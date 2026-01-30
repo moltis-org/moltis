@@ -6,6 +6,8 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   build-deb:
     strategy:
@@ -18,13 +20,18 @@ jobs:
 
     runs-on: ubuntu-latest
     name: Build .deb (${{ matrix.arch }})
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cargo-deb
@@ -39,20 +46,24 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Build .deb package
-        run: cargo deb -p moltis-cli --no-build --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo deb -p moltis-cli --no-build --target "$BUILD_TARGET"
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.deb
           path: target/${{ matrix.target }}/debian/*.deb
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: target/${{ matrix.target }}/debian/*.deb
 
@@ -67,13 +78,18 @@ jobs:
 
     runs-on: ubuntu-latest
     name: Build .rpm (${{ matrix.arch }})
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cargo-generate-rpm
@@ -88,28 +104,35 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Strip binary
+        env:
+          MATRIX_ARCH: ${{ matrix.arch }}
+          BUILD_TARGET: ${{ matrix.target }}
         run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            strip target/${{ matrix.target }}/release/moltis
+          if [ "$MATRIX_ARCH" = "x86_64" ]; then
+            strip "target/$BUILD_TARGET/release/moltis"
           else
-            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/moltis
+            aarch64-linux-gnu-strip "target/$BUILD_TARGET/release/moltis"
           fi
 
       - name: Build .rpm package
-        run: cargo generate-rpm -p crates/cli --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo generate-rpm -p crates/cli --target "$BUILD_TARGET"
 
       - name: Upload .rpm artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.rpm
           path: target/${{ matrix.target }}/generate-rpm/*.rpm
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: target/${{ matrix.target }}/generate-rpm/*.rpm
 
@@ -124,13 +147,18 @@ jobs:
 
     runs-on: ubuntu-latest
     name: Build .pkg.tar.zst (${{ matrix.arch }})
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install packaging tools
@@ -144,7 +172,9 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Determine package version
         id: version
@@ -153,11 +183,14 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build .pkg.tar.zst
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TARGET: ${{ matrix.target }}
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
-          VERSION=${{ steps.version.outputs.version }}
           PKG_DIR="pkg-root"
           mkdir -p "$PKG_DIR/usr/bin"
-          cp "target/${{ matrix.target }}/release/moltis" "$PKG_DIR/usr/bin/moltis"
+          cp "target/$BUILD_TARGET/release/moltis" "$PKG_DIR/usr/bin/moltis"
           chmod 755 "$PKG_DIR/usr/bin/moltis"
 
           cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
@@ -165,22 +198,22 @@ jobs:
           pkgver = ${VERSION}-1
           pkgdesc = Rust version of moltbot
           url = https://docs.molt.bot/
-          arch = ${{ matrix.arch }}
+          arch = $MATRIX_ARCH
           license = MIT
           PKGINFO
 
           cd "$PKG_DIR"
-          fakeroot -- tar --zstd -cf "../moltis-${VERSION}-1-${{ matrix.arch }}.pkg.tar.zst" .PKGINFO usr/
+          fakeroot -- tar --zstd -cf "../moltis-${VERSION}-1-${MATRIX_ARCH}.pkg.tar.zst" .PKGINFO usr/
 
       - name: Upload .pkg.tar.zst artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.pkg.tar.zst
           path: "*.pkg.tar.zst"
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: "*.pkg.tar.zst"
 
@@ -195,13 +228,18 @@ jobs:
 
     runs-on: ubuntu-latest
     name: Build AppImage (${{ matrix.arch }})
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools
@@ -213,7 +251,9 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Determine package version
         id: version
@@ -222,9 +262,11 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build AppImage
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TARGET: ${{ matrix.target }}
+          MATRIX_ARCH: ${{ matrix.arch }}
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-
           # Download appimagetool for the host (always x86_64 runner)
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
           chmod +x appimagetool
@@ -232,7 +274,7 @@ jobs:
           # Build AppDir structure
           APP_DIR="moltis.AppDir"
           mkdir -p "$APP_DIR/usr/bin"
-          cp "target/${{ matrix.target }}/release/moltis" "$APP_DIR/usr/bin/moltis"
+          cp "target/$BUILD_TARGET/release/moltis" "$APP_DIR/usr/bin/moltis"
           chmod 755 "$APP_DIR/usr/bin/moltis"
 
           # Create .desktop file
@@ -262,39 +304,43 @@ jobs:
           chmod +x "$APP_DIR/AppRun"
 
           # Package - use --appimage-extract-and-run to avoid FUSE requirement in CI
-          ARCH=${{ matrix.arch }} ./appimagetool --appimage-extract-and-run "$APP_DIR" "moltis-${VERSION}-${{ matrix.arch }}.AppImage"
+          ARCH="$MATRIX_ARCH" ./appimagetool --appimage-extract-and-run "$APP_DIR" "moltis-${VERSION}-${MATRIX_ARCH}.AppImage"
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.AppImage
           path: "*.AppImage"
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: "*.AppImage"
 
   build-snap:
     runs-on: ubuntu-latest
     name: Build Snap
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: snapcore/action-build@v1
+      - uses: snapcore/action-build@b391f430cb2650fd359ed4d2cfe88b2c481800e0 # v1
         id: build-snap
 
       - name: Upload Snap artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis.snap
           path: ${{ steps.build-snap.outputs.snap }}
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: ${{ steps.build-snap.outputs.snap }}
 
@@ -313,13 +359,18 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: Build binary (${{ matrix.target }})
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools
@@ -331,7 +382,9 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$BUILD_TARGET"
 
       - name: Determine package version
         id: version
@@ -340,19 +393,21 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package binary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_TARGET: ${{ matrix.target }}
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cp target/${{ matrix.target }}/release/moltis moltis
-          tar czf moltis-${VERSION}-${{ matrix.target }}.tar.gz moltis
+          cp "target/$BUILD_TARGET/release/moltis" moltis
+          tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" moltis
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.target }}
           path: "*.tar.gz"
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: "*.tar.gz"
