@@ -24,15 +24,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Install zizmor
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download --repo woodruffw/zizmor --pattern 'zizmor-x86_64-unknown-linux-gnu.tar.gz'
-          tar xzf zizmor-x86_64-unknown-linux-gnu.tar.gz
-          chmod +x zizmor
-      - name: Run zizmor
-        run: ./zizmor .github/workflows/
+      - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
+        with:
+          advanced-security: false
 
   fmt:
     name: Format
