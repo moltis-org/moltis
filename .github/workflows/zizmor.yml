@@ -22,7 +22,10 @@ jobs:
       - name: Install zizmor
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download --repo woodruffw/zizmor --pattern 'zizmor-x86_64-unknown-linux-gnu' --output zizmor && chmod +x zizmor
+        run: |
+          gh release download --repo woodruffw/zizmor --pattern 'zizmor-x86_64-unknown-linux-gnu.tar.gz'
+          tar xzf zizmor-x86_64-unknown-linux-gnu.tar.gz
+          chmod +x zizmor
 
       - name: Run zizmor
         run: ./zizmor --format sarif .github/workflows/ > results.sarif
