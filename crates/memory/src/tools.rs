@@ -52,9 +52,20 @@ impl AgentTool for MemorySearchTool {
 
         let results = self.manager.search(query, limit).await?;
 
+        // Determine if we should include citations based on config and result set.
+        let include_citations = crate::search::SearchResult::should_include_citations(
+            &results,
+            self.manager.citation_mode(),
+        );
+
         let items: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
+                let text = if include_citations {
+                    r.text_with_citation()
+                } else {
+                    r.text.clone()
+                };
                 json!({
                     "chunk_id": r.chunk_id,
                     "path": r.path,
@@ -62,12 +73,13 @@ impl AgentTool for MemorySearchTool {
                     "start_line": r.start_line,
                     "end_line": r.end_line,
                     "score": r.score,
-                    "text": r.text,
+                    "text": text,
+                    "citation": format!("{}#{}", r.path, r.start_line),
                 })
             })
             .collect();
 
-        Ok(json!({ "results": items }))
+        Ok(json!({ "results": items, "citations_enabled": include_citations }))
     }
 }
 

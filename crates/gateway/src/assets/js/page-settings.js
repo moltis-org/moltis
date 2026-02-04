@@ -44,6 +44,11 @@ var sections = [
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>`,
 	},
 	{
+		id: "memory",
+		label: "Memory",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>`,
+	},
+	{
 		id: "environment",
 		label: "Environment",
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>`,
@@ -1289,6 +1294,195 @@ function TailscaleSection() {
 	</div>`;
 }
 
+// ── Memory section ────────────────────────────────────────────
+
+function MemorySection() {
+	var [memStatus, setMemStatus] = useState(null);
+	var [memConfig, setMemConfig] = useState(null);
+	var [loading, setLoading] = useState(true);
+	var [saving, setSaving] = useState(false);
+	var [saved, setSaved] = useState(false);
+	var [error, setError] = useState(null);
+
+	// Form state
+	var [backend, setBackend] = useState("builtin");
+	var [citations, setCitations] = useState("auto");
+	var [llmReranking, setLlmReranking] = useState(false);
+	var [sessionExport, setSessionExport] = useState(false);
+
+	useEffect(() => {
+		// Fetch memory status and config
+		Promise.all([
+			sendRpc("memory.status", {}),
+			sendRpc("memory.config.get", {}),
+		]).then(([statusRes, configRes]) => {
+			if (statusRes?.ok) {
+				setMemStatus(statusRes.payload);
+			}
+			if (configRes?.ok) {
+				var cfg = configRes.payload;
+				setMemConfig(cfg);
+				setBackend(cfg.backend || "builtin");
+				setCitations(cfg.citations || "auto");
+				setLlmReranking(cfg.llm_reranking || false);
+				setSessionExport(cfg.session_export || false);
+			}
+			setLoading(false);
+			rerender();
+		}).catch(() => {
+			setLoading(false);
+			rerender();
+		});
+	}, []);
+
+	function onSave(e) {
+		e.preventDefault();
+		setError(null);
+		setSaving(true);
+		setSaved(false);
+
+		sendRpc("memory.config.update", {
+			backend,
+			citations,
+			llm_reranking: llmReranking,
+			session_export: sessionExport,
+		}).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				setMemConfig(res.payload);
+				setSaved(true);
+				setTimeout(() => {
+					setSaved(false);
+					rerender();
+				}, 2000);
+			} else {
+				setError(res?.error?.message || "Failed to save");
+			}
+			rerender();
+		});
+	}
+
+	if (loading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
+			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
+			Configure how the agent stores and retrieves long-term memory. Memory enables the agent
+			to recall past conversations, notes, and context across sessions.
+		</p>
+
+		<!-- Status -->
+		${memStatus ? html`
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Status</h3>
+				<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 16px;font-size:.8rem;">
+					<div>
+						<span class="text-[var(--muted)]">Files:</span>
+						<span class="text-[var(--text)]" style="margin-left:6px;">${memStatus.total_files || 0}</span>
+					</div>
+					<div>
+						<span class="text-[var(--muted)]">Chunks:</span>
+						<span class="text-[var(--text)]" style="margin-left:6px;">${memStatus.total_chunks || 0}</span>
+					</div>
+					<div>
+						<span class="text-[var(--muted)]">Model:</span>
+						<span class="text-[var(--text)]" style="margin-left:6px;font-family:var(--font-mono);font-size:.75rem;">${memStatus.embedding_model || "none"}</span>
+					</div>
+					<div>
+						<span class="text-[var(--muted)]">DB Size:</span>
+						<span class="text-[var(--text)]" style="margin-left:6px;">${memStatus.db_size_display || "0 B"}</span>
+					</div>
+				</div>
+			</div>
+		` : null}
+
+		<!-- Configuration -->
+		<form onSubmit=${onSave} style="max-width:600px;display:flex;flex-direction:column;gap:16px;">
+			<!-- Backend selection -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Backend</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Choose between the built-in hybrid search or QMD (external sidecar with BM25 + vector + LLM reranking).
+				</p>
+				<div style="display:flex;gap:8px;">
+					<button type="button"
+						class="provider-btn ${backend === "builtin" ? "" : "provider-btn-secondary"}"
+						onClick=${() => { setBackend("builtin"); rerender(); }}>
+						Built-in
+					</button>
+					<button type="button"
+						class="provider-btn ${backend === "qmd" ? "" : "provider-btn-secondary"}"
+						onClick=${() => { setBackend("qmd"); rerender(); }}>
+						QMD
+					</button>
+				</div>
+				${backend === "qmd" ? html`
+					<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+						QMD must be installed separately.
+						<a href="https://github.com/qmd/qmd" target="_blank" rel="noopener"
+							style="color:var(--accent);">Learn more</a>
+					</div>
+				` : null}
+			</div>
+
+			<!-- Citations -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Citations</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
+					Include source file and line number with search results to help track where information comes from.
+				</p>
+				<select class="provider-key-input" style="width:auto;min-width:150px;"
+					value=${citations} onChange=${(e) => { setCitations(e.target.value); rerender(); }}>
+					<option value="auto">Auto (multi-file only)</option>
+					<option value="on">Always</option>
+					<option value="off">Never</option>
+				</select>
+			</div>
+
+			<!-- LLM Reranking -->
+			<div>
+				<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+					<input type="checkbox" checked=${llmReranking}
+						onChange=${(e) => { setLlmReranking(e.target.checked); rerender(); }} />
+					<div>
+						<span class="text-sm font-medium text-[var(--text-strong)]">LLM Reranking</span>
+						<p class="text-xs text-[var(--muted)]" style="margin:2px 0 0;">
+							Use the LLM to rerank search results for better relevance (slower but more accurate).
+						</p>
+					</div>
+				</label>
+			</div>
+
+			<!-- Session Export -->
+			<div>
+				<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+					<input type="checkbox" checked=${sessionExport}
+						onChange=${(e) => { setSessionExport(e.target.checked); rerender(); }} />
+					<div>
+						<span class="text-sm font-medium text-[var(--text-strong)]">Session Export</span>
+						<p class="text-xs text-[var(--muted)]" style="margin:2px 0 0;">
+							Export session transcripts to memory for cross-run recall of past conversations.
+						</p>
+					</div>
+				</label>
+			</div>
+
+			<div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--border);">
+				<button type="submit" class="provider-btn" disabled=${saving}>
+					${saving ? "Saving\u2026" : "Save"}
+				</button>
+				${saved ? html`<span class="text-xs" style="color:var(--accent);">Saved</span>` : null}
+				${error ? html`<span class="text-xs" style="color:var(--error);">${error}</span>` : null}
+			</div>
+		</form>
+	</div>`;
+}
+
 // ── Main layout ──────────────────────────────────────────────
 
 function SettingsPage() {
@@ -1301,6 +1495,7 @@ function SettingsPage() {
 	return html`<div class="settings-layout">
 		<${SettingsSidebar} />
 		${section === "identity" ? html`<${IdentitySection} />` : null}
+		${section === "memory" ? html`<${MemorySection} />` : null}
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}

@@ -11,6 +11,7 @@ local-embeddings = ["dep:llama-cpp-2"]
 [dependencies]
 anyhow                = { workspace = true }
 async-trait           = "0.1"
+chrono                = { version = "0.4", features = ["serde"] }
 directories.workspace = true
 llama-cpp-2           = { optional = true, version = "0.1" }
 moltis-agents         = { workspace = true }
