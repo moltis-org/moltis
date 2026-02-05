@@ -3,6 +3,7 @@ use std::sync::Arc;
 use {
     secrecy::ExposeSecret,
     teloxide::{
+        ApiError, RequestError,
         prelude::*,
         types::{AllowedUpdate, BotCommand, UpdateKind},
     },
@@ -162,6 +163,35 @@ pub async fn start_polling(
                     }
                 },
                 Err(e) => {
+                    // Detect conflict error: another bot instance is running with the same token.
+                    let is_conflict =
+                        matches!(&e, RequestError::Api(ApiError::TerminatedByOtherGetUpdates));
+
+                    if is_conflict {
+                        warn!(
+                            account_id = aid,
+                            "telegram bot disabled: another instance is already running with this token"
+                        );
+
+                        // Request the gateway to disable this channel.
+                        let event_sink = {
+                            let accounts = poll_accounts.read().unwrap();
+                            accounts.get(&aid).and_then(|s| s.event_sink.clone())
+                        };
+                        if let Some(sink) = event_sink {
+                            sink.request_disable_account(
+                                "telegram",
+                                &aid,
+                                "Another bot instance is already running with this token",
+                            )
+                            .await;
+                        }
+
+                        // Cancel this polling loop and exit.
+                        cancel_clone.cancel();
+                        break;
+                    }
+
                     warn!(account_id = aid, error = %e, "telegram getUpdates failed");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 },

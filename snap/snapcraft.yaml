@@ -1,8 +1,8 @@
 name: moltis
 version: '0.1.0'
-summary: Rust version of moltbot
+summary: Personal AI gateway inspired by OpenClaw
 description: |
-  Moltis is a Rust implementation of moltbot, a multi-feature bot system.
+  Moltis is a personal AI gateway inspired by OpenClaw. One binary, multiple LLM providers.
 
 base: core24
 grade: stable

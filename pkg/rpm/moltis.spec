@@ -1,12 +1,12 @@
 Name:           moltis
 Version:        0.1.0
 Release:        1%{?dist}
-Summary:        Rust version of moltbot
+Summary:        Personal AI gateway inspired by OpenClaw
 License:        MIT
-URL:            https://docs.molt.bot/
+URL:            https://www.moltis.org/
 
 %description
-Moltis is a Rust implementation of moltbot, a multi-feature bot system.
+Moltis is a personal AI gateway inspired by OpenClaw. One binary, multiple LLM providers.
 
 %install
 mkdir -p %{buildroot}%{_bindir}

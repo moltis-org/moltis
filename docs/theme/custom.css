@@ -1,0 +1,548 @@
+/* Moltis Documentation - Custom Theme
+   Matches www.moltis.org design system */
+
+/* ===== Google Fonts ===== */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ===== CSS Variables ===== */
+:root {
+    --content-max-width: 850px;
+    --sidebar-width: 280px;
+    --orange-500: #ff6b35;
+    --orange-400: #ff8c5a;
+    --orange-600: #e55a2b;
+    --transition: 0.2s ease;
+}
+
+/* ===== Typography ===== */
+.content, .sidebar {
+    font-family: "Space Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.content {
+    font-size: 16px;
+    line-height: 1.7;
+}
+
+/* Headings use Outfit */
+.content h1, .content h2, .content h3, .content h4, .content h5, .content h6 {
+    font-family: "Outfit", "Space Grotesk", system-ui, sans-serif;
+    font-weight: 600;
+}
+
+.content h1 {
+    font-size: 2.2em;
+    font-weight: 700;
+    margin-top: 0;
+    margin-bottom: 1em;
+    padding-bottom: 0.3em;
+    border-bottom: 2px solid var(--quote-border);
+}
+
+.content h2 {
+    font-size: 1.6em;
+    margin-top: 2em;
+    margin-bottom: 0.8em;
+    padding-bottom: 0.2em;
+    border-bottom: 1px solid var(--quote-border);
+}
+
+.content h3 {
+    font-size: 1.3em;
+    margin-top: 1.5em;
+    margin-bottom: 0.6em;
+}
+
+.content h4 {
+    font-size: 1.1em;
+    margin-top: 1.2em;
+    margin-bottom: 0.5em;
+}
+
+.content p {
+    margin-bottom: 1em;
+}
+
+/* ===== Code Blocks ===== */
+.content code {
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    padding: 0.15em 0.4em;
+    border-radius: 6px;
+    background: var(--quote-bg);
+}
+
+.content pre {
+    padding: 1em 1.2em;
+    border-radius: 10px;
+    margin: 1.2em 0;
+    overflow-x: auto;
+    border: 1px solid var(--quote-border);
+}
+
+.content pre > code {
+    padding: 0;
+    background: transparent;
+    font-size: 0.85em;
+    line-height: 1.6;
+}
+
+.content pre .linenumber {
+    opacity: 0.4;
+    user-select: none;
+    margin-right: 1em;
+    min-width: 1.5em;
+    display: inline-block;
+    text-align: right;
+}
+
+/* Copy button styling */
+.content pre .buttons {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+}
+
+.content pre .buttons button {
+    background: var(--quote-bg);
+    border: 1px solid var(--quote-border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--transition), background var(--transition);
+}
+
+.content pre:hover .buttons button {
+    opacity: 1;
+}
+
+.content pre .buttons button:hover {
+    background: var(--orange-500);
+    border-color: var(--orange-500);
+    color: white;
+}
+
+/* ===== Tables ===== */
+.content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5em 0;
+    font-size: 0.95em;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--quote-border);
+}
+
+.content table th {
+    background: var(--quote-bg);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.8em 1em;
+    border-bottom: 2px solid var(--quote-border);
+}
+
+.content table td {
+    padding: 0.7em 1em;
+    border-bottom: 1px solid var(--quote-border);
+}
+
+.content table tr:last-child td {
+    border-bottom: none;
+}
+
+.content table tr:hover td {
+    background: var(--table-hover-bg);
+}
+
+/* ===== Blockquotes ===== */
+.content blockquote {
+    margin: 1.5em 0;
+    padding: 0.8em 1.2em;
+    border-left: 4px solid var(--orange-500);
+    background: var(--quote-bg);
+    border-radius: 0 10px 10px 0;
+}
+
+.content blockquote p:last-child {
+    margin-bottom: 0;
+}
+
+/* ===== Lists ===== */
+.content ul, .content ol {
+    margin: 1em 0;
+    padding-left: 1.5em;
+}
+
+.content li {
+    margin: 0.4em 0;
+}
+
+.content li > p {
+    margin: 0.3em 0;
+}
+
+.content li ul, .content li ol {
+    margin: 0.3em 0;
+}
+
+/* ===== Links ===== */
+.content a {
+    color: var(--links);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--transition), color var(--transition);
+}
+
+.content a:hover {
+    color: var(--orange-600);
+    border-bottom-color: var(--orange-500);
+}
+
+/* ===== Sidebar ===== */
+.sidebar {
+    font-size: 0.95em;
+}
+
+.sidebar .sidebar-scrollbox {
+    padding: 1.5em;
+}
+
+.sidebar ol.chapter {
+    padding-left: 0;
+}
+
+.sidebar ol.chapter li {
+    margin: 0.3em 0;
+}
+
+.sidebar ol.chapter li.chapter-item {
+    line-height: 1.5;
+}
+
+.sidebar ol.chapter li a {
+    padding: 0.5em 0.8em;
+    border-radius: 8px;
+    display: block;
+    transition: background-color var(--transition), color var(--transition);
+}
+
+.sidebar ol.chapter li a:hover {
+    background: var(--sidebar-hover-bg);
+    color: var(--sidebar-active);
+}
+
+.sidebar ol.chapter li.active > a {
+    background: var(--sidebar-active-bg);
+    color: var(--orange-500);
+    font-weight: 600;
+}
+
+.sidebar .spacer {
+    height: 1em;
+}
+
+.sidebar-separator {
+    margin: 1em 0 !important;
+    border-top: 1px solid var(--quote-border);
+    opacity: 0.5;
+}
+
+/* Sidebar title */
+.sidebar .sidebar-scrollbox .chapter-item:first-child a {
+    font-family: "Outfit", sans-serif;
+    font-weight: 700;
+    font-size: 1.1em;
+}
+
+/* ===== Navigation ===== */
+.nav-chapters {
+    font-size: 0.9em;
+    opacity: 0.6;
+    transition: opacity var(--transition);
+}
+
+.nav-chapters:hover {
+    opacity: 1;
+    color: var(--orange-500);
+}
+
+/* ===== Search ===== */
+#searchbar {
+    border-radius: 10px;
+    padding: 0.7em 1em;
+    font-size: 0.95em;
+    font-family: "Space Grotesk", sans-serif;
+    border: 1px solid var(--quote-border);
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+#searchbar:focus {
+    border-color: var(--orange-500);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.15);
+    outline: none;
+}
+
+#searchresults {
+    border-radius: 10px;
+    margin-top: 0.5em;
+    border: 1px solid var(--quote-border);
+    overflow: hidden;
+}
+
+#searchresults li {
+    padding: 0.8em 1em;
+    border-bottom: 1px solid var(--quote-border);
+}
+
+#searchresults li:last-child {
+    border-bottom: none;
+}
+
+#searchresults li:hover {
+    background: var(--sidebar-hover-bg);
+}
+
+#searchresults mark {
+    background: rgba(255, 107, 53, 0.3);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+/* ===== Page Navigation ===== */
+.nav-wrapper {
+    margin-top: 3em;
+    padding-top: 1.5em;
+    border-top: 1px solid var(--quote-border);
+}
+
+.previous, .next {
+    padding: 0.8em 1.2em;
+    border-radius: 10px;
+    background: var(--quote-bg);
+    border: 1px solid var(--quote-border);
+    transition: background-color var(--transition), border-color var(--transition);
+}
+
+.previous:hover, .next:hover {
+    background: var(--sidebar-hover-bg);
+    border-color: var(--orange-500);
+}
+
+/* ===== Menu Bar ===== */
+#menu-bar {
+    border-bottom: 1px solid var(--quote-border);
+}
+
+#menu-bar .icon-button {
+    border-radius: 8px;
+    transition: background-color var(--transition);
+}
+
+#menu-bar .icon-button:hover {
+    background: var(--sidebar-hover-bg);
+    color: var(--orange-500);
+}
+
+/* Theme toggle buttons */
+#theme-list {
+    border-radius: 10px;
+    border: 1px solid var(--quote-border);
+    overflow: hidden;
+}
+
+#theme-list button {
+    transition: background-color var(--transition);
+}
+
+#theme-list button:hover {
+    background: var(--sidebar-hover-bg);
+}
+
+/* ===== Print Styles ===== */
+@media print {
+    .sidebar, .nav-wrapper, #menu-bar {
+        display: none !important;
+    }
+    .content {
+        max-width: 100% !important;
+    }
+}
+
+/* ===== Mobile Responsive ===== */
+@media (max-width: 1080px) {
+    .content {
+        padding: 1em;
+    }
+    .content h1 {
+        font-size: 1.8em;
+    }
+    .content h2 {
+        font-size: 1.4em;
+    }
+    .content pre {
+        padding: 0.8em;
+        font-size: 0.9em;
+    }
+}
+
+/* ============================================
+   LIGHT THEME - Matches moltis.org light mode
+   ============================================ */
+.light {
+    --bg: #ffffff;
+    --fg: #374151;  /* gray-700 */
+    --sidebar-bg: #f9fafb;  /* gray-50 */
+    --sidebar-fg: #6b7280;  /* gray-500 */
+    --sidebar-active: #ff6b35;
+    --sidebar-hover-bg: #e5e7eb;  /* gray-200 */
+    --sidebar-active-bg: rgba(255, 107, 53, 0.1);
+    --links: #ff6b35;
+    --inline-code-color: #1f2937;  /* gray-800 */
+    --quote-bg: #f3f4f6;  /* gray-100 */
+    --quote-border: #e5e7eb;  /* gray-200 */
+    --table-hover-bg: #f9fafb;  /* gray-50 */
+    --code-bg: #f8f9fa;
+}
+
+.light .content {
+    color: #374151;
+}
+
+.light .sidebar {
+    background: var(--sidebar-bg);
+}
+
+.light #menu-bar {
+    background: #ffffff;
+}
+
+.light .content pre {
+    background: #f8f9fa;
+    border-color: #e5e7eb;
+}
+
+.light .content code {
+    background: #f3f4f6;
+    color: #1f2937;
+}
+
+/* ============================================
+   DARK THEME (Navy) - Matches moltis.org dark mode
+   ============================================ */
+.navy, .coal, .ayu {
+    --bg: #111827;  /* gray-900 */
+    --fg: #e5e7eb;  /* gray-200 */
+    --sidebar-bg: #1f2937;  /* gray-800 */
+    --sidebar-fg: #9ca3af;  /* gray-400 */
+    --sidebar-active: #ff8c5a;  /* orange-400 */
+    --sidebar-hover-bg: #374151;  /* gray-700 */
+    --sidebar-active-bg: rgba(255, 107, 53, 0.15);
+    --links: #ff8c5a;  /* orange-400 */
+    --inline-code-color: #f3f4f6;
+    --quote-bg: rgba(255, 107, 53, 0.08);
+    --quote-border: #374151;  /* gray-700 */
+    --table-hover-bg: rgba(255, 107, 53, 0.05);
+    --code-bg: #1f2937;
+}
+
+.navy .content, .coal .content, .ayu .content {
+    color: #e5e7eb;
+}
+
+.navy .sidebar, .coal .sidebar, .ayu .sidebar {
+    background: var(--sidebar-bg);
+}
+
+.navy #menu-bar, .coal #menu-bar, .ayu #menu-bar {
+    background: #111827;
+}
+
+.navy .content pre, .coal .content pre, .ayu .content pre {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+.navy .content code, .coal .content code, .ayu .content code {
+    background: rgba(255, 107, 53, 0.1);
+    color: #f3f4f6;
+}
+
+/* ===== Admonish Overrides ===== */
+.admonition {
+    border-radius: 10px !important;
+    border: 1px solid var(--quote-border) !important;
+    margin: 1.5em 0 !important;
+}
+
+.admonition-title {
+    font-family: "Outfit", sans-serif !important;
+    font-weight: 600 !important;
+}
+
+/* Info admonition - uses orange accent */
+.admonition.admonish-info {
+    border-left: 4px solid var(--orange-500) !important;
+}
+
+.admonition.admonish-info > .admonition-title {
+    background: rgba(255, 107, 53, 0.1) !important;
+}
+
+/* Tip admonition */
+.admonition.admonish-tip {
+    border-left: 4px solid #10b981 !important;
+}
+
+.admonition.admonish-tip > .admonition-title {
+    background: rgba(16, 185, 129, 0.1) !important;
+}
+
+/* Warning admonition */
+.admonition.admonish-warning {
+    border-left: 4px solid #f59e0b !important;
+}
+
+.admonition.admonish-warning > .admonition-title {
+    background: rgba(245, 158, 11, 0.1) !important;
+}
+
+/* Danger admonition */
+.admonition.admonish-danger {
+    border-left: 4px solid #ef4444 !important;
+}
+
+.admonition.admonish-danger > .admonition-title {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* ===== Scrollbar Styling ===== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--quote-border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--orange-500);
+}
+
+/* ===== Selection Highlight ===== */
+::selection {
+    background: rgba(255, 107, 53, 0.3);
+    color: inherit;
+}
+
+::-moz-selection {
+    background: rgba(255, 107, 53, 0.3);
+    color: inherit;
+}

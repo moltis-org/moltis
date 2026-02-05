@@ -2,9 +2,9 @@
 pkgname=moltis
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Rust version of moltbot"
+pkgdesc="Personal AI gateway inspired by OpenClaw"
 arch=('x86_64' 'aarch64')
-url="https://docs.molt.bot/"
+url="https://www.moltis.org/"
 license=('MIT')
 depends=('gcc-libs')
 makedepends=('cargo')
