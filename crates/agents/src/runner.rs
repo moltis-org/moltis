@@ -8,9 +8,11 @@ use {
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{CompletionResponse, LlmProvider, ToolCall, Usage},
+    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
     tool_registry::ToolRegistry,
 };
+
+use futures::StreamExt;
 
 /// Maximum number of tool-call loop iterations before giving up.
 const MAX_ITERATIONS: usize = 25;
@@ -617,6 +619,396 @@ pub async fn run_agent_loop_with_context(
 /// Convenience wrapper matching the old stub signature.
 pub async fn run_agent(_agent_id: &str, _session_key: &str, _message: &str) -> Result<String> {
     bail!("run_agent requires a configured provider and tool registry; use run_agent_loop instead")
+}
+
+/// Streaming variant of the agent loop.
+///
+/// Unlike `run_agent_loop_with_context`, this function uses streaming to send
+/// text deltas to the UI as they arrive, providing a much better UX.
+///
+/// Tool calls are accumulated from the stream and executed after the stream
+/// completes, then the loop continues with the next iteration.
+pub async fn run_agent_loop_streaming(
+    provider: Arc<dyn LlmProvider>,
+    tools: &ToolRegistry,
+    system_prompt: &str,
+    user_message: &str,
+    on_event: Option<&OnEvent>,
+    history: Option<Vec<serde_json::Value>>,
+    tool_context: Option<serde_json::Value>,
+    hook_registry: Option<Arc<HookRegistry>>,
+) -> Result<AgentRunResult, AgentRunError> {
+    let native_tools = provider.supports_tools();
+    let max_tool_result_bytes = moltis_config::discover_and_load()
+        .tools
+        .max_tool_result_bytes;
+    let tool_schemas = tools.list_schemas();
+
+    info!(
+        provider = provider.name(),
+        model = provider.id(),
+        native_tools,
+        tools_count = tool_schemas.len(),
+        "starting streaming agent loop"
+    );
+
+    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
+        "role": "system",
+        "content": system_prompt,
+    })];
+
+    // Insert conversation history before the current user message.
+    if let Some(hist) = history {
+        messages.extend(hist);
+    }
+
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": user_message,
+    }));
+
+    // Only send tool schemas to providers that support them natively.
+    let schemas_for_api = if native_tools {
+        tool_schemas.clone()
+    } else {
+        vec![]
+    };
+
+    let mut iterations = 0;
+    let mut total_tool_calls = 0;
+    let mut total_input_tokens: u32 = 0;
+    let mut total_output_tokens: u32 = 0;
+
+    loop {
+        iterations += 1;
+        if iterations > MAX_ITERATIONS {
+            warn!(
+                "streaming agent loop exceeded max iterations ({})",
+                MAX_ITERATIONS
+            );
+            return Err(AgentRunError::Other(anyhow::anyhow!(
+                "agent loop exceeded max iterations"
+            )));
+        }
+
+        if let Some(cb) = on_event {
+            cb(RunnerEvent::Iteration(iterations));
+        }
+
+        info!(
+            iteration = iterations,
+            messages_count = messages.len(),
+            "calling LLM (streaming)"
+        );
+        trace!(iteration = iterations, messages = %serde_json::to_string(&messages).unwrap_or_default(), "LLM request messages");
+
+        if let Some(cb) = on_event {
+            cb(RunnerEvent::Thinking);
+        }
+
+        // Use streaming API.
+        let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
+
+        // Accumulate text and tool calls from the stream.
+        let mut accumulated_text = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut tool_call_args: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        let mut input_tokens: u32 = 0;
+        let mut output_tokens: u32 = 0;
+        let mut stream_error: Option<String> = None;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Delta(text) => {
+                    accumulated_text.push_str(&text);
+                    if let Some(cb) = on_event {
+                        cb(RunnerEvent::TextDelta(text));
+                    }
+                },
+                StreamEvent::ToolCallStart { id, name, index } => {
+                    debug!(tool = %name, id = %id, index, "tool call started in stream");
+                    tool_calls.push(ToolCall {
+                        id,
+                        name,
+                        arguments: serde_json::json!({}),
+                    });
+                    tool_call_args.insert(index, String::new());
+                },
+                StreamEvent::ToolCallArgumentsDelta { index, delta } => {
+                    if let Some(args) = tool_call_args.get_mut(&index) {
+                        args.push_str(&delta);
+                    }
+                },
+                StreamEvent::ToolCallComplete { index } => {
+                    // Arguments are finalized after stream completes.
+                    // Just log for now - we'll parse accumulated args later.
+                    debug!(index, "tool call arguments complete");
+                },
+                StreamEvent::Done(usage) => {
+                    input_tokens = usage.input_tokens;
+                    output_tokens = usage.output_tokens;
+                    debug!(input_tokens, output_tokens, "stream done");
+                },
+                StreamEvent::Error(msg) => {
+                    stream_error = Some(msg);
+                    break;
+                },
+            }
+        }
+
+        if let Some(cb) = on_event {
+            cb(RunnerEvent::ThinkingDone);
+        }
+
+        // Handle stream error.
+        if let Some(err) = stream_error {
+            if is_context_window_error(&err) {
+                return Err(AgentRunError::ContextWindowExceeded(err));
+            }
+            return Err(AgentRunError::Other(anyhow::anyhow!(err)));
+        }
+
+        total_input_tokens = total_input_tokens.saturating_add(input_tokens);
+        total_output_tokens = total_output_tokens.saturating_add(output_tokens);
+
+        // Finalize tool call arguments from accumulated strings.
+        for (index, args_str) in &tool_call_args {
+            if *index < tool_calls.len()
+                && !args_str.is_empty()
+                && let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str)
+            {
+                tool_calls[*index].arguments = args;
+            }
+        }
+
+        info!(
+            iteration = iterations,
+            has_text = !accumulated_text.is_empty(),
+            tool_calls_count = tool_calls.len(),
+            input_tokens,
+            output_tokens,
+            "streaming LLM response complete"
+        );
+
+        // For providers without native tool calling, try parsing tool calls from text.
+        if !native_tools
+            && tool_calls.is_empty()
+            && !accumulated_text.is_empty()
+            && let Some((tc, remaining_text)) = parse_tool_call_from_text(&accumulated_text)
+        {
+            info!(
+                tool = %tc.name,
+                "parsed tool call from text (non-native provider)"
+            );
+            accumulated_text = remaining_text.unwrap_or_default();
+            tool_calls = vec![tc];
+        }
+
+        // If no tool calls, return the text response.
+        if tool_calls.is_empty() {
+            info!(
+                iterations,
+                tool_calls = total_tool_calls,
+                "streaming agent loop complete — returning text"
+            );
+            return Ok(AgentRunResult {
+                text: accumulated_text,
+                iterations,
+                tool_calls_made: total_tool_calls,
+                usage: Usage {
+                    input_tokens: total_input_tokens,
+                    output_tokens: total_output_tokens,
+                },
+            });
+        }
+
+        // Append assistant message with tool calls.
+        let tool_calls_json: Vec<serde_json::Value> = tool_calls
+            .iter()
+            .map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": tc.arguments.to_string(),
+                    }
+                })
+            })
+            .collect();
+
+        let mut assistant_msg = serde_json::json!({
+            "role": "assistant",
+            "tool_calls": tool_calls_json,
+        });
+        if !accumulated_text.is_empty() {
+            assistant_msg["content"] = serde_json::Value::String(accumulated_text.clone());
+            if let Some(cb) = on_event {
+                cb(RunnerEvent::ThinkingText(accumulated_text));
+            }
+        }
+        messages.push(assistant_msg);
+
+        // Extract session key from tool_context for hook payloads.
+        let session_key = tool_context
+            .as_ref()
+            .and_then(|ctx| ctx.get("_session_key"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Execute tool calls concurrently.
+        total_tool_calls += tool_calls.len();
+
+        // Emit all ToolCallStart events first (preserves notification order).
+        for tc in &tool_calls {
+            if let Some(cb) = on_event {
+                cb(RunnerEvent::ToolCallStart {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                });
+            }
+            info!(tool = %tc.name, id = %tc.id, args = %tc.arguments, "executing tool");
+        }
+
+        // Build futures for all tool calls (executed concurrently).
+        let tool_futures: Vec<_> = tool_calls
+            .iter()
+            .map(|tc| {
+                let tool = tools.get(&tc.name);
+                let mut args = tc.arguments.clone();
+
+                let hook_registry = hook_registry.clone();
+                let session_key = session_key.clone();
+                let tc_name = tc.name.clone();
+
+                if let Some(ref ctx) = tool_context
+                    && let (Some(args_obj), Some(ctx_obj)) = (args.as_object_mut(), ctx.as_object())
+                {
+                    for (k, v) in ctx_obj {
+                        args_obj.insert(k.clone(), v.clone());
+                    }
+                }
+                async move {
+                    // Run BeforeToolCall hook.
+                    if let Some(ref hooks) = hook_registry {
+                        let payload = HookPayload::BeforeToolCall {
+                            session_key: session_key.clone(),
+                            tool_name: tc_name.clone(),
+                            arguments: args.clone(),
+                        };
+                        match hooks.dispatch(&payload).await {
+                            Ok(HookAction::Block(reason)) => {
+                                warn!(tool = %tc_name, reason = %reason, "tool call blocked by hook");
+                                let err_str = format!("blocked by hook: {reason}");
+                                return (
+                                    false,
+                                    serde_json::json!({ "error": err_str }),
+                                    Some(err_str),
+                                );
+                            }
+                            Ok(HookAction::ModifyPayload(v)) => {
+                                args = v;
+                            }
+                            Ok(HookAction::Continue) => {}
+                            Err(e) => {
+                                warn!(tool = %tc_name, error = %e, "BeforeToolCall hook dispatch failed");
+                            }
+                        }
+                    }
+
+                    if let Some(tool) = tool {
+                        match tool.execute(args).await {
+                            Ok(val) => {
+                                if let Some(ref hooks) = hook_registry {
+                                    let payload = HookPayload::AfterToolCall {
+                                        session_key: session_key.clone(),
+                                        tool_name: tc_name.clone(),
+                                        success: true,
+                                        result: Some(val.clone()),
+                                    };
+                                    if let Err(e) = hooks.dispatch(&payload).await {
+                                        warn!(tool = %tc_name, error = %e, "AfterToolCall hook dispatch failed");
+                                    }
+                                }
+                                (true, serde_json::json!({ "result": val }), None)
+                            }
+                            Err(e) => {
+                                let err_str = e.to_string();
+                                if let Some(ref hooks) = hook_registry {
+                                    let payload = HookPayload::AfterToolCall {
+                                        session_key: session_key.clone(),
+                                        tool_name: tc_name.clone(),
+                                        success: false,
+                                        result: None,
+                                    };
+                                    if let Err(e) = hooks.dispatch(&payload).await {
+                                        warn!(tool = %tc_name, error = %e, "AfterToolCall hook dispatch failed");
+                                    }
+                                }
+                                (
+                                    false,
+                                    serde_json::json!({ "error": err_str }),
+                                    Some(err_str),
+                                )
+                            }
+                        }
+                    } else {
+                        let err_str = format!("unknown tool: {tc_name}");
+                        (
+                            false,
+                            serde_json::json!({ "error": err_str }),
+                            Some(err_str),
+                        )
+                    }
+                }
+            })
+            .collect();
+
+        // Execute all tools concurrently and collect results in order.
+        let results = futures::future::join_all(tool_futures).await;
+
+        // Process results in original order: emit events, append messages.
+        for (tc, (success, result, error)) in tool_calls.iter().zip(results) {
+            if success {
+                info!(tool = %tc.name, id = %tc.id, "tool execution succeeded");
+                trace!(tool = %tc.name, result = %result, "tool result");
+            } else {
+                warn!(tool = %tc.name, id = %tc.id, error = %error.as_deref().unwrap_or(""), "tool execution failed");
+            }
+
+            if let Some(cb) = on_event {
+                cb(RunnerEvent::ToolCallEnd {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    success,
+                    error,
+                    result: if success {
+                        result.get("result").cloned()
+                    } else {
+                        None
+                    },
+                });
+            }
+
+            let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
+            debug!(
+                tool = %tc.name,
+                id = %tc.id,
+                result_len = tool_result_str.len(),
+                "appending tool result to messages"
+            );
+            trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
+
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result_str,
+            }));
+        }
+    }
 }
 
 #[cfg(test)]

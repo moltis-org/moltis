@@ -17,7 +17,7 @@ env:
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -32,7 +32,7 @@ jobs:
   biome:
     name: Biome
     needs: zizmor
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -47,7 +47,7 @@ jobs:
   fmt:
     name: Format
     needs: zizmor
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -63,7 +63,7 @@ jobs:
   clippy:
     name: Clippy
     needs: zizmor
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -80,7 +80,7 @@ jobs:
   build:
     name: Build & Test
     needs: zizmor
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:

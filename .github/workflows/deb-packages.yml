@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -37,7 +37,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: arm64
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Build .deb (${{ matrix.arch }})
     permissions:
       contents: write
@@ -96,7 +96,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Build .rpm (${{ matrix.arch }})
     permissions:
       contents: write
@@ -166,7 +166,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
       contents: write
@@ -248,7 +248,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Build AppImage (${{ matrix.arch }})
     permissions:
       contents: write
@@ -342,7 +342,7 @@ jobs:
 
   build-snap:
     needs: zizmor
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Build Snap
     permissions:
       contents: write
@@ -373,15 +373,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-14
           - target: aarch64-apple-darwin
-            os: macos-latest
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
 
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     name: Build binary (${{ matrix.target }})
     permissions:
       contents: write

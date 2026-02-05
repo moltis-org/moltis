@@ -210,13 +210,98 @@ impl LlmProvider for AnthropicProvider {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let body = serde_json::json!({
+            // Separate system message from conversation messages.
+            let (system_text, conv_messages): (Option<String>, Vec<&serde_json::Value>) = {
+                let mut sys = None;
+                let mut msgs = Vec::new();
+                for m in &messages {
+                    if m["role"].as_str() == Some("system") {
+                        // Concatenate multiple system messages.
+                        let content = m["content"].as_str().unwrap_or("");
+                        sys = Some(match sys {
+                            Some(existing) => format!("{existing}\n\n{content}"),
+                            None => content.to_string(),
+                        });
+                    } else {
+                        msgs.push(m);
+                    }
+                }
+                (sys, msgs)
+            };
+
+            // Convert messages to Anthropic format (same as complete()).
+            let anthropic_messages: Vec<serde_json::Value> = conv_messages
+                .iter()
+                .map(|m| {
+                    if m["role"].as_str() == Some("tool") {
+                        serde_json::json!({
+                            "role": "user",
+                            "content": [{
+                                "type": "tool_result",
+                                "tool_use_id": m["tool_call_id"],
+                                "content": m["content"],
+                            }]
+                        })
+                    } else if m["role"].as_str() == Some("assistant") && m.get("tool_calls").is_some() {
+                        let mut content = Vec::new();
+                        if let Some(text) = m["content"].as_str() {
+                            if !text.is_empty() {
+                                content.push(serde_json::json!({ "type": "text", "text": text }));
+                            }
+                        }
+                        if let Some(tcs) = m["tool_calls"].as_array() {
+                            for tc in tcs {
+                                let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
+                                let args: serde_json::Value =
+                                    serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                                content.push(serde_json::json!({
+                                    "type": "tool_use",
+                                    "id": tc["id"],
+                                    "name": tc["function"]["name"],
+                                    "input": args,
+                                }));
+                            }
+                        }
+                        serde_json::json!({ "role": "assistant", "content": content })
+                    } else {
+                        (*m).clone()
+                    }
+                })
+                .collect();
+
+            let mut body = serde_json::json!({
                 "model": self.model,
                 "max_tokens": 4096,
-                "messages": messages,
+                "messages": anthropic_messages,
                 "stream": true,
             });
+
+            if let Some(ref sys) = system_text {
+                body["system"] = serde_json::Value::String(sys.clone());
+            }
+
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_anthropic_tools(&tools));
+            }
+
+            debug!(
+                model = %self.model,
+                messages_count = anthropic_messages.len(),
+                tools_count = tools.len(),
+                has_system = system_text.is_some(),
+                "anthropic stream_with_tools request"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "anthropic stream request body");
 
             let resp = match self
                 .client
@@ -248,6 +333,9 @@ impl LlmProvider for AnthropicProvider {
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
 
+            // Track current content block index for tool calls.
+            let mut current_block_index: Option<usize> = None;
+
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
                     Ok(c) => c,
@@ -267,11 +355,44 @@ impl LlmProvider for AnthropicProvider {
                             if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
                                 let evt_type = evt["type"].as_str().unwrap_or("");
                                 match evt_type {
+                                    "content_block_start" => {
+                                        let index = evt["index"].as_u64().unwrap_or(0) as usize;
+                                        let content_block = &evt["content_block"];
+                                        let block_type = content_block["type"].as_str().unwrap_or("");
+
+                                        if block_type == "tool_use" {
+                                            let id = content_block["id"].as_str().unwrap_or("").to_string();
+                                            let name = content_block["name"].as_str().unwrap_or("").to_string();
+                                            current_block_index = Some(index);
+                                            yield StreamEvent::ToolCallStart { id, name, index };
+                                        }
+                                    }
                                     "content_block_delta" => {
-                                        if let Some(text) = evt["delta"]["text"].as_str() {
-                                            if !text.is_empty() {
-                                                yield StreamEvent::Delta(text.to_string());
+                                        let delta = &evt["delta"];
+                                        let delta_type = delta["type"].as_str().unwrap_or("");
+
+                                        if delta_type == "text_delta" {
+                                            if let Some(text) = delta["text"].as_str() {
+                                                if !text.is_empty() {
+                                                    yield StreamEvent::Delta(text.to_string());
+                                                }
                                             }
+                                        } else if delta_type == "input_json_delta" {
+                                            if let Some(partial_json) = delta["partial_json"].as_str() {
+                                                let index = evt["index"].as_u64().unwrap_or(0) as usize;
+                                                yield StreamEvent::ToolCallArgumentsDelta {
+                                                    index,
+                                                    delta: partial_json.to_string(),
+                                                };
+                                            }
+                                        }
+                                    }
+                                    "content_block_stop" => {
+                                        let index = evt["index"].as_u64().unwrap_or(0) as usize;
+                                        // Only emit ToolCallComplete if this was a tool_use block.
+                                        if current_block_index == Some(index) {
+                                            yield StreamEvent::ToolCallComplete { index };
+                                            current_block_index = None;
                                         }
                                     }
                                     "message_delta" => {

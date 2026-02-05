@@ -5,8 +5,32 @@ use {async_trait::async_trait, tokio_stream::Stream};
 /// Events emitted during streaming LLM completion.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
+    /// Text content delta.
     Delta(String),
+    /// A tool call has started (content_block_start with tool_use).
+    ToolCallStart {
+        /// Tool call ID from the provider.
+        id: String,
+        /// Tool name being called.
+        name: String,
+        /// Index of this tool call in the response (0-based).
+        index: usize,
+    },
+    /// Streaming delta for tool call arguments (JSON fragment).
+    ToolCallArgumentsDelta {
+        /// Index of the tool call this delta belongs to.
+        index: usize,
+        /// JSON fragment to append to the arguments.
+        delta: String,
+    },
+    /// A tool call's arguments are complete.
+    ToolCallComplete {
+        /// Index of the completed tool call.
+        index: usize,
+    },
+    /// Stream completed successfully.
     Done(Usage),
+    /// An error occurred.
     Error(String),
 }
 
@@ -42,6 +66,22 @@ pub trait LlmProvider: Send + Sync {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>>;
+
+    /// Stream a completion with tool support.
+    ///
+    /// Like `stream()`, but accepts tool schemas and can emit `ToolCallStart`,
+    /// `ToolCallArgumentsDelta`, and `ToolCallComplete` events in addition to
+    /// text deltas.
+    ///
+    /// Default implementation falls back to `stream()` (ignoring tools).
+    /// Providers with native streaming tool support should override this.
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream(messages)
+    }
 }
 
 /// Response from an LLM completion call.
