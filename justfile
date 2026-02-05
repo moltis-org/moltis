@@ -24,17 +24,17 @@ build-release:
 
 # Build Debian package for the current architecture
 deb: build-release
-    cargo deb -p moltis-cli --no-build
+    cargo deb -p moltis --no-build
 
 # Build Debian package for amd64
 deb-amd64:
     cargo build --release --target x86_64-unknown-linux-gnu
-    cargo deb -p moltis-cli --no-build --target x86_64-unknown-linux-gnu
+    cargo deb -p moltis --no-build --target x86_64-unknown-linux-gnu
 
 # Build Debian package for arm64
 deb-arm64:
     cargo build --release --target aarch64-unknown-linux-gnu
-    cargo deb -p moltis-cli --no-build --target aarch64-unknown-linux-gnu
+    cargo deb -p moltis --no-build --target aarch64-unknown-linux-gnu
 
 # Build Debian packages for all architectures
 deb-all: deb-amd64 deb-arm64
@@ -53,8 +53,8 @@ arch-pkg: build-release
     cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
     pkgname = moltis
     pkgver = ${VERSION}-1
-    pkgdesc = Rust version of moltbot
-    url = https://docs.molt.bot/
+    pkgdesc = Personal AI gateway inspired by OpenClaw
+    url = https://www.moltis.org/
     arch = ${ARCH}
     license = MIT
     PKGINFO
@@ -76,8 +76,8 @@ arch-pkg-x86_64:
     cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
     pkgname = moltis
     pkgver = ${VERSION}-1
-    pkgdesc = Rust version of moltbot
-    url = https://docs.molt.bot/
+    pkgdesc = Personal AI gateway inspired by OpenClaw
+    url = https://www.moltis.org/
     arch = x86_64
     license = MIT
     PKGINFO
@@ -99,8 +99,8 @@ arch-pkg-aarch64:
     cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
     pkgname = moltis
     pkgver = ${VERSION}-1
-    pkgdesc = Rust version of moltbot
-    url = https://docs.molt.bot/
+    pkgdesc = Personal AI gateway inspired by OpenClaw
+    url = https://www.moltis.org/
     arch = aarch64
     license = MIT
     PKGINFO

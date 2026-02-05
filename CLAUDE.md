@@ -7,12 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is doing a Rust version of openclaw. Openclaw documentation is available at
 https://docs.openclaw.ai and its code is at https://github.com/openclaw/openclaw
 
-Dig this repo and documentation to figure out how moltbot is working and how
-many features it has. `../clawdbot/HOWITWORKS.md` has explaination of how it
-works. But feel free to do any improvement and change the way it is to make
-it more Rustacean.
-
-All code you write must have tests with high coverage.
+All code you write must have tests with high coverage. Always check for Security
+to make code safe.
 
 ## Rust Style and Idioms
 
@@ -562,9 +558,64 @@ Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): de
 When adding a new feature (`feat` commits), update the features list in
 `README.md` as part of the same branch/PR.
 
+**Merging main into your branch:** When merging `main` into your current branch
+and encountering conflicts, resolve them by keeping both sides of the changes.
+Don't discard either the incoming changes from main or your local changes —
+integrate them together so nothing is lost.
+
 **You MUST run all checks before every commit and fix any issues they report:**
 1. `cargo +nightly fmt --all` — format all Rust code (CI runs `cargo fmt --all -- --check`)
 2. `cargo +nightly clippy --all-targets --all-features -- -D warnings` — run linter (must pass with zero warnings)
 3. `cargo test --all-features` — run all tests
 4. `biome check --write` (when JS files were modified; CI runs `biome ci`)
 5. `taplo fmt` (when TOML files were modified)
+
+## Documentation
+
+Documentation source files live in `docs/src/` (not `docs/` directly) and are built
+with [mdBook](https://rust-lang.github.io/mdBook/). The site is automatically deployed
+to [docs.moltis.org](https://docs.moltis.org) on push to `main`.
+
+**When adding or renaming docs:**
+
+1. Add/edit your `.md` file in `docs/src/` — this is the source directory
+2. Update `docs/src/SUMMARY.md` to include the new page in the navigation
+3. Preview locally with `cd docs && mdbook serve`
+
+**Directory structure:**
+
+```
+docs/
+├── book.toml          # mdBook configuration
+├── src/               # ← Markdown source files go here
+│   ├── SUMMARY.md     # Navigation structure
+│   ├── index.md       # Landing page
+│   └── *.md           # Documentation pages
+├── theme/             # Custom CSS
+└── book/              # Built output (gitignored)
+```
+
+**Local commands:**
+
+```bash
+cd docs
+mdbook serve      # Preview at http://localhost:3000 (auto-reloads)
+mdbook build      # Build to docs/book/
+```
+
+The theme matches [moltis.org](https://www.moltis.org) with Space Grotesk / Outfit fonts
+and orange accent colors. Use admonish blocks for callouts:
+
+```markdown
+\`\`\`admonish info title="Note"
+Important information here.
+\`\`\`
+
+\`\`\`admonish warning
+Be careful about this.
+\`\`\`
+
+\`\`\`admonish tip
+Helpful suggestion.
+\`\`\`
+```

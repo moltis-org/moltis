@@ -59,7 +59,7 @@ jobs:
           cat > Formula/moltis.rb <<RUBY
           class Moltis < Formula
             desc "Personal AI gateway — one binary, multiple LLM providers"
-            homepage "https://docs.molt.bot/"
+            homepage "https://www.moltis.org/"
             license "MIT"
             version "${VERSION}"
 

@@ -21,14 +21,20 @@ Inspired by [OpenClaw](https://docs.openclaw.ai) — just build it and run it.
 ## Installation
 
 ```bash
-# Docker (multi-arch: amd64/arm64)
-docker pull ghcr.io/penso/moltis:latest
+# One-liner install script (macOS / Linux)
+curl -fsSL https://www.moltis.org/install.sh | sh
 
 # macOS / Linux via Homebrew
 brew install moltis-org/tap/moltis
 
+# Pre-built binary via cargo-binstall (no compilation)
+cargo binstall moltis
+
+# Docker (multi-arch: amd64/arm64)
+docker pull ghcr.io/moltis-org/moltis:latest
+
 # Or build from source
-cargo install moltis-cli --git https://github.com/moltis-org/moltis
+cargo install moltis --git https://github.com/moltis-org/moltis
 ```
 
 Moltis compiles your entire AI gateway — web UI, LLM providers, tools, and
@@ -465,7 +471,7 @@ Moltis is organized as a Cargo workspace with the following crates:
 
 | Crate | Description |
 |-------|-------------|
-| `moltis-cli` | Command-line interface and entry point |
+| `moltis` | Command-line interface and entry point |
 | `moltis-gateway` | HTTP/WebSocket server and web UI |
 | `moltis-agents` | LLM provider integrations |
 | `moltis-channels` | Communication channel abstraction |

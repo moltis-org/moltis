@@ -17,6 +17,12 @@ pub enum ChannelEvent {
         message_count: Option<i64>,
         access_granted: bool,
     },
+    /// A channel account was automatically disabled due to a runtime error.
+    AccountDisabled {
+        channel_type: String,
+        account_id: String,
+        reason: String,
+    },
 }
 
 /// Sink for channel events — the gateway provides the concrete implementation.
@@ -42,6 +48,12 @@ pub trait ChannelEventSink: Send + Sync {
         command: &str,
         reply_to: ChannelReplyTarget,
     ) -> anyhow::Result<String>;
+
+    /// Request disabling a channel account due to a runtime error.
+    ///
+    /// This is used when the polling loop detects an unrecoverable error
+    /// (e.g. another bot instance is running with the same token).
+    async fn request_disable_account(&self, channel_type: &str, account_id: &str, reason: &str);
 }
 
 /// Metadata about a channel message, used for UI display.

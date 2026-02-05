@@ -1,0 +1,46 @@
+[book]
+title = "Moltis Documentation"
+authors = ["Moltis Team"]
+description = "Documentation for Moltis - Your AI coding assistant"
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+smart-punctuation = true
+mathjax-support = false
+copy-fonts = true
+additional-css = ["theme/custom.css", "theme/admonish.css"]
+additional-js = []
+no-section-label = false
+git-repository-url = "https://github.com/moltis-org/moltis"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/moltis-org/moltis/edit/main/docs/src/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+copyable = true
+copy-js = true
+line-numbers = true
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-hierarchical-sections = true
+
+[output.html.code.hidelines]
+rust = "# "
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0" # do not edit: managed by `mdbook-admonish install`

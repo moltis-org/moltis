@@ -76,7 +76,7 @@ jobs:
       - name: Build .deb package
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo deb -p moltis-cli --no-build --target "$BUILD_TARGET"
+        run: cargo deb -p moltis --no-build --target "$BUILD_TARGET"
 
       - name: Sign with Sigstore and generate checksums
         uses: ./.github/actions/sign-artifacts
@@ -261,8 +261,8 @@ jobs:
           cat > "$PKG_DIR/.PKGINFO" <<PKGINFO
           pkgname = moltis
           pkgver = ${VERSION}-1
-          pkgdesc = Rust version of moltbot
-          url = https://docs.molt.bot/
+          pkgdesc = Personal AI gateway inspired by OpenClaw
+          url = https://www.moltis.org/
           arch = $MATRIX_ARCH
           license = MIT
           PKGINFO

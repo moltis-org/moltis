@@ -1,6 +1,6 @@
 class Moltis < Formula
-  desc "Rust version of moltbot"
-  homepage "https://docs.molt.bot/"
+  desc "Personal AI gateway inspired by OpenClaw"
+  homepage "https://www.moltis.org/"
   license "MIT"
   version "0.1.0"
 
