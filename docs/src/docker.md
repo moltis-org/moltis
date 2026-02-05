@@ -16,14 +16,15 @@ docker run -d \
   ghcr.io/penso/moltis:latest
 ```
 
-Open http://localhost:13131 in your browser. On first launch, a setup code is
-printed to the container logs:
+Open http://localhost:13131 in your browser and configure your LLM provider to start chatting.
 
-```bash
+```admonish note
+When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:
+
+\`\`\`bash
 docker logs moltis
+\`\`\`
 ```
-
-Enter this code on the setup page to configure authentication.
 
 ## Volume Mounts
 
@@ -98,7 +99,7 @@ Start with:
 
 ```bash
 docker compose up -d
-docker compose logs -f moltis  # watch for setup code
+docker compose logs -f moltis  # watch for startup messages
 ```
 
 ## Podman Support
@@ -186,9 +187,9 @@ to access it. Verify:
 docker exec moltis ls -la /var/run/docker.sock
 ```
 
-### Setup code not appearing in logs
+### Setup code not appearing in logs (for network access)
 
-Wait a few seconds for the gateway to start, then check logs again:
+The setup code only appears when accessing from a non-localhost address. If you're accessing from the same machine via `localhost`, no setup code is needed. For network access, wait a few seconds for the gateway to start, then check logs:
 
 ```bash
 docker logs moltis 2>&1 | grep -i setup
