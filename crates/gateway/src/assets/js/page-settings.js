@@ -547,6 +547,7 @@ function EnvironmentSection() {
 
 // ── Security section ─────────────────────────────────────────
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Large component managing auth, passwords, passkeys, and API keys
 function SecuritySection() {
 	var [authDisabled, setAuthDisabled] = useState(false);
 	var [localhostOnly, setLocalhostOnly] = useState(false);
@@ -1212,9 +1213,12 @@ function TailscaleSection() {
 				setAuthReady(ready);
 				rerender();
 			})
-			.catch(() => {});
+			.catch(() => {
+				/* ignore auth status fetch errors */
+			});
 	}, []);
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: DOM manipulation with multiple conditionals
 	function renderInstalledBar(container, status) {
 		var bar = cloneHidden("ts-installed-bar");
 		if (!bar) return;
@@ -1287,6 +1291,7 @@ function TailscaleSection() {
 		return currentMode;
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: DOM manipulation with multiple conditionals
 	function renderHostnameAndUrl(container, currentMode) {
 		if (tsStatus?.hostname) {
 			var hn = cloneHidden("ts-hostname");
@@ -1375,11 +1380,12 @@ function TailscaleSection() {
 
 // ── Memory section ────────────────────────────────────────────
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Large component managing memory settings with QMD integration
 function MemorySection() {
 	var [memStatus, setMemStatus] = useState(null);
 	var [memConfig, setMemConfig] = useState(null);
 	var [qmdStatus, setQmdStatus] = useState(null);
-	var [loading, setLoading] = useState(true);
+	var [memLoading, setMemLoading] = useState(true);
 	var [saving, setSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
 	var [error, setError] = useState(null);
@@ -1405,16 +1411,16 @@ function MemorySection() {
 				setMemConfig(cfg);
 				setBackend(cfg.backend || "builtin");
 				setCitations(cfg.citations || "auto");
-				setLlmReranking(cfg.llm_reranking || false);
-				setSessionExport(cfg.session_export || false);
+				setLlmReranking(cfg.llm_reranking ?? false);
+				setSessionExport(cfg.session_export ?? false);
 			}
 			if (qmdRes?.ok) {
 				setQmdStatus(qmdRes.payload);
 			}
-			setLoading(false);
+			setMemLoading(false);
 			rerender();
 		}).catch(() => {
-			setLoading(false);
+			setMemLoading(false);
 			rerender();
 		});
 	}, []);
@@ -1446,7 +1452,7 @@ function MemorySection() {
 		});
 	}
 
-	if (loading) {
+	if (memLoading) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
 			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
