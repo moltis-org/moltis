@@ -1084,6 +1084,8 @@ impl RealBrowserService {
         if !config.tools.browser.enabled {
             return None;
         }
+        // Check if Chrome/Chromium is available and warn if not
+        moltis_browser::detect::check_and_warn(config.tools.browser.chrome_path.as_deref());
         Some(Self::new(&config.tools.browser))
     }
 }

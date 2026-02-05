@@ -29,6 +29,7 @@
 //! let response = manager.handle_request(request).await;
 //! ```
 
+pub mod detect;
 pub mod error;
 pub mod manager;
 pub mod pool;

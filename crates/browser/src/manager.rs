@@ -27,6 +27,13 @@ use crate::{
     types::{BrowserAction, BrowserConfig, BrowserRequest, BrowserResponse},
 };
 
+/// Extract session_id or return an error for actions that require an existing session.
+fn require_session(session_id: Option<&str>, action: &str) -> Result<String, BrowserError> {
+    session_id
+        .map(String::from)
+        .ok_or_else(|| BrowserError::InvalidAction(format!("{action} requires a session_id")))
+}
+
 /// Manage Chrome/Chromium instances with CDP.
 pub struct BrowserManager {
     pool: Arc<BrowserPool>,
@@ -265,11 +272,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         ref_: u32,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "click requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "click")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -327,11 +330,7 @@ impl BrowserManager {
         ref_: u32,
         text: &str,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "type requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "type")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -379,11 +378,7 @@ impl BrowserManager {
         x: i32,
         y: i32,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "scroll requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "scroll")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -414,11 +409,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         code: &str,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "evaluate requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "evaluate")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -445,11 +436,7 @@ impl BrowserManager {
         ref_: Option<u32>,
         timeout_ms: u64,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "wait requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "wait")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -496,11 +483,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "get_url requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "get_url")?;
 
         let page = self.pool.get_page(&sid).await?;
         let url = page.url().await.ok().flatten().unwrap_or_default();
@@ -513,11 +496,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "get_title requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "get_title")?;
 
         let page = self.pool.get_page(&sid).await?;
         let title = page.get_title().await.ok().flatten().unwrap_or_default();
@@ -533,11 +512,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "back requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "back")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -558,11 +533,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "forward requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "forward")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -583,11 +554,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "refresh requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "refresh")?;
 
         let page = self.pool.get_page(&sid).await?;
 
@@ -608,11 +575,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = session_id
-            .map(String::from)
-            .ok_or(BrowserError::InvalidAction(
-                "close requires a session_id".into(),
-            ))?;
+        let sid = require_session(session_id, "close")?;
 
         self.pool.close_session(&sid).await?;
 
