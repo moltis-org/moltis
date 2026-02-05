@@ -50,3 +50,16 @@ pub mod tailscale_routes;
 #[cfg(feature = "tls")]
 pub mod tls;
 pub mod ws;
+
+/// Run database migrations for the gateway crate.
+///
+/// This creates the auth tables (auth_password, passkeys, api_keys, auth_sessions),
+/// env_variables, message_log, and channels tables. Should be called at application
+/// startup after the other crate migrations (projects, sessions, cron).
+pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    sqlx::migrate!("./migrations")
+        .set_ignore_missing(true)
+        .run(pool)
+        .await?;
+    Ok(())
+}

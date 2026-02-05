@@ -13,3 +13,10 @@ inline_table_expand   = false
 reorder_arrays        = true
 reorder_inline_tables = true
 reorder_keys          = true
+
+# Disable array reordering for cargo-deb assets (format is [source, dest, mode])
+[[rule]]
+include = ["**/Cargo.toml"]
+keys    = ["package.metadata.deb"]
+[rule.formatting]
+reorder_arrays = false
