@@ -18,9 +18,9 @@ use {base64::Engine, secrecy::Secret, tokio::sync::RwLock, tracing::debug};
 
 #[cfg(feature = "voice")]
 use moltis_voice::{
-    AudioFormat, DeepgramStt, ElevenLabsTts, GoogleStt, GroqStt, OpenAiTts, SherpaOnnxStt,
-    SttProvider, SynthesizeRequest, TranscribeRequest, TtsConfig, TtsProvider, WhisperCliStt,
-    WhisperStt,
+    AudioFormat, CoquiTts, DeepgramStt, ElevenLabsTts, GoogleStt, GoogleTts, GroqStt, MistralStt,
+    OpenAiTts, PiperTts, SherpaOnnxStt, SttProvider, SynthesizeRequest, TranscribeRequest,
+    TtsConfig, TtsProvider, VoxtralLocalStt, WhisperCliStt, WhisperStt,
 };
 
 #[cfg(feature = "voice")]
@@ -34,6 +34,9 @@ pub struct LiveTtsService {
     config: Arc<RwLock<TtsConfig>>,
     elevenlabs: Option<ElevenLabsTts>,
     openai: Option<OpenAiTts>,
+    google: Option<GoogleTts>,
+    piper: Option<PiperTts>,
+    coqui: Option<CoquiTts>,
 }
 
 #[cfg(feature = "voice")]
@@ -42,6 +45,9 @@ impl std::fmt::Debug for LiveTtsService {
         f.debug_struct("LiveTtsService")
             .field("elevenlabs_configured", &self.elevenlabs.is_some())
             .field("openai_configured", &self.openai.is_some())
+            .field("google_configured", &self.google.is_some())
+            .field("piper_configured", &self.piper.is_some())
+            .field("coqui_configured", &self.coqui.is_some())
             .finish()
     }
 }
@@ -66,10 +72,26 @@ impl LiveTtsService {
             )
         });
 
+        // Google Cloud TTS - requires API key
+        let google = config
+            .google
+            .api_key
+            .as_ref()
+            .map(|_| GoogleTts::new(&config.google));
+
+        // Piper (local) - always created, checks model_path internally
+        let piper = Some(PiperTts::new(&config.piper));
+
+        // Coqui TTS (local server) - always created, checks config internally
+        let coqui = Some(CoquiTts::new(&config.coqui));
+
         Self {
             config: Arc::new(RwLock::new(config)),
             elevenlabs,
             openai,
+            google,
+            piper,
+            coqui,
         }
     }
 
@@ -77,14 +99,28 @@ impl LiveTtsService {
     pub fn from_env() -> Self {
         let elevenlabs_key = std::env::var("ELEVENLABS_API_KEY").ok().map(Secret::new);
         let openai_key = std::env::var("OPENAI_API_KEY").ok().map(Secret::new);
+        let google_key = std::env::var("GOOGLE_API_KEY").ok().map(Secret::new);
 
         let elevenlabs = elevenlabs_key.map(|key| ElevenLabsTts::new(Some(key)));
         let openai = openai_key.map(|key| OpenAiTts::new(Some(key)));
+        let google = google_key.map(|_| {
+            GoogleTts::new(&moltis_voice::GoogleTtsConfig {
+                api_key: std::env::var("GOOGLE_API_KEY").ok().map(Secret::new),
+                ..Default::default()
+            })
+        });
+
+        // Local providers
+        let piper = Some(PiperTts::new(&moltis_voice::PiperTtsConfig::default()));
+        let coqui = Some(CoquiTts::new(&moltis_voice::CoquiTtsConfig::default()));
 
         Self {
             config: Arc::new(RwLock::new(TtsConfig::default())),
             elevenlabs,
             openai,
+            google,
+            piper,
+            coqui,
         }
     }
 
@@ -93,6 +129,9 @@ impl LiveTtsService {
         match provider_id {
             "elevenlabs" => self.elevenlabs.as_ref().map(|p| p as &dyn TtsProvider),
             "openai" => self.openai.as_ref().map(|p| p as &dyn TtsProvider),
+            "google" => self.google.as_ref().map(|p| p as &dyn TtsProvider),
+            "piper" => self.piper.as_ref().map(|p| p as &dyn TtsProvider),
+            "coqui" => self.coqui.as_ref().map(|p| p as &dyn TtsProvider),
             _ => None,
         }
     }
@@ -109,10 +148,31 @@ impl LiveTtsService {
             ),
             (
                 "openai",
-                "OpenAI",
+                "OpenAI TTS",
                 self.openai
                     .as_ref()
                     .is_some_and(|p: &OpenAiTts| p.is_configured()),
+            ),
+            (
+                "google",
+                "Google Cloud TTS",
+                self.google
+                    .as_ref()
+                    .is_some_and(|p: &GoogleTts| p.is_configured()),
+            ),
+            (
+                "piper",
+                "Piper",
+                self.piper
+                    .as_ref()
+                    .is_some_and(|p: &PiperTts| p.is_configured()),
+            ),
+            (
+                "coqui",
+                "Coqui TTS",
+                self.coqui
+                    .as_ref()
+                    .is_some_and(|p: &CoquiTts| p.is_configured()),
             ),
         ]
     }
@@ -305,6 +365,8 @@ pub struct LiveSttService {
     groq: Option<GroqStt>,
     deepgram: Option<DeepgramStt>,
     google: Option<GoogleStt>,
+    mistral: Option<MistralStt>,
+    voxtral_local: Option<VoxtralLocalStt>,
     whisper_cli: Option<WhisperCliStt>,
     sherpa_onnx: Option<SherpaOnnxStt>,
 }
@@ -329,6 +391,17 @@ impl std::fmt::Debug for LiveSttService {
             .field(
                 "google_configured",
                 &self.google.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "mistral_configured",
+                &self.mistral.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "voxtral_local_configured",
+                &self
+                    .voxtral_local
+                    .as_ref()
+                    .is_some_and(|p| p.is_configured()),
             )
             .field(
                 "whisper_cli_configured",
@@ -357,6 +430,12 @@ pub struct SttServiceConfig {
     pub google_key: Option<Secret<String>>,
     pub google_language: Option<String>,
     pub google_model: Option<String>,
+    pub mistral_key: Option<Secret<String>>,
+    pub mistral_model: Option<String>,
+    pub mistral_language: Option<String>,
+    pub voxtral_local_endpoint: Option<String>,
+    pub voxtral_local_model: Option<String>,
+    pub voxtral_local_language: Option<String>,
     pub whisper_cli_binary: Option<String>,
     pub whisper_cli_model: Option<String>,
     pub whisper_cli_language: Option<String>,
@@ -381,6 +460,12 @@ impl Default for SttServiceConfig {
             google_key: None,
             google_language: None,
             google_model: None,
+            mistral_key: None,
+            mistral_model: None,
+            mistral_language: None,
+            voxtral_local_endpoint: None,
+            voxtral_local_model: None,
+            voxtral_local_language: None,
             whisper_cli_binary: None,
             whisper_cli_model: None,
             whisper_cli_language: None,
@@ -414,6 +499,17 @@ impl LiveSttService {
             GoogleStt::with_options(Some(key), config.google_language, config.google_model)
         });
 
+        let mistral = config.mistral_key.map(|key| {
+            MistralStt::with_options(Some(key), config.mistral_model, config.mistral_language)
+        });
+
+        // Voxtral local is always created (connects to vLLM server)
+        let voxtral_local = Some(VoxtralLocalStt::with_options(
+            config.voxtral_local_endpoint,
+            config.voxtral_local_model,
+            config.voxtral_local_language,
+        ));
+
         // Local providers are always created, they check config internally
         let whisper_cli = Some(WhisperCliStt::with_options(
             config.whisper_cli_binary,
@@ -433,6 +529,8 @@ impl LiveSttService {
             groq,
             deepgram,
             google,
+            mistral,
+            voxtral_local,
             whisper_cli,
             sherpa_onnx,
         }
@@ -444,12 +542,14 @@ impl LiveSttService {
         let groq_key = std::env::var("GROQ_API_KEY").ok().map(Secret::new);
         let deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok().map(Secret::new);
         let google_key = std::env::var("GOOGLE_CLOUD_API_KEY").ok().map(Secret::new);
+        let mistral_key = std::env::var("MISTRAL_API_KEY").ok().map(Secret::new);
 
         Self::new(SttServiceConfig {
             openai_key,
             groq_key,
             deepgram_key,
             google_key,
+            mistral_key,
             ..Default::default()
         })
     }
@@ -461,6 +561,8 @@ impl LiveSttService {
             "groq" => self.groq.as_ref().map(|p| p as &dyn SttProvider),
             "deepgram" => self.deepgram.as_ref().map(|p| p as &dyn SttProvider),
             "google" => self.google.as_ref().map(|p| p as &dyn SttProvider),
+            "mistral" => self.mistral.as_ref().map(|p| p as &dyn SttProvider),
+            "voxtral-local" => self.voxtral_local.as_ref().map(|p| p as &dyn SttProvider),
             "whisper-cli" => self.whisper_cli.as_ref().map(|p| p as &dyn SttProvider),
             "sherpa-onnx" => self.sherpa_onnx.as_ref().map(|p| p as &dyn SttProvider),
             _ => None,
@@ -489,6 +591,18 @@ impl LiveSttService {
                 "google",
                 "Google Cloud",
                 self.google.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "mistral",
+                "Mistral AI",
+                self.mistral.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "voxtral-local",
+                "Voxtral (Local)",
+                self.voxtral_local
+                    .as_ref()
+                    .is_some_and(|p| p.is_configured()),
             ),
             (
                 "whisper-cli",
@@ -644,7 +758,8 @@ mod tests {
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        assert_eq!(providers_arr.len(), 2);
+        // 5 providers: elevenlabs, openai, google, piper, coqui
+        assert_eq!(providers_arr.len(), 5);
 
         let ids: Vec<_> = providers_arr
             .iter()
@@ -652,6 +767,9 @@ mod tests {
             .collect();
         assert!(ids.contains(&"elevenlabs"));
         assert!(ids.contains(&"openai"));
+        assert!(ids.contains(&"google"));
+        assert!(ids.contains(&"piper"));
+        assert!(ids.contains(&"coqui"));
     }
 
     #[tokio::test]
@@ -687,8 +805,8 @@ mod tests {
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        // Now we have 6 providers
-        assert_eq!(providers_arr.len(), 6);
+        // Now we have 8 providers (5 cloud + 3 local)
+        assert_eq!(providers_arr.len(), 8);
         // Check all providers are listed
         let ids: Vec<_> = providers_arr
             .iter()
@@ -698,6 +816,8 @@ mod tests {
         assert!(ids.contains(&"groq"));
         assert!(ids.contains(&"deepgram"));
         assert!(ids.contains(&"google"));
+        assert!(ids.contains(&"mistral"));
+        assert!(ids.contains(&"voxtral-local"));
         assert!(ids.contains(&"whisper-cli"));
         assert!(ids.contains(&"sherpa-onnx"));
     }

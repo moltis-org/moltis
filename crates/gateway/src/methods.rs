@@ -85,6 +85,8 @@ const READ_METHODS: &[&str] = &[
     "mcp.status",
     "mcp.tools",
     "voice.config.get",
+    "voice.config.voxtral_requirements",
+    "voice.providers.all",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -142,6 +144,7 @@ const WRITE_METHODS: &[&str] = &[
     "heartbeat.run",
     "voice.config.save_key",
     "voice.config.remove_key",
+    "voice.provider.toggle",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -3045,6 +3048,62 @@ impl MethodRegistry {
                     })
                 }),
             );
+            // Comprehensive provider listing with availability detection
+            self.register(
+                "voice.providers.all",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        let config = moltis_config::discover_and_load();
+                        let providers = detect_voice_providers(&config).await;
+                        Ok(serde_json::json!(providers))
+                    })
+                }),
+            );
+            // Enable/disable a voice provider (updates config file)
+            self.register(
+                "voice.provider.toggle",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+                        let enabled = ctx
+                            .params
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing enabled")
+                            })?;
+                        let provider_type = ctx
+                            .params
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("stt");
+
+                        toggle_voice_provider(provider, enabled, provider_type).map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to toggle provider: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast change
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider, "enabled": enabled }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider, "enabled": enabled }))
+                    })
+                }),
+            );
             self.register(
                 "voice.config.save_key",
                 Box::new(|ctx| {
@@ -3072,8 +3131,15 @@ impl MethodRegistry {
                                 cfg.voice.tts.elevenlabs.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
-                            "openai" => {
+                            "openai" | "openai-tts" => {
                                 cfg.voice.tts.openai.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "google-tts" => {
+                                // Google API key is shared - set both TTS and STT
+                                let key = Secret::new(api_key.to_string());
+                                cfg.voice.tts.google.api_key = Some(key.clone());
+                                cfg.voice.stt.google.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
                             // STT providers
@@ -3089,7 +3155,14 @@ impl MethodRegistry {
                                     Some(Secret::new(api_key.to_string()));
                             },
                             "google" => {
-                                cfg.voice.stt.google.api_key =
+                                // Google STT key - also set TTS since they share the same key
+                                let key = Secret::new(api_key.to_string());
+                                cfg.voice.stt.google.api_key = Some(key.clone());
+                                cfg.voice.tts.google.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "mistral" => {
+                                cfg.voice.stt.mistral.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
                             _ => {},
@@ -3147,6 +3220,9 @@ impl MethodRegistry {
                             "google" => {
                                 cfg.voice.stt.google.api_key = None;
                             },
+                            "mistral" => {
+                                cfg.voice.stt.mistral.api_key = None;
+                            },
                             _ => {},
                         })
                         .map_err(|e| {
@@ -3169,8 +3245,558 @@ impl MethodRegistry {
                     })
                 }),
             );
+            self.register(
+                "voice.config.voxtral_requirements",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        // Detect OS and architecture
+                        let os = std::env::consts::OS;
+                        let arch = std::env::consts::ARCH;
+
+                        // Check Python version
+                        let python_info = check_python_version().await;
+
+                        // Check CUDA availability
+                        let cuda_info = check_cuda_availability().await;
+
+                        // Determine compatibility
+                        let (compatible, reasons) =
+                            check_voxtral_compatibility(os, arch, &python_info, &cuda_info);
+
+                        Ok(serde_json::json!({
+                            "os": os,
+                            "arch": arch,
+                            "python": python_info,
+                            "cuda": cuda_info,
+                            "compatible": compatible,
+                            "reasons": reasons,
+                        }))
+                    })
+                }),
+            );
         }
     }
+}
+
+/// Check if Python 3.10+ is available.
+async fn check_python_version() -> serde_json::Value {
+    // Try python3 first, then python
+    for cmd in &["python3", "python"] {
+        if let Ok(output) = tokio::process::Command::new(cmd)
+            .arg("--version")
+            .output()
+            .await
+            && output.status.success()
+        {
+            let version_str = String::from_utf8_lossy(&output.stdout);
+            // Parse "Python 3.11.0" format
+            if let Some(version) = version_str.strip_prefix("Python ") {
+                let version = version.trim();
+                // Check if version is 3.10+
+                let parts: Vec<&str> = version.split('.').collect();
+                if parts.len() >= 2
+                    && let (Ok(major), Ok(minor)) =
+                        (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                {
+                    let sufficient = major > 3 || (major == 3 && minor >= 10);
+                    return serde_json::json!({
+                        "available": true,
+                        "version": version,
+                        "sufficient": sufficient,
+                    });
+                }
+                return serde_json::json!({
+                    "available": true,
+                    "version": version,
+                    "sufficient": false,
+                });
+            }
+        }
+    }
+    serde_json::json!({
+        "available": false,
+        "version": null,
+        "sufficient": false,
+    })
+}
+
+/// Check CUDA availability via nvidia-smi.
+async fn check_cuda_availability() -> serde_json::Value {
+    // Check if nvidia-smi is available
+    if let Ok(output) = tokio::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=name,memory.total")
+        .arg("--format=csv,noheader,nounits")
+        .output()
+        .await
+        && output.status.success()
+    {
+        let info = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = info.trim().lines().collect();
+        if let Some(first_gpu) = lines.first() {
+            let parts: Vec<&str> = first_gpu.split(", ").collect();
+            if parts.len() >= 2 {
+                let gpu_name = parts[0].trim();
+                let memory_mb: u64 = parts[1].trim().parse().unwrap_or(0);
+                // vLLM needs ~9.5GB, recommend 10GB minimum
+                let sufficient = memory_mb >= 10000;
+                return serde_json::json!({
+                    "available": true,
+                    "gpu_name": gpu_name,
+                    "memory_mb": memory_mb,
+                    "sufficient": sufficient,
+                });
+            }
+        }
+        return serde_json::json!({
+            "available": true,
+            "gpu_name": null,
+            "memory_mb": null,
+            "sufficient": false,
+        });
+    }
+    serde_json::json!({
+        "available": false,
+        "gpu_name": null,
+        "memory_mb": null,
+        "sufficient": false,
+    })
+}
+
+/// Check if the system meets Voxtral Local requirements.
+fn check_voxtral_compatibility(
+    os: &str,
+    arch: &str,
+    python: &serde_json::Value,
+    cuda: &serde_json::Value,
+) -> (bool, Vec<String>) {
+    let mut reasons = Vec::new();
+
+    // vLLM primarily supports Linux
+    let os_ok = os == "linux";
+    if !os_ok {
+        if os == "macos" {
+            reasons.push("vLLM has limited macOS support. Linux is recommended.".into());
+        } else if os == "windows" {
+            reasons.push("vLLM requires WSL2 on Windows.".into());
+        }
+    }
+
+    // Architecture check
+    let arch_ok = arch == "x86_64";
+    if !arch_ok && arch == "aarch64" {
+        reasons.push("ARM64 has limited CUDA/vLLM support.".into());
+    }
+
+    // Python check
+    let python_ok = python["sufficient"].as_bool().unwrap_or(false);
+    if !python["available"].as_bool().unwrap_or(false) {
+        reasons.push("Python is not installed. Install Python 3.10+.".into());
+    } else if !python_ok {
+        let ver = python["version"].as_str().unwrap_or("unknown");
+        reasons.push(format!("Python {} is too old. Python 3.10+ required.", ver));
+    }
+
+    // CUDA check
+    let cuda_ok = cuda["sufficient"].as_bool().unwrap_or(false);
+    if !cuda["available"].as_bool().unwrap_or(false) {
+        reasons.push("No NVIDIA GPU detected. CUDA GPU with 10GB+ VRAM required.".into());
+    } else if !cuda_ok {
+        let mem = cuda["memory_mb"].as_u64().unwrap_or(0);
+        reasons.push(format!(
+            "GPU has {}MB VRAM. 10GB+ recommended for Voxtral.",
+            mem
+        ));
+    }
+
+    // Overall compatibility
+    let compatible = os_ok && arch_ok && python_ok && cuda_ok;
+
+    (compatible, reasons)
+}
+
+/// Detect all available voice providers with their availability status.
+async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    use secrecy::ExposeSecret;
+
+    // Check for API keys from environment variables
+    let env_openai_key = std::env::var("OPENAI_API_KEY").ok();
+    let env_elevenlabs_key = std::env::var("ELEVENLABS_API_KEY").ok();
+    let env_google_key = std::env::var("GOOGLE_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_CLOUD_API_KEY"))
+        .ok();
+    let env_groq_key = std::env::var("GROQ_API_KEY").ok();
+    let env_deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok();
+    let env_mistral_key = std::env::var("MISTRAL_API_KEY").ok();
+
+    // Check for API keys from LLM providers config
+    let llm_openai_key = config
+        .providers
+        .get("openai")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+    let llm_groq_key = config
+        .providers
+        .get("groq")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+    let _llm_deepseek_key = config
+        .providers
+        .get("deepseek")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+
+    // Check for local binaries
+    let whisper_cli_available = check_binary_available("whisper-cpp")
+        .await
+        .or(check_binary_available("whisper").await);
+    let piper_available = check_binary_available("piper").await;
+    let sherpa_onnx_available = check_binary_available("sherpa-onnx-offline").await;
+    let coqui_server_running = check_coqui_server(&config.voice.tts.coqui.endpoint).await;
+    let tts_server_binary = check_binary_available("tts-server").await;
+
+    // Build TTS providers list
+    let tts_providers = vec![
+        build_provider_info(
+            "elevenlabs",
+            "ElevenLabs",
+            "tts",
+            "cloud",
+            config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some(),
+            config.voice.tts.provider == "elevenlabs" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.elevenlabs.api_key.is_some(),
+                env_elevenlabs_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "openai-tts",
+            "OpenAI TTS",
+            "tts",
+            "cloud",
+            config.voice.tts.openai.api_key.is_some()
+                || env_openai_key.is_some()
+                || llm_openai_key.is_some(),
+            config.voice.tts.provider == "openai" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.openai.api_key.is_some(),
+                env_openai_key.is_some(),
+                llm_openai_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "google-tts",
+            "Google Cloud TTS",
+            "tts",
+            "cloud",
+            config.voice.tts.google.api_key.is_some() || env_google_key.is_some(),
+            config.voice.tts.provider == "google" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.google.api_key.is_some(),
+                env_google_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "piper",
+            "Piper",
+            "tts",
+            "local",
+            piper_available.is_some() && config.voice.tts.piper.model_path.is_some(),
+            config.voice.tts.provider == "piper" && config.voice.tts.enabled,
+            None,
+            piper_available.clone(),
+            if piper_available.is_none() {
+                Some("piper binary not found")
+            } else if config.voice.tts.piper.model_path.is_none() {
+                Some("model not configured")
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            "coqui",
+            "Coqui TTS",
+            "tts",
+            "local",
+            coqui_server_running,
+            config.voice.tts.provider == "coqui" && config.voice.tts.enabled,
+            None,
+            tts_server_binary,
+            if !coqui_server_running {
+                Some("server not running")
+            } else {
+                None
+            },
+        ),
+    ];
+
+    // Check voxtral local server
+    let voxtral_server_running = check_vllm_server(&config.voice.stt.voxtral_local.endpoint).await;
+
+    // Build STT providers list
+    let stt_providers = vec![
+        build_provider_info(
+            "whisper",
+            "OpenAI Whisper",
+            "stt",
+            "cloud",
+            config.voice.stt.whisper.api_key.is_some()
+                || env_openai_key.is_some()
+                || llm_openai_key.is_some(),
+            config.voice.stt.provider == "whisper" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.whisper.api_key.is_some(),
+                env_openai_key.is_some(),
+                llm_openai_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "groq",
+            "Groq",
+            "stt",
+            "cloud",
+            config.voice.stt.groq.api_key.is_some()
+                || env_groq_key.is_some()
+                || llm_groq_key.is_some(),
+            config.voice.stt.provider == "groq" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.groq.api_key.is_some(),
+                env_groq_key.is_some(),
+                llm_groq_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "deepgram",
+            "Deepgram",
+            "stt",
+            "cloud",
+            config.voice.stt.deepgram.api_key.is_some() || env_deepgram_key.is_some(),
+            config.voice.stt.provider == "deepgram" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.deepgram.api_key.is_some(),
+                env_deepgram_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "google",
+            "Google Cloud STT",
+            "stt",
+            "cloud",
+            config.voice.stt.google.api_key.is_some() || env_google_key.is_some(),
+            config.voice.stt.provider == "google" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.google.api_key.is_some(),
+                env_google_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "mistral",
+            "Mistral (Voxtral)",
+            "stt",
+            "cloud",
+            config.voice.stt.mistral.api_key.is_some() || env_mistral_key.is_some(),
+            config.voice.stt.provider == "mistral" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.mistral.api_key.is_some(),
+                env_mistral_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            "voxtral-local",
+            "Voxtral (Local)",
+            "stt",
+            "local",
+            voxtral_server_running,
+            config.voice.stt.provider == "voxtral-local" && config.voice.stt.enabled,
+            None,
+            None,
+            if !voxtral_server_running {
+                Some("server not running")
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            "whisper-cli",
+            "whisper.cpp",
+            "stt",
+            "local",
+            whisper_cli_available.is_some() && config.voice.stt.whisper_cli.model_path.is_some(),
+            config.voice.stt.provider == "whisper-cli" && config.voice.stt.enabled,
+            None,
+            whisper_cli_available.clone(),
+            if whisper_cli_available.is_none() {
+                Some("whisper-cpp binary not found")
+            } else if config.voice.stt.whisper_cli.model_path.is_none() {
+                Some("model not configured")
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            "sherpa-onnx",
+            "sherpa-onnx",
+            "stt",
+            "local",
+            sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
+            config.voice.stt.provider == "sherpa-onnx" && config.voice.stt.enabled,
+            None,
+            sherpa_onnx_available.clone(),
+            if sherpa_onnx_available.is_none() {
+                Some("sherpa-onnx binary not found")
+            } else if config.voice.stt.sherpa_onnx.model_dir.is_none() {
+                Some("model not configured")
+            } else {
+                None
+            },
+        ),
+    ];
+
+    serde_json::json!({
+        "tts": tts_providers,
+        "stt": stt_providers,
+    })
+}
+
+fn build_provider_info(
+    id: &str,
+    name: &str,
+    provider_type: &str,
+    category: &str,
+    available: bool,
+    enabled: bool,
+    key_source: Option<&str>,
+    binary_path: Option<String>,
+    status_message: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": name,
+        "type": provider_type,
+        "category": category,
+        "available": available,
+        "enabled": enabled,
+        "keySource": key_source,
+        "binaryPath": binary_path,
+        "statusMessage": status_message,
+    })
+}
+
+fn key_source(in_config: bool, in_env: bool, in_llm_provider: bool) -> Option<&'static str> {
+    if in_config {
+        Some("config")
+    } else if in_env {
+        Some("env")
+    } else if in_llm_provider {
+        Some("llm_provider")
+    } else {
+        None
+    }
+}
+
+async fn check_binary_available(name: &str) -> Option<String> {
+    // Try to find the binary in PATH
+    if let Ok(output) = tokio::process::Command::new("which")
+        .arg(name)
+        .output()
+        .await
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Check if Coqui TTS server is running.
+async fn check_coqui_server(endpoint: &str) -> bool {
+    // Try to connect to the server's health endpoint
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    // Coqui TTS server responds to GET /
+    if let Ok(resp) = client.get(endpoint).send().await {
+        return resp.status().is_success();
+    }
+    false
+}
+
+/// Check if vLLM server is running (for Voxtral local).
+async fn check_vllm_server(endpoint: &str) -> bool {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    // vLLM exposes /health endpoint
+    let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
+    if let Ok(resp) = client.get(&health_url).send().await {
+        return resp.status().is_success();
+    }
+    false
+}
+
+/// Toggle a voice provider on/off by updating the config file.
+fn toggle_voice_provider(
+    provider: &str,
+    enabled: bool,
+    provider_type: &str,
+) -> Result<(), anyhow::Error> {
+    moltis_config::update_config(|cfg| {
+        match provider_type {
+            "tts" => {
+                if enabled {
+                    // Map provider id to config provider name
+                    let config_provider = match provider {
+                        "openai-tts" => "openai",
+                        "google-tts" => "google",
+                        other => other,
+                    };
+                    cfg.voice.tts.provider = config_provider.to_string();
+                    cfg.voice.tts.enabled = true;
+                } else if cfg.voice.tts.provider == provider
+                    || (provider == "openai-tts" && cfg.voice.tts.provider == "openai")
+                    || (provider == "google-tts" && cfg.voice.tts.provider == "google")
+                {
+                    cfg.voice.tts.enabled = false;
+                }
+            },
+            "stt" => {
+                if enabled {
+                    cfg.voice.stt.provider = provider.to_string();
+                    cfg.voice.stt.enabled = true;
+                } else if cfg.voice.stt.provider == provider {
+                    cfg.voice.stt.enabled = false;
+                }
+            },
+            _ => {},
+        }
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]

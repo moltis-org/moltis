@@ -103,12 +103,18 @@ pub struct VoiceConfig {
 pub struct VoiceTtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
-    /// Default provider: "elevenlabs", "openai".
+    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
     pub provider: String,
     /// ElevenLabs-specific settings.
     pub elevenlabs: VoiceElevenLabsConfig,
     /// OpenAI TTS settings.
     pub openai: VoiceOpenAiConfig,
+    /// Google Cloud TTS settings.
+    pub google: VoiceGoogleTtsConfig,
+    /// Piper (local) settings.
+    pub piper: VoicePiperTtsConfig,
+    /// Coqui TTS (local server) settings.
+    pub coqui: VoiceCoquiTtsConfig,
 }
 
 impl Default for VoiceTtsConfig {
@@ -118,6 +124,9 @@ impl Default for VoiceTtsConfig {
             provider: "elevenlabs".into(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
+            google: VoiceGoogleTtsConfig::default(),
+            piper: VoicePiperTtsConfig::default(),
+            coqui: VoiceCoquiTtsConfig::default(),
         }
     }
 }
@@ -158,13 +167,76 @@ pub struct VoiceOpenAiConfig {
     pub model: Option<String>,
 }
 
+/// Google Cloud TTS provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceGoogleTtsConfig {
+    /// API key for Google Cloud Text-to-Speech.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    pub voice: Option<String>,
+    /// Language code (e.g., "en-US", "fr-FR").
+    pub language_code: Option<String>,
+    /// Speaking rate (0.25 - 4.0, default 1.0).
+    pub speaking_rate: Option<f32>,
+    /// Pitch (-20.0 - 20.0, default 0.0).
+    pub pitch: Option<f32>,
+}
+
+/// Piper TTS (local) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoicePiperTtsConfig {
+    /// Path to piper binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+    /// Path to the voice model file (.onnx).
+    pub model_path: Option<String>,
+    /// Path to the model config file (.onnx.json). If not set, uses model_path + ".json".
+    pub config_path: Option<String>,
+    /// Speaker ID for multi-speaker models.
+    pub speaker_id: Option<u32>,
+    /// Speaking rate multiplier (default 1.0).
+    pub length_scale: Option<f32>,
+}
+
+/// Coqui TTS (local server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceCoquiTtsConfig {
+    /// Coqui TTS server endpoint (default: http://localhost:5002).
+    pub endpoint: String,
+    /// Model name to use (if server supports multiple models).
+    pub model: Option<String>,
+    /// Speaker name or ID for multi-speaker models.
+    pub speaker: Option<String>,
+    /// Language code for multilingual models.
+    pub language: Option<String>,
+}
+
+impl Default for VoiceCoquiTtsConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:5002".into(),
+            model: None,
+            speaker: None,
+            language: None,
+        }
+    }
+}
+
 /// Voice STT configuration for moltis.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceSttConfig {
     /// Enable STT globally.
     pub enabled: bool,
-    /// Default provider: "whisper", "groq", "deepgram", "google", "whisper-cli", "sherpa-onnx".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx".
     pub provider: String,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
@@ -174,6 +246,10 @@ pub struct VoiceSttConfig {
     pub deepgram: VoiceDeepgramConfig,
     /// Google Cloud Speech-to-Text settings.
     pub google: VoiceGoogleSttConfig,
+    /// Mistral AI (Voxtral Transcribe) settings.
+    pub mistral: VoiceMistralSttConfig,
+    /// Voxtral local (vLLM server) settings.
+    pub voxtral_local: VoiceVoxtralLocalConfig,
     /// whisper-cli (whisper.cpp) settings.
     pub whisper_cli: VoiceWhisperCliConfig,
     /// sherpa-onnx offline settings.
@@ -189,6 +265,8 @@ impl Default for VoiceSttConfig {
             groq: VoiceGroqSttConfig::default(),
             deepgram: VoiceDeepgramConfig::default(),
             google: VoiceGoogleSttConfig::default(),
+            mistral: VoiceMistralSttConfig::default(),
+            voxtral_local: VoiceVoxtralLocalConfig::default(),
             whisper_cli: VoiceWhisperCliConfig::default(),
             sherpa_onnx: VoiceSherpaOnnxConfig::default(),
         }
@@ -269,6 +347,46 @@ pub struct VoiceGoogleSttConfig {
     pub language: Option<String>,
     /// Model variant (e.g., "latest_long", "latest_short").
     pub model: Option<String>,
+}
+
+/// Mistral AI (Voxtral Transcribe) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceMistralSttConfig {
+    /// API key (from MISTRAL_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (e.g., "voxtral-mini-latest").
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Voxtral local (vLLM server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceVoxtralLocalConfig {
+    /// vLLM server endpoint (default: http://localhost:8000).
+    pub endpoint: String,
+    /// Model to use (optional, server default if not set).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+impl Default for VoiceVoxtralLocalConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:8000".into(),
+            model: None,
+            language: None,
+        }
+    }
 }
 
 /// whisper-cli (whisper.cpp) configuration.

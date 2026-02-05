@@ -9,6 +9,7 @@ import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { navigate, registerPrefix } from "./router.js";
 import * as S from "./state.js";
+import { Modal } from "./ui.js";
 
 var identity = signal(null);
 var loading = signal(true);
@@ -1302,18 +1303,137 @@ function TailscaleSection() {
 
 // ── Voice section ────────────────────────────────────────────
 
-function VoiceSection() {
-	var [_ttsStatus, setTtsStatus] = useState(null);
-	var [_sttStatus, setSttStatus] = useState(null);
-	var [ttsProviders, setTtsProviders] = useState([]);
-	var [sttProviders, setSttProviders] = useState([]);
-	var [voiceLoading, setVoiceLoading] = useState(true);
+// Provider metadata for the add modal
+var VOICE_PROVIDERS = {
+	// STT Cloud
+	whisper: {
+		id: "whisper",
+		name: "OpenAI Whisper",
+		type: "stt",
+		category: "cloud",
+		description: "Best accuracy, handles accents and background noise",
+		keyPlaceholder: "sk-...",
+		keyUrl: "https://platform.openai.com/api-keys",
+		keyUrlLabel: "platform.openai.com/api-keys",
+	},
+	groq: {
+		id: "groq",
+		name: "Groq",
+		type: "stt",
+		category: "cloud",
+		description: "Ultra-fast Whisper inference on Groq hardware",
+		keyPlaceholder: "gsk_...",
+		keyUrl: "https://console.groq.com/keys",
+		keyUrlLabel: "console.groq.com/keys",
+	},
+	deepgram: {
+		id: "deepgram",
+		name: "Deepgram",
+		type: "stt",
+		category: "cloud",
+		description: "Fast and accurate with Nova-3 model",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.deepgram.com/api-keys",
+		keyUrlLabel: "console.deepgram.com",
+	},
+	google: {
+		id: "google",
+		name: "Google Cloud",
+		type: "stt",
+		category: "cloud",
+		description: "Supports 125+ languages with Google Speech-to-Text",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.cloud.google.com/apis/credentials",
+		keyUrlLabel: "console.cloud.google.com",
+	},
+	mistral: {
+		id: "mistral",
+		name: "Mistral AI",
+		type: "stt",
+		category: "cloud",
+		description: "Fast Voxtral transcription with 13 language support",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.mistral.ai/api-keys",
+		keyUrlLabel: "console.mistral.ai",
+	},
+	// STT Local
+	"whisper-cli": {
+		id: "whisper-cli",
+		name: "whisper.cpp",
+		type: "stt",
+		category: "local",
+		description: "Local Whisper inference via whisper-cli",
+	},
+	"sherpa-onnx": {
+		id: "sherpa-onnx",
+		name: "sherpa-onnx",
+		type: "stt",
+		category: "local",
+		description: "Local offline speech recognition via ONNX runtime",
+	},
+	"voxtral-local": {
+		id: "voxtral-local",
+		name: "Voxtral (Local)",
+		type: "stt",
+		category: "local",
+		description: "Run Mistral's Voxtral model locally via vLLM server",
+	},
+	// TTS Cloud
+	elevenlabs: {
+		id: "elevenlabs",
+		name: "ElevenLabs",
+		type: "tts",
+		category: "cloud",
+		description: "Lowest latency (~75ms), most natural voices",
+		keyPlaceholder: "API key",
+		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
+		keyUrlLabel: "elevenlabs.io",
+	},
+	openai: {
+		id: "openai",
+		name: "OpenAI TTS",
+		type: "tts",
+		category: "cloud",
+		description: "Good quality, shares API key with Whisper STT",
+		keyPlaceholder: "sk-...",
+		keyUrl: "https://platform.openai.com/api-keys",
+		keyUrlLabel: "platform.openai.com/api-keys",
+	},
+	"google-tts": {
+		id: "google",
+		name: "Google Cloud TTS",
+		type: "tts",
+		category: "cloud",
+		description: "220+ voices, 40+ languages, WaveNet and Neural2 voices",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.cloud.google.com/apis/credentials",
+		keyUrlLabel: "console.cloud.google.com",
+	},
+	// TTS Local
+	piper: {
+		id: "piper",
+		name: "Piper",
+		type: "tts",
+		category: "local",
+		description: "Fast local TTS, commonly used in Home Assistant",
+	},
+	coqui: {
+		id: "coqui",
+		name: "Coqui TTS",
+		type: "tts",
+		category: "local",
+		description: "Open-source deep learning TTS with many voice models",
+	},
+};
 
-	var [elevenLabsKey, setElevenLabsKey] = useState("");
-	var [openaiKey, setOpenaiKey] = useState("");
-	var [groqKey, setGroqKey] = useState("");
-	var [deepgramKey, setDeepgramKey] = useState("");
-	var [googleKey, setGoogleKey] = useState("");
+// Voice section signals
+var voiceShowAddModal = signal(false);
+var voiceSelectedProvider = signal(null);
+
+function VoiceSection() {
+	var [allProviders, setAllProviders] = useState({ tts: [], stt: [] });
+	var [voiceLoading, setVoiceLoading] = useState(true);
+	var [voxtralReqs, setVoxtralReqs] = useState(null);
 	var [savingProvider, setSavingProvider] = useState(null);
 	var [voiceMsg, setVoiceMsg] = useState(null);
 	var [voiceErr, setVoiceErr] = useState(null);
@@ -1321,17 +1441,10 @@ function VoiceSection() {
 	function fetchVoiceStatus() {
 		setVoiceLoading(true);
 		rerender();
-		Promise.all([
-			sendRpc("tts.status", {}),
-			sendRpc("stt.status", {}),
-			sendRpc("tts.providers", {}),
-			sendRpc("stt.providers", {}),
-		])
-			.then(([tts, stt, ttsProv, sttProv]) => {
-				if (tts?.ok) setTtsStatus(tts.payload);
-				if (stt?.ok) setSttStatus(stt.payload);
-				if (ttsProv?.ok) setTtsProviders(ttsProv.payload || []);
-				if (sttProv?.ok) setSttProviders(sttProv.payload || []);
+		Promise.all([sendRpc("voice.providers.all", {}), sendRpc("voice.config.voxtral_requirements", {})])
+			.then(([providers, voxtral]) => {
+				if (providers?.ok) setAllProviders(providers.payload || { tts: [], stt: [] });
+				if (voxtral?.ok) setVoxtralReqs(voxtral.payload);
 				setVoiceLoading(false);
 				rerender();
 			})
@@ -1345,34 +1458,24 @@ function VoiceSection() {
 		fetchVoiceStatus();
 	}, []);
 
-	function onSaveKey(provider, key) {
-		if (!key.trim()) {
-			setVoiceErr("API key is required.");
-			rerender();
-			return;
-		}
+	function onToggleProvider(provider, enabled, providerType) {
 		setVoiceErr(null);
 		setVoiceMsg(null);
-		setSavingProvider(provider);
+		setSavingProvider(provider.id);
 		rerender();
 
-		sendRpc("voice.config.save_key", { provider, api_key: key.trim() })
+		sendRpc("voice.provider.toggle", { provider: provider.id, enabled, type: providerType })
 			.then((res) => {
 				setSavingProvider(null);
 				if (res?.ok) {
-					setVoiceMsg(`${provider} API key saved.`);
-					if (provider === "elevenlabs") setElevenLabsKey("");
-					if (provider === "openai") setOpenaiKey("");
-					if (provider === "groq") setGroqKey("");
-					if (provider === "deepgram") setDeepgramKey("");
-					if (provider === "google") setGoogleKey("");
+					setVoiceMsg(`${provider.name} ${enabled ? "enabled" : "disabled"}.`);
 					setTimeout(() => {
 						setVoiceMsg(null);
 						rerender();
 					}, 2000);
 					fetchVoiceStatus();
 				} else {
-					setVoiceErr(res?.error?.message || "Failed to save key");
+					setVoiceErr(res?.error?.message || "Failed to toggle provider");
 				}
 				rerender();
 			})
@@ -1383,38 +1486,14 @@ function VoiceSection() {
 			});
 	}
 
-	function onRemoveKey(provider) {
-		setVoiceErr(null);
-		setVoiceMsg(null);
-		setSavingProvider(provider);
-		rerender();
-
-		sendRpc("voice.config.remove_key", { provider })
-			.then((res) => {
-				setSavingProvider(null);
-				if (res?.ok) {
-					setVoiceMsg(`${provider} API key removed.`);
-					setTimeout(() => {
-						setVoiceMsg(null);
-						rerender();
-					}, 2000);
-					fetchVoiceStatus();
-				} else {
-					setVoiceErr(res?.error?.message || "Failed to remove key");
-				}
-				rerender();
-			})
-			.catch((err) => {
-				setSavingProvider(null);
-				setVoiceErr(err.message);
-				rerender();
-			});
+	function onConfigureProvider(providerId) {
+		voiceSelectedProvider.value = providerId;
+		voiceShowAddModal.value = true;
 	}
 
-	function isProviderConfigured(providerId) {
-		var all = [...ttsProviders, ...sttProviders];
-		var prov = all.find((p) => p.id === providerId);
-		return prov?.configured;
+	function getUnconfiguredProviders() {
+		var allIds = new Set([...allProviders.tts.map((p) => p.id), ...allProviders.stt.map((p) => p.id)]);
+		return Object.values(VOICE_PROVIDERS).filter((p) => !allIds.has(p.id));
 	}
 
 	if (voiceLoading) {
@@ -1424,307 +1503,358 @@ function VoiceSection() {
 		</div>`;
 	}
 
-	var elevenLabsConfigured = isProviderConfigured("elevenlabs");
-	var openaiConfigured = isProviderConfigured("openai");
-	var whisperConfigured = isProviderConfigured("whisper");
-	var groqConfigured = isProviderConfigured("groq");
-	var deepgramConfigured = isProviderConfigured("deepgram");
-	var googleConfigured = isProviderConfigured("google");
-	var whisperCliConfigured = isProviderConfigured("whisper-cli");
-	var sherpaOnnxConfigured = isProviderConfigured("sherpa-onnx");
-
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
-			Configure text-to-speech (TTS) and speech-to-text (STT) providers. Once configured, you can use the microphone button in chat to record voice input.
+			Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in chat to record voice input. TTS lets you hear responses as audio.
 		</p>
 
 		${voiceMsg ? html`<div class="text-xs" style="color:var(--accent);">${voiceMsg}</div>` : null}
 		${voiceErr ? html`<div class="text-xs" style="color:var(--error);">${voiceErr}</div>` : null}
 
-		<!-- Speech-to-Text (STT) -->
-		<div style="max-width:600px;">
-			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Speech-to-Text (STT)</h3>
-			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
-				Transcribe your voice to text. Cloud providers require an API key. Local providers run on your machine.
-			</p>
-
-			<!-- Cloud STT Providers -->
-			<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Cloud Providers</h4>
-
-			<!-- OpenAI Whisper -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">OpenAI Whisper</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Best accuracy, handles accents and background noise
-						</div>
-					</div>
-					${whisperConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					whisperConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "whisper"}
-								onClick=${() => onRemoveKey("whisper")}>
-								${savingProvider === "whisper" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${openaiKey} onInput=${(e) => setOpenaiKey(e.target.value)}
-								placeholder="sk-..." />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "whisper" || !openaiKey.trim()}
-								onClick=${() => onSaveKey("whisper", openaiKey)}>
-								${savingProvider === "whisper" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">platform.openai.com/api-keys</a>
-						</div>`
-				}
-			</div>
-
-			<!-- Groq -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">Groq</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Ultra-fast Whisper inference on Groq hardware
-						</div>
-					</div>
-					${groqConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					groqConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "groq"}
-								onClick=${() => onRemoveKey("groq")}>
-								${savingProvider === "groq" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${groqKey} onInput=${(e) => setGroqKey(e.target.value)}
-								placeholder="gsk_..." />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "groq" || !groqKey.trim()}
-								onClick=${() => onSaveKey("groq", groqKey)}>
-								${savingProvider === "groq" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.groq.com/keys</a>
-						</div>`
-				}
-			</div>
-
-			<!-- Deepgram -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">Deepgram</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Fast and accurate with Nova-3 model
-						</div>
-					</div>
-					${deepgramConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					deepgramConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "deepgram"}
-								onClick=${() => onRemoveKey("deepgram")}>
-								${savingProvider === "deepgram" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${deepgramKey} onInput=${(e) => setDeepgramKey(e.target.value)}
-								placeholder="API key" />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "deepgram" || !deepgramKey.trim()}
-								onClick=${() => onSaveKey("deepgram", deepgramKey)}>
-								${savingProvider === "deepgram" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://console.deepgram.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.deepgram.com</a>
-						</div>`
-				}
-			</div>
-
-			<!-- Google Cloud -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">Google Cloud</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Supports 125+ languages with Google Speech-to-Text
-						</div>
-					</div>
-					${googleConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					googleConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "google"}
-								onClick=${() => onRemoveKey("google")}>
-								${savingProvider === "google" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${googleKey} onInput=${(e) => setGoogleKey(e.target.value)}
-								placeholder="API key" />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "google" || !googleKey.trim()}
-								onClick=${() => onSaveKey("google", googleKey)}>
-								${savingProvider === "google" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.cloud.google.com</a>
-						</div>`
-				}
-			</div>
-
-			<!-- Local STT Providers -->
-			<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Local Providers</h4>
-			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
-				Local providers run on your machine. Configure them in <code style="font-family:var(--font-mono);font-size:.75rem;">moltis.toml</code>.
-			</p>
-
-			<!-- whisper.cpp -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">whisper.cpp</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Local Whisper inference via whisper-cli
-						</div>
-					</div>
-					${whisperCliConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : html`<span class="provider-item-badge">Not Configured</span>`}
-				</div>
-				<div class="text-xs text-[var(--muted)]">
-					Install: <code style="font-family:var(--font-mono);font-size:.75rem;">brew install whisper-cpp</code>
-					<br />
-					Then set <code style="font-family:var(--font-mono);font-size:.75rem;">model_path</code> in <code style="font-family:var(--font-mono);font-size:.75rem;">[voice.stt.whisper_cli]</code>
+		<div style="max-width:700px;display:flex;flex-direction:column;gap:24px;">
+			<!-- STT Providers -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Speech-to-Text (Voice Input)</h3>
+				<div class="flex flex-col gap-2">
+					${allProviders.stt.map((prov) => {
+						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						return html`<${VoiceProviderRow}
+							provider=${prov}
+							meta=${meta}
+							saving=${savingProvider === prov.id}
+							onToggle=${(enabled) => onToggleProvider(prov, enabled, "stt")}
+							onConfigure=${() => onConfigureProvider(prov.id)}
+						/>`;
+					})}
 				</div>
 			</div>
 
-			<!-- sherpa-onnx -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">sherpa-onnx</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Local offline speech recognition via ONNX runtime
-						</div>
-					</div>
-					${sherpaOnnxConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : html`<span class="provider-item-badge">Not Configured</span>`}
-				</div>
-				<div class="text-xs text-[var(--muted)]">
-					See <a href="https://k2-fsa.github.io/sherpa/onnx/install.html" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">sherpa-onnx docs</a> for installation.
-					<br />
-					Then set <code style="font-family:var(--font-mono);font-size:.75rem;">model_dir</code> in <code style="font-family:var(--font-mono);font-size:.75rem;">[voice.stt.sherpa_onnx]</code>
+			<!-- TTS Providers -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Text-to-Speech (Audio Responses)</h3>
+				<div class="flex flex-col gap-2">
+					${allProviders.tts.map((prov) => {
+						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						return html`<${VoiceProviderRow}
+							provider=${prov}
+							meta=${meta}
+							saving=${savingProvider === prov.id}
+							onToggle=${(enabled) => onToggleProvider(prov, enabled, "tts")}
+							onConfigure=${() => onConfigureProvider(prov.id)}
+						/>`;
+					})}
 				</div>
 			</div>
 		</div>
 
-		<!-- Text-to-Speech (TTS) -->
-		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;">
-			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Text-to-Speech (TTS)</h3>
-			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
-				Convert text responses to spoken audio.
-			</p>
-
-			<!-- ElevenLabs -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">ElevenLabs</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Lowest latency (~75ms), most natural voices
-						</div>
-					</div>
-					${elevenLabsConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					elevenLabsConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "elevenlabs"}
-								onClick=${() => onRemoveKey("elevenlabs")}>
-								${savingProvider === "elevenlabs" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${elevenLabsKey} onInput=${(e) => setElevenLabsKey(e.target.value)}
-								placeholder="API key" />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "elevenlabs" || !elevenLabsKey.trim()}
-								onClick=${() => onSaveKey("elevenlabs", elevenLabsKey)}>
-								${savingProvider === "elevenlabs" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">elevenlabs.io</a>
-						</div>`
-				}
-			</div>
-
-			<!-- OpenAI TTS -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
-				<div style="display:flex;justify-content:space-between;align-items:center;">
-					<div>
-						<div class="provider-item-name">OpenAI TTS</div>
-						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-							Good quality, shares API key with Whisper STT
-						</div>
-					</div>
-					${openaiConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
-				</div>
-				${
-					openaiConfigured
-						? html`<div style="display:flex;gap:8px;align-items:center;">
-							<span class="text-xs text-[var(--muted)]">API key is set</span>
-							<button type="button" class="provider-btn provider-btn-danger"
-								disabled=${savingProvider === "openai"}
-								onClick=${() => onRemoveKey("openai")}>
-								${savingProvider === "openai" ? "Removing\u2026" : "Remove"}
-							</button>
-						</div>`
-						: html`<div style="display:flex;gap:8px;align-items:center;">
-							<input type="password" class="provider-key-input" style="flex:1;"
-								value=${openaiKey} onInput=${(e) => setOpenaiKey(e.target.value)}
-								placeholder="sk-..." />
-							<button type="button" class="provider-btn"
-								disabled=${savingProvider === "openai" || !openaiKey.trim()}
-								onClick=${() => onSaveKey("openai", openaiKey)}>
-								${savingProvider === "openai" ? "Saving\u2026" : "Save"}
-							</button>
-						</div>
-						<div class="text-xs text-[var(--muted)]">
-							Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">platform.openai.com/api-keys</a>
-						</div>`
-				}
-			</div>
-		</div>
+		<${AddVoiceProviderModal}
+			unconfiguredProviders=${getUnconfiguredProviders()}
+			voxtralReqs=${voxtralReqs}
+			onSaved=${() => {
+				fetchVoiceStatus();
+				voiceShowAddModal.value = false;
+				voiceSelectedProvider.value = null;
+			}}
+		/>
 	</div>`;
+}
+
+// Individual provider row with enable toggle
+function VoiceProviderRow({ provider, meta, saving, onToggle, onConfigure }) {
+	var canEnable = provider.available;
+	var keySourceLabel =
+		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
+
+	return html`<div class="provider-card" style="padding:10px 14px;border-radius:8px;display:flex;align-items:center;gap:12px;">
+		<div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+			<div style="display:flex;align-items:center;gap:8px;">
+				<span class="text-sm text-[var(--text-strong)]">${meta.name}</span>
+				${provider.category === "local" ? html`<span class="provider-item-badge">local</span>` : null}
+				${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
+			</div>
+			<span class="text-xs text-[var(--muted)]">${meta.description}</span>
+			${provider.binaryPath ? html`<span class="text-xs text-[var(--muted)]">Found at: ${provider.binaryPath}</span>` : null}
+			${!canEnable && provider.statusMessage ? html`<span class="text-xs text-[var(--error)]">${provider.statusMessage}</span>` : null}
+		</div>
+		${
+			canEnable
+				? html`<label class="toggle-switch">
+					<input type="checkbox"
+						checked=${provider.enabled}
+						disabled=${saving}
+						onChange=${(e) => onToggle(e.target.checked)} />
+					<span class="toggle-slider"></span>
+				</label>`
+				: provider.category === "local"
+					? html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${onConfigure}>
+						Setup
+					</button>`
+					: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${onConfigure}>
+						Configure
+					</button>`
+		}
+	</div>`;
+}
+
+// Local provider instructions component (uses hidden HTML elements)
+function LocalProviderInstructions({ providerId, voxtralReqs }) {
+	var ref = useRef(null);
+
+	useEffect(() => {
+		var container = ref.current;
+		if (!container) return;
+		while (container.firstChild) container.removeChild(container.firstChild);
+
+		var templateId = {
+			"whisper-cli": "voice-whisper-cli-instructions",
+			"sherpa-onnx": "voice-sherpa-onnx-instructions",
+			piper: "voice-piper-instructions",
+			coqui: "voice-coqui-instructions",
+			"voxtral-local": "voice-voxtral-instructions",
+		}[providerId];
+
+		if (!templateId) return;
+
+		var el = cloneHidden(templateId);
+		if (!el) return;
+
+		// For voxtral-local, populate the requirements section
+		if (providerId === "voxtral-local" && el.querySelector("[data-voxtral-requirements]")) {
+			var reqsContainer = el.querySelector("[data-voxtral-requirements]");
+			if (voxtralReqs) {
+				var detected = `${voxtralReqs.os}/${voxtralReqs.arch}`;
+				if (voxtralReqs.python?.available) detected += `, Python ${voxtralReqs.python.version}`;
+				else detected += ", no Python";
+				if (voxtralReqs.cuda?.available) {
+					detected += `, ${voxtralReqs.cuda.gpu_name || "NVIDIA GPU"} (${Math.round((voxtralReqs.cuda.memory_mb || 0) / 1024)}GB)`;
+				} else detected += ", no CUDA GPU";
+
+				var reqEl = cloneHidden(
+					voxtralReqs.compatible ? "voice-voxtral-requirements-ok" : "voice-voxtral-requirements-fail",
+				);
+				if (reqEl) {
+					reqEl.querySelector("[data-voxtral-detected]").textContent = detected;
+					if (!voxtralReqs.compatible && voxtralReqs.reasons?.length > 0) {
+						var ul = reqEl.querySelector("[data-voxtral-reasons]");
+						for (var r of voxtralReqs.reasons) {
+							var li = document.createElement("li");
+							li.style.margin = "2px 0";
+							li.textContent = r;
+							ul.appendChild(li);
+						}
+					}
+					reqsContainer.appendChild(reqEl);
+				}
+			} else {
+				var loadingEl = document.createElement("div");
+				loadingEl.className = "text-xs text-[var(--muted)] mb-3";
+				loadingEl.textContent = "Checking system requirements\u2026";
+				reqsContainer.appendChild(loadingEl);
+			}
+		}
+
+		container.appendChild(el);
+	}, [providerId, voxtralReqs]);
+
+	return html`<div ref=${ref}></div>`;
+}
+
+// Add Voice Provider Modal
+function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) {
+	var [apiKey, setApiKey] = useState("");
+	var [saving, setSaving] = useState(false);
+	var [error, setError] = useState("");
+
+	var selectedProvider = voiceSelectedProvider.value;
+	var providerMeta = selectedProvider ? VOICE_PROVIDERS[selectedProvider] : null;
+
+	function onClose() {
+		voiceShowAddModal.value = false;
+		voiceSelectedProvider.value = null;
+		setApiKey("");
+		setError("");
+	}
+
+	function onSaveKey() {
+		if (!apiKey.trim()) {
+			setError("API key is required.");
+			return;
+		}
+		setError("");
+		setSaving(true);
+
+		sendRpc("voice.config.save_key", { provider: selectedProvider, api_key: apiKey.trim() })
+			.then((res) => {
+				setSaving(false);
+				if (res?.ok) {
+					setApiKey("");
+					onSaved();
+				} else {
+					setError(res?.error?.message || "Failed to save key");
+				}
+			})
+			.catch((err) => {
+				setSaving(false);
+				setError(err.message);
+			});
+	}
+
+	function onSelectProvider(providerId) {
+		voiceSelectedProvider.value = providerId;
+		setApiKey("");
+		setError("");
+	}
+
+	// Group providers by type and category
+	var sttCloud = unconfiguredProviders.filter((p) => p.type === "stt" && p.category === "cloud");
+	var sttLocal = unconfiguredProviders.filter((p) => p.type === "stt" && p.category === "local");
+	var ttsProviders = unconfiguredProviders.filter((p) => p.type === "tts");
+
+	// If a provider is selected, show its configuration form
+	if (selectedProvider && providerMeta) {
+		// Cloud provider - show API key form
+		if (providerMeta.category === "cloud") {
+			return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add ${providerMeta.name}">
+				<div class="channel-form">
+					<div class="text-sm text-[var(--text-strong)]">${providerMeta.name}</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-bottom:12px;">${providerMeta.description}</div>
+
+					<label class="text-xs text-[var(--muted)]">API Key</label>
+					<input type="password" class="provider-key-input" style="width:100%;"
+						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
+						placeholder=${providerMeta.keyPlaceholder} />
+					<div class="text-xs text-[var(--muted)]">
+						Get your API key at <a href=${providerMeta.keyUrl} target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">${providerMeta.keyUrlLabel}</a>
+					</div>
+
+					${error && html`<div class="text-xs" style="color:var(--error);">${error}</div>`}
+
+					<div style="display:flex;gap:8px;margin-top:8px;">
+						<button class="provider-btn provider-btn-secondary" onClick=${() => {
+							voiceSelectedProvider.value = null;
+							setApiKey("");
+							setError("");
+						}}>Back</button>
+						<button class="provider-btn" disabled=${saving || !apiKey.trim()} onClick=${onSaveKey}>
+							${saving ? "Saving\u2026" : "Save"}
+						</button>
+					</div>
+				</div>
+			</${Modal}>`;
+		}
+
+		// Local provider - show setup instructions
+		if (providerMeta.category === "local") {
+			return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add ${providerMeta.name}">
+				<div class="channel-form">
+					<div class="text-sm text-[var(--text-strong)]">${providerMeta.name}</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-bottom:12px;">${providerMeta.description}</div>
+					<${LocalProviderInstructions} providerId=${selectedProvider} voxtralReqs=${voxtralReqs} />
+					<div style="display:flex;gap:8px;margin-top:12px;">
+						<button class="provider-btn provider-btn-secondary" onClick=${() => {
+							voiceSelectedProvider.value = null;
+						}}>Back</button>
+					</div>
+				</div>
+			</${Modal}>`;
+		}
+	}
+
+	// Show provider selection list
+	return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add Voice Provider">
+		<div class="channel-form" style="gap:16px;">
+			${
+				sttCloud.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Speech-to-Text (Cloud)</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${sttCloud.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				sttLocal.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Speech-to-Text (Local)</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${sttLocal.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				ttsProviders.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Text-to-Speech</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${ttsProviders.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				unconfiguredProviders.length === 0
+					? html`
+				<div class="text-sm text-[var(--muted)]" style="text-align:center;padding:20px 0;">
+					All available providers are already configured.
+				</div>
+			`
+					: null
+			}
+		</div>
+	</${Modal}>`;
 }
 
 // ── Main layout ──────────────────────────────────────────────

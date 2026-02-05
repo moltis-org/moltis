@@ -20,7 +20,7 @@ pub struct TtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
 
-    /// Default provider: "elevenlabs", "openai".
+    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
     pub provider: String,
 
     /// Auto-speak mode.
@@ -34,6 +34,15 @@ pub struct TtsConfig {
 
     /// OpenAI TTS settings.
     pub openai: OpenAiTtsConfig,
+
+    /// Google Cloud TTS settings.
+    pub google: GoogleTtsConfig,
+
+    /// Piper (local) settings.
+    pub piper: PiperTtsConfig,
+
+    /// Coqui TTS (local) settings.
+    pub coqui: CoquiTtsConfig,
 }
 
 impl Default for TtsConfig {
@@ -45,6 +54,9 @@ impl Default for TtsConfig {
             max_text_length: 2000,
             elevenlabs: ElevenLabsConfig::default(),
             openai: OpenAiTtsConfig::default(),
+            google: GoogleTtsConfig::default(),
+            piper: PiperTtsConfig::default(),
+            coqui: CoquiTtsConfig::default(),
         }
     }
 }
@@ -113,6 +125,80 @@ pub struct OpenAiTtsConfig {
     pub speed: Option<f32>,
 }
 
+/// Google Cloud TTS provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleTtsConfig {
+    /// API key for Google Cloud Text-to-Speech.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    pub voice: Option<String>,
+
+    /// Language code (e.g., "en-US", "fr-FR").
+    pub language_code: Option<String>,
+
+    /// Speaking rate (0.25 - 4.0, default 1.0).
+    pub speaking_rate: Option<f32>,
+
+    /// Pitch (-20.0 - 20.0, default 0.0).
+    pub pitch: Option<f32>,
+}
+
+/// Piper TTS (local) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PiperTtsConfig {
+    /// Path to piper binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+
+    /// Path to the voice model file (.onnx).
+    pub model_path: Option<String>,
+
+    /// Path to the model config file (.onnx.json). If not set, uses model_path + ".json".
+    pub config_path: Option<String>,
+
+    /// Speaker ID for multi-speaker models.
+    pub speaker_id: Option<u32>,
+
+    /// Speaking rate multiplier (default 1.0).
+    pub length_scale: Option<f32>,
+}
+
+/// Coqui TTS (local) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CoquiTtsConfig {
+    /// Coqui TTS server endpoint (default: http://localhost:5002).
+    pub endpoint: String,
+
+    /// Model name to use (if server supports multiple models).
+    pub model: Option<String>,
+
+    /// Speaker name or ID for multi-speaker models.
+    pub speaker: Option<String>,
+
+    /// Language code for multilingual models.
+    pub language: Option<String>,
+}
+
+impl Default for CoquiTtsConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:5002".into(),
+            model: None,
+            speaker: None,
+            language: None,
+        }
+    }
+}
+
 /// Speech-to-Text configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -120,7 +206,7 @@ pub struct SttConfig {
     /// Enable STT globally.
     pub enabled: bool,
 
-    /// Default provider: "whisper", "groq", "deepgram", "google", "whisper-cli", "sherpa-onnx".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx".
     pub provider: String,
 
     /// OpenAI Whisper settings.
@@ -134,6 +220,12 @@ pub struct SttConfig {
 
     /// Google Cloud Speech-to-Text settings.
     pub google: GoogleSttConfig,
+
+    /// Mistral AI (Voxtral) settings.
+    pub mistral: MistralSttConfig,
+
+    /// Voxtral local (vLLM) settings.
+    pub voxtral_local: VoxtralLocalConfig,
 
     /// whisper-cli (whisper.cpp) settings.
     pub whisper_cli: WhisperCliConfig,
@@ -151,6 +243,8 @@ impl Default for SttConfig {
             groq: GroqSttConfig::default(),
             deepgram: DeepgramConfig::default(),
             google: GoogleSttConfig::default(),
+            mistral: MistralSttConfig::default(),
+            voxtral_local: VoxtralLocalConfig::default(),
             whisper_cli: WhisperCliConfig::default(),
             sherpa_onnx: SherpaOnnxConfig::default(),
         }
@@ -243,6 +337,26 @@ pub struct GoogleSttConfig {
     pub model: Option<String>,
 }
 
+/// Mistral AI (Voxtral Transcribe) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MistralSttConfig {
+    /// API key (from MISTRAL_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Model to use (e.g., "voxtral-mini-latest").
+    pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
 /// whisper-cli (whisper.cpp) configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -269,6 +383,30 @@ pub struct SherpaOnnxConfig {
 
     /// Language hint (ISO 639-1 code).
     pub language: Option<String>,
+}
+
+/// Voxtral local (vLLM) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoxtralLocalConfig {
+    /// vLLM server endpoint (default: http://localhost:8000).
+    pub endpoint: String,
+
+    /// Model to use (optional, server default if not set).
+    pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+impl Default for VoxtralLocalConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:8000".into(),
+            model: None,
+            language: None,
+        }
+    }
 }
 
 // ── Secret serialization helpers ───────────────────────────────────────────
@@ -339,6 +477,9 @@ mod tests {
                     ..Default::default()
                 },
                 openai: OpenAiTtsConfig::default(),
+                google: GoogleTtsConfig::default(),
+                piper: PiperTtsConfig::default(),
+                coqui: CoquiTtsConfig::default(),
             },
             stt: SttConfig::default(),
         };

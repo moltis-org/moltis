@@ -4,13 +4,16 @@ mod cli_utils;
 mod deepgram;
 mod google;
 mod groq;
+mod mistral;
 mod sherpa_onnx;
+mod voxtral_local;
 mod whisper;
 mod whisper_cli;
 
 pub use {
-    deepgram::DeepgramStt, google::GoogleStt, groq::GroqStt, sherpa_onnx::SherpaOnnxStt,
-    whisper::WhisperStt, whisper_cli::WhisperCliStt,
+    deepgram::DeepgramStt, google::GoogleStt, groq::GroqStt, mistral::MistralStt,
+    sherpa_onnx::SherpaOnnxStt, voxtral_local::VoxtralLocalStt, whisper::WhisperStt,
+    whisper_cli::WhisperCliStt,
 };
 
 use {

@@ -10,18 +10,19 @@ base64      = { workspace = true }
 bytes       = { workspace = true }
 dirs        = "6"
 futures     = { workspace = true }
-reqwest     = { workspace = true, features = ["multipart"] }
+reqwest     = { features = ["multipart"], workspace = true }
 secrecy     = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 tempfile    = "3"
 thiserror   = { workspace = true }
-tokio       = { workspace = true, features = ["process"] }
+tokio       = { features = ["process"], workspace = true }
 tracing     = { workspace = true }
+urlencoding = "2"
 which       = "7"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util", "macros"] }
+tokio    = { features = ["macros", "test-util"], workspace = true }
 wiremock = "0.6"
 
 [lints]

@@ -9,14 +9,16 @@ pub mod tts;
 
 pub use {
     config::{
-        DeepgramConfig, GoogleSttConfig, GroqSttConfig, SherpaOnnxConfig, SttConfig, TtsAutoMode,
-        TtsConfig, VoiceConfig, WhisperCliConfig, WhisperConfig,
+        CoquiTtsConfig, DeepgramConfig, GoogleSttConfig, GoogleTtsConfig, GroqSttConfig,
+        MistralSttConfig, PiperTtsConfig, SherpaOnnxConfig, SttConfig, TtsAutoMode, TtsConfig,
+        VoiceConfig, VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
     },
     stt::{
-        DeepgramStt, GoogleStt, GroqStt, SherpaOnnxStt, SttProvider, TranscribeRequest, Transcript,
-        WhisperCliStt, WhisperStt,
+        DeepgramStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider, TranscribeRequest,
+        Transcript, VoxtralLocalStt, WhisperCliStt, WhisperStt,
     },
     tts::{
-        AudioFormat, AudioOutput, ElevenLabsTts, OpenAiTts, SynthesizeRequest, TtsProvider, Voice,
+        AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts,
+        SynthesizeRequest, TtsProvider, Voice,
     },
 };

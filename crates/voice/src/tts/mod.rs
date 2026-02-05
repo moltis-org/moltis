@@ -1,9 +1,15 @@
 //! Text-to-Speech provider abstraction and implementations.
 
+mod coqui;
 mod elevenlabs;
+mod google;
 mod openai;
+mod piper;
 
-pub use {elevenlabs::ElevenLabsTts, openai::OpenAiTts};
+pub use {
+    coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, openai::OpenAiTts,
+    piper::PiperTts,
+};
 
 use {
     anyhow::Result,

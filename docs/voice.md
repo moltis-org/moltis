@@ -37,6 +37,8 @@ When disabled:
 │  └─ OpenAiTts              │  ├─ GroqStt (Groq)             │
 │                            │  ├─ DeepgramStt                │
 │                            │  ├─ GoogleStt                  │
+│                            │  ├─ MistralStt                 │
+│                            │  ├─ VoxtralLocalStt (local)    │
 │                            │  ├─ WhisperCliStt (local)      │
 │                            │  └─ SherpaOnnxStt (local)      │
 └─────────────────────────────────────────────────────────────┘
@@ -212,7 +214,7 @@ Change the active TTS provider.
 
 ### Supported Providers
 
-Moltis supports 6 STT providers: 4 cloud-based and 2 local.
+Moltis supports 8 STT providers: 5 cloud-based and 3 local.
 
 #### Cloud Providers
 
@@ -222,11 +224,13 @@ Moltis supports 6 STT providers: 4 cloud-based and 2 local.
 | Groq | `whisper-large-v3-turbo` | Ultra-fast Whisper inference on Groq hardware |
 | Deepgram | `nova-3` | Fast and accurate with smart formatting |
 | Google Cloud | Various | Supports 125+ languages |
+| Mistral AI | `voxtral-mini-latest` | Fast Voxtral transcription with 13 languages |
 
 #### Local Providers
 
-| Provider | Binary | Notes |
-|----------|--------|-------|
+| Provider | Binary/Server | Notes |
+|----------|---------------|-------|
+| Voxtral (Local) | vLLM server | Run Voxtral locally via vLLM with OpenAI-compatible API |
 | whisper.cpp | `whisper-cli` | Local Whisper inference via C++ port |
 | sherpa-onnx | `sherpa-onnx-offline` | Local offline STT via ONNX runtime |
 
@@ -235,7 +239,7 @@ Moltis supports 6 STT providers: 4 cloud-based and 2 local.
 ```toml
 [voice.stt]
 enabled = true
-provider = "whisper"  # or "groq", "deepgram", "google", "whisper-cli", "sherpa-onnx"
+provider = "whisper"  # or "groq", "deepgram", "google", "mistral", "whisper-cli", "sherpa-onnx"
 
 # Cloud providers - API key required
 [voice.stt.whisper]
@@ -259,7 +263,19 @@ api_key = "..."
 language = "en-US"
 # model = "latest_long"  # optional
 
-# Local providers - no API key, requires binary and model
+[voice.stt.mistral]
+api_key = "..."
+model = "voxtral-mini-latest"  # default
+language = "en"
+
+# Local providers - no API key, requires server or binary
+
+# Voxtral local via vLLM server
+[voice.stt.voxtral_local]
+# endpoint = "http://localhost:8000"  # default vLLM endpoint
+# model = "mistralai/Voxtral-Mini-3B-2507"  # optional, server default
+# language = "en"  # optional
+
 [voice.stt.whisper_cli]
 # binary_path = "/usr/local/bin/whisper-cli"  # optional, searches PATH
 model_path = "~/.moltis/models/ggml-base.en.bin"  # required
@@ -272,6 +288,51 @@ language = "en"
 ```
 
 ### Local Provider Setup
+
+#### Voxtral via vLLM
+
+Voxtral is an open-weights model from Mistral AI that can run locally using vLLM.
+It supports 13 languages with fast transcription.
+
+**Requirements:**
+- Python 3.10+
+- CUDA-capable GPU with ~9.5GB VRAM (or CPU with more memory)
+- vLLM with audio support
+
+**Setup:**
+
+1. Install vLLM with audio support:
+   ```bash
+   pip install "vllm[audio]"
+   ```
+
+2. Start the vLLM server:
+   ```bash
+   vllm serve mistralai/Voxtral-Mini-3B-2507 \
+     --tokenizer_mode mistral \
+     --config_format mistral \
+     --load_format mistral
+   ```
+
+   The server exposes an OpenAI-compatible endpoint at `http://localhost:8000`.
+
+3. Configure in `moltis.toml`:
+   ```toml
+   [voice.stt]
+   provider = "voxtral-local"
+
+   [voice.stt.voxtral_local]
+   # Default endpoint works if vLLM is running locally
+   # endpoint = "http://localhost:8000"
+   ```
+
+**Supported Languages:**
+English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish,
+Norwegian, Danish, Finnish, Arabic
+
+**Note:** Unlike the embedded local providers (whisper.cpp, sherpa-onnx), this
+requires running vLLM as a separate server process. The model is downloaded
+automatically on first vLLM startup.
 
 #### whisper.cpp
 
@@ -340,6 +401,8 @@ List available STT providers.
   { "id": "groq", "name": "Groq", "configured": false },
   { "id": "deepgram", "name": "Deepgram", "configured": false },
   { "id": "google", "name": "Google Cloud", "configured": false },
+  { "id": "mistral", "name": "Mistral AI", "configured": false },
+  { "id": "voxtral-local", "name": "Voxtral (Local)", "configured": false },
   { "id": "whisper-cli", "name": "whisper.cpp", "configured": false },
   { "id": "sherpa-onnx", "name": "sherpa-onnx", "configured": false }
 ]
@@ -391,7 +454,7 @@ Change the active STT provider.
 { "provider": "groq" }
 ```
 
-Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `whisper-cli`, `sherpa-onnx`
+Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `voxtral-local`, `whisper-cli`, `sherpa-onnx`
 
 ## Code Structure
 
@@ -406,14 +469,16 @@ src/
 │   ├── elevenlabs.rs # ElevenLabs implementation
 │   └── openai.rs    # OpenAI TTS implementation
 └── stt/
-    ├── mod.rs       # SttProvider trait, Transcript types
-    ├── whisper.rs   # OpenAI Whisper implementation
-    ├── groq.rs      # Groq Whisper implementation
-    ├── deepgram.rs  # Deepgram implementation
-    ├── google.rs    # Google Cloud Speech-to-Text
-    ├── cli_utils.rs # Shared utilities for CLI providers
-    ├── whisper_cli.rs # whisper.cpp CLI wrapper
-    └── sherpa_onnx.rs # sherpa-onnx CLI wrapper
+    ├── mod.rs          # SttProvider trait, Transcript types
+    ├── whisper.rs      # OpenAI Whisper implementation
+    ├── groq.rs         # Groq Whisper implementation
+    ├── deepgram.rs     # Deepgram implementation
+    ├── google.rs       # Google Cloud Speech-to-Text
+    ├── mistral.rs      # Mistral AI Voxtral cloud implementation
+    ├── voxtral_local.rs # Voxtral via local vLLM server
+    ├── cli_utils.rs    # Shared utilities for CLI providers
+    ├── whisper_cli.rs  # whisper.cpp CLI wrapper
+    └── sherpa_onnx.rs  # sherpa-onnx CLI wrapper
 ```
 
 ### Key Traits
