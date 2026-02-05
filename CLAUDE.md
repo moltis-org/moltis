@@ -562,6 +562,11 @@ Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): de
 When adding a new feature (`feat` commits), update the features list in
 `README.md` as part of the same branch/PR.
 
+**Merging main into your branch:** When merging `main` into your current branch
+and encountering conflicts, resolve them by keeping both sides of the changes.
+Don't discard either the incoming changes from main or your local changes —
+integrate them together so nothing is lost.
+
 **You MUST run all checks before every commit and fix any issues they report:**
 1. `cargo +nightly fmt --all` — format all Rust code (CI runs `cargo fmt --all -- --check`)
 2. `cargo +nightly clippy --all-targets --all-features -- -D warnings` — run linter (must pass with zero warnings)
