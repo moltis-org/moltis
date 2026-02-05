@@ -323,6 +323,43 @@
   </div>
 </template>
 
+<template id="tpl-install-hint">
+  <div class="install-hint">
+    <div data-install-label>Install with any of:</div>
+    <div data-install-commands class="flex flex-col gap-1 mt-1"></div>
+  </div>
+</template>
+
+<template id="tpl-install-cmd">
+  <code data-cmd></code>
+</template>
+
+<template id="tpl-model-notice">
+  <div class="ctx-card" style="max-width:400px">
+    <div class="ctx-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--warning,#eab308)">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span class="ctx-header-title">Chat-only mode</span>
+    </div>
+    <div class="ctx-section">
+      <div class="ctx-row">
+        <span class="ctx-label">Model</span>
+        <span class="ctx-value" data-model-name></span>
+      </div>
+      <div class="ctx-row">
+        <span class="ctx-label">Provider</span>
+        <span class="ctx-value" data-provider></span>
+      </div>
+      <div class="ctx-disabled" style="margin-top:8px">
+        Tools disabled — file operations, shell commands, and memory search are not available.
+      </div>
+    </div>
+  </div>
+</template>
+
 <script type="module" src="/assets/js/app.js"></script>
 </body>
 </html>

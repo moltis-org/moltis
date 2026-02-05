@@ -70,12 +70,32 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Install build dependencies for llama.cpp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
           components: clippy
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Initialize git repo in llama-cpp source to satisfy cmake
+        run: |
+          # llama-cpp-sys-2's cmake build runs git commands that fail without a repo
+          # We need to fetch the crate first so the source exists
+          cargo fetch --locked
+          LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
+          if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
+            cd "$LLAMA_SRC"
+            git init
+            git config user.email "ci@example.com"
+            git config user.name "CI"
+            git add -A
+            git commit -m "init" --allow-empty
+            git tag v0.0.0
+          fi
+      # Build with default features (local-llm included) - excludes CUDA/Metal which need GPU toolkits
+      - run: cargo clippy --all-targets -- -D warnings
 
   build:
     name: Build & Test
@@ -87,9 +107,27 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Install build dependencies for llama.cpp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
-      - run: cargo build --all-targets --all-features
-      - run: cargo test --all-features
+      - name: Initialize git repo in llama-cpp source to satisfy cmake
+        run: |
+          cargo fetch --locked
+          LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
+          if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
+            cd "$LLAMA_SRC"
+            git init
+            git config user.email "ci@example.com"
+            git config user.name "CI"
+            git add -A
+            git commit -m "init" --allow-empty
+            git tag v0.0.0
+          fi
+      # Build with default features (local-llm included) - excludes CUDA/Metal which need GPU toolkits
+      - run: cargo build --all-targets
+      - run: cargo test

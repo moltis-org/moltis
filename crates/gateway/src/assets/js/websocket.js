@@ -249,6 +249,13 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	S.setStreamText("");
 }
 
+function handleChatNotice(p, isActive, isChatPage) {
+	if (!(isActive && isChatPage)) return;
+	// Show notice message with title if provided
+	var msg = p.title ? `**${p.title}:** ${p.message}` : p.message;
+	chatAddMsg("system", msg);
+}
+
 var chatHandlers = {
 	thinking: handleChatThinking,
 	thinking_text: handleChatThinkingText,
@@ -260,6 +267,7 @@ var chatHandlers = {
 	final: handleChatFinal,
 	auto_compact: handleChatAutoCompact,
 	error: handleChatError,
+	notice: handleChatNotice,
 };
 
 function handleChatEvent(p) {

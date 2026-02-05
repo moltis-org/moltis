@@ -77,6 +77,10 @@ const READ_METHODS: &[&str] = &[
     "chat.context",
     "providers.available",
     "providers.oauth.status",
+    "providers.local.system_info",
+    "providers.local.models",
+    "providers.local.status",
+    "providers.local.search_hf",
     "mcp.list",
     "mcp.status",
     "mcp.tools",
@@ -106,6 +110,8 @@ const WRITE_METHODS: &[&str] = &[
     "providers.save_key",
     "providers.remove_key",
     "providers.oauth.start",
+    "providers.local.configure",
+    "providers.local.configure_custom",
     "channels.add",
     "channels.remove",
     "channels.update",
@@ -2578,6 +2584,32 @@ impl MethodRegistry {
                 })
             }),
         );
+        self.register(
+            "models.disable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .disable(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "models.enable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .enable(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
 
         // Provider setup
         self.register(
@@ -2640,6 +2672,99 @@ impl MethodRegistry {
                         .services
                         .provider_setup
                         .remove_key(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        // Local LLM
+        self.register(
+            "providers.local.system_info",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .system_info()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.models",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .models()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.configure",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .configure(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.status",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .status()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.search_hf",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .search_hf(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.configure_custom",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .configure_custom(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.local.remove_model",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .local_llm
+                        .remove_model(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

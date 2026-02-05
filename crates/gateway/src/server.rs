@@ -248,6 +248,20 @@ pub async fn start_gateway(
         Arc::clone(&registry),
         config.providers.clone(),
     ));
+
+    // Wire live local-llm service when the feature is enabled.
+    #[cfg(feature = "local-llm")]
+    let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = {
+        let svc = Arc::new(crate::local_llm_setup::LiveLocalLlmService::new(
+            Arc::clone(&registry),
+        ));
+        services =
+            services.with_local_llm(Arc::clone(&svc) as Arc<dyn crate::services::LocalLlmService>);
+        Some(svc)
+    };
+    #[cfg(not(feature = "local-llm"))]
+    let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = None;
+
     if !registry.read().await.is_empty() {
         services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
     }
@@ -1170,6 +1184,12 @@ pub async fn start_gateway(
 
     // Populate the deferred reference so cron callbacks can reach the gateway.
     let _ = deferred_state.set(Arc::clone(&state));
+
+    // Set the state on local-llm service for broadcasting download progress.
+    #[cfg(feature = "local-llm")]
+    if let Some(svc) = &local_llm_service {
+        svc.set_state(Arc::clone(&state));
+    }
 
     // Store heartbeat config on state for gon data and RPC methods.
     *state.heartbeat_config.write().await = config.heartbeat.clone();

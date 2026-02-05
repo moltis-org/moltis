@@ -983,6 +983,99 @@
     overflow-y: auto;
     color: var(--text);
   }
+
+  /* Local model selection */
+  .model-card {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .model-card:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+  }
+
+  .tier-badge {
+    font-size: 0.68rem;
+    padding: 2px 6px;
+    border-radius: 9999px;
+    font-weight: 500;
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .recommended-badge {
+    font-size: 0.68rem;
+    padding: 2px 6px;
+    border-radius: 9999px;
+    font-weight: 500;
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+
+  /* Backend selection cards */
+  .backend-card {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .backend-card:hover:not(.disabled) {
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+  }
+  .backend-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+  }
+  .backend-card.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .backend-card.disabled .backend-name {
+    color: var(--muted);
+  }
+
+  .install-hint {
+    font-size: 0.7rem;
+    padding: 6px 8px;
+    margin-top: 4px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .install-hint code {
+    background: var(--surface);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: var(--text);
+  }
+
+  .download-progress {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .download-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+  }
+
+  .provider-item-badge.local {
+    background: rgba(168, 85, 247, 0.12);
+    color: #a855f7;
+  }
 }
 
 /* ── Animations ───────────────────────────────────────────────────── */

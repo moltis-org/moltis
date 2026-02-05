@@ -21,6 +21,9 @@ Inspired by [OpenClaw](https://docs.openclaw.ai) — just build it and run it.
 ## Installation
 
 ```bash
+# Docker (multi-arch: amd64/arm64)
+docker pull ghcr.io/penso/moltis:latest
+
 # macOS / Linux via Homebrew
 brew install moltis-org/tap/moltis
 
@@ -132,6 +135,62 @@ On first launch, a one-time setup code is printed to the terminal. Open
 `http://localhost:3000` in your browser, enter the code, and set a password or
 register a passkey. From there you can configure LLM providers and start
 chatting.
+
+### Running with Docker
+
+Moltis uses Docker for sandboxed command execution — when the LLM runs shell
+commands, they execute inside isolated containers. When running Moltis itself
+in a container, you need to give it access to the host's container runtime.
+
+```bash
+# Docker / OrbStack
+docker run -d \
+  --name moltis \
+  -p 13131:13131 \
+  -v moltis-config:/home/moltis/.config/moltis \
+  -v moltis-data:/home/moltis/.moltis \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/penso/moltis:latest
+
+# Podman (rootless)
+podman run -d \
+  --name moltis \
+  -p 13131:13131 \
+  -v moltis-config:/home/moltis/.config/moltis \
+  -v moltis-data:/home/moltis/.moltis \
+  -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
+  ghcr.io/penso/moltis:latest
+
+# Podman (rootful)
+podman run -d \
+  --name moltis \
+  -p 13131:13131 \
+  -v moltis-config:/home/moltis/.config/moltis \
+  -v moltis-data:/home/moltis/.moltis \
+  -v /run/podman/podman.sock:/var/run/docker.sock \
+  ghcr.io/penso/moltis:latest
+```
+
+Open `http://localhost:13131` in your browser and complete the setup.
+
+**Important notes:**
+
+- **Socket mount is required** — Without mounting the container runtime socket,
+  Moltis cannot execute sandboxed commands. The agent will still work for
+  chat-only interactions, but any tool that runs shell commands will fail.
+- **Security consideration** — Mounting the Docker socket gives the container
+  full access to the Docker daemon. This is necessary for Moltis to create
+  sandbox containers. Only run Moltis containers from trusted sources.
+- **OrbStack** — Works identically to Docker; use the same socket path
+  (`/var/run/docker.sock`).
+- **Podman** — Moltis talks to the Podman socket using the Docker API
+  (Podman's compatibility layer). Use the rootless socket path
+  (`/run/user/$(id -u)/podman/podman.sock`) or rootful path
+  (`/run/podman/podman.sock`) depending on your setup. You may need to enable
+  the Podman socket service: `systemctl --user enable --now podman.socket`
+- **Persistence** — Mount volumes to preserve data across container restarts:
+  - `/home/moltis/.config/moltis` — configuration (moltis.toml, mcp-servers.json)
+  - `/home/moltis/.moltis` — data (databases, sessions, memory)
 
 ## How It Works
 

@@ -51,7 +51,10 @@ function slashInjectStyles() {
 		".ctx-file{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);padding:3px 0;display:flex;justify-content:space-between;gap:12px}" +
 		".ctx-file-path{color:var(--text);word-break:break-all}" +
 		".ctx-file-size{flex-shrink:0;opacity:.7}" +
-		".ctx-empty{color:var(--muted);font-style:italic;font-size:.78rem;padding:2px 0}";
+		".ctx-empty{color:var(--muted);font-style:italic;font-size:.78rem;padding:2px 0}" +
+		".ctx-warning{background:var(--warning-bg,rgba(234,179,8,.15));border:1px solid var(--warning-border,rgba(234,179,8,.3));border-radius:var(--radius-sm);padding:8px 12px;margin:8px 12px;font-size:.78rem;color:var(--text);display:flex;align-items:center;gap:8px}" +
+		".ctx-warning svg{flex-shrink:0;color:var(--warning,#eab308)}" +
+		".ctx-disabled{color:var(--muted);font-style:italic;font-size:.78rem;padding:2px 0;background:var(--warning-bg,rgba(234,179,8,.1));border-radius:var(--radius-sm);padding:6px 10px;border-left:3px solid var(--warning,#eab308)}";
 	document.head.appendChild(s);
 }
 
@@ -184,6 +187,7 @@ function renderContextSessionSection(card, data) {
 	sessSection.appendChild(ctxRow("Model", sess.model || "default", true));
 	if (sess.provider) sessSection.appendChild(ctxRow("Provider", sess.provider, true));
 	if (sess.label) sessSection.appendChild(ctxRow("Label", sess.label));
+	sessSection.appendChild(ctxRow("Tool Support", data.supportsTools === false ? "Disabled" : "Enabled"));
 	card.appendChild(sessSection);
 }
 
@@ -215,7 +219,9 @@ function renderContextProjectSection(card, data) {
 function renderContextToolsSection(card, data) {
 	var tools = data.tools || [];
 	var toolsSection = ctxSection("Tools");
-	if (tools.length > 0) {
+	if (data.supportsTools === false) {
+		toolsSection.appendChild(ctxEl("div", "ctx-disabled", "Tools disabled \u2014 model doesn't support tool calling"));
+	} else if (tools.length > 0) {
 		var toolWrap = ctxEl("div", "");
 		toolWrap.className = "ctx-tool-wrap";
 		tools.forEach((t) => {
@@ -236,7 +242,11 @@ function renderContextToolsSection(card, data) {
 function renderContextSkillsSection(card, data) {
 	var skills = data.skills || [];
 	var skillsSection = ctxSection("Skills & Plugins");
-	if (skills.length > 0) {
+	if (data.supportsTools === false) {
+		skillsSection.appendChild(
+			ctxEl("div", "ctx-disabled", "Skills disabled \u2014 model doesn't support tool calling"),
+		);
+	} else if (skills.length > 0) {
 		var wrap = ctxEl("div", "");
 		wrap.className = "ctx-tool-wrap";
 		skills.forEach((s) => {
@@ -259,22 +269,26 @@ function renderContextSkillsSection(card, data) {
 function renderContextMcpSection(card, data) {
 	var servers = data.mcpServers || [];
 	var section = ctxSection("MCP Tools");
-	var running = servers.filter((s) => s.state === "running");
-	if (running.length > 0) {
-		var wrap = ctxEl("div", "");
-		wrap.className = "ctx-tool-wrap";
-		running.forEach((s) => {
-			var tag = ctxEl("span", "ctx-tag");
-			var dot = ctxEl("span", "ctx-tag-dot");
-			dot.style.background = "var(--ok)";
-			tag.appendChild(dot);
-			tag.appendChild(document.createTextNode(s.name));
-			tag.title = `${s.tool_count} tool${s.tool_count !== 1 ? "s" : ""} — ${s.state}`;
-			wrap.appendChild(tag);
-		});
-		section.appendChild(wrap);
+	if (data.supportsTools === false) {
+		section.appendChild(ctxEl("div", "ctx-disabled", "MCP tools disabled \u2014 model doesn't support tool calling"));
 	} else {
-		section.appendChild(ctxEl("div", "ctx-empty", "No MCP tools running"));
+		var running = servers.filter((s) => s.state === "running");
+		if (running.length > 0) {
+			var wrap = ctxEl("div", "");
+			wrap.className = "ctx-tool-wrap";
+			running.forEach((s) => {
+				var tag = ctxEl("span", "ctx-tag");
+				var dot = ctxEl("span", "ctx-tag-dot");
+				dot.style.background = "var(--ok)";
+				tag.appendChild(dot);
+				tag.appendChild(document.createTextNode(s.name));
+				tag.title = `${s.tool_count} tool${s.tool_count !== 1 ? "s" : ""} — ${s.state}`;
+				wrap.appendChild(tag);
+			});
+			section.appendChild(wrap);
+		} else {
+			section.appendChild(ctxEl("div", "ctx-empty", "No MCP tools running"));
+		}
 	}
 	card.appendChild(section);
 }
@@ -337,6 +351,42 @@ function renderContextCard(data) {
 	header.appendChild(svg);
 	header.appendChild(ctxEl("span", "ctx-header-title", "Context"));
 	card.appendChild(header);
+
+	// Show warning if tools are disabled
+	if (data.supportsTools === false) {
+		var warning = ctxEl("div", "ctx-warning");
+		var warnSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		warnSvg.setAttribute("width", "16");
+		warnSvg.setAttribute("height", "16");
+		warnSvg.setAttribute("viewBox", "0 0 24 24");
+		warnSvg.setAttribute("fill", "none");
+		warnSvg.setAttribute("stroke", "currentColor");
+		warnSvg.setAttribute("stroke-width", "2");
+		warnSvg.setAttribute("stroke-linecap", "round");
+		warnSvg.setAttribute("stroke-linejoin", "round");
+		var tri = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		tri.setAttribute("d", "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z");
+		var line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line1.setAttribute("x1", "12");
+		line1.setAttribute("y1", "9");
+		line1.setAttribute("x2", "12");
+		line1.setAttribute("y2", "13");
+		var line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line2.setAttribute("x1", "12");
+		line2.setAttribute("y1", "17");
+		line2.setAttribute("x2", "12.01");
+		line2.setAttribute("y2", "17");
+		warnSvg.appendChild(tri);
+		warnSvg.appendChild(line1);
+		warnSvg.appendChild(line2);
+		warning.appendChild(warnSvg);
+		warning.appendChild(
+			document.createTextNode(
+				"Tools disabled \u2014 the current model doesn't support tool calling. Running in chat-only mode.",
+			),
+		);
+		card.appendChild(warning);
+	}
 
 	renderContextSessionSection(card, data);
 	renderContextProjectSection(card, data);
@@ -401,6 +451,24 @@ export function renderCompactCard(data) {
 	afterSection.appendChild(ctxRow("Messages", "1 (summary)"));
 	afterSection.appendChild(ctxRow("Status", "Conversation history replaced with a summary"));
 	card.appendChild(afterSection);
+
+	S.chatMsgBox.appendChild(card);
+	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+}
+
+// ── Model change notice ──────────────────────────────────
+export function showModelNotice(model) {
+	if (!S.chatMsgBox) return;
+	if (model.supportsTools !== false) return; // Only show for models without tool support
+
+	slashInjectStyles();
+
+	var tpl = document.getElementById("tpl-model-notice");
+	if (!tpl) return;
+
+	var card = tpl.content.cloneNode(true).firstElementChild;
+	card.querySelector("[data-model-name]").textContent = model.displayName || model.id;
+	card.querySelector("[data-provider]").textContent = model.provider || "local";
 
 	S.chatMsgBox.appendChild(card);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;

@@ -61,12 +61,16 @@ uuid                  = { workspace = true }
 webauthn-rs           = { features = ["danger-allow-state-serialisation"], version = "0.5" }
 webauthn-rs-proto     = "0.5"
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
-openssl = { workspace = true }
+openssl     = { workspace = true }
+urlencoding = "2.1.3"
 
 [features]
-default          = ["file-watcher", "metrics", "prometheus", "tailscale", "tls", "voice", "web-ui"]
+default          = ["file-watcher", "local-llm", "metrics", "prometheus", "tailscale", "tls", "voice", "web-ui"]
 file-watcher     = ["moltis-memory/file-watcher"]
 local-embeddings = ["moltis-memory/local-embeddings"]
+local-llm        = ["moltis-agents/local-llm"]
+local-llm-cuda   = ["moltis-agents/local-llm-cuda"]
+local-llm-metal  = ["moltis-agents/local-llm-metal"]
 metrics          = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 prometheus       = ["metrics", "moltis-metrics/prometheus"]
 tailscale        = []

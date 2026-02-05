@@ -59,7 +59,8 @@
   background: var(--bg-hover);
 }
 
-.provider-item.configured { opacity: 0.6; }
+/* Configured providers are NOT grayed out - users can add multiple */
+.badge-row { display: flex; gap: 6px; align-items: center; }
 
 .provider-item-name {
   color: var(--text);

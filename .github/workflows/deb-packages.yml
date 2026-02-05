@@ -41,6 +41,7 @@ jobs:
     name: Build .deb (${{ matrix.arch }})
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -55,6 +56,9 @@ jobs:
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cross-compilation tools
         if: matrix.arch == 'arm64'
@@ -74,17 +78,33 @@ jobs:
           BUILD_TARGET: ${{ matrix.target }}
         run: cargo deb -p moltis-cli --no-build --target "$BUILD_TARGET"
 
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: '*.deb'
+          working-directory: target/${{ matrix.target }}/debian
+
       - name: Upload .deb artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.deb
-          path: target/${{ matrix.target }}/debian/*.deb
+          path: |
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/debian/*.sha256
+            target/${{ matrix.target }}/debian/*.sha512
+            target/${{ matrix.target }}/debian/*.sig
+            target/${{ matrix.target }}/debian/*.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: target/${{ matrix.target }}/debian/*.deb
+          files: |
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/debian/*.sha256
+            target/${{ matrix.target }}/debian/*.sha512
+            target/${{ matrix.target }}/debian/*.sig
+            target/${{ matrix.target }}/debian/*.crt
 
   build-rpm:
     needs: zizmor
@@ -100,6 +120,7 @@ jobs:
     name: Build .rpm (${{ matrix.arch }})
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -114,6 +135,9 @@ jobs:
 
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cross-compilation tools
         if: matrix.arch == 'aarch64'
@@ -144,17 +168,33 @@ jobs:
           BUILD_TARGET: ${{ matrix.target }}
         run: cargo generate-rpm -p crates/cli --target "$BUILD_TARGET"
 
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: '*.rpm'
+          working-directory: target/${{ matrix.target }}/generate-rpm
+
       - name: Upload .rpm artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.rpm
-          path: target/${{ matrix.target }}/generate-rpm/*.rpm
+          path: |
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+            target/${{ matrix.target }}/generate-rpm/*.sha256
+            target/${{ matrix.target }}/generate-rpm/*.sha512
+            target/${{ matrix.target }}/generate-rpm/*.sig
+            target/${{ matrix.target }}/generate-rpm/*.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: target/${{ matrix.target }}/generate-rpm/*.rpm
+          files: |
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+            target/${{ matrix.target }}/generate-rpm/*.sha256
+            target/${{ matrix.target }}/generate-rpm/*.sha512
+            target/${{ matrix.target }}/generate-rpm/*.sig
+            target/${{ matrix.target }}/generate-rpm/*.crt
 
   build-arch:
     needs: zizmor
@@ -170,6 +210,7 @@ jobs:
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -184,6 +225,9 @@ jobs:
 
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y fakeroot zstd
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cross-compilation tools
         if: matrix.arch == 'aarch64'
@@ -226,17 +270,32 @@ jobs:
           cd "$PKG_DIR"
           fakeroot -- tar --zstd -cf "../moltis-${VERSION}-1-${MATRIX_ARCH}.pkg.tar.zst" .PKGINFO usr/
 
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: moltis-${{ steps.version.outputs.version }}-1-${{ matrix.arch }}.pkg.tar.zst
+
       - name: Upload .pkg.tar.zst artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.pkg.tar.zst
-          path: "*.pkg.tar.zst"
+          path: |
+            *.pkg.tar.zst
+            *.pkg.tar.zst.sha256
+            *.pkg.tar.zst.sha512
+            *.pkg.tar.zst.sig
+            *.pkg.tar.zst.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: "*.pkg.tar.zst"
+          files: |
+            *.pkg.tar.zst
+            *.pkg.tar.zst.sha256
+            *.pkg.tar.zst.sha512
+            *.pkg.tar.zst.sig
+            *.pkg.tar.zst.crt
 
   build-appimage:
     needs: zizmor
@@ -252,6 +311,7 @@ jobs:
     name: Build AppImage (${{ matrix.arch }})
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -263,6 +323,9 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cross-compilation tools
         if: matrix.arch == 'aarch64'
@@ -328,17 +391,32 @@ jobs:
           # Package - use --appimage-extract-and-run to avoid FUSE requirement in CI
           ARCH="$MATRIX_ARCH" ./appimagetool --appimage-extract-and-run "$APP_DIR" "moltis-${VERSION}-${MATRIX_ARCH}.AppImage"
 
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: moltis-${{ steps.version.outputs.version }}-${{ matrix.arch }}.AppImage
+
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.arch }}.AppImage
-          path: "*.AppImage"
+          path: |
+            *.AppImage
+            *.AppImage.sha256
+            *.AppImage.sha512
+            *.AppImage.sig
+            *.AppImage.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: "*.AppImage"
+          files: |
+            *.AppImage
+            *.AppImage.sha256
+            *.AppImage.sha512
+            *.AppImage.sig
+            *.AppImage.crt
 
   build-snap:
     needs: zizmor
@@ -346,26 +424,45 @@ jobs:
     name: Build Snap
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
       - uses: snapcore/action-build@b391f430cb2650fd359ed4d2cfe88b2c481800e0 # v1
         id: build-snap
+
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: ${{ steps.build-snap.outputs.snap }}
 
       - name: Upload Snap artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis.snap
-          path: ${{ steps.build-snap.outputs.snap }}
+          path: |
+            ${{ steps.build-snap.outputs.snap }}
+            ${{ steps.build-snap.outputs.snap }}.sha256
+            ${{ steps.build-snap.outputs.snap }}.sha512
+            ${{ steps.build-snap.outputs.snap }}.sig
+            ${{ steps.build-snap.outputs.snap }}.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: ${{ steps.build-snap.outputs.snap }}
+          files: |
+            ${{ steps.build-snap.outputs.snap }}
+            ${{ steps.build-snap.outputs.snap }}.sha256
+            ${{ steps.build-snap.outputs.snap }}.sha512
+            ${{ steps.build-snap.outputs.snap }}.sig
+            ${{ steps.build-snap.outputs.snap }}.crt
 
   build-homebrew-binaries:
     needs: zizmor
@@ -381,6 +478,7 @@ jobs:
     name: Build binary (${{ matrix.target }})
     permissions:
       contents: write
+      id-token: write # Required for Sigstore keyless signing
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -392,6 +490,9 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -420,14 +521,164 @@ jobs:
           cp "target/$BUILD_TARGET/release/moltis" moltis
           tar czf "moltis-${VERSION}-${BUILD_TARGET}.tar.gz" moltis
 
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: moltis-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: moltis-${{ matrix.target }}
-          path: "*.tar.gz"
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.tar.gz.sha512
+            *.tar.gz.sig
+            *.tar.gz.crt
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
-          files: "*.tar.gz"
+          files: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.tar.gz.sha512
+            *.tar.gz.sig
+            *.tar.gz.crt
+
+  build-docker:
+    needs: zizmor
+    runs-on: ubuntu-latest
+    name: Build Docker (multi-arch)
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Required for Sigstore keyless signing
+      attestations: write # Required for provenance attestations
+
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Enable SBOM and provenance attestations
+          sbom: true
+          provenance: mode=max
+
+      - name: Sign container image with cosign (keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # Sign each tag with cosign using keyless signing (Sigstore)
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: Verify container signature
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}/*" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            "ghcr.io/${{ github.repository }}@${DIGEST}"
+
+  # Generate SBOM for the entire release
+  generate-sbom:
+    needs:
+      - build-deb
+      - build-rpm
+      - build-arch
+      - build-appimage
+      - build-snap
+      - build-homebrew-binaries
+      - build-docker
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Generate Release SBOM
+    permissions:
+      contents: write
+      id-token: write # Required for Sigstore keyless signing
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Install cargo-sbom
+        run: cargo install cargo-sbom
+
+      - name: Generate SBOM (CycloneDX and SPDX)
+        run: |
+          cargo sbom --output-format cyclonedx_json_1_4 > moltis-sbom.cdx.json
+          cargo sbom --output-format spdx_json_2_3 > moltis-sbom.spdx.json
+
+      - name: Sign SBOMs with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: moltis-sbom.cdx.json moltis-sbom.spdx.json
+          skip-sha512: 'true'
+
+      - name: Upload SBOM to release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        with:
+          files: |
+            moltis-sbom.cdx.json
+            moltis-sbom.cdx.json.sha256
+            moltis-sbom.cdx.json.sig
+            moltis-sbom.cdx.json.crt
+            moltis-sbom.spdx.json
+            moltis-sbom.spdx.json.sha256
+            moltis-sbom.spdx.json.sig
+            moltis-sbom.spdx.json.crt

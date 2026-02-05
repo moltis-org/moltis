@@ -1196,6 +1196,10 @@ impl UpdateService for NoopUpdateService {
 #[async_trait]
 pub trait ModelService: Send + Sync {
     async fn list(&self) -> ServiceResult;
+    /// Disable a model (hide it from the list).
+    async fn disable(&self, params: Value) -> ServiceResult;
+    /// Enable a model (un-hide it).
+    async fn enable(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopModelService;
@@ -1204,6 +1208,14 @@ pub struct NoopModelService;
 impl ModelService for NoopModelService {
     async fn list(&self) -> ServiceResult {
         Ok(serde_json::json!([]))
+    }
+
+    async fn disable(&self, _params: Value) -> ServiceResult {
+        Err("model service not configured".into())
+    }
+
+    async fn enable(&self, _params: Value) -> ServiceResult {
+        Err("model service not configured".into())
     }
 }
 
@@ -1299,6 +1311,60 @@ pub trait ProviderSetupService: Send + Sync {
     async fn oauth_start(&self, params: Value) -> ServiceResult;
     async fn oauth_status(&self, params: Value) -> ServiceResult;
     async fn remove_key(&self, params: Value) -> ServiceResult;
+}
+
+// ── Local LLM ───────────────────────────────────────────────────────────────
+
+/// Service for managing local LLM provider (GGUF/MLX).
+#[async_trait]
+pub trait LocalLlmService: Send + Sync {
+    /// Get system info (RAM, GPU, memory tier).
+    async fn system_info(&self) -> ServiceResult;
+    /// Get available models with recommendations based on memory tier.
+    async fn models(&self) -> ServiceResult;
+    /// Configure and load a model by ID (from registry).
+    async fn configure(&self, params: Value) -> ServiceResult;
+    /// Get current provider status (loading/loaded/error).
+    async fn status(&self) -> ServiceResult;
+    /// Search HuggingFace for models by query and backend.
+    async fn search_hf(&self, params: Value) -> ServiceResult;
+    /// Configure a custom model from HuggingFace repo URL.
+    async fn configure_custom(&self, params: Value) -> ServiceResult;
+    /// Remove a configured model by ID.
+    async fn remove_model(&self, params: Value) -> ServiceResult;
+}
+
+pub struct NoopLocalLlmService;
+
+#[async_trait]
+impl LocalLlmService for NoopLocalLlmService {
+    async fn system_info(&self) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn models(&self) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn configure(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn status(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "status": "unavailable" }))
+    }
+
+    async fn search_hf(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn configure_custom(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn remove_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
 }
 
 pub struct NoopProviderSetupService;
@@ -1398,6 +1464,7 @@ pub struct GatewayServices {
     pub logs: Arc<dyn LogsService>,
     pub provider_setup: Arc<dyn ProviderSetupService>,
     pub project: Arc<dyn ProjectService>,
+    pub local_llm: Arc<dyn LocalLlmService>,
     /// Optional channel outbound for sending replies back to channels.
     channel_outbound: Option<Arc<dyn ChannelOutbound>>,
     /// Optional session metadata for cross-service access (e.g. channel binding).
@@ -1461,10 +1528,16 @@ impl GatewayServices {
             logs: Arc::new(NoopLogsService),
             provider_setup: Arc::new(NoopProviderSetupService),
             project: Arc::new(NoopProjectService),
+            local_llm: Arc::new(NoopLocalLlmService),
             channel_outbound: None,
             session_metadata: None,
             session_store: None,
         }
+    }
+
+    pub fn with_local_llm(mut self, local_llm: Arc<dyn LocalLlmService>) -> Self {
+        self.local_llm = local_llm;
+        self
     }
 
     pub fn with_onboarding(mut self, onboarding: Arc<dyn OnboardingService>) -> Self {
