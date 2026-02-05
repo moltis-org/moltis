@@ -1,0 +1,25 @@
+[package]
+edition.workspace = true
+name              = "moltis-voice"
+version.workspace = true
+
+[dependencies]
+anyhow      = { workspace = true }
+async-trait = "0.1"
+base64      = { workspace = true }
+bytes       = { workspace = true }
+futures     = { workspace = true }
+reqwest     = { workspace = true, features = ["multipart"] }
+secrecy     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

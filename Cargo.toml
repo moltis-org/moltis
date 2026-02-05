@@ -23,6 +23,7 @@ members = [
   "crates/skills",
   "crates/telegram",
   "crates/tools",
+  "crates/voice",
 ]
 resolver = "2"
 
@@ -74,6 +75,7 @@ toml              = "0.8"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
 base64       = "0.22"
+bytes        = "1"
 fd-lock      = "4"
 genai        = "0.5"
 open         = "5.3"
@@ -113,3 +115,4 @@ moltis-sessions   = { path = "crates/sessions" }
 moltis-skills     = { path = "crates/skills" }
 moltis-telegram   = { path = "crates/telegram" }
 moltis-tools      = { path = "crates/tools" }
+moltis-voice      = { path = "crates/voice" }
