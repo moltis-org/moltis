@@ -287,6 +287,12 @@ pub struct BrowserConfig {
     /// Additional Chrome arguments.
     #[serde(default)]
     pub chrome_args: Vec<String>,
+    /// Run browser in a container for isolation.
+    #[serde(default)]
+    pub sandbox: bool,
+    /// Allowed domains for navigation (empty = all allowed).
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
 }
 
 impl Default for BrowserConfig {
@@ -302,6 +308,8 @@ impl Default for BrowserConfig {
             navigation_timeout_ms: 30000,
             user_agent: None,
             chrome_args: Vec::new(),
+            sandbox: false,
+            allowed_domains: Vec::new(),
         }
     }
 }
@@ -319,6 +327,83 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             navigation_timeout_ms: cfg.navigation_timeout_ms,
             user_agent: cfg.user_agent.clone(),
             chrome_args: cfg.chrome_args.clone(),
+            sandbox: cfg.sandbox,
+            allowed_domains: cfg.allowed_domains.clone(),
         }
+    }
+}
+
+/// Check if a URL is allowed based on the allowed domains list.
+/// Returns true if allowed, false if blocked.
+pub fn is_domain_allowed(url: &str, allowed_domains: &[String]) -> bool {
+    if allowed_domains.is_empty() {
+        return true; // No restrictions
+    }
+
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false; // Invalid URL, block it
+    };
+
+    let Some(host) = parsed.host_str() else {
+        return false; // No host, block it
+    };
+
+    for pattern in allowed_domains {
+        if pattern.starts_with("*.") {
+            // Wildcard: *.example.com matches foo.example.com, bar.example.com
+            let suffix = &pattern[1..]; // .example.com
+            if host.ends_with(suffix) || host == &pattern[2..] {
+                return true;
+            }
+        } else if host == pattern {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_domain_allowed_empty_list() {
+        // Empty allowed_domains means all domains are allowed
+        assert!(is_domain_allowed("https://example.com", &[]));
+        assert!(is_domain_allowed("https://evil.com", &[]));
+    }
+
+    #[test]
+    fn test_domain_allowed_exact_match() {
+        let allowed = vec!["example.com".to_string()];
+        assert!(is_domain_allowed("https://example.com/path", &allowed));
+        assert!(!is_domain_allowed("https://other.com", &allowed));
+        assert!(!is_domain_allowed("https://sub.example.com", &allowed));
+    }
+
+    #[test]
+    fn test_domain_allowed_wildcard() {
+        let allowed = vec!["*.example.com".to_string()];
+        assert!(is_domain_allowed("https://sub.example.com", &allowed));
+        assert!(is_domain_allowed("https://foo.bar.example.com", &allowed));
+        // Wildcard also matches the base domain
+        assert!(is_domain_allowed("https://example.com", &allowed));
+        assert!(!is_domain_allowed("https://notexample.com", &allowed));
+    }
+
+    #[test]
+    fn test_domain_allowed_multiple() {
+        let allowed = vec!["example.com".to_string(), "*.trusted.org".to_string()];
+        assert!(is_domain_allowed("https://example.com", &allowed));
+        assert!(is_domain_allowed("https://sub.trusted.org", &allowed));
+        assert!(!is_domain_allowed("https://evil.com", &allowed));
+    }
+
+    #[test]
+    fn test_domain_allowed_invalid_url() {
+        let allowed = vec!["example.com".to_string()];
+        assert!(!is_domain_allowed("not-a-url", &allowed));
+        assert!(!is_domain_allowed("", &allowed));
     }
 }

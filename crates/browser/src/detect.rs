@@ -176,19 +176,26 @@ fn install_instructions() -> String {
     )
 }
 
-/// Check browser availability and log a warning if not found.
+/// Check browser availability and warn if not found.
 ///
-/// Call this at startup when browser is enabled.
+/// Call this at startup when browser is enabled. Prints a visible warning
+/// to stderr and logs via tracing for log file capture.
 pub fn check_and_warn(custom_path: Option<&str>) -> bool {
     let result = detect_browser(custom_path);
 
     if !result.found {
+        // Print to stderr for immediate visibility to users
+        eprintln!("\n⚠️  Browser tool enabled but Chrome/Chromium not found!");
+        eprintln!("{}", result.install_hint);
+        eprintln!();
+
+        // Also log for log file capture
         tracing::warn!(
             "Browser tool enabled but Chrome/Chromium not found.\n{}",
             result.install_hint
         );
     } else if let Some(ref path) = result.path {
-        tracing::debug!(path = %path.display(), "Browser detected");
+        tracing::info!(path = %path.display(), "Browser detected");
     }
 
     result.found

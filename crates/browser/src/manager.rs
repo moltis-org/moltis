@@ -49,6 +49,20 @@ impl Default for BrowserManager {
 impl BrowserManager {
     /// Create a new browser manager with the given configuration.
     pub fn new(config: BrowserConfig) -> Self {
+        // Warn if sandbox mode is enabled (not yet implemented)
+        if config.sandbox {
+            tracing::warn!(
+                "Browser sandbox mode is enabled but not yet implemented. \
+                 The browser will run on the host. Consider using allowed_domains \
+                 to restrict navigation."
+            );
+            eprintln!(
+                "\n⚠️  Browser sandbox mode is enabled but not yet implemented.\n\
+                 The browser will run on the host. Consider using allowed_domains\n\
+                 to restrict navigation for better security.\n"
+            );
+        }
+
         Self {
             pool: Arc::new(BrowserPool::new(config.clone())),
             config,
@@ -158,6 +172,14 @@ impl BrowserManager {
         session_id: Option<&str>,
         url: &str,
     ) -> Result<(String, BrowserResponse), BrowserError> {
+        // Check if the domain is allowed
+        if !crate::types::is_domain_allowed(url, &self.config.allowed_domains) {
+            return Err(BrowserError::NavigationFailed(format!(
+                "domain not in allowed list. Allowed domains: {:?}",
+                self.config.allowed_domains
+            )));
+        }
+
         let sid = self.pool.get_or_create(session_id).await?;
         let page = self.pool.get_page(&sid).await?;
 

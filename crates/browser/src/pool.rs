@@ -194,6 +194,15 @@ impl BrowserPool {
 
     /// Launch a new browser instance.
     async fn launch_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
+        // Check if Chrome/Chromium is available before attempting to launch
+        let detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
+        if !detection.found {
+            return Err(BrowserError::LaunchFailed(format!(
+                "Chrome/Chromium not found. {}",
+                detection.install_hint
+            )));
+        }
+
         let mut builder = CdpBrowserConfig::builder();
 
         // with_head() shows the browser window (non-headless mode)

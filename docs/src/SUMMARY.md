@@ -19,6 +19,7 @@
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
+- [Browser Automation](browser-automation.md)
 
 ---
 

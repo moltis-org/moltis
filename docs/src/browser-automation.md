@@ -42,8 +42,8 @@ faster and more lightweight.
 
 ## Configuration
 
-Browser automation is **disabled by default** and requires explicit opt-in.
-Add to your `moltis.toml`:
+Browser automation is **enabled by default**. The browser tool runs Chrome on
+the host machine (not inside the sandbox). To customize, add to your `moltis.toml`:
 
 ```toml
 [tools.browser]
@@ -57,7 +57,28 @@ navigation_timeout_ms = 30000  # Page load timeout
 # chrome_path = "/path/to/chrome"  # Optional: custom Chrome path
 # user_agent = "Custom UA"         # Optional: custom user agent
 # chrome_args = ["--disable-extensions"]  # Optional: extra args
+
+# Security options (see Security section below)
+# sandbox = true            # Run browser in container (not yet implemented)
+# allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 ```
+
+### Domain Restrictions
+
+For improved security, you can restrict which domains the browser can navigate to:
+
+```toml
+[tools.browser]
+allowed_domains = [
+    "docs.example.com",    # Exact match
+    "*.github.com",        # Wildcard: matches any subdomain
+    "localhost",           # Allow localhost
+]
+```
+
+When `allowed_domains` is set, any navigation to a domain not in the list will
+be blocked with an error. Wildcards (`*.domain.com`) match any subdomain and
+also the base domain itself.
 
 ## Tool Usage
 
@@ -197,10 +218,50 @@ When the `metrics` feature is enabled, the browser module records:
 | `moltis_browser_navigation_duration_seconds` | Page load time histogram |
 | `moltis_browser_errors_total` | Errors by type |
 
+## Browser Tool vs Sandbox
+
+The `browser` tool runs Chrome **on the host machine**, not inside the sandbox.
+This is intentional:
+
+- The browser tool uses Chrome DevTools Protocol (CDP) for real-time interaction
+- CDP requires a persistent connection to the browser process
+- Running inside the sandbox would add latency and complexity
+
+However, if agents need to run browser automation **scripts** (Puppeteer,
+Playwright, Selenium) inside the sandbox, Chromium is included in the default
+sandbox packages. To run a script:
+
+```bash
+# Inside sandbox (via exec tool)
+chromium --headless --no-sandbox --dump-dom https://example.com
+```
+
+Or use Puppeteer/Playwright in a Node.js script executed via the `exec` tool.
+
 ## Security Considerations
 
-1. **Sandboxing**: Browser runs with `--no-sandbox` for container compatibility.
-   For production, consider running in a sandboxed container.
+### Prompt Injection Risk
+
+**Important**: Web pages can contain content designed to manipulate LLM behavior
+(prompt injection). When the browser tool returns page content to the LLM,
+malicious sites could attempt to inject instructions.
+
+**Mitigations**:
+
+1. **Domain restrictions**: Use `allowed_domains` to limit navigation to trusted
+   sites only. This is the most effective mitigation.
+
+2. **Review returned content**: The snapshot action returns element text which
+   could contain injected prompts. Be cautious with untrusted sites.
+
+3. **Sandbox mode** (planned): Future versions will support running the browser
+   in an isolated container. Set `sandbox = true` to enable when available.
+
+### Other Security Considerations
+
+1. **Host browser**: The browser tool runs Chrome on the host with `--no-sandbox`
+   for container compatibility. For additional isolation, consider running
+   Moltis itself in a container.
 
 2. **Resource limits**: Configure `max_instances` to prevent resource exhaustion.
 
@@ -209,6 +270,9 @@ When the `metrics` feature is enabled, the browser module records:
 
 4. **Network access**: The browser has full network access. Use firewall rules
    if you need to restrict outbound connections.
+
+5. **Sandbox scripts**: Browser scripts running in the sandbox (via exec tool)
+   inherit sandbox network restrictions (`no_network: true` by default).
 
 ## Troubleshooting
 

@@ -568,6 +568,16 @@ pub struct BrowserConfig {
     /// Additional Chrome arguments.
     #[serde(default)]
     pub chrome_args: Vec<String>,
+    /// Run browser in a container for isolation. Requires Docker.
+    /// When true, Chrome runs inside a container with network access but
+    /// filesystem isolation from the host.
+    #[serde(default)]
+    pub sandbox: bool,
+    /// Allowed domains for navigation. Empty list means all domains allowed.
+    /// When set, the browser will refuse to navigate to non-matching domains.
+    /// Supports wildcards: "*.example.com" matches subdomains.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
 }
 
 impl Default for BrowserConfig {
@@ -583,6 +593,8 @@ impl Default for BrowserConfig {
             navigation_timeout_ms: 30000,
             user_agent: None,
             chrome_args: Vec::new(),
+            sandbox: false,
+            allowed_domains: Vec::new(),
         }
     }
 }
@@ -710,6 +722,24 @@ fn default_sandbox_packages() -> Vec<String> {
         "patchelf",
         // Text processing & search
         "ripgrep",
+        // Browser automation (for browser tool)
+        "chromium",
+        "libxss1",
+        "libnss3",
+        "libnspr4",
+        "libasound2t64",
+        "libatk1.0-0t64",
+        "libatk-bridge2.0-0t64",
+        "libcups2t64",
+        "libdrm2",
+        "libgbm1",
+        "libgtk-3-0t64",
+        "libxcomposite1",
+        "libxdamage1",
+        "libxfixes3",
+        "libxrandr2",
+        "libxkbcommon0",
+        "fonts-liberation",
     ]
     .iter()
     .map(|s| (*s).to_string())

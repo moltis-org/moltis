@@ -147,6 +147,16 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             .route(
                 "/api/env/{id}",
                 axum::routing::delete(crate::env_routes::env_delete),
+            )
+            // Tools config routes
+            .route(
+                "/api/tools/config",
+                get(crate::tools_routes::tools_config_get)
+                    .post(crate::tools_routes::tools_config_save),
+            )
+            .route(
+                "/api/tools/config/validate",
+                axum::routing::post(crate::tools_routes::tools_config_validate),
             );
 
         // Add metrics API routes (protected).
