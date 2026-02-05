@@ -1,6 +1,9 @@
 /// Hybrid search: combine vector similarity and keyword/FTS results.
 use std::collections::HashMap;
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, memory as mem_metrics};
+
 use crate::{config::CitationMode, embeddings::EmbeddingProvider, store::MemoryStore};
 
 /// A search result with metadata.
@@ -53,6 +56,12 @@ pub async fn hybrid_search(
     vector_weight: f32,
     keyword_weight: f32,
 ) -> anyhow::Result<Vec<SearchResult>> {
+    #[cfg(feature = "metrics")]
+    let start = std::time::Instant::now();
+
+    #[cfg(feature = "metrics")]
+    counter!(mem_metrics::SEARCHES_TOTAL, labels::SEARCH_TYPE => "hybrid").increment(1);
+
     let query_embedding = embedder.embed(query).await?;
 
     let fetch_limit = limit * 3; // over-fetch for merging
@@ -77,6 +86,10 @@ pub async fn hybrid_search(
         }
     }
 
+    #[cfg(feature = "metrics")]
+    histogram!(mem_metrics::SEARCH_DURATION_SECONDS, labels::SEARCH_TYPE => "hybrid")
+        .record(start.elapsed().as_secs_f64());
+
     Ok(final_results)
 }
 
@@ -86,6 +99,12 @@ pub async fn keyword_only_search(
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<SearchResult>> {
+    #[cfg(feature = "metrics")]
+    let start = std::time::Instant::now();
+
+    #[cfg(feature = "metrics")]
+    counter!(mem_metrics::SEARCHES_TOTAL, labels::SEARCH_TYPE => "keyword").increment(1);
+
     let mut results = store.keyword_search(query, limit).await?;
 
     for result in &mut results {
@@ -95,6 +114,10 @@ pub async fn keyword_only_search(
             result.text = chunk.text;
         }
     }
+
+    #[cfg(feature = "metrics")]
+    histogram!(mem_metrics::SEARCH_DURATION_SECONDS, labels::SEARCH_TYPE => "keyword")
+        .record(start.elapsed().as_secs_f64());
 
     Ok(results)
 }

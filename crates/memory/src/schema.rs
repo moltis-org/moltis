@@ -25,10 +25,13 @@ pub struct ChunkRow {
     pub updated_at: String,
 }
 
-/// Run database migrations.
+/// Run database migrations for the memory system.
+///
+/// This creates the `files`, `chunks`, `embedding_cache` tables and the
+/// `chunks_fts` full-text search virtual table. Memory uses its own database
+/// (`memory.db`) separate from the main `moltis.db`.
 pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
-    let sql = include_str!("../migrations/001_init.sql");
-    sqlx::raw_sql(sql).execute(pool).await?;
+    sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }
 

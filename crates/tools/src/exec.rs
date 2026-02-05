@@ -1,11 +1,19 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
+
 use {
     anyhow::{Result, bail},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     tokio::process::Command,
     tracing::{debug, info, warn},
+};
+
+#[cfg(feature = "metrics")]
+use moltis_metrics::{
+    counter, gauge, histogram, labels, sandbox as sandbox_metrics, tools as tools_metrics,
 };
 
 use moltis_agents::tool_registry::AgentTool;
@@ -221,6 +229,11 @@ impl AgentTool for ExecTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+        #[cfg(feature = "metrics")]
+        let start = Instant::now();
+        #[cfg(feature = "metrics")]
+        gauge!(tools_metrics::EXECUTIONS_IN_FLIGHT, labels::TOOL => "exec").increment(1.0);
+
         let command = params
             .get("command")
             .and_then(|v| v.as_str())
@@ -356,6 +369,52 @@ impl AgentTool for ExecTool {
             stderr_len = result.stderr.len(),
             "exec tool completed"
         );
+
+        // Record metrics
+        #[cfg(feature = "metrics")]
+        {
+            let duration = start.elapsed().as_secs_f64();
+            let success = result.exit_code == 0;
+
+            counter!(
+                tools_metrics::EXECUTIONS_TOTAL,
+                labels::TOOL => "exec".to_string(),
+                labels::SUCCESS => success.to_string()
+            )
+            .increment(1);
+
+            histogram!(
+                tools_metrics::EXECUTION_DURATION_SECONDS,
+                labels::TOOL => "exec".to_string()
+            )
+            .record(duration);
+
+            if !success {
+                counter!(
+                    tools_metrics::EXECUTION_ERRORS_TOTAL,
+                    labels::TOOL => "exec".to_string()
+                )
+                .increment(1);
+            }
+
+            // Track sandbox-specific metrics
+            if is_sandboxed {
+                counter!(
+                    sandbox_metrics::COMMAND_EXECUTIONS_TOTAL,
+                    labels::SUCCESS => success.to_string()
+                )
+                .increment(1);
+
+                histogram!(sandbox_metrics::COMMAND_DURATION_SECONDS).record(duration);
+
+                if !success {
+                    counter!(sandbox_metrics::COMMAND_ERRORS_TOTAL).increment(1);
+                }
+            }
+
+            gauge!(tools_metrics::EXECUTIONS_IN_FLIGHT, labels::TOOL => "exec").decrement(1.0);
+        }
+
         Ok(serde_json::to_value(&result)?)
     }
 }

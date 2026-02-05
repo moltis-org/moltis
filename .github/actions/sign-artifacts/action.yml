@@ -1,0 +1,53 @@
+name: Sign with Sigstore
+description: Generate checksums and sign files with Sigstore keyless signing
+
+inputs:
+  files:
+    description: Glob pattern or space-separated list of files to sign
+    required: true
+  working-directory:
+    description: Directory containing files (defaults to current directory)
+    required: false
+    default: '.'
+  skip-sha512:
+    description: Skip SHA512 checksum generation (only generate SHA256)
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FILES_PATTERN: ${{ inputs.files }}
+        SKIP_SHA512: ${{ inputs.skip-sha512 }}
+      run: |
+        # Function to generate checksum (handles macOS vs Linux)
+        checksum256() {
+          sha256sum "$1" > "${1}.sha256" 2>/dev/null || shasum -a 256 "$1" > "${1}.sha256"
+        }
+        checksum512() {
+          sha512sum "$1" > "${1}.sha512" 2>/dev/null || shasum -a 512 "$1" > "${1}.sha512"
+        }
+
+        # Process each file matching the pattern
+        for file in $FILES_PATTERN; do
+          if [ ! -f "$file" ]; then
+            echo "Warning: No files matching '$file'"
+            continue
+          fi
+          echo "Signing: $file"
+
+          # Generate checksums
+          checksum256 "$file"
+          if [ "$SKIP_SHA512" != "true" ]; then
+            checksum512 "$file"
+          fi
+
+          # Sign with Sigstore (keyless)
+          cosign sign-blob --yes \
+            --output-signature "${file}.sig" \
+            --output-certificate "${file}.crt" \
+            "$file"
+        done

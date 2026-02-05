@@ -4,11 +4,16 @@ name              = "moltis-canvas"
 version.workspace = true
 
 [dependencies]
-anyhow        = { workspace = true }
-axum          = { workspace = true }
-moltis-common = { workspace = true }
-tokio         = { workspace = true }
-tracing       = { workspace = true }
+anyhow         = { workspace = true }
+axum           = { workspace = true }
+moltis-common  = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

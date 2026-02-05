@@ -223,41 +223,31 @@ impl SqliteSessionMetadata {
         Self { pool }
     }
 
-    /// Create the `sessions` table if it doesn't exist.
+    /// Initialize the sessions table schema.
+    ///
+    /// **Deprecated**: Schema is now managed by sqlx migrations in the gateway crate.
+    /// This method is retained for tests that use in-memory databases.
+    #[doc(hidden)]
     pub async fn init(pool: &sqlx::SqlitePool) -> Result<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS sessions (
-                key             TEXT PRIMARY KEY,
-                id              TEXT NOT NULL,
+                key             TEXT    PRIMARY KEY,
+                id              TEXT    NOT NULL,
                 label           TEXT,
                 model           TEXT,
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
                 message_count   INTEGER NOT NULL DEFAULT 0,
-                project_id      TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                project_id      TEXT    REFERENCES projects(id) ON DELETE SET NULL,
                 archived        INTEGER NOT NULL DEFAULT 0,
                 worktree_branch TEXT,
-                sandbox_enabled INTEGER
+                sandbox_enabled INTEGER,
+                sandbox_image   TEXT,
+                channel_binding TEXT
             )"#,
         )
         .execute(pool)
         .await?;
-
-        // Migrations for columns added after initial release.
-        sqlx::query("ALTER TABLE sessions ADD COLUMN sandbox_enabled INTEGER")
-            .execute(pool)
-            .await
-            .ok(); // ignore if column already exists
-
-        sqlx::query("ALTER TABLE sessions ADD COLUMN channel_binding TEXT")
-            .execute(pool)
-            .await
-            .ok(); // ignore if column already exists
-
-        sqlx::query("ALTER TABLE sessions ADD COLUMN sandbox_image TEXT")
-            .execute(pool)
-            .await
-            .ok(); // ignore if column already exists
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
             .execute(pool)
@@ -266,10 +256,10 @@ impl SqliteSessionMetadata {
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS channel_sessions (
-                channel_type TEXT NOT NULL,
-                account_id   TEXT NOT NULL,
-                chat_id      TEXT NOT NULL,
-                session_key  TEXT NOT NULL,
+                channel_type TEXT    NOT NULL,
+                account_id   TEXT    NOT NULL,
+                chat_id      TEXT    NOT NULL,
+                session_key  TEXT    NOT NULL,
                 updated_at   INTEGER NOT NULL,
                 PRIMARY KEY (channel_type, account_id, chat_id)
             )"#,

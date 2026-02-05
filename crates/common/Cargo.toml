@@ -4,15 +4,20 @@ name              = "moltis-common"
 version.workspace = true
 
 [dependencies]
-anyhow      = { workspace = true }
-async-trait = "0.1"
-futures     = { workspace = true }
-serde       = { workspace = true }
-serde_json  = { workspace = true }
-thiserror   = { workspace = true }
-tokio       = { workspace = true }
-tracing     = { workspace = true }
-uuid        = { workspace = true }
+anyhow         = { workspace = true }
+async-trait    = "0.1"
+futures        = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

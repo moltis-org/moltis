@@ -3,16 +3,21 @@ edition.workspace = true
 name              = "moltis-mcp"
 version.workspace = true
 
+[features]
+default = ["metrics"]
+metrics = ["dep:moltis-metrics"]
+
 [dependencies]
-anyhow      = { workspace = true }
-async-trait = "0.1"
-futures     = { workspace = true }
-reqwest     = { workspace = true }
-serde       = { workspace = true }
-serde_json  = { workspace = true }
-tokio       = { workspace = true }
-tracing     = { workspace = true }
-uuid        = { workspace = true }
+anyhow         = { workspace = true }
+async-trait    = "0.1"
+futures        = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+reqwest        = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { workspace = true }
 
 [dev-dependencies]
 tempfile   = "3"

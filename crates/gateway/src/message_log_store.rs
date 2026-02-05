@@ -14,20 +14,25 @@ impl SqliteMessageLog {
         Self { pool }
     }
 
+    /// Initialize the message_log table schema.
+    ///
+    /// **Deprecated**: Schema is now managed by sqlx migrations.
+    /// This method is retained for tests that use in-memory databases.
+    #[doc(hidden)]
     pub async fn init(pool: &SqlitePool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS message_log (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                account_id      TEXT    NOT NULL,
-                channel_type    TEXT    NOT NULL,
-                peer_id         TEXT    NOT NULL,
-                username        TEXT,
-                sender_name     TEXT,
-                chat_id         TEXT    NOT NULL,
-                chat_type       TEXT    NOT NULL,
-                body            TEXT    NOT NULL,
-                access_granted  INTEGER NOT NULL DEFAULT 0,
-                created_at      INTEGER NOT NULL
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id     TEXT    NOT NULL,
+                channel_type   TEXT    NOT NULL,
+                peer_id        TEXT    NOT NULL,
+                username       TEXT,
+                sender_name    TEXT,
+                chat_id        TEXT    NOT NULL,
+                chat_type      TEXT    NOT NULL,
+                body           TEXT    NOT NULL,
+                access_granted INTEGER NOT NULL DEFAULT 0,
+                created_at     INTEGER NOT NULL
             )",
         )
         .execute(pool)

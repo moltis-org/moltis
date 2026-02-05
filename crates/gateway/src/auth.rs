@@ -102,13 +102,20 @@ impl CredentialStore {
         Ok(store)
     }
 
+    /// Initialize auth tables.
+    ///
+    /// **Note**: Schema is now managed by sqlx migrations. This method is a no-op
+    /// when running with the gateway (migrations have already run). It's retained
+    /// for standalone tests that use in-memory databases.
     async fn init(&self) -> anyhow::Result<()> {
+        // Tables are created by migrations in production. For tests using
+        // in-memory databases, create them here.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS auth_password (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                id            INTEGER PRIMARY KEY CHECK (id = 1),
+                password_hash TEXT    NOT NULL,
+                created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
             )",
         )
         .execute(&self.pool)
@@ -116,11 +123,11 @@ impl CredentialStore {
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS passkeys (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                credential_id BLOB NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                passkey_data BLOB NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                credential_id BLOB    NOT NULL UNIQUE,
+                name          TEXT    NOT NULL,
+                passkey_data  BLOB    NOT NULL,
+                created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
             )",
         )
         .execute(&self.pool)
@@ -128,11 +135,11 @@ impl CredentialStore {
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS api_keys (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                label TEXT NOT NULL,
-                key_hash TEXT NOT NULL,
-                key_prefix TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                label      TEXT    NOT NULL,
+                key_hash   TEXT    NOT NULL,
+                key_prefix TEXT    NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
                 revoked_at TEXT
             )",
         )
@@ -141,7 +148,7 @@ impl CredentialStore {
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS auth_sessions (
-                token TEXT PRIMARY KEY,
+                token      TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 expires_at TEXT NOT NULL
             )",
@@ -151,11 +158,11 @@ impl CredentialStore {
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS env_variables (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL UNIQUE,
-                value TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                key        TEXT    NOT NULL UNIQUE,
+                value      TEXT    NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
             )",
         )
         .execute(&self.pool)

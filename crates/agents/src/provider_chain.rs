@@ -16,6 +16,9 @@ use std::{
 
 use {async_trait::async_trait, tokio_stream::Stream, tracing::warn};
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
+
 use crate::model::{CompletionResponse, LlmProvider, StreamEvent};
 
 /// How a provider error should be handled.
@@ -231,20 +234,72 @@ impl LlmProvider for ProviderChain {
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let mut errors = Vec::new();
+        #[cfg(feature = "metrics")]
+        let start = Instant::now();
 
         for entry in &self.chain {
             if entry.state.is_tripped() {
                 continue;
             }
 
+            let provider_name = entry.provider.name().to_string();
+            let model_id = entry.provider.id().to_string();
+
             match entry.provider.complete(messages, tools).await {
                 Ok(resp) => {
                     entry.state.record_success();
+
+                    // Record metrics on successful completion
+                    #[cfg(feature = "metrics")]
+                    {
+                        let duration = start.elapsed().as_secs_f64();
+
+                        counter!(
+                            llm_metrics::COMPLETIONS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(1);
+
+                        counter!(
+                            llm_metrics::INPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(resp.usage.input_tokens));
+
+                        counter!(
+                            llm_metrics::OUTPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(resp.usage.output_tokens));
+
+                        histogram!(
+                            llm_metrics::COMPLETION_DURATION_SECONDS,
+                            labels::PROVIDER => provider_name,
+                            labels::MODEL => model_id
+                        )
+                        .record(duration);
+                    }
+
                     return Ok(resp);
                 },
                 Err(e) => {
                     let kind = classify_error(&e);
                     entry.state.record_failure();
+
+                    // Record error metrics
+                    #[cfg(feature = "metrics")]
+                    {
+                        counter!(
+                            llm_metrics::COMPLETION_ERRORS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone(),
+                            labels::ERROR_TYPE => format!("{kind:?}")
+                        )
+                        .increment(1);
+                    }
 
                     if !kind.should_failover() {
                         // Non-retryable error — propagate immediately.

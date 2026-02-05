@@ -1,6 +1,7 @@
 // ── Model selector ──────────────────────────────────────────
 
 import { sendRpc } from "./helpers.js";
+import { showModelNotice } from "./page-chat.js";
 import * as S from "./state.js";
 
 function setSessionModel(sessionKey, modelId) {
@@ -33,6 +34,8 @@ export function selectModel(m) {
 	localStorage.setItem("moltis-model", m.id);
 	setSessionModel(S.activeSessionKey, m.id);
 	closeModelDropdown();
+	// Show notice if model doesn't support tools
+	showModelNotice(m);
 }
 
 export function openModelDropdown() {

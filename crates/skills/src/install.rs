@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, skills as skills_metrics};
+
 use crate::{
     manifest::ManifestStore,
     parse,
@@ -15,6 +18,12 @@ use crate::{
 /// Only handles native `SKILL.md` format repos. For multi-format plugin repos,
 /// use `moltis_plugins::install::install_plugin` instead.
 pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<Vec<SkillMetadata>> {
+    #[cfg(feature = "metrics")]
+    let start = std::time::Instant::now();
+
+    #[cfg(feature = "metrics")]
+    counter!(skills_metrics::INSTALLATION_ATTEMPTS_TOTAL).increment(1);
+
     let (owner, repo) = parse_source(source)?;
     let dir_name = format!("{owner}-{repo}");
     let target = install_dir.join(&dir_name);
@@ -37,9 +46,13 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
 
     match git_result {
         Ok(output) if output.status.success() => {
+            #[cfg(feature = "metrics")]
+            counter!("moltis_skills_git_clone_total").increment(1);
             tracing::info!(%source, "installed skill repo via git clone");
         },
         _ => {
+            #[cfg(feature = "metrics")]
+            counter!("moltis_skills_git_clone_fallback_total").increment(1);
             install_via_http(&owner, &repo, &target).await?;
         },
     }
@@ -73,6 +86,9 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
         skills: skill_states,
     });
     store.save(&manifest)?;
+
+    #[cfg(feature = "metrics")]
+    histogram!(skills_metrics::INSTALLATION_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
 
     tracing::info!(count = skills_meta.len(), %source, "installed repo skills");
     Ok(skills_meta)

@@ -16,6 +16,9 @@ use {
     tracing::{debug, error, info, warn},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, cron as cron_metrics, gauge, histogram};
+
 use crate::{schedule::compute_next_run, store::CronStore, types::*};
 
 /// Result of an agent turn, including optional token usage.
@@ -263,6 +266,10 @@ impl CronService {
             .iter()
             .filter_map(|j| j.state.next_run_at_ms)
             .min();
+
+        #[cfg(feature = "metrics")]
+        gauge!(cron_metrics::JOBS_SCHEDULED).set(user_jobs.len() as f64);
+
         CronStatus {
             running,
             job_count: user_jobs.len(),
@@ -341,6 +348,9 @@ impl CronService {
         let started = now_ms();
         info!(id = %job.id, name = %job.name, "executing cron job");
 
+        #[cfg(feature = "metrics")]
+        counter!(cron_metrics::EXECUTIONS_TOTAL).increment(1);
+
         // Mark as running.
         self.update_job_state(&job.id, |state| {
             state.running_at_ms = Some(started);
@@ -381,18 +391,34 @@ impl CronService {
         let finished = now_ms();
         let duration_ms = finished - started;
         let (status, error_msg, output, input_tokens, output_tokens) = match &result {
-            Ok(r) => (
-                RunStatus::Ok,
-                None,
-                Some(r.output.clone()),
-                r.input_tokens,
-                r.output_tokens,
-            ),
+            Ok(r) => {
+                #[cfg(feature = "metrics")]
+                {
+                    if let Some(input) = r.input_tokens {
+                        counter!(cron_metrics::INPUT_TOKENS_TOTAL).increment(input);
+                    }
+                    if let Some(output) = r.output_tokens {
+                        counter!(cron_metrics::OUTPUT_TOKENS_TOTAL).increment(output);
+                    }
+                }
+                (
+                    RunStatus::Ok,
+                    None,
+                    Some(r.output.clone()),
+                    r.input_tokens,
+                    r.output_tokens,
+                )
+            },
             Err(e) => {
                 error!(id = %job.id, error = %e, "cron job failed");
+                #[cfg(feature = "metrics")]
+                counter!(cron_metrics::ERRORS_TOTAL).increment(1);
                 (RunStatus::Error, Some(e.to_string()), None, None, None)
             },
         };
+
+        #[cfg(feature = "metrics")]
+        histogram!(cron_metrics::EXECUTION_DURATION_SECONDS).record(duration_ms as f64 / 1000.0);
 
         // Record run.
         let run = CronRunRecord {
@@ -480,6 +506,8 @@ impl CronService {
                 job.state.running_at_ms = None;
                 job.state.last_status = Some(RunStatus::Error);
                 job.state.last_error = Some("stuck: exceeded 2h timeout".into());
+                #[cfg(feature = "metrics")]
+                counter!(cron_metrics::STUCK_JOBS_CLEARED_TOTAL).increment(1);
             }
         }
     }

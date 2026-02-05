@@ -20,6 +20,9 @@ use {
     moltis_common::types::ChatType,
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, telegram as tg_metrics};
+
 use crate::{access, state::AccountStateMap};
 
 /// Shared context injected into teloxide's dispatcher.
@@ -46,6 +49,12 @@ pub async fn handle_message_direct(
     account_id: &str,
     accounts: &AccountStateMap,
 ) -> anyhow::Result<()> {
+    #[cfg(feature = "metrics")]
+    let start = std::time::Instant::now();
+
+    #[cfg(feature = "metrics")]
+    counter!(tg_metrics::MESSAGES_RECEIVED_TOTAL).increment(1);
+
     let text = extract_text(&msg);
     if text.is_none() && !has_media(&msg) {
         debug!(account_id, "ignoring non-text, non-media message");
@@ -155,6 +164,8 @@ pub async fn handle_message_direct(
 
     if let Err(reason) = access_result {
         warn!(account_id, %reason, peer_id, username = ?username, "handler: access denied");
+        #[cfg(feature = "metrics")]
+        counter!(tg_metrics::ACCESS_CONTROL_DENIALS_TOTAL).increment(1);
         return Ok(());
     }
 
@@ -316,6 +327,9 @@ pub async fn handle_message_direct(
         };
         sink.dispatch_to_chat(&body, reply_target, meta).await;
     }
+
+    #[cfg(feature = "metrics")]
+    histogram!(tg_metrics::POLLING_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
 
     Ok(())
 }

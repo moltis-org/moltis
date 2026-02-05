@@ -30,6 +30,9 @@ pub fn build_system_prompt(
 
 /// Build the system prompt, optionally including session context stats, skills,
 /// and agent identity / user profile.
+///
+/// When `include_tools` is false (e.g., for local LLMs that don't support tool calling),
+/// tool schemas and tool-related instructions are omitted for a smaller prompt.
 pub fn build_system_prompt_with_session(
     tools: &ToolRegistry,
     native_tools: bool,
@@ -39,11 +42,60 @@ pub fn build_system_prompt_with_session(
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
 ) -> String {
-    let tool_schemas = tools.list_schemas();
+    build_system_prompt_full(
+        tools,
+        native_tools,
+        project_context,
+        session_context,
+        skills,
+        identity,
+        user,
+        true, // include_tools
+    )
+}
 
-    let mut prompt = String::from(
-        "You are a helpful assistant with access to tools for executing shell commands.\n\n",
-    );
+/// Build a minimal system prompt without tool schemas (for LLMs that don't support tools).
+pub fn build_system_prompt_minimal(
+    project_context: Option<&str>,
+    session_context: Option<&str>,
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+) -> String {
+    build_system_prompt_full(
+        &ToolRegistry::new(),
+        true,
+        project_context,
+        session_context,
+        &[],
+        identity,
+        user,
+        false, // include_tools
+    )
+}
+
+/// Internal: build system prompt with full control over what's included.
+fn build_system_prompt_full(
+    tools: &ToolRegistry,
+    native_tools: bool,
+    project_context: Option<&str>,
+    session_context: Option<&str>,
+    skills: &[SkillMetadata],
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    include_tools: bool,
+) -> String {
+    let tool_schemas = if include_tools {
+        tools.list_schemas()
+    } else {
+        vec![]
+    };
+
+    let base_intro = if include_tools {
+        "You are a helpful assistant with access to tools for executing shell commands.\n\n"
+    } else {
+        "You are a helpful assistant. Answer questions clearly and concisely.\n\n"
+    };
+    let mut prompt = String::from(base_intro);
 
     // Inject agent identity and user name right after the opening line.
     if let Some(id) = identity {
@@ -93,7 +145,8 @@ pub fn build_system_prompt_with_session(
     }
 
     // Inject available skills so the LLM knows what skills can be activated.
-    if !skills.is_empty() {
+    // Skip for minimal prompts since skills require tool calling.
+    if include_tools && !skills.is_empty() {
         prompt.push_str(&moltis_skills::prompt_gen::generate_skills_prompt(skills));
     }
 
@@ -135,15 +188,24 @@ pub fn build_system_prompt_with_session(
         ));
     }
 
-    prompt.push_str(concat!(
-        "## Guidelines\n\n",
-        "- Use the exec tool to run shell commands when the user asks you to perform tasks ",
-        "that require system interaction (file operations, running programs, checking status, etc.).\n",
-        "- Always explain what you're doing before executing commands.\n",
-        "- If a command fails, analyze the error and suggest fixes.\n",
-        "- For multi-step tasks, execute commands one at a time and check results before proceeding.\n",
-        "- Be careful with destructive operations — confirm with the user first.\n",
-    ));
+    if include_tools {
+        prompt.push_str(concat!(
+            "## Guidelines\n\n",
+            "- Use the exec tool to run shell commands when the user asks you to perform tasks ",
+            "that require system interaction (file operations, running programs, checking status, etc.).\n",
+            "- Always explain what you're doing before executing commands.\n",
+            "- If a command fails, analyze the error and suggest fixes.\n",
+            "- For multi-step tasks, execute commands one at a time and check results before proceeding.\n",
+            "- Be careful with destructive operations — confirm with the user first.\n",
+        ));
+    } else {
+        prompt.push_str(concat!(
+            "## Guidelines\n\n",
+            "- Be helpful, accurate, and concise.\n",
+            "- If you don't know something, say so rather than making things up.\n",
+            "- For coding questions, provide clear explanations with examples.\n",
+        ));
+    }
 
     prompt
 }

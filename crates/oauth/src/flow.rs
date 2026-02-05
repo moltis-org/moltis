@@ -1,5 +1,8 @@
 use {anyhow::Result, secrecy::Secret, url::Url};
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, oauth as oauth_metrics};
+
 use crate::{
     pkce::{generate_pkce, generate_state},
     types::{OAuthConfig, OAuthTokens, PkceChallenge},
@@ -28,6 +31,9 @@ impl OAuthFlow {
 
     /// Build the authorization URL and generate PKCE + state.
     pub fn start(&self) -> AuthorizationRequest {
+        #[cfg(feature = "metrics")]
+        counter!(oauth_metrics::FLOW_STARTS_TOTAL).increment(1);
+
         let pkce = generate_pkce();
         let state = generate_state();
 
@@ -61,7 +67,10 @@ impl OAuthFlow {
 
     /// Exchange an authorization code for tokens.
     pub async fn exchange(&self, code: &str, verifier: &str) -> Result<OAuthTokens> {
-        let resp = self
+        #[cfg(feature = "metrics")]
+        counter!(oauth_metrics::CODE_EXCHANGE_TOTAL).increment(1);
+
+        let result = self
             .client
             .post(&self.config.token_url)
             .form(&[
@@ -75,14 +84,28 @@ impl OAuthFlow {
             .await?
             .error_for_status()?
             .json::<serde_json::Value>()
-            .await?;
+            .await;
 
-        parse_token_response(&resp)
+        match result {
+            Ok(resp) => {
+                #[cfg(feature = "metrics")]
+                counter!(oauth_metrics::FLOW_COMPLETIONS_TOTAL).increment(1);
+                parse_token_response(&resp)
+            },
+            Err(e) => {
+                #[cfg(feature = "metrics")]
+                counter!(oauth_metrics::CODE_EXCHANGE_ERRORS_TOTAL).increment(1);
+                Err(e.into())
+            },
+        }
     }
 
     /// Refresh an access token using a refresh token.
     pub async fn refresh(&self, refresh_token: &str) -> Result<OAuthTokens> {
-        let resp = self
+        #[cfg(feature = "metrics")]
+        counter!(oauth_metrics::TOKEN_REFRESH_TOTAL).increment(1);
+
+        let result = self
             .client
             .post(&self.config.token_url)
             .form(&[
@@ -94,9 +117,16 @@ impl OAuthFlow {
             .await?
             .error_for_status()?
             .json::<serde_json::Value>()
-            .await?;
+            .await;
 
-        parse_token_response(&resp)
+        match result {
+            Ok(resp) => parse_token_response(&resp),
+            Err(e) => {
+                #[cfg(feature = "metrics")]
+                counter!(oauth_metrics::TOKEN_REFRESH_FAILURES_TOTAL).increment(1);
+                Err(e.into())
+            },
+        }
     }
 }
 

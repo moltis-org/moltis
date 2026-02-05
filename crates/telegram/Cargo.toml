@@ -9,6 +9,7 @@ async-trait       = "0.1"
 moltis-auto-reply = { workspace = true }
 moltis-channels   = { workspace = true }
 moltis-common     = { workspace = true }
+moltis-metrics    = { optional = true, workspace = true }
 reqwest           = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
@@ -17,6 +18,10 @@ teloxide          = { workspace = true }
 tokio             = { workspace = true }
 tokio-util        = { workspace = true }
 tracing           = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
 tokio = { workspace = true }

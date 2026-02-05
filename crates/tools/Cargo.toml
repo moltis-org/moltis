@@ -3,6 +3,10 @@ edition.workspace = true
 name              = "moltis-tools"
 version.workspace = true
 
+[features]
+default = ["metrics"]
+metrics = ["dep:moltis-metrics"]
+
 [dependencies]
 anyhow            = { workspace = true }
 async-trait       = "0.1"
@@ -11,6 +15,7 @@ moltis-agents     = { workspace = true }
 moltis-common     = { workspace = true }
 moltis-config     = { workspace = true }
 moltis-cron       = { workspace = true }
+moltis-metrics    = { optional = true, workspace = true }
 reqwest           = { workspace = true }
 secrecy.workspace = true
 serde             = { workspace = true }

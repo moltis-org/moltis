@@ -4,9 +4,14 @@ name              = "moltis-protocol"
 version.workspace = true
 
 [dependencies]
-serde      = { workspace = true }
-serde_json = { workspace = true }
-thiserror  = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

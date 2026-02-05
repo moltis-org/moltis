@@ -7,6 +7,12 @@ use {
     tracing::{debug, info, warn},
 };
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
+
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, gauge, histogram, labels, mcp as mcp_metrics};
+
 use crate::{
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
@@ -60,6 +66,15 @@ impl McpClient {
             warn!(server = %server_name, error = %e, "MCP initialize handshake failed");
             return Err(e);
         }
+
+        // Track MCP server connection
+        #[cfg(feature = "metrics")]
+        {
+            counter!(mcp_metrics::SERVER_CONNECTIONS_TOTAL, labels::SERVER => server_name.to_string())
+                .increment(1);
+            gauge!(mcp_metrics::SERVERS_CONNECTED).increment(1.0);
+        }
+
         Ok(client)
     }
 
@@ -167,20 +182,58 @@ impl McpClientTrait for McpClient {
     async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> Result<ToolsCallResult> {
         self.ensure_ready()?;
 
+        #[cfg(feature = "metrics")]
+        let start = Instant::now();
+
         let params = ToolsCallParams {
             name: name.into(),
             arguments,
         };
 
-        let resp = self
+        let result = self
             .transport
             .request("tools/call", Some(serde_json::to_value(&params)?))
-            .await?;
+            .await;
 
-        let result: ToolsCallResult =
-            serde_json::from_value(resp.result.context("tools/call returned no result")?)?;
+        match result {
+            Ok(resp) => {
+                let result: ToolsCallResult =
+                    serde_json::from_value(resp.result.context("tools/call returned no result")?)?;
 
-        Ok(result)
+                #[cfg(feature = "metrics")]
+                {
+                    let duration = start.elapsed().as_secs_f64();
+
+                    counter!(
+                        mcp_metrics::TOOL_CALLS_TOTAL,
+                        labels::SERVER => self.server_name.clone(),
+                        labels::TOOL => name.to_string()
+                    )
+                    .increment(1);
+
+                    histogram!(
+                        mcp_metrics::TOOL_CALL_DURATION_SECONDS,
+                        labels::SERVER => self.server_name.clone(),
+                        labels::TOOL => name.to_string()
+                    )
+                    .record(duration);
+                }
+
+                Ok(result)
+            },
+            Err(e) => {
+                #[cfg(feature = "metrics")]
+                {
+                    counter!(
+                        mcp_metrics::TOOL_CALL_ERRORS_TOTAL,
+                        labels::SERVER => self.server_name.clone(),
+                        labels::TOOL => name.to_string()
+                    )
+                    .increment(1);
+                }
+                Err(e)
+            },
+        }
     }
 
     async fn is_alive(&self) -> bool {
@@ -190,6 +243,12 @@ impl McpClientTrait for McpClient {
     async fn shutdown(&mut self) {
         self.state = McpClientState::Closed;
         self.transport.kill().await;
+
+        // Decrement connected servers gauge
+        #[cfg(feature = "metrics")]
+        {
+            gauge!(mcp_metrics::SERVERS_CONNECTED).decrement(1.0);
+        }
     }
 }
 

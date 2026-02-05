@@ -17,7 +17,10 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    /// Create a new store and run migrations.
+    /// Create a new store with its own connection pool and run migrations.
+    ///
+    /// Use this for standalone cron databases. For shared pools (e.g., moltis.db),
+    /// use [`SqliteStore::with_pool`] after calling [`crate::run_migrations`].
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -25,48 +28,16 @@ impl SqliteStore {
             .await
             .context("failed to connect to SQLite")?;
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS cron_jobs (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL
-            )",
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS cron_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id TEXT NOT NULL,
-                started_at_ms INTEGER NOT NULL,
-                finished_at_ms INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                error TEXT,
-                duration_ms INTEGER NOT NULL,
-                output TEXT,
-                input_tokens INTEGER,
-                output_tokens INTEGER,
-                FOREIGN KEY (job_id) REFERENCES cron_jobs(id)
-            )",
-        )
-        .execute(&pool)
-        .await?;
-
-        // Migrate existing tables: add token columns if missing.
-        let _ = sqlx::query("ALTER TABLE cron_runs ADD COLUMN input_tokens INTEGER")
-            .execute(&pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE cron_runs ADD COLUMN output_tokens INTEGER")
-            .execute(&pool)
-            .await;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id ON cron_runs(job_id, started_at_ms DESC)",
-        )
-        .execute(&pool)
-        .await?;
+        crate::run_migrations(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// Create a store using an existing pool (migrations must already be run).
+    ///
+    /// Call [`crate::run_migrations`] before using this constructor.
+    pub fn with_pool(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 }
 

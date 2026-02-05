@@ -16,6 +16,12 @@ pub mod github_copilot;
 #[cfg(feature = "provider-kimi-code")]
 pub mod kimi_code;
 
+#[cfg(feature = "local-llm")]
+pub mod local_gguf;
+
+#[cfg(feature = "local-llm")]
+pub mod local_llm;
+
 use std::{collections::HashMap, sync::Arc};
 
 use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret};
@@ -197,6 +203,15 @@ impl ProviderRegistry {
         self.models.push(info);
     }
 
+    /// Unregister a provider by model ID. Returns true if it was removed.
+    pub fn unregister(&mut self, model_id: &str) -> bool {
+        let removed = self.providers.remove(model_id).is_some();
+        if removed {
+            self.models.retain(|m| m.id != model_id);
+        }
+        removed
+    }
+
     /// Auto-discover providers from environment variables.
     /// Uses default config (all providers enabled).
     pub fn from_env() -> Self {
@@ -246,6 +261,12 @@ impl ProviderRegistry {
         #[cfg(feature = "provider-kimi-code")]
         {
             reg.register_kimi_code_providers(config);
+        }
+
+        // Local GGUF providers (no API key needed, model runs locally)
+        #[cfg(feature = "local-llm")]
+        {
+            reg.register_local_gguf_providers(config);
         }
 
         reg
@@ -302,7 +323,10 @@ impl ProviderRegistry {
                 continue;
             }
 
-            let genai_provider_name = format!("genai/{provider_name}");
+            // Get alias if configured (for metrics differentiation).
+            let alias = config.get(provider_name).and_then(|e| e.alias.clone());
+            let genai_provider_name = alias.unwrap_or_else(|| format!("genai/{provider_name}"));
+
             let provider = Arc::new(genai_provider::GenaiProvider::new(
                 model_id.into(),
                 genai_provider_name.clone(),
@@ -344,15 +368,20 @@ impl ProviderRegistry {
             return;
         }
 
-        let provider = Arc::new(async_openai_provider::AsyncOpenAiProvider::new(
+        // Get alias if configured (for metrics differentiation).
+        let alias = config.get("openai").and_then(|e| e.alias.clone());
+        let provider_label = alias.clone().unwrap_or_else(|| "async-openai".into());
+
+        let provider = Arc::new(async_openai_provider::AsyncOpenAiProvider::with_alias(
             key,
             model_id.into(),
             base_url,
+            alias,
         ));
         self.register(
             ModelInfo {
                 id: model_id.into(),
-                provider: "async-openai".into(),
+                provider: provider_label,
                 display_name: "GPT-4o (async-openai)".into(),
             },
             provider,
@@ -511,6 +540,74 @@ impl ProviderRegistry {
         }
     }
 
+    #[cfg(feature = "local-llm")]
+    fn register_local_gguf_providers(&mut self, config: &ProvidersConfig) {
+        use std::path::PathBuf;
+
+        use local_gguf::LazyLocalGgufProvider;
+
+        if !config.is_enabled("local") {
+            return;
+        }
+
+        // User must configure a model explicitly (bring your own model pattern)
+        let Some(model_id) = config.get("local").and_then(|e| e.model.as_deref()) else {
+            // Log system info and suggestions even when no model is configured
+            local_gguf::log_system_info_and_suggestions();
+            tracing::info!(
+                "local-llm enabled but no model configured. Add [providers.local] model = \"...\" to config."
+            );
+            return;
+        };
+
+        if self.providers.contains_key(model_id) {
+            return;
+        }
+
+        // Build config from provider entry
+        let entry = config.get("local");
+        let model_path = entry
+            .and_then(|e| e.base_url.as_deref()) // Reuse base_url for model_path
+            .map(PathBuf::from);
+
+        let gguf_config = local_gguf::LocalGgufConfig {
+            model_id: model_id.into(),
+            model_path,
+            context_size: None, // Use model default
+            gpu_layers: 0,      // CPU by default
+            temperature: 0.7,
+            cache_dir: local_gguf::models::default_models_dir(),
+        };
+
+        // Log system info
+        local_gguf::log_system_info_and_suggestions();
+
+        // Check if model exists in registry for display name
+        let display_name = local_gguf::models::find_model(model_id)
+            .map(|m| m.display_name.to_string())
+            .unwrap_or_else(|| format!("{} (local)", model_id));
+
+        // We can't load the model synchronously here (async needed for download).
+        // Instead, we create a lazy-loading wrapper or skip registration.
+        // For now, log that the model will be loaded on first use.
+        tracing::info!(
+            model = model_id,
+            display_name = %display_name,
+            "local-llm model configured (will load on first use)"
+        );
+
+        // Register a placeholder provider that loads on first use
+        let provider = Arc::new(LazyLocalGgufProvider::new(gguf_config));
+        self.register(
+            ModelInfo {
+                id: model_id.into(),
+                provider: "local-llm".into(),
+                display_name,
+            },
+            provider,
+        );
+    }
+
     fn register_builtin_providers(&mut self, config: &ProvidersConfig) {
         // Anthropic — register all known Claude models when API key is available.
         if config.is_enabled("anthropic")
@@ -522,6 +619,10 @@ impl ProviderRegistry {
                 .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.anthropic.com".into());
 
+            // Get alias if configured (for metrics differentiation).
+            let alias = config.get("anthropic").and_then(|e| e.alias.clone());
+            let provider_label = alias.clone().unwrap_or_else(|| "anthropic".into());
+
             // If user configured a specific model, register only that one.
             if let Some(model_id) = config.get("anthropic").and_then(|e| e.model.as_deref()) {
                 if !self.providers.contains_key(model_id) {
@@ -530,15 +631,16 @@ impl ProviderRegistry {
                         .find(|(id, _)| *id == model_id)
                         .map(|(_, name)| name.to_string())
                         .unwrap_or_else(|| model_id.to_string());
-                    let provider = Arc::new(anthropic::AnthropicProvider::new(
+                    let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
                         key.clone(),
                         model_id.into(),
                         base_url.clone(),
+                        alias.clone(),
                     ));
                     self.register(
                         ModelInfo {
                             id: model_id.into(),
-                            provider: "anthropic".into(),
+                            provider: provider_label.clone(),
                             display_name: display,
                         },
                         provider,
@@ -550,15 +652,16 @@ impl ProviderRegistry {
                     if self.providers.contains_key(model_id) {
                         continue;
                     }
-                    let provider = Arc::new(anthropic::AnthropicProvider::new(
+                    let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
                         key.clone(),
                         model_id.into(),
                         base_url.clone(),
+                        alias.clone(),
                     ));
                     self.register(
                         ModelInfo {
                             id: model_id.into(),
-                            provider: "anthropic".into(),
+                            provider: provider_label.clone(),
                             display_name: display_name.into(),
                         },
                         provider,
@@ -577,6 +680,10 @@ impl ProviderRegistry {
                 .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
 
+            // Get alias if configured (for metrics differentiation).
+            let alias = config.get("openai").and_then(|e| e.alias.clone());
+            let provider_label = alias.clone().unwrap_or_else(|| "openai".into());
+
             if let Some(model_id) = config.get("openai").and_then(|e| e.model.as_deref()) {
                 if !self.providers.contains_key(model_id) {
                     let display = OPENAI_MODELS
@@ -584,15 +691,16 @@ impl ProviderRegistry {
                         .find(|(id, _)| *id == model_id)
                         .map(|(_, name)| name.to_string())
                         .unwrap_or_else(|| model_id.to_string());
-                    let provider = Arc::new(openai::OpenAiProvider::new(
+                    let provider = Arc::new(openai::OpenAiProvider::new_with_name(
                         key.clone(),
                         model_id.into(),
                         base_url.clone(),
+                        provider_label.clone(),
                     ));
                     self.register(
                         ModelInfo {
                             id: model_id.into(),
-                            provider: "openai".into(),
+                            provider: provider_label.clone(),
                             display_name: display,
                         },
                         provider,
@@ -603,15 +711,16 @@ impl ProviderRegistry {
                     if self.providers.contains_key(model_id) {
                         continue;
                     }
-                    let provider = Arc::new(openai::OpenAiProvider::new(
+                    let provider = Arc::new(openai::OpenAiProvider::new_with_name(
                         key.clone(),
                         model_id.into(),
                         base_url.clone(),
+                        provider_label.clone(),
                     ));
                     self.register(
                         ModelInfo {
                             id: model_id.into(),
-                            provider: "openai".into(),
+                            provider: provider_label.clone(),
                             display_name: display_name.into(),
                         },
                         provider,
@@ -646,6 +755,10 @@ impl ProviderRegistry {
                 .or_else(|| std::env::var(def.env_base_url_key).ok())
                 .unwrap_or_else(|| def.default_base_url.into());
 
+            // Get alias if configured (for metrics differentiation).
+            let alias = config.get(def.config_name).and_then(|e| e.alias.clone());
+            let provider_label = alias.unwrap_or_else(|| def.config_name.into());
+
             // If user configured a specific model, register only that one.
             if let Some(model_id) = config.get(def.config_name).and_then(|e| e.model.as_deref()) {
                 if !self.providers.contains_key(model_id) {
@@ -659,12 +772,12 @@ impl ProviderRegistry {
                         key.clone(),
                         model_id.into(),
                         base_url.clone(),
-                        def.config_name.into(),
+                        provider_label.clone(),
                     ));
                     self.register(
                         ModelInfo {
                             id: model_id.into(),
-                            provider: def.config_name.into(),
+                            provider: provider_label.clone(),
                             display_name: display,
                         },
                         provider,
@@ -686,12 +799,12 @@ impl ProviderRegistry {
                     key.clone(),
                     model_id.into(),
                     base_url.clone(),
-                    def.config_name.into(),
+                    provider_label.clone(),
                 ));
                 self.register(
                     ModelInfo {
                         id: model_id.into(),
-                        provider: def.config_name.into(),
+                        provider: provider_label.clone(),
                         display_name: display_name.into(),
                     },
                     provider,
@@ -1239,5 +1352,57 @@ mod tests {
 
         // Verify we don't use the openrouter provider we created (not registered).
         drop(provider_or);
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_requires_model_in_config() {
+        // local-llm is a "bring your own model" provider — without a model it registers nothing.
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_registers_with_model_in_config() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        let local_models: Vec<_> = reg
+            .list_models()
+            .iter()
+            .filter(|m| m.provider == "local-llm")
+            .collect();
+        assert_eq!(local_models.len(), 1);
+        assert_eq!(local_models[0].id, "qwen2.5-coder-7b-q4_k_m");
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_disabled_not_registered() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                enabled: false,
+                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 }

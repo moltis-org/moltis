@@ -16,3 +16,12 @@ pub use {
     types::{ContextFile, Project, ProjectContext},
     worktree::WorktreeManager,
 };
+
+/// Run database migrations for the projects crate.
+///
+/// This creates the `projects` table and indexes. Should be called at
+/// application startup before using [`SqliteProjectStore`].
+pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    sqlx::migrate!("./migrations").run(pool).await?;
+    Ok(())
+}
