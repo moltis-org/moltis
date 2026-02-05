@@ -302,6 +302,9 @@ mod tests {
         assert_eq!("never".parse::<CitationMode>().unwrap(), CitationMode::Off);
 
         assert_eq!("auto".parse::<CitationMode>().unwrap(), CitationMode::Auto);
-        assert_eq!("anything".parse::<CitationMode>().unwrap(), CitationMode::Auto);
+        assert_eq!(
+            "anything".parse::<CitationMode>().unwrap(),
+            CitationMode::Auto
+        );
     }
 }
