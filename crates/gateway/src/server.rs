@@ -1221,6 +1221,9 @@ pub async fn start_gateway(
         {
             tool_registry.register(Box::new(t));
         }
+        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
+            tool_registry.register(Box::new(t));
+        }
 
         // Register memory tools if the memory system is available.
         if let Some(ref mm) = memory_manager {
