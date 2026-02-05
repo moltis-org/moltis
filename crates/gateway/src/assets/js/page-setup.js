@@ -21,9 +21,12 @@ function SetupPage() {
 				if (data.setup_code_required) setCodeRequired(true);
 				if (data.localhost_only) setLocalhostOnly(true);
 			})
-			.catch(() => {});
+			.catch(() => {
+				/* ignore auth status check failures */
+			});
 	}, []);
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Setup form handles auth, password, passkey flows
 	function onSubmit(e) {
 		e.preventDefault();
 		setError(null);

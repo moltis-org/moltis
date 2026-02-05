@@ -1048,7 +1048,7 @@ function SecuritySection() {
 					}
 					<div>
 						<button type="button" class="provider-btn" onClick=${onCreateApiKey}
-							disabled=${!akLabel.trim() || !(akFullAccess || Object.values(akScopes).some((v) => v))}>
+							disabled=${!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}>
 							Generate key
 						</button>
 					</div>
@@ -1398,31 +1398,29 @@ function MemorySection() {
 
 	useEffect(() => {
 		// Fetch memory status, config, and QMD status
-		Promise.all([
-			sendRpc("memory.status", {}),
-			sendRpc("memory.config.get", {}),
-			sendRpc("memory.qmd.status", {}),
-		]).then(([statusRes, configRes, qmdRes]) => {
-			if (statusRes?.ok) {
-				setMemStatus(statusRes.payload);
-			}
-			if (configRes?.ok) {
-				var cfg = configRes.payload;
-				setMemConfig(cfg);
-				setBackend(cfg.backend || "builtin");
-				setCitations(cfg.citations || "auto");
-				setLlmReranking(cfg.llm_reranking ?? false);
-				setSessionExport(cfg.session_export ?? false);
-			}
-			if (qmdRes?.ok) {
-				setQmdStatus(qmdRes.payload);
-			}
-			setMemLoading(false);
-			rerender();
-		}).catch(() => {
-			setMemLoading(false);
-			rerender();
-		});
+		Promise.all([sendRpc("memory.status", {}), sendRpc("memory.config.get", {}), sendRpc("memory.qmd.status", {})])
+			.then(([statusRes, configRes, qmdRes]) => {
+				if (statusRes?.ok) {
+					setMemStatus(statusRes.payload);
+				}
+				if (configRes?.ok) {
+					var cfg = configRes.payload;
+					setMemConfig(cfg);
+					setBackend(cfg.backend || "builtin");
+					setCitations(cfg.citations || "auto");
+					setLlmReranking(cfg.llm_reranking ?? false);
+					setSessionExport(cfg.session_export ?? false);
+				}
+				if (qmdRes?.ok) {
+					setQmdStatus(qmdRes.payload);
+				}
+				setMemLoading(false);
+				rerender();
+			})
+			.catch(() => {
+				setMemLoading(false);
+				rerender();
+			});
 	}, []);
 
 	function onSave(e) {
@@ -1470,7 +1468,9 @@ function MemorySection() {
 		</p>
 
 		<!-- Status -->
-		${memStatus ? html`
+		${
+			memStatus
+				? html`
 			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Status</h3>
 				<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 16px;font-size:.8rem;">
@@ -1492,7 +1492,9 @@ function MemorySection() {
 					</div>
 				</div>
 			</div>
-		` : null}
+		`
+				: null
+		}
 
 		<!-- Configuration -->
 		<form onSubmit=${onSave} style="max-width:600px;display:flex;flex-direction:column;gap:16px;">
@@ -1553,31 +1555,46 @@ function MemorySection() {
 				<div style="display:flex;gap:8px;">
 					<button type="button"
 						class="provider-btn ${backend === "builtin" ? "" : "provider-btn-secondary"}"
-						onClick=${() => { setBackend("builtin"); rerender(); }}>
+						onClick=${() => {
+							setBackend("builtin");
+							rerender();
+						}}>
 						Built-in (Recommended)
 					</button>
 					<button type="button"
 						class="provider-btn ${backend === "qmd" ? "" : "provider-btn-secondary"}"
 						disabled=${!qmdFeatureEnabled}
-						onClick=${() => { setBackend("qmd"); rerender(); }}>
+						onClick=${() => {
+							setBackend("qmd");
+							rerender();
+						}}>
 						QMD
 					</button>
 				</div>
 
-				${!qmdFeatureEnabled ? html`
+				${
+					qmdFeatureEnabled
+						? null
+						: html`
 					<div class="text-xs text-[var(--error)]" style="margin-top:8px;">
 						QMD feature is not enabled. Rebuild moltis with <code style="font-family:var(--font-mono);font-size:.7rem;">--features qmd</code>
 					</div>
-				` : null}
+				`
+				}
 
-				${backend === "qmd" ? html`
+				${
+					backend === "qmd"
+						? html`
 					<div style="margin-top:12px;padding:12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
 						<h4 class="text-xs font-medium text-[var(--text-strong)]" style="margin:0 0 8px;">QMD Status</h4>
-						${qmdAvailable ? html`
+						${
+							qmdAvailable
+								? html`
 							<div class="text-xs" style="color:var(--accent);display:flex;align-items:center;gap:6px;">
 								<span>\u2713</span> QMD is installed ${qmdStatus?.version ? html`<span class="text-[var(--muted)]">(${qmdStatus.version})</span>` : null}
 							</div>
-						` : html`
+						`
+								: html`
 							<div class="text-xs" style="color:var(--error);margin-bottom:8px;">
 								\u2717 QMD is not installed or not found in PATH
 							</div>
@@ -1593,9 +1610,12 @@ function MemorySection() {
 								<a href="https://github.com/anthropics/qmd" target="_blank" rel="noopener"
 									style="color:var(--accent);">View documentation \u2192</a>
 							</div>
-						`}
+						`
+						}
 					</div>
-				` : null}
+				`
+						: null
+				}
 			</div>
 
 			<!-- Citations -->
@@ -1605,7 +1625,10 @@ function MemorySection() {
 					Include source file and line number with search results to help track where information comes from.
 				</p>
 				<select class="provider-key-input" style="width:auto;min-width:150px;"
-					value=${citations} onChange=${(e) => { setCitations(e.target.value); rerender(); }}>
+					value=${citations} onChange=${(e) => {
+						setCitations(e.target.value);
+						rerender();
+					}}>
 					<option value="auto">Auto (multi-file only)</option>
 					<option value="on">Always</option>
 					<option value="off">Never</option>
@@ -1616,7 +1639,10 @@ function MemorySection() {
 			<div>
 				<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
 					<input type="checkbox" checked=${llmReranking}
-						onChange=${(e) => { setLlmReranking(e.target.checked); rerender(); }} />
+						onChange=${(e) => {
+							setLlmReranking(e.target.checked);
+							rerender();
+						}} />
 					<div>
 						<span class="text-sm font-medium text-[var(--text-strong)]">LLM Reranking</span>
 						<p class="text-xs text-[var(--muted)]" style="margin:2px 0 0;">
@@ -1630,7 +1656,10 @@ function MemorySection() {
 			<div>
 				<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
 					<input type="checkbox" checked=${sessionExport}
-						onChange=${(e) => { setSessionExport(e.target.checked); rerender(); }} />
+						onChange=${(e) => {
+							setSessionExport(e.target.checked);
+							rerender();
+						}} />
 					<div>
 						<span class="text-sm font-medium text-[var(--text-strong)]">Session Export</span>
 						<p class="text-xs text-[var(--muted)]" style="margin:2px 0 0;">
