@@ -62,6 +62,18 @@ pub async fn config_validate(
     }
 }
 
+/// Get the default configuration template with all options documented.
+/// Preserves the current port from the existing config.
+pub async fn config_template(State(_state): State<crate::server::AppState>) -> impl IntoResponse {
+    // Load current config to preserve the port
+    let config = moltis_config::discover_and_load();
+    let template = moltis_config::template::default_config_template(config.server.port);
+
+    Json(serde_json::json!({
+        "toml": template,
+    }))
+}
+
 /// Save configuration from TOML.
 pub async fn config_save(
     State(_state): State<crate::server::AppState>,

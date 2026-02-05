@@ -157,6 +157,10 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             .route(
                 "/api/config/validate",
                 axum::routing::post(crate::tools_routes::config_validate),
+            )
+            .route(
+                "/api/config/template",
+                get(crate::tools_routes::config_template),
             );
 
         // Add metrics API routes (protected).

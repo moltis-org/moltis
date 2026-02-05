@@ -1047,7 +1047,7 @@ function SecuritySection() {
 					}
 					<div>
 						<button type="button" class="provider-btn" onClick=${onCreateApiKey}
-							disabled=${!akLabel.trim() || !(akFullAccess || Object.values(akScopes).some((v) => v))}>
+							disabled=${!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}>
 							Generate key
 						</button>
 					</div>
@@ -1109,6 +1109,7 @@ function ConfigSection() {
 	var [loading, setLoading] = useState(true);
 	var [saving, setSaving] = useState(false);
 	var [testing, setTesting] = useState(false);
+	var [resettingTemplate, setResettingTemplate] = useState(false);
 	var [msg, setMsg] = useState(null);
 	var [err, setErr] = useState(null);
 	var [warnings, setWarnings] = useState([]);
@@ -1208,6 +1209,39 @@ function ConfigSection() {
 		setWarnings([]);
 	}
 
+	function onResetToTemplate() {
+		if (
+			!confirm(
+				"Replace current config with the default template?\n\nThis will show all available options with documentation. Your current values will be lost unless you copy them first.",
+			)
+		) {
+			return;
+		}
+		setResettingTemplate(true);
+		setMsg(null);
+		setErr(null);
+		setWarnings([]);
+		rerender();
+
+		fetch("/api/config/template")
+			.then((r) => (r.ok ? r.json() : { error: "Failed to load template" }))
+			.then((d) => {
+				setResettingTemplate(false);
+				if (d.error) {
+					setErr(d.error);
+				} else {
+					setToml(d.toml || "");
+					setMsg("Loaded default template with all options. Review and save when ready.");
+				}
+				rerender();
+			})
+			.catch((e) => {
+				setResettingTemplate(false);
+				setErr(e.message);
+				rerender();
+			});
+	}
+
 	if (loading) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
@@ -1220,6 +1254,8 @@ function ConfigSection() {
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:700px;margin:0;">
 			Edit the full moltis configuration. This includes server, tools, providers, auth, and all other settings.
 			Test your changes before saving. Changes require a restart to take effect.
+			<a href="https://moltis.dev/docs/configuration" target="_blank" rel="noopener"
+				style="color:var(--accent);text-decoration:underline;">View documentation \u2197</a>
 		</p>
 		${
 			configPath
@@ -1258,20 +1294,30 @@ function ConfigSection() {
 			}
 
 			<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onTest} disabled=${testing || saving}>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onTest} disabled=${testing || saving || resettingTemplate}>
 					${testing ? "Testing\u2026" : "Test Config"}
 				</button>
-				<button type="submit" class="provider-btn" disabled=${saving || testing}>
+				<button type="submit" class="provider-btn" disabled=${saving || testing || resettingTemplate}>
 					${saving ? "Saving\u2026" : "Save"}
 				</button>
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onReset} disabled=${saving || testing}>
-					Reset
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onReset} disabled=${saving || testing || resettingTemplate}>
+					Reload
+				</button>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onResetToTemplate} disabled=${saving || testing || resettingTemplate}>
+					${resettingTemplate ? "Loading\u2026" : "Load Template"}
 				</button>
 			</div>
 
 			${msg ? html`<div class="text-xs" style="margin-top:8px;color:var(--accent);">${msg}</div>` : null}
 			${err ? html`<div class="text-xs" style="margin-top:8px;color:var(--error);white-space:pre-wrap;font-family:var(--font-mono);">${err}</div>` : null}
 		</form>
+
+		<div style="max-width:800px;margin-top:8px;padding-top:16px;border-top:1px solid var(--border);">
+			<p class="text-xs text-[var(--muted)] leading-relaxed">
+				<strong>Tip:</strong> Click "Load Template" to see all available configuration options with documentation.
+				This replaces the editor content with a fully documented template - copy your current values first if needed.
+			</p>
+		</div>
 	</div>`;
 }
 
