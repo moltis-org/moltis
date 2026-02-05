@@ -292,7 +292,7 @@ pub struct BrowserConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
-            enabled: false, // Disabled by default - requires explicit opt-in
+            enabled: true,
             chrome_path: None,
             headless: true,
             viewport_width: 1280,

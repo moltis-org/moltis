@@ -642,14 +642,14 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = BrowserConfig::default();
-        assert!(!config.enabled);
+        assert!(config.enabled);
         assert!(config.headless);
         assert_eq!(config.max_instances, 3);
     }
 
     #[test]
-    fn test_browser_manager_disabled() {
+    fn test_browser_manager_enabled_by_default() {
         let manager = BrowserManager::default();
-        assert!(!manager.is_enabled());
+        assert!(manager.is_enabled());
     }
 }
