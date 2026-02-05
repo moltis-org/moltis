@@ -80,6 +80,7 @@ const READ_METHODS: &[&str] = &[
     "mcp.list",
     "mcp.status",
     "mcp.tools",
+    "voice.config.get",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -133,6 +134,8 @@ const WRITE_METHODS: &[&str] = &[
     "mcp.update",
     "heartbeat.update",
     "heartbeat.run",
+    "voice.config.save_key",
+    "voice.config.remove_key",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -1933,139 +1936,140 @@ impl MethodRegistry {
             }),
         );
 
-        // TTS
-        self.register(
-            "tts.status",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .status()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.providers",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .providers()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.enable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .enable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.disable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .disable()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.convert",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .convert(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.setProvider",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .set_provider(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-
-        // STT
-        self.register(
-            "stt.status",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .stt
-                        .status()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "stt.providers",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .stt
-                        .providers()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "stt.transcribe",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .stt
-                        .transcribe(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "stt.setProvider",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .stt
-                        .set_provider(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
+        // TTS and STT (voice feature)
+        #[cfg(feature = "voice")]
+        {
+            self.register(
+                "tts.status",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .status()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.providers",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .providers()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.enable",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .enable(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.disable",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .disable()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.convert",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .convert(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.setProvider",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .set_provider(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.status",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .status()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.providers",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .providers()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.transcribe",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .transcribe(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.setProvider",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .set_provider(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+        }
 
         // Skills
         self.register(
@@ -2886,6 +2890,132 @@ impl MethodRegistry {
                 })
             }),
         );
+
+        // ── Voice Config ───────────────────────────────────────────────
+        #[cfg(feature = "voice")]
+        {
+            self.register(
+                "voice.config.get",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        let config = moltis_config::discover_and_load();
+                        Ok(serde_json::json!({
+                            "tts": {
+                                "enabled": config.voice.tts.enabled,
+                                "provider": config.voice.tts.provider,
+                                "elevenlabs_configured": config.voice.tts.elevenlabs.api_key.is_some(),
+                                "openai_configured": config.voice.tts.openai.api_key.is_some(),
+                            },
+                            "stt": {
+                                "enabled": config.voice.stt.enabled,
+                                "provider": config.voice.stt.provider,
+                                "whisper_configured": config.voice.stt.whisper.api_key.is_some(),
+                            },
+                        }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.save_key",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        use secrecy::Secret;
+
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+                        let api_key = ctx
+                            .params
+                            .get("api_key")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing api_key")
+                            })?;
+
+                        moltis_config::update_config(|cfg| match provider {
+                            "elevenlabs" => {
+                                cfg.voice.tts.elevenlabs.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "openai" => {
+                                cfg.voice.tts.openai.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "whisper" => {
+                                cfg.voice.stt.whisper.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            _ => {},
+                        })
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast voice config change event
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.remove_key",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+
+                        moltis_config::update_config(|cfg| match provider {
+                            "elevenlabs" => {
+                                cfg.voice.tts.elevenlabs.api_key = None;
+                            },
+                            "openai" => {
+                                cfg.voice.tts.openai.api_key = None;
+                            },
+                            "whisper" => {
+                                cfg.voice.stt.whisper.api_key = None;
+                            },
+                            _ => {},
+                        })
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast voice config change event
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider, "removed": true }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider }))
+                    })
+                }),
+            );
+        }
     }
 }
 

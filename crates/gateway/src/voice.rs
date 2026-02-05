@@ -3,33 +3,39 @@
 //! This module provides concrete implementations of the `TtsService` and
 //! `SttService` traits using the moltis-voice crate's providers.
 
-use std::sync::Arc;
-
 use {
     async_trait::async_trait,
-    base64::Engine,
-    secrecy::Secret,
     serde_json::{Value, json},
-    tokio::sync::RwLock,
-    tracing::debug,
 };
 
+use crate::services::ServiceResult;
+
+#[cfg(feature = "voice")]
+use std::sync::Arc;
+
+#[cfg(feature = "voice")]
+use {base64::Engine, secrecy::Secret, tokio::sync::RwLock, tracing::debug};
+
+#[cfg(feature = "voice")]
 use moltis_voice::{
     AudioFormat, ElevenLabsTts, OpenAiTts, SttProvider, SynthesizeRequest, TranscribeRequest,
     TtsConfig, TtsProvider, WhisperStt,
 };
 
-use crate::services::{ServiceResult, TtsService};
+#[cfg(feature = "voice")]
+use crate::services::TtsService;
 
 // ── TTS Service ─────────────────────────────────────────────────────────────
 
 /// Live TTS service that delegates to voice providers.
+#[cfg(feature = "voice")]
 pub struct LiveTtsService {
     config: Arc<RwLock<TtsConfig>>,
     elevenlabs: Option<ElevenLabsTts>,
     openai: Option<OpenAiTts>,
 }
 
+#[cfg(feature = "voice")]
 impl std::fmt::Debug for LiveTtsService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LiveTtsService")
@@ -39,6 +45,7 @@ impl std::fmt::Debug for LiveTtsService {
     }
 }
 
+#[cfg(feature = "voice")]
 impl LiveTtsService {
     /// Create a new TTS service from configuration.
     pub fn new(config: TtsConfig) -> Self {
@@ -110,6 +117,7 @@ impl LiveTtsService {
     }
 }
 
+#[cfg(feature = "voice")]
 #[async_trait]
 impl TtsService for LiveTtsService {
     async fn status(&self) -> ServiceResult {
@@ -289,11 +297,13 @@ pub trait SttService: Send + Sync {
 }
 
 /// Live STT service that delegates to voice providers.
+#[cfg(feature = "voice")]
 pub struct LiveSttService {
     provider: String,
     whisper: Option<WhisperStt>,
 }
 
+#[cfg(feature = "voice")]
 impl std::fmt::Debug for LiveSttService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LiveSttService")
@@ -303,6 +313,7 @@ impl std::fmt::Debug for LiveSttService {
     }
 }
 
+#[cfg(feature = "voice")]
 impl LiveSttService {
     /// Create a new STT service.
     pub fn new(openai_key: Option<Secret<String>>) -> Self {
@@ -329,6 +340,7 @@ impl LiveSttService {
     }
 }
 
+#[cfg(feature = "voice")]
 #[async_trait]
 impl SttService for LiveSttService {
     async fn status(&self) -> ServiceResult {
@@ -445,9 +457,9 @@ impl SttService for NoopSttService {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "voice"))]
 mod tests {
-    use super::*;
+    use {super::*, serde_json::json};
 
     #[tokio::test]
     async fn test_live_tts_service_status_unconfigured() {

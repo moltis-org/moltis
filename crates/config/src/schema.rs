@@ -85,6 +85,116 @@ pub struct MoltisConfig {
     pub tailscale: TailscaleConfig,
     pub failover: FailoverConfig,
     pub heartbeat: HeartbeatConfig,
+    pub voice: VoiceConfig,
+}
+
+/// Voice configuration (TTS and STT).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    pub tts: VoiceTtsConfig,
+    pub stt: VoiceSttConfig,
+}
+
+/// Voice TTS configuration for moltis.toml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceTtsConfig {
+    /// Enable TTS globally.
+    pub enabled: bool,
+    /// Default provider: "elevenlabs", "openai".
+    pub provider: String,
+    /// ElevenLabs-specific settings.
+    pub elevenlabs: VoiceElevenLabsConfig,
+    /// OpenAI TTS settings.
+    pub openai: VoiceOpenAiConfig,
+}
+
+impl Default for VoiceTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "elevenlabs".into(),
+            elevenlabs: VoiceElevenLabsConfig::default(),
+            openai: VoiceOpenAiConfig::default(),
+        }
+    }
+}
+
+/// ElevenLabs provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceElevenLabsConfig {
+    /// API key (from ELEVENLABS_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Default voice ID.
+    pub voice_id: Option<String>,
+    /// Model to use (e.g., "eleven_flash_v2_5" for lowest latency).
+    pub model: Option<String>,
+}
+
+/// OpenAI TTS/STT provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceOpenAiConfig {
+    /// API key (from OPENAI_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Voice to use for TTS (alloy, echo, fable, onyx, nova, shimmer).
+    pub voice: Option<String>,
+    /// Model to use for TTS (tts-1, tts-1-hd).
+    pub model: Option<String>,
+}
+
+/// Voice STT configuration for moltis.toml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceSttConfig {
+    /// Enable STT globally.
+    pub enabled: bool,
+    /// Default provider: "whisper".
+    pub provider: String,
+    /// Whisper (OpenAI) settings.
+    pub whisper: VoiceWhisperConfig,
+}
+
+impl Default for VoiceSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "whisper".into(),
+            whisper: VoiceWhisperConfig::default(),
+        }
+    }
+}
+
+/// OpenAI Whisper configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceWhisperConfig {
+    /// API key (from OPENAI_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (whisper-1).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
 }
 
 /// Gateway server configuration.
@@ -746,6 +856,14 @@ fn serialize_option_secret<S: serde::Serializer>(
         Some(s) => serializer.serialize_some(s.expose_secret()),
         None => serializer.serialize_none(),
     }
+}
+
+fn deserialize_option_secret<'de, D>(deserializer: D) -> Result<Option<Secret<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.map(Secret::new))
 }
 
 impl ProvidersConfig {

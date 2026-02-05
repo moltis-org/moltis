@@ -35,7 +35,7 @@ moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tools          = { workspace = true }
-moltis-voice          = { workspace = true }
+moltis-voice          = { optional = true, workspace = true }
 password-hash         = "0.5"
 pulldown-cmark        = { default-features = false, features = ["html"], version = "0.12" }
 rand                  = { workspace = true }
@@ -60,14 +60,15 @@ uuid                  = { workspace = true }
 webauthn-rs           = { features = ["danger-allow-state-serialisation"], version = "0.5" }
 webauthn-rs-proto     = "0.5"
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
-openssl               = { workspace = true }
+openssl = { workspace = true }
 
 [features]
-default          = ["file-watcher", "tailscale", "tls", "web-ui"]
+default          = ["file-watcher", "tailscale", "tls", "voice", "web-ui"]
 file-watcher     = ["moltis-memory/file-watcher"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 tailscale        = []
 tls              = ["dep:axum-server", "dep:rcgen", "dep:rustls", "dep:rustls-pemfile", "dep:tokio-rustls"]
+voice            = ["dep:moltis-voice"]
 web-ui           = ["dep:include_dir"]
 
 [dev-dependencies]

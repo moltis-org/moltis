@@ -1043,3 +1043,22 @@
   font-size: 0.72rem;
   color: var(--muted);
 }
+
+/* ── Microphone Button ── */
+
+.mic-btn.recording {
+  background: var(--error) !important;
+  border-color: var(--error) !important;
+  color: #fff !important;
+  animation: mic-pulse 1s infinite;
+}
+
+.mic-btn.transcribing {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}

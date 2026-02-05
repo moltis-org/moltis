@@ -3,6 +3,28 @@
 Moltis provides text-to-speech (TTS) and speech-to-text (STT) capabilities
 through the `moltis-voice` crate and gateway integration.
 
+## Feature Flag
+
+Voice services are behind the `voice` cargo feature, enabled by default:
+
+```toml
+# Cargo.toml (gateway crate)
+[features]
+default = ["voice", ...]
+voice = ["dep:moltis-voice"]
+```
+
+To disable voice features at compile time:
+```bash
+cargo build --no-default-features --features "file-watcher,tailscale,tls,web-ui"
+```
+
+When disabled:
+- TTS/STT RPC methods are not registered
+- Voice settings section is hidden in the UI
+- Microphone button is hidden in the chat interface
+- `voice_enabled: false` is set in the gon data
+
 ## Architecture
 
 ```
@@ -10,9 +32,9 @@ through the `moltis-voice` crate and gateway integration.
 │                      Voice Crate                            │
 │                   (crates/voice/)                           │
 ├─────────────────────────────────────────────────────────────┤
-│  TtsProvider trait          │  SttProvider trait            │
-│  ├─ ElevenLabsTts          │  └─ WhisperStt (OpenAI)       │
-│  └─ OpenAiTts              │                               │
+│  TtsProvider trait         │  SttProvider trait             │
+│  ├─ ElevenLabsTts          │  └─ WhisperStt (OpenAI)        │
+│  └─ OpenAiTts              │                                │
 └─────────────────────────────────────────────────────────────┘
                     │
                     ▼
@@ -28,9 +50,9 @@ through the `moltis-voice` crate and gateway integration.
 ┌─────────────────────────────────────────────────────────────┐
 │                     RPC Methods                             │
 ├─────────────────────────────────────────────────────────────┤
-│  tts.status, tts.providers, tts.enable, tts.disable,       │
-│  tts.convert, tts.setProvider                              │
-│  stt.status, stt.providers, stt.transcribe, stt.setProvider│
+│  tts.status, tts.providers, tts.enable, tts.disable,        │
+│  tts.convert, tts.setProvider                               │
+│  stt.status, stt.providers, stt.transcribe, stt.setProvider │
 └─────────────────────────────────────────────────────────────┘
 ```
 

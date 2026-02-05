@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { navigate, registerPrefix } from "./router.js";
@@ -58,12 +59,22 @@ var sections = [
 		label: "Tailscale",
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.466.73-3.558"/></svg>`,
 	},
+	{
+		id: "voice",
+		label: "Voice",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>`,
+	},
 ];
+
+function getVisibleSections() {
+	var voiceEnabled = gon.get("voice_enabled");
+	return sections.filter((s) => s.id !== "voice" || voiceEnabled);
+}
 
 function SettingsSidebar() {
 	return html`<div class="settings-sidebar">
 		<div class="settings-sidebar-nav">
-			${sections.map(
+			${getVisibleSections().map(
 				(s) => html`
 				<button
 					key=${s.id}
@@ -1289,6 +1300,266 @@ function TailscaleSection() {
 	</div>`;
 }
 
+// ── Voice section ────────────────────────────────────────────
+
+function VoiceSection() {
+	var [_ttsStatus, setTtsStatus] = useState(null);
+	var [_sttStatus, setSttStatus] = useState(null);
+	var [ttsProviders, setTtsProviders] = useState([]);
+	var [sttProviders, setSttProviders] = useState([]);
+	var [voiceLoading, setVoiceLoading] = useState(true);
+
+	var [elevenLabsKey, setElevenLabsKey] = useState("");
+	var [openaiKey, setOpenaiKey] = useState("");
+	var [savingProvider, setSavingProvider] = useState(null);
+	var [voiceMsg, setVoiceMsg] = useState(null);
+	var [voiceErr, setVoiceErr] = useState(null);
+
+	function fetchVoiceStatus() {
+		setVoiceLoading(true);
+		rerender();
+		Promise.all([
+			sendRpc("tts.status", {}),
+			sendRpc("stt.status", {}),
+			sendRpc("tts.providers", {}),
+			sendRpc("stt.providers", {}),
+		])
+			.then(([tts, stt, ttsProv, sttProv]) => {
+				if (tts?.ok) setTtsStatus(tts.payload);
+				if (stt?.ok) setSttStatus(stt.payload);
+				if (ttsProv?.ok) setTtsProviders(ttsProv.payload || []);
+				if (sttProv?.ok) setSttProviders(sttProv.payload || []);
+				setVoiceLoading(false);
+				rerender();
+			})
+			.catch(() => {
+				setVoiceLoading(false);
+				rerender();
+			});
+	}
+
+	useEffect(() => {
+		fetchVoiceStatus();
+	}, []);
+
+	function onSaveKey(provider, key) {
+		if (!key.trim()) {
+			setVoiceErr("API key is required.");
+			rerender();
+			return;
+		}
+		setVoiceErr(null);
+		setVoiceMsg(null);
+		setSavingProvider(provider);
+		rerender();
+
+		sendRpc("voice.config.save_key", { provider, api_key: key.trim() })
+			.then((res) => {
+				setSavingProvider(null);
+				if (res?.ok) {
+					setVoiceMsg(`${provider} API key saved.`);
+					if (provider === "elevenlabs") setElevenLabsKey("");
+					if (provider === "openai") setOpenaiKey("");
+					setTimeout(() => {
+						setVoiceMsg(null);
+						rerender();
+					}, 2000);
+					fetchVoiceStatus();
+				} else {
+					setVoiceErr(res?.error?.message || "Failed to save key");
+				}
+				rerender();
+			})
+			.catch((err) => {
+				setSavingProvider(null);
+				setVoiceErr(err.message);
+				rerender();
+			});
+	}
+
+	function onRemoveKey(provider) {
+		setVoiceErr(null);
+		setVoiceMsg(null);
+		setSavingProvider(provider);
+		rerender();
+
+		sendRpc("voice.config.remove_key", { provider })
+			.then((res) => {
+				setSavingProvider(null);
+				if (res?.ok) {
+					setVoiceMsg(`${provider} API key removed.`);
+					setTimeout(() => {
+						setVoiceMsg(null);
+						rerender();
+					}, 2000);
+					fetchVoiceStatus();
+				} else {
+					setVoiceErr(res?.error?.message || "Failed to remove key");
+				}
+				rerender();
+			})
+			.catch((err) => {
+				setSavingProvider(null);
+				setVoiceErr(err.message);
+				rerender();
+			});
+	}
+
+	function isProviderConfigured(providerId) {
+		var all = [...ttsProviders, ...sttProviders];
+		var prov = all.find((p) => p.id === providerId);
+		return prov?.configured;
+	}
+
+	if (voiceLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
+			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
+		</div>`;
+	}
+
+	var elevenLabsConfigured = isProviderConfigured("elevenlabs");
+	var openaiConfigured = isProviderConfigured("openai");
+	var whisperConfigured = isProviderConfigured("whisper");
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Configure text-to-speech (TTS) and speech-to-text (STT) providers. Once configured, you can use the microphone button in chat to record voice input.
+		</p>
+
+		${voiceMsg ? html`<div class="text-xs" style="color:var(--accent);">${voiceMsg}</div>` : null}
+		${voiceErr ? html`<div class="text-xs" style="color:var(--error);">${voiceErr}</div>` : null}
+
+		<!-- Speech-to-Text (STT) -->
+		<div style="max-width:600px;">
+			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Speech-to-Text (STT)</h3>
+			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
+				Transcribe your voice to text using OpenAI Whisper.
+			</p>
+
+			<!-- OpenAI Whisper -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">OpenAI Whisper</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Best accuracy, handles accents and background noise
+						</div>
+					</div>
+					${whisperConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					whisperConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "whisper"}
+								onClick=${() => onRemoveKey("whisper")}>
+								${savingProvider === "whisper" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${openaiKey} onInput=${(e) => setOpenaiKey(e.target.value)}
+								placeholder="sk-..." />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "whisper" || !openaiKey.trim()}
+								onClick=${() => onSaveKey("whisper", openaiKey)}>
+								${savingProvider === "whisper" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">platform.openai.com/api-keys</a>
+						</div>`
+				}
+			</div>
+		</div>
+
+		<!-- Text-to-Speech (TTS) -->
+		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;">
+			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Text-to-Speech (TTS)</h3>
+			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
+				Convert text responses to spoken audio.
+			</p>
+
+			<!-- ElevenLabs -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">ElevenLabs</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Lowest latency (~75ms), most natural voices
+						</div>
+					</div>
+					${elevenLabsConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					elevenLabsConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "elevenlabs"}
+								onClick=${() => onRemoveKey("elevenlabs")}>
+								${savingProvider === "elevenlabs" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${elevenLabsKey} onInput=${(e) => setElevenLabsKey(e.target.value)}
+								placeholder="API key" />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "elevenlabs" || !elevenLabsKey.trim()}
+								onClick=${() => onSaveKey("elevenlabs", elevenLabsKey)}>
+								${savingProvider === "elevenlabs" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">elevenlabs.io</a>
+						</div>`
+				}
+			</div>
+
+			<!-- OpenAI TTS -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">OpenAI TTS</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Good quality, shares API key with Whisper STT
+						</div>
+					</div>
+					${openaiConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					openaiConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "openai"}
+								onClick=${() => onRemoveKey("openai")}>
+								${savingProvider === "openai" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${openaiKey} onInput=${(e) => setOpenaiKey(e.target.value)}
+								placeholder="sk-..." />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "openai" || !openaiKey.trim()}
+								onClick=${() => onSaveKey("openai", openaiKey)}>
+								${savingProvider === "openai" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">platform.openai.com/api-keys</a>
+						</div>`
+				}
+			</div>
+		</div>
+	</div>`;
+}
+
 // ── Main layout ──────────────────────────────────────────────
 
 function SettingsPage() {
@@ -1304,6 +1575,7 @@ function SettingsPage() {
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
+		${section === "voice" ? html`<${VoiceSection} />` : null}
 	</div>`;
 }
 

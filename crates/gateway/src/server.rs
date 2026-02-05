@@ -1771,6 +1771,7 @@ struct GonData {
     cron_status: moltis_cron::types::CronStatus,
     heartbeat_config: moltis_config::schema::HeartbeatConfig,
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
+    voice_enabled: bool,
 }
 
 /// Counts shown as badges in the sidebar navigation.
@@ -1830,6 +1831,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         cron_status,
         heartbeat_config,
         heartbeat_runs,
+        voice_enabled: cfg!(feature = "voice"),
     }
 }
 
