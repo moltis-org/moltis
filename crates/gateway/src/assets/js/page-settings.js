@@ -1299,6 +1299,7 @@ function TailscaleSection() {
 function MemorySection() {
 	var [memStatus, setMemStatus] = useState(null);
 	var [memConfig, setMemConfig] = useState(null);
+	var [qmdStatus, setQmdStatus] = useState(null);
 	var [loading, setLoading] = useState(true);
 	var [saving, setSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
@@ -1311,11 +1312,12 @@ function MemorySection() {
 	var [sessionExport, setSessionExport] = useState(false);
 
 	useEffect(() => {
-		// Fetch memory status and config
+		// Fetch memory status, config, and QMD status
 		Promise.all([
 			sendRpc("memory.status", {}),
 			sendRpc("memory.config.get", {}),
-		]).then(([statusRes, configRes]) => {
+			sendRpc("memory.qmd.status", {}),
+		]).then(([statusRes, configRes, qmdRes]) => {
 			if (statusRes?.ok) {
 				setMemStatus(statusRes.payload);
 			}
@@ -1326,6 +1328,9 @@ function MemorySection() {
 				setCitations(cfg.citations || "auto");
 				setLlmReranking(cfg.llm_reranking || false);
 				setSessionExport(cfg.session_export || false);
+			}
+			if (qmdRes?.ok) {
+				setQmdStatus(qmdRes.payload);
 			}
 			setLoading(false);
 			rerender();
@@ -1369,6 +1374,9 @@ function MemorySection() {
 		</div>`;
 	}
 
+	var qmdFeatureEnabled = memConfig?.qmd_feature_enabled !== false;
+	var qmdAvailable = qmdStatus?.available === true;
+
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
@@ -1406,26 +1414,101 @@ function MemorySection() {
 			<!-- Backend selection -->
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Backend</h3>
-				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
-					Choose between the built-in hybrid search or QMD (external sidecar with BM25 + vector + LLM reranking).
-				</p>
+
+				<!-- Comparison table -->
+				<div style="margin-bottom:12px;padding:12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);font-size:.75rem;">
+					<table style="width:100%;border-collapse:collapse;">
+						<thead>
+							<tr style="border-bottom:1px solid var(--border);">
+								<th style="text-align:left;padding:4px 8px 8px 0;color:var(--muted);font-weight:500;">Feature</th>
+								<th style="text-align:center;padding:4px 8px 8px;color:var(--muted);font-weight:500;">Built-in</th>
+								<th style="text-align:center;padding:4px 8px 8px;color:var(--muted);font-weight:500;">QMD</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">Search type</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">FTS5 + vector</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">BM25 + vector + LLM</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">External dependency</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--accent);">None</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">Node.js/Bun</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">Embedding cache</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--accent);">\u2713</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">\u2717</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">OpenAI batch API</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--accent);">\u2713 (50% cheaper)</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">\u2717</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">Provider fallback</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--accent);">\u2713</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">\u2717</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">LLM reranking</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">Optional</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--accent);">Built-in</td>
+							</tr>
+							<tr>
+								<td style="padding:6px 8px 6px 0;color:var(--text);">Best for</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">Most users</td>
+								<td style="padding:6px 8px;text-align:center;color:var(--muted);">Power users</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+
 				<div style="display:flex;gap:8px;">
 					<button type="button"
 						class="provider-btn ${backend === "builtin" ? "" : "provider-btn-secondary"}"
 						onClick=${() => { setBackend("builtin"); rerender(); }}>
-						Built-in
+						Built-in (Recommended)
 					</button>
 					<button type="button"
 						class="provider-btn ${backend === "qmd" ? "" : "provider-btn-secondary"}"
+						disabled=${!qmdFeatureEnabled}
 						onClick=${() => { setBackend("qmd"); rerender(); }}>
 						QMD
 					</button>
 				</div>
+
+				${!qmdFeatureEnabled ? html`
+					<div class="text-xs text-[var(--error)]" style="margin-top:8px;">
+						QMD feature is not enabled. Rebuild moltis with <code style="font-family:var(--font-mono);font-size:.7rem;">--features qmd</code>
+					</div>
+				` : null}
+
 				${backend === "qmd" ? html`
-					<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
-						QMD must be installed separately.
-						<a href="https://github.com/qmd/qmd" target="_blank" rel="noopener"
-							style="color:var(--accent);">Learn more</a>
+					<div style="margin-top:12px;padding:12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+						<h4 class="text-xs font-medium text-[var(--text-strong)]" style="margin:0 0 8px;">QMD Status</h4>
+						${qmdAvailable ? html`
+							<div class="text-xs" style="color:var(--accent);display:flex;align-items:center;gap:6px;">
+								<span>\u2713</span> QMD is installed ${qmdStatus?.version ? html`<span class="text-[var(--muted)]">(${qmdStatus.version})</span>` : null}
+							</div>
+						` : html`
+							<div class="text-xs" style="color:var(--error);margin-bottom:8px;">
+								\u2717 QMD is not installed or not found in PATH
+							</div>
+							<div class="text-xs text-[var(--muted)]" style="line-height:1.6;">
+								<strong style="color:var(--text);">Installation:</strong><br/>
+								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">npm install -g @anthropic/qmd</code>
+								<span style="margin:0 4px;">or</span>
+								<code style="font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">bun install -g @anthropic/qmd</code>
+								<br/><br/>
+								Then start the QMD daemon:
+								<code style="display:block;margin-top:4px;font-family:var(--font-mono);font-size:.7rem;background:var(--surface);padding:2px 4px;border-radius:3px;">qmd daemon</code>
+								<br/>
+								<a href="https://github.com/anthropics/qmd" target="_blank" rel="noopener"
+									style="color:var(--accent);">View documentation \u2192</a>
+							</div>
+						`}
 					</div>
 				` : null}
 			</div>

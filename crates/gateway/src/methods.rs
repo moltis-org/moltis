@@ -80,6 +80,7 @@ const READ_METHODS: &[&str] = &[
     "mcp.tools",
     "memory.status",
     "memory.config.get",
+    "memory.qmd.status",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -2876,6 +2877,7 @@ impl MethodRegistry {
                         "citations": memory.citations.as_deref().unwrap_or("auto"),
                         "llm_reranking": memory.llm_reranking,
                         "session_export": memory.session_export,
+                        "qmd_feature_enabled": cfg!(feature = "qmd"),
                     }))
                 })
             }),
@@ -2924,6 +2926,52 @@ impl MethodRegistry {
                         "llm_reranking": llm_reranking,
                         "session_export": session_export,
                     }))
+                })
+            }),
+        );
+
+        // QMD status check
+        self.register(
+            "memory.qmd.status",
+            Box::new(|_ctx| {
+                Box::pin(async move {
+                    #[cfg(feature = "qmd")]
+                    {
+                        use moltis_qmd::{QmdManager, QmdManagerConfig};
+
+                        let config = moltis_config::discover_and_load();
+                        let qmd_config = QmdManagerConfig {
+                            command: config
+                                .memory
+                                .qmd
+                                .command
+                                .clone()
+                                .unwrap_or_else(|| "qmd".into()),
+                            collections: std::collections::HashMap::new(),
+                            max_results: config.memory.qmd.max_results.unwrap_or(10),
+                            timeout_ms: config.memory.qmd.timeout_ms.unwrap_or(30_000),
+                            work_dir: moltis_config::data_dir(),
+                        };
+
+                        let manager = QmdManager::new(qmd_config);
+                        let status = manager.status().await;
+
+                        Ok(serde_json::json!({
+                            "feature_enabled": true,
+                            "available": status.available,
+                            "version": status.version,
+                            "error": status.error,
+                        }))
+                    }
+
+                    #[cfg(not(feature = "qmd"))]
+                    {
+                        Ok(serde_json::json!({
+                            "feature_enabled": false,
+                            "available": false,
+                            "error": "QMD feature not enabled. Rebuild with --features qmd",
+                        }))
+                    }
                 })
             }),
         );

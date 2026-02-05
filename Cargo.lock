@@ -2538,6 +2538,7 @@ dependencies = [
  "moltis-plugins",
  "moltis-projects",
  "moltis-protocol",
+ "moltis-qmd",
  "moltis-routing",
  "moltis-sessions",
  "moltis-skills",
