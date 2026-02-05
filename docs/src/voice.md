@@ -34,10 +34,10 @@ When disabled:
 ├─────────────────────────────────────────────────────────────┤
 │  TtsProvider trait         │  SttProvider trait             │
 │  ├─ ElevenLabsTts          │  ├─ WhisperStt (OpenAI)        │
-│  └─ OpenAiTts              │  ├─ GroqStt (Groq)             │
-│                            │  ├─ DeepgramStt                │
-│                            │  ├─ GoogleStt                  │
-│                            │  ├─ MistralStt                 │
+│  ├─ OpenAiTts              │  ├─ GroqStt (Groq)             │
+│  ├─ GoogleTts              │  ├─ DeepgramStt                │
+│  ├─ PiperTts (local)       │  ├─ GoogleStt                  │
+│  └─ CoquiTts (local)       │  ├─ MistralStt                 │
 │                            │  ├─ VoxtralLocalStt (local)    │
 │                            │  ├─ WhisperCliStt (local)      │
 │                            │  └─ SherpaOnnxStt (local)      │
@@ -66,12 +66,24 @@ When disabled:
 
 ### Supported Providers
 
+Moltis supports 5 TTS providers: 3 cloud-based and 2 local.
+
+#### Cloud Providers
+
 | Provider | Model | Latency | Notes |
 |----------|-------|---------|-------|
 | ElevenLabs | `eleven_flash_v2_5` | ~75ms | Lowest latency, voice cloning |
 | ElevenLabs | `eleven_turbo_v2_5` | ~250ms | Higher quality |
 | OpenAI | `tts-1` | ~200ms | Real-time optimized |
 | OpenAI | `tts-1-hd` | ~400ms | Higher quality |
+| Google Cloud | Various | ~150ms | 380+ voices, 50+ languages |
+
+#### Local Providers
+
+| Provider | Binary/Server | Notes |
+|----------|---------------|-------|
+| Piper | `piper` binary | Fast neural TTS, many voices, runs offline |
+| Coqui TTS | TTS server | High-quality neural TTS with voice cloning |
 
 ### Configuration
 
@@ -103,7 +115,82 @@ api_key = "sk-..."
 voice = "alloy"  # alloy, echo, fable, onyx, nova, shimmer
 model = "tts-1"
 speed = 1.0
+
+[voice.tts.google]
+api_key = "..."  # Google Cloud API key
+voice = "en-US-Neural2-D"  # See Google Cloud TTS voices
+language_code = "en-US"
+speaking_rate = 1.0
+
+# Local providers - no API key required
+
+[voice.tts.piper]
+# binary_path = "/usr/local/bin/piper"  # optional, searches PATH
+model_path = "~/.moltis/models/en_US-lessac-medium.onnx"  # required
+# config_path = "~/.moltis/models/en_US-lessac-medium.onnx.json"  # optional
+# speaker_id = 0  # for multi-speaker models
+# length_scale = 1.0  # speaking rate (lower = faster)
+
+[voice.tts.coqui]
+endpoint = "http://localhost:5002"  # Coqui TTS server
+# model = "tts_models/en/ljspeech/tacotron2-DDC"  # optional
 ```
+
+### Local TTS Provider Setup
+
+#### Piper TTS
+
+Piper is a fast, local neural text-to-speech system that runs entirely offline.
+
+1. Install Piper:
+   ```bash
+   # Via pip
+   pip install piper-tts
+
+   # Or download pre-built binaries from:
+   # https://github.com/rhasspy/piper/releases
+   ```
+
+2. Download a voice model from [Piper Voices](https://github.com/rhasspy/piper#voices):
+   ```bash
+   mkdir -p ~/.moltis/models
+   curl -L -o ~/.moltis/models/en_US-lessac-medium.onnx \
+     https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+   ```
+
+3. Configure in `moltis.toml`:
+   ```toml
+   [voice.tts]
+   provider = "piper"
+
+   [voice.tts.piper]
+   model_path = "~/.moltis/models/en_US-lessac-medium.onnx"
+   ```
+
+#### Coqui TTS
+
+Coqui TTS is a high-quality neural TTS with voice cloning capabilities.
+
+1. Install and start the server:
+   ```bash
+   # Via pip
+   pip install TTS
+   tts-server --model_name tts_models/en/ljspeech/tacotron2-DDC
+
+   # Or via Docker
+   docker run -p 5002:5002 ghcr.io/coqui-ai/tts
+   ```
+
+2. Configure in `moltis.toml`:
+   ```toml
+   [voice.tts]
+   provider = "coqui"
+
+   [voice.tts.coqui]
+   endpoint = "http://localhost:5002"
+   ```
+
+Browse available models at [Coqui TTS Models](https://github.com/coqui-ai/TTS#available-models).
 
 ### RPC Methods
 
@@ -467,7 +554,10 @@ src/
 ├── tts/
 │   ├── mod.rs       # TtsProvider trait, AudioFormat, types
 │   ├── elevenlabs.rs # ElevenLabs implementation
-│   └── openai.rs    # OpenAI TTS implementation
+│   ├── openai.rs    # OpenAI TTS implementation
+│   ├── google.rs    # Google Cloud TTS implementation
+│   ├── piper.rs     # Piper local TTS implementation
+│   └── coqui.rs     # Coqui TTS server implementation
 └── stt/
     ├── mod.rs          # SttProvider trait, Transcript types
     ├── whisper.rs      # OpenAI Whisper implementation
@@ -532,10 +622,20 @@ pub trait SttProvider: Send + Sync {
 3. Re-export from `crates/voice/src/stt/mod.rs`
 4. Add to `LiveSttService` in gateway
 
+## Web UI Integration
+
+The voice feature integrates with the web UI:
+
+- **Microphone button**: Record voice input in the chat interface
+- **Settings page**: Configure and enable/disable voice providers
+- **Auto-detection**: API keys are detected from environment variables and LLM provider configs
+- **Toggle switches**: Enable/disable providers without removing configuration
+- **Setup instructions**: Step-by-step guides for local provider installation
+
 ## Future Enhancements
 
 - **Streaming TTS**: Chunked audio delivery for lower latency
 - **VoiceWake**: Wake word detection and continuous listening
-- **Web UI**: Audio playback and microphone capture
+- **Audio playback**: Play TTS responses directly in the chat
 - **Channel Integration**: Auto-transcribe Telegram voice messages
 - **Per-Agent Voices**: Different voices for different agents
