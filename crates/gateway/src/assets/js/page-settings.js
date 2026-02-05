@@ -59,9 +59,9 @@ var sections = [
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.466.73-3.558"/></svg>`,
 	},
 	{
-		id: "tools",
-		label: "Tools",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></svg>`,
+		id: "config",
+		label: "Configuration",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>`,
 	},
 ];
 
@@ -1022,10 +1022,11 @@ function bufToB64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ── Tools section ─────────────────────────────────────────────
+// ── Configuration section ─────────────────────────────────────
 
-function ToolsSection() {
+function ConfigSection() {
 	var [toml, setToml] = useState("");
+	var [configPath, setConfigPath] = useState("");
 	var [loading, setLoading] = useState(true);
 	var [saving, setSaving] = useState(false);
 	var [testing, setTesting] = useState(false);
@@ -1036,13 +1037,14 @@ function ToolsSection() {
 	function fetchConfig() {
 		setLoading(true);
 		rerender();
-		fetch("/api/tools/config")
+		fetch("/api/config")
 			.then((r) => (r.ok ? r.json() : { error: "Failed to load" }))
 			.then((d) => {
 				if (d.error) {
 					setErr(d.error);
 				} else {
 					setToml(d.toml || "");
+					setConfigPath(d.path || "");
 					setErr(null);
 				}
 				setLoading(false);
@@ -1067,7 +1069,7 @@ function ToolsSection() {
 		setWarnings([]);
 		rerender();
 
-		fetch("/api/tools/config/validate", {
+		fetch("/api/config/validate", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ toml }),
@@ -1098,7 +1100,7 @@ function ToolsSection() {
 		setWarnings([]);
 		rerender();
 
-		fetch("/api/tools/config", {
+		fetch("/api/config", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ toml }),
@@ -1129,28 +1131,31 @@ function ToolsSection() {
 
 	if (loading) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Tools</h2>
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
 			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
 		</div>`;
 	}
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Tools</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:700px;margin:0;">
-			Configure tool settings including exec, browser, and web tools.
-			Edit the TOML configuration below, test it, then save.
-			Changes require a restart to take effect.
+			Edit the full moltis configuration. This includes server, tools, providers, auth, and all other settings.
+			Test your changes before saving. Changes require a restart to take effect.
 		</p>
+		${
+			configPath
+				? html`<div class="text-xs text-[var(--muted)]" style="font-family:var(--font-mono);">
+			<span style="opacity:0.7;">File:</span> ${configPath}
+		</div>`
+				: null
+		}
 
-		<form onSubmit=${onSave} style="max-width:700px;">
+		<form onSubmit=${onSave} style="max-width:800px;">
 			<div style="margin-bottom:12px;">
-				<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">
-					Configuration (TOML format)
-				</div>
 				<textarea
 					class="provider-key-input"
-					rows="20"
-					style="width:100%;min-height:300px;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;"
+					rows="30"
+					style="width:100%;min-height:500px;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;"
 					value=${toml}
 					onInput=${(e) => {
 						setToml(e.target.value);
@@ -1188,33 +1193,6 @@ function ToolsSection() {
 			${msg ? html`<div class="text-xs" style="margin-top:8px;color:var(--accent);">${msg}</div>` : null}
 			${err ? html`<div class="text-xs" style="margin-top:8px;color:var(--error);white-space:pre-wrap;font-family:var(--font-mono);">${err}</div>` : null}
 		</form>
-
-		<div style="max-width:700px;margin-top:8px;border-top:1px solid var(--border);padding-top:16px;">
-			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Configuration Reference</h3>
-			<div class="text-xs text-[var(--muted)] leading-relaxed" style="font-family:var(--font-mono);">
-				<pre style="margin:0;white-space:pre-wrap;background:var(--surface);padding:12px;border-radius:6px;border:1px solid var(--border);"># Browser automation
-[browser]
-enabled = true
-headless = true
-max_instances = 3
-# Restrict to specific domains for security:
-# allowed_domains = ["docs.example.com", "*.github.com"]
-
-# Command execution
-[exec]
-default_timeout_secs = 30
-[exec.sandbox]
-mode = "all"  # "off", "non-main", "all"
-
-# Web tools
-[web.search]
-enabled = true
-max_results = 5
-[web.fetch]
-enabled = true
-max_chars = 50000</pre>
-			</div>
-		</div>
 	</div>`;
 }
 
@@ -1505,7 +1483,7 @@ function SettingsPage() {
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
-		${section === "tools" ? html`<${ToolsSection} />` : null}
+		${section === "config" ? html`<${ConfigSection} />` : null}
 	</div>`;
 }
 
