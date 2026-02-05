@@ -1,4 +1,5 @@
 /target
+memory
 prompts
 .envrc
 .env

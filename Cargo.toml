@@ -96,7 +96,7 @@ moltis-auto-reply = { path = "crates/auto-reply" }
 moltis-browser    = { path = "crates/browser" }
 moltis-canvas     = { path = "crates/canvas" }
 moltis-channels   = { path = "crates/channels" }
-moltis-cli        = { path = "crates/cli" }
+moltis            = { path = "crates/cli" }
 moltis-common     = { path = "crates/common" }
 moltis-config     = { path = "crates/config" }
 moltis-cron       = { path = "crates/cron" }

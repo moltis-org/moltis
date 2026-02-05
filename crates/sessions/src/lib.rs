@@ -17,6 +17,9 @@ pub use {key::SessionKey, store::SearchResult};
 /// at application startup after [`moltis_projects::run_migrations`] (sessions
 /// has a foreign key to projects).
 pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations").run(pool).await?;
+    sqlx::migrate!("./migrations")
+        .set_ignore_missing(true)
+        .run(pool)
+        .await?;
     Ok(())
 }

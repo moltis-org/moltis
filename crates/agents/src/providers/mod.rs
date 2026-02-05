@@ -16,6 +16,12 @@ pub mod github_copilot;
 #[cfg(feature = "provider-kimi-code")]
 pub mod kimi_code;
 
+#[cfg(feature = "local-llm")]
+pub mod local_gguf;
+
+#[cfg(feature = "local-llm")]
+pub mod local_llm;
+
 use std::{collections::HashMap, sync::Arc};
 
 use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret};
@@ -197,6 +203,15 @@ impl ProviderRegistry {
         self.models.push(info);
     }
 
+    /// Unregister a provider by model ID. Returns true if it was removed.
+    pub fn unregister(&mut self, model_id: &str) -> bool {
+        let removed = self.providers.remove(model_id).is_some();
+        if removed {
+            self.models.retain(|m| m.id != model_id);
+        }
+        removed
+    }
+
     /// Auto-discover providers from environment variables.
     /// Uses default config (all providers enabled).
     pub fn from_env() -> Self {
@@ -246,6 +261,12 @@ impl ProviderRegistry {
         #[cfg(feature = "provider-kimi-code")]
         {
             reg.register_kimi_code_providers(config);
+        }
+
+        // Local GGUF providers (no API key needed, model runs locally)
+        #[cfg(feature = "local-llm")]
+        {
+            reg.register_local_gguf_providers(config);
         }
 
         reg
@@ -517,6 +538,74 @@ impl ProviderRegistry {
                 provider,
             );
         }
+    }
+
+    #[cfg(feature = "local-llm")]
+    fn register_local_gguf_providers(&mut self, config: &ProvidersConfig) {
+        use std::path::PathBuf;
+
+        use local_gguf::LazyLocalGgufProvider;
+
+        if !config.is_enabled("local") {
+            return;
+        }
+
+        // User must configure a model explicitly (bring your own model pattern)
+        let Some(model_id) = config.get("local").and_then(|e| e.model.as_deref()) else {
+            // Log system info and suggestions even when no model is configured
+            local_gguf::log_system_info_and_suggestions();
+            tracing::info!(
+                "local-llm enabled but no model configured. Add [providers.local] model = \"...\" to config."
+            );
+            return;
+        };
+
+        if self.providers.contains_key(model_id) {
+            return;
+        }
+
+        // Build config from provider entry
+        let entry = config.get("local");
+        let model_path = entry
+            .and_then(|e| e.base_url.as_deref()) // Reuse base_url for model_path
+            .map(PathBuf::from);
+
+        let gguf_config = local_gguf::LocalGgufConfig {
+            model_id: model_id.into(),
+            model_path,
+            context_size: None, // Use model default
+            gpu_layers: 0,      // CPU by default
+            temperature: 0.7,
+            cache_dir: local_gguf::models::default_models_dir(),
+        };
+
+        // Log system info
+        local_gguf::log_system_info_and_suggestions();
+
+        // Check if model exists in registry for display name
+        let display_name = local_gguf::models::find_model(model_id)
+            .map(|m| m.display_name.to_string())
+            .unwrap_or_else(|| format!("{} (local)", model_id));
+
+        // We can't load the model synchronously here (async needed for download).
+        // Instead, we create a lazy-loading wrapper or skip registration.
+        // For now, log that the model will be loaded on first use.
+        tracing::info!(
+            model = model_id,
+            display_name = %display_name,
+            "local-llm model configured (will load on first use)"
+        );
+
+        // Register a placeholder provider that loads on first use
+        let provider = Arc::new(LazyLocalGgufProvider::new(gguf_config));
+        self.register(
+            ModelInfo {
+                id: model_id.into(),
+                provider: "local-llm".into(),
+                display_name,
+            },
+            provider,
+        );
     }
 
     fn register_builtin_providers(&mut self, config: &ProvidersConfig) {
@@ -1263,5 +1352,57 @@ mod tests {
 
         // Verify we don't use the openrouter provider we created (not registered).
         drop(provider_or);
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_requires_model_in_config() {
+        // local-llm is a "bring your own model" provider — without a model it registers nothing.
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_registers_with_model_in_config() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        let local_models: Vec<_> = reg
+            .list_models()
+            .iter()
+            .filter(|m| m.provider == "local-llm")
+            .collect();
+        assert_eq!(local_models.len(), 1);
+        assert_eq!(local_models[0].id, "qwen2.5-coder-7b-q4_k_m");
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_disabled_not_registered() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("local".into(), moltis_config::schema::ProviderEntry {
+                enabled: false,
+                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
     }
 }

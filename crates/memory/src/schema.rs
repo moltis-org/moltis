@@ -31,7 +31,10 @@ pub struct ChunkRow {
 /// `chunks_fts` full-text search virtual table. Memory uses its own database
 /// (`memory.db`) separate from the main `moltis.db`.
 pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations").run(pool).await?;
+    sqlx::migrate!("./migrations")
+        .set_ignore_missing(true)
+        .run(pool)
+        .await?;
     Ok(())
 }
 

@@ -7,12 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is doing a Rust version of openclaw. Openclaw documentation is available at
 https://docs.openclaw.ai and its code is at https://github.com/openclaw/openclaw
 
-Dig this repo and documentation to figure out how moltbot is working and how
-many features it has. `../clawdbot/HOWITWORKS.md` has explaination of how it
-works. But feel free to do any improvement and change the way it is to make
-it more Rustacean.
-
-All code you write must have tests with high coverage.
+All code you write must have tests with high coverage. Always check for Security
+to make code safe.
 
 ## Rust Style and Idioms
 
@@ -181,6 +177,56 @@ npx tailwindcss -i input.css -o ../src/assets/style.css --minify
 Use `npm run watch` during development for automatic rebuilds on file changes.
 If styles don't appear after adding new Tailwind classes, this rebuild step was
 likely missed.
+
+### Selection Card UI Pattern
+
+When presenting users with a choice between options (backends, models, plans),
+use **clickable cards** instead of dropdowns. Cards provide better UX because:
+- Users can see all options at once with descriptions
+- Visual feedback (selected state) is clearer
+- Badges can highlight recommended options or availability status
+
+**Card structure** (see `.model-card`, `.backend-card` in `input.css`):
+```html
+<div class="backend-card selected">
+  <div class="flex items-center justify-between">
+    <span class="text-sm font-medium">Option Name</span>
+    <div class="flex gap-2">
+      <span class="recommended-badge">Recommended</span>
+    </div>
+  </div>
+  <div class="text-xs text-[var(--muted)] mt-1">Description text</div>
+</div>
+```
+
+**States**:
+- `.selected` — highlighted with accent border/background
+- `.disabled` — dimmed, cursor not-allowed, not clickable
+- Default — hover shows border-strong and bg-hover
+
+**Badges**:
+- `.recommended-badge` — accent color, for the suggested option
+- `.tier-badge` — muted color, for metadata (RAM requirements, "Not installed")
+
+**Install hints**: When an option requires installation, show clear instructions:
+```html
+<div class="install-hint">Install with: <code>pip install mlx-lm</code></div>
+```
+
+### Provider Configuration Storage
+
+Provider credentials and settings are stored in `~/.config/moltis/provider_keys.json`.
+The `KeyStore` in `provider_setup.rs` manages this with:
+
+- **Per-provider config object**: `{ "apiKey": "...", "baseUrl": "...", "model": "..." }`
+- **Backward compatibility**: Migrates from old string-only format automatically
+- **Partial updates**: `save_config()` preserves existing fields when updating
+
+When adding new provider fields, update both:
+1. `ProviderConfig` struct in `provider_setup.rs`
+2. `available()` response to expose the field to the frontend
+3. `save_key()` to accept and persist the new field
+
 ### Server-Injected Data (gon pattern)
 
 When the frontend needs server-side data **at page load** (before any async
@@ -511,6 +557,11 @@ Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): de
 
 When adding a new feature (`feat` commits), update the features list in
 `README.md` as part of the same branch/PR.
+
+**Merging main into your branch:** When merging `main` into your current branch
+and encountering conflicts, resolve them by keeping both sides of the changes.
+Don't discard either the incoming changes from main or your local changes —
+integrate them together so nothing is lost.
 
 **You MUST run all checks before every commit and fix any issues they report:**
 1. `cargo +nightly fmt --all` — format all Rust code (CI runs `cargo fmt --all -- --check`)
