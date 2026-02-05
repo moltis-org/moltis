@@ -237,6 +237,11 @@ pub async fn start_gateway(
 
     services.exec_approval = Arc::new(LiveExecApprovalService::new(Arc::clone(&approval_manager)));
 
+    // Wire browser service if enabled.
+    if let Some(browser_svc) = crate::services::RealBrowserService::from_config(&config) {
+        services.browser = Arc::new(browser_svc);
+    }
+
     // Wire live onboarding service.
     let onboarding_config_path = moltis_config::find_or_default_config_path();
     let live_onboarding =

@@ -404,13 +404,14 @@ pub enum MessageQueueMode {
     Collect,
 }
 
-/// Tools configuration (exec, sandbox, policy, web).
+/// Tools configuration (exec, sandbox, policy, web, browser).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolsConfig {
     pub exec: ExecConfig,
     pub policy: ToolPolicyConfig,
     pub web: WebConfig,
+    pub browser: BrowserConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
@@ -425,6 +426,7 @@ impl Default for ToolsConfig {
             exec: ExecConfig::default(),
             policy: ToolPolicyConfig::default(),
             web: WebConfig::default(),
+            browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
         }
@@ -537,6 +539,50 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+        }
+    }
+}
+
+/// Browser automation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserConfig {
+    /// Whether browser support is enabled.
+    pub enabled: bool,
+    /// Path to Chrome/Chromium binary (auto-detected if not set).
+    pub chrome_path: Option<String>,
+    /// Whether to run in headless mode.
+    pub headless: bool,
+    /// Default viewport width.
+    pub viewport_width: u32,
+    /// Default viewport height.
+    pub viewport_height: u32,
+    /// Maximum concurrent browser instances.
+    pub max_instances: usize,
+    /// Instance idle timeout in seconds before closing.
+    pub idle_timeout_secs: u64,
+    /// Default navigation timeout in milliseconds.
+    pub navigation_timeout_ms: u64,
+    /// User agent string (uses default if not set).
+    pub user_agent: Option<String>,
+    /// Additional Chrome arguments.
+    #[serde(default)]
+    pub chrome_args: Vec<String>,
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default - requires explicit opt-in
+            chrome_path: None,
+            headless: true,
+            viewport_width: 1280,
+            viewport_height: 720,
+            max_instances: 3,
+            idle_timeout_secs: 300,
+            navigation_timeout_ms: 30000,
+            user_agent: None,
+            chrome_args: Vec::new(),
         }
     }
 }

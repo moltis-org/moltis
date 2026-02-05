@@ -5,14 +5,24 @@ version.workspace = true
 
 [dependencies]
 anyhow         = { workspace = true }
+async-trait    = "0.1"
+base64         = { workspace = true }
+chromiumoxide  = { version = "0.8", default-features = false, features = ["tokio-runtime"] }
+futures        = { workspace = true }
 moltis-common  = { workspace = true }
+moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
+rand           = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
 
 [features]
 default = []
 metrics = ["dep:moltis-metrics"]
+tracing = []
 
 [lints]
 workspace = true
