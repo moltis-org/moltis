@@ -1,5 +1,8 @@
 use {super::plugin::ChannelPlugin, std::collections::HashMap};
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{channels as ch_metrics, gauge};
+
 /// Registry of all loaded channel plugins.
 pub struct ChannelRegistry {
     plugins: HashMap<String, Box<dyn ChannelPlugin>>,
@@ -20,6 +23,8 @@ impl ChannelRegistry {
 
     pub fn register(&mut self, plugin: Box<dyn ChannelPlugin>) {
         self.plugins.insert(plugin.id().to_string(), plugin);
+        #[cfg(feature = "metrics")]
+        gauge!(ch_metrics::ACTIVE).set(self.plugins.len() as f64);
     }
 
     pub fn get(&self, id: &str) -> Option<&dyn ChannelPlugin> {

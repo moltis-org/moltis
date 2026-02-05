@@ -28,6 +28,10 @@ pub mod mcp_health;
 pub mod mcp_service;
 pub mod message_log_store;
 pub mod methods;
+#[cfg(feature = "metrics")]
+pub mod metrics_middleware;
+#[cfg(feature = "metrics")]
+pub mod metrics_routes;
 pub mod nodes;
 pub mod onboarding;
 pub mod pairing;

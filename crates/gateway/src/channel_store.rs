@@ -36,13 +36,17 @@ impl SqliteChannelStore {
         Self { pool }
     }
 
-    /// Create the `channels` table if it doesn't exist.
+    /// Initialize the channels table schema.
+    ///
+    /// **Deprecated**: Schema is now managed by sqlx migrations.
+    /// This method is retained for tests that use in-memory databases.
+    #[doc(hidden)]
     pub async fn init(pool: &SqlitePool) -> Result<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS channels (
-                account_id   TEXT PRIMARY KEY,
-                channel_type TEXT NOT NULL DEFAULT 'telegram',
-                config       TEXT NOT NULL,
+                account_id   TEXT    PRIMARY KEY,
+                channel_type TEXT    NOT NULL DEFAULT 'telegram',
+                config       TEXT    NOT NULL,
                 created_at   INTEGER NOT NULL,
                 updated_at   INTEGER NOT NULL
             )"#,

@@ -7,12 +7,17 @@ version.workspace = true
 anyhow          = { workspace = true }
 moltis-agents   = { workspace = true }
 moltis-common   = { workspace = true }
+moltis-metrics  = { optional = true, workspace = true }
 moltis-routing  = { workspace = true }
 moltis-sessions = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

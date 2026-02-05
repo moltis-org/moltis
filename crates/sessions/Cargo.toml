@@ -3,16 +3,21 @@ edition.workspace = true
 name              = "moltis-sessions"
 version.workspace = true
 
+[features]
+default = ["metrics"]
+metrics = ["dep:moltis-metrics"]
+
 [dependencies]
-anyhow        = { workspace = true }
-fd-lock       = { workspace = true }
-moltis-common = { workspace = true }
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-sqlx          = { workspace = true }
-tokio         = { workspace = true }
-tracing       = { workspace = true }
-uuid          = { workspace = true }
+anyhow         = { workspace = true }
+fd-lock        = { workspace = true }
+moltis-common  = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+sqlx           = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

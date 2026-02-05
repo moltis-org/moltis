@@ -13,6 +13,7 @@ members = [
   "crates/mcp",
   "crates/media",
   "crates/memory",
+  "crates/metrics",
   "crates/oauth",
   "crates/onboarding",
   "crates/plugins",
@@ -33,7 +34,7 @@ unsafe_code = "deny"
 [workspace.package]
 edition    = "2024"
 license    = "MIT"
-repository = "https://github.com/penso/moltis"
+repository = "https://github.com/moltis-org/moltis"
 version    = "0.1.3"
 
 [workspace.dependencies]
@@ -59,7 +60,7 @@ tracing-subscriber    = { features = ["env-filter", "json"], version = "0.3" }
 # CLI
 clap = { features = ["derive", "env"], version = "4" }
 # Database
-sqlx = { features = ["runtime-tokio", "sqlite"], version = "0.8" }
+sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
 reqwest = { features = ["json", "stream"], version = "0.12" }
 # UUID
@@ -105,6 +106,7 @@ moltis-gateway    = { path = "crates/gateway" }
 moltis-mcp        = { path = "crates/mcp" }
 moltis-media      = { path = "crates/media" }
 moltis-memory     = { path = "crates/memory" }
+moltis-metrics    = { path = "crates/metrics" }
 moltis-oauth      = { path = "crates/oauth" }
 moltis-onboarding = { path = "crates/onboarding" }
 moltis-plugins    = { path = "crates/plugins" }

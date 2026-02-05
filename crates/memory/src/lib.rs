@@ -17,3 +17,6 @@ pub mod store_sqlite;
 pub mod tools;
 #[cfg(feature = "file-watcher")]
 pub mod watcher;
+
+// Re-export run_migrations for consistency with other crates.
+pub use schema::run_migrations;

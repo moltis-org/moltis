@@ -4,12 +4,17 @@ name              = "moltis-media"
 version.workspace = true
 
 [dependencies]
-anyhow        = { workspace = true }
-moltis-common = { workspace = true }
-reqwest       = { workspace = true }
-tokio         = { workspace = true }
-tracing       = { workspace = true }
-uuid          = { workspace = true }
+anyhow         = { workspace = true }
+moltis-common  = { workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+reqwest        = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+uuid           = { workspace = true }
+
+[features]
+default = []
+metrics = ["dep:moltis-metrics"]
 
 [lints]
 workspace = true

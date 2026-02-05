@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/penso/moltis-website/main/favicon.svg" alt="Moltis" width="120">
+<img src="https://raw.githubusercontent.com/moltis-org/moltis-website/main/favicon.svg" alt="Moltis" width="120">
 
 # Moltis
 
 **A personal AI gateway written in Rust. One binary, no runtime, no npm.**
 
-[![CI](https://github.com/penso/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/penso/moltis/actions/workflows/ci.yml)
+[![CI](https://github.com/moltis-org/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/moltis-org/moltis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
 
@@ -22,10 +22,10 @@ Inspired by [OpenClaw](https://docs.openclaw.ai) — just build it and run it.
 
 ```bash
 # macOS / Linux via Homebrew
-brew install penso/tap/moltis
+brew install moltis-org/tap/moltis
 
 # Or build from source
-cargo install moltis-cli --git https://github.com/penso/moltis
+cargo install moltis-cli --git https://github.com/moltis-org/moltis
 ```
 
 Moltis compiles your entire AI gateway — web UI, LLM providers, tools, and
@@ -120,7 +120,7 @@ What you get out of the box:
 
 ```bash
 # Clone and build
-git clone https://github.com/penso/moltis.git
+git clone https://github.com/moltis-org/moltis.git
 cd moltis
 cargo build --release
 
@@ -427,7 +427,7 @@ Moltis is organized as a Cargo workspace with the following crates:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=penso/moltis&type=Date)](https://star-history.com/#penso/moltis&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=Date)](https://star-history.com/#moltis-org/moltis&Date)
 
 ## License
 

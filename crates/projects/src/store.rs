@@ -103,39 +103,30 @@ impl SqliteProjectStore {
         Self { pool }
     }
 
-    /// Create the `projects` table if it doesn't exist.
+    /// Initialize the projects table schema.
+    ///
+    /// **Deprecated**: Schema is now managed by sqlx migrations in the gateway crate.
+    /// This method is retained for tests that use in-memory databases.
+    #[doc(hidden)]
     pub async fn init(pool: &sqlx::SqlitePool) -> Result<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS projects (
-                id              TEXT PRIMARY KEY,
-                label           TEXT NOT NULL,
-                directory       TEXT NOT NULL,
-                system_prompt   TEXT,
-                auto_worktree   INTEGER NOT NULL DEFAULT 0,
-                setup_command   TEXT,
+                id               TEXT    PRIMARY KEY,
+                label            TEXT    NOT NULL,
+                directory        TEXT    NOT NULL,
+                system_prompt    TEXT,
+                auto_worktree    INTEGER NOT NULL DEFAULT 0,
+                setup_command    TEXT,
                 teardown_command TEXT,
-                branch_prefix   TEXT,
-                detected        INTEGER NOT NULL DEFAULT 0,
-                created_at      INTEGER NOT NULL,
-                updated_at      INTEGER NOT NULL
+                branch_prefix    TEXT,
+                sandbox_image    TEXT,
+                detected         INTEGER NOT NULL DEFAULT 0,
+                created_at       INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL
             )"#,
         )
         .execute(pool)
         .await?;
-
-        // Migrations for columns added after initial release.
-        sqlx::query("ALTER TABLE projects ADD COLUMN teardown_command TEXT")
-            .execute(pool)
-            .await
-            .ok();
-        sqlx::query("ALTER TABLE projects ADD COLUMN branch_prefix TEXT")
-            .execute(pool)
-            .await
-            .ok();
-        sqlx::query("ALTER TABLE projects ADD COLUMN sandbox_image TEXT")
-            .execute(pool)
-            .await
-            .ok();
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at)")
             .execute(pool)

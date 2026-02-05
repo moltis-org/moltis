@@ -11,6 +11,8 @@ pub struct AnthropicProvider {
     model: String,
     base_url: String,
     client: reqwest::Client,
+    /// Optional alias for metrics differentiation (e.g., "anthropic-work", "anthropic-2").
+    alias: Option<String>,
 }
 
 impl AnthropicProvider {
@@ -20,6 +22,23 @@ impl AnthropicProvider {
             model,
             base_url,
             client: reqwest::Client::new(),
+            alias: None,
+        }
+    }
+
+    /// Create a new provider with a custom alias for metrics.
+    pub fn with_alias(
+        api_key: secrecy::Secret<String>,
+        model: String,
+        base_url: String,
+        alias: Option<String>,
+    ) -> Self {
+        Self {
+            api_key,
+            model,
+            base_url,
+            client: reqwest::Client::new(),
+            alias,
         }
     }
 }
@@ -59,7 +78,7 @@ fn parse_tool_calls(content: &[serde_json::Value]) -> Vec<ToolCall> {
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
-        "anthropic"
+        self.alias.as_deref().unwrap_or("anthropic")
     }
 
     fn id(&self) -> &str {

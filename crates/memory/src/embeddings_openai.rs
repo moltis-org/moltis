@@ -6,6 +6,9 @@ use {
     sha2::{Digest, Sha256},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, memory as mem_metrics};
+
 use crate::embeddings::EmbeddingProvider;
 
 pub struct OpenAiEmbeddingProvider {
@@ -81,12 +84,19 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
     }
 
     async fn embed_batch(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+
+        #[cfg(feature = "metrics")]
+        counter!(mem_metrics::EMBEDDINGS_GENERATED_TOTAL, labels::PROVIDER => "openai")
+            .increment(texts.len() as u64);
+
         let req = EmbeddingRequest {
             model: self.model.clone(),
             input: texts.to_vec(),
         };
 
-        let resp = self
+        let result = self
             .client
             .post(format!("{}/v1/embeddings", self.base_url))
             .bearer_auth(self.api_key.expose_secret())
@@ -95,8 +105,16 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
             .await?
             .error_for_status()?
             .json::<EmbeddingResponse>()
-            .await?;
+            .await;
 
+        #[cfg(feature = "metrics")]
+        histogram!(
+            "moltis_memory_embedding_duration_seconds",
+            labels::PROVIDER => "openai"
+        )
+        .record(start.elapsed().as_secs_f64());
+
+        let resp = result?;
         Ok(resp.data.into_iter().map(|d| d.embedding).collect())
     }
 

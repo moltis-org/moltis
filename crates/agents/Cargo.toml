@@ -4,7 +4,8 @@ name              = "moltis-agents"
 version.workspace = true
 
 [features]
-default                 = ["provider-async-openai", "provider-genai"]
+default                 = ["metrics", "provider-async-openai", "provider-genai"]
+metrics                 = ["dep:moltis-metrics"]
 provider-async-openai   = ["dep:async-openai"]
 provider-genai          = ["dep:genai"]
 provider-github-copilot = ["dep:moltis-oauth"]
@@ -31,10 +32,11 @@ tracing         = { workspace = true }
 uuid            = { workspace = true }
 
 # Optional LLM provider crates
-async-openai = { optional = true, workspace = true }
-base64       = { optional = true, workspace = true }
-genai        = { optional = true, workspace = true }
-moltis-oauth = { optional = true, workspace = true }
+async-openai   = { optional = true, workspace = true }
+base64         = { optional = true, workspace = true }
+genai          = { optional = true, workspace = true }
+moltis-metrics = { optional = true, workspace = true }
+moltis-oauth   = { optional = true, workspace = true }
 
 [dev-dependencies]
 axum     = { workspace = true }

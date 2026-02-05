@@ -21,6 +21,7 @@ import "./page-logs.js";
 import "./page-plugins.js";
 import "./page-skills.js";
 import "./page-mcp.js";
+import "./page-metrics.js";
 import "./page-settings.js";
 import "./page-images.js";
 import "./page-setup.js";

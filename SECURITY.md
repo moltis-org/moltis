@@ -6,7 +6,7 @@ If you discover a security vulnerability in Moltis, please report it responsibly
 
 ### Preferred Methods
 
-1. **GitHub Security Advisories** (recommended): Use [GitHub's private vulnerability reporting](https://github.com/penso/moltis/security/advisories/new) to report issues confidentially.
+1. **GitHub Security Advisories** (recommended): Use [GitHub's private vulnerability reporting](https://github.com/moltis-org/moltis/security/advisories/new) to report issues confidentially.
 
 2. **Email**: Send details to [moltis AT pen DOT so](mailto:moltis AT pen DOT so)
 

@@ -11,3 +11,12 @@ pub mod store_file;
 pub mod store_memory;
 pub mod store_sqlite;
 pub mod types;
+
+/// Run database migrations for the cron crate.
+///
+/// This creates the `cron_jobs` and `cron_runs` tables. Should be called at
+/// application startup when using [`store_sqlite::SqliteStore`].
+pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    sqlx::migrate!("./migrations").run(pool).await?;
+    Ok(())
+}

@@ -22,6 +22,8 @@ use crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage};
 pub struct AsyncOpenAiProvider {
     model: String,
     client: async_openai::Client<OpenAIConfig>,
+    /// Optional alias for metrics differentiation.
+    alias: Option<String>,
 }
 
 impl AsyncOpenAiProvider {
@@ -33,6 +35,25 @@ impl AsyncOpenAiProvider {
         Self {
             model,
             client: async_openai::Client::with_config(config),
+            alias: None,
+        }
+    }
+
+    /// Create a new provider with a custom alias for metrics.
+    pub fn with_alias(
+        api_key: secrecy::Secret<String>,
+        model: String,
+        base_url: String,
+        alias: Option<String>,
+    ) -> Self {
+        use secrecy::ExposeSecret;
+        let config = OpenAIConfig::new()
+            .with_api_key(api_key.expose_secret())
+            .with_api_base(&base_url);
+        Self {
+            model,
+            client: async_openai::Client::with_config(config),
+            alias,
         }
     }
 }
@@ -77,7 +98,7 @@ fn build_messages(
 #[async_trait]
 impl LlmProvider for AsyncOpenAiProvider {
     fn name(&self) -> &str {
-        "async-openai"
+        self.alias.as_deref().unwrap_or("async-openai")
     }
 
     fn id(&self) -> &str {

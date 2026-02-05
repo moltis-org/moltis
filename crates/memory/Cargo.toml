@@ -7,6 +7,7 @@ version.workspace = true
 default          = ["file-watcher"]
 file-watcher     = ["dep:notify-debouncer-full"]
 local-embeddings = ["dep:llama-cpp-2"]
+metrics          = ["dep:moltis-metrics"]
 
 [dependencies]
 anyhow                = { workspace = true }
@@ -15,6 +16,7 @@ directories.workspace = true
 llama-cpp-2           = { optional = true, version = "0.1" }
 moltis-agents         = { workspace = true }
 moltis-common         = { workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
 notify-debouncer-full = { optional = true, version = "0.7" }
 reqwest               = { workspace = true }
 secrecy               = { workspace = true }
