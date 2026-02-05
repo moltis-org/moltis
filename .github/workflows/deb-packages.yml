@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
     steps:
@@ -37,7 +37,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: arm64
 
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build .deb (${{ matrix.arch }})
     permissions:
       contents: write
@@ -96,7 +96,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build .rpm (${{ matrix.arch }})
     permissions:
       contents: write
@@ -166,7 +166,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
       contents: write
@@ -248,7 +248,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
 
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build AppImage (${{ matrix.arch }})
     permissions:
       contents: write
@@ -342,7 +342,7 @@ jobs:
 
   build-snap:
     needs: zizmor
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build Snap
     permissions:
       contents: write
@@ -377,7 +377,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
           - target: aarch64-unknown-linux-gnu
 
-    runs-on: self-hosted
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Build binary (${{ matrix.target }})
     permissions:
       contents: write
