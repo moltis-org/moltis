@@ -2577,6 +2577,7 @@ dependencies = [
  "moltis-skills",
  "moltis-telegram",
  "moltis-tools",
+ "moltis-voice",
  "openssl",
  "password-hash",
  "pulldown-cmark",

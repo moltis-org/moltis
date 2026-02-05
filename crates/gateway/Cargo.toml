@@ -35,6 +35,7 @@ moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tools          = { workspace = true }
+moltis-voice          = { workspace = true }
 password-hash         = "0.5"
 pulldown-cmark        = { default-features = false, features = ["html"], version = "0.12" }
 rand                  = { workspace = true }

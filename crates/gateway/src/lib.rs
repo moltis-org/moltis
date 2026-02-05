@@ -43,4 +43,5 @@ pub mod tailscale;
 pub mod tailscale_routes;
 #[cfg(feature = "tls")]
 pub mod tls;
+pub mod voice;
 pub mod ws;

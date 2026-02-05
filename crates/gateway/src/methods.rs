@@ -46,6 +46,8 @@ const READ_METHODS: &[&str] = &[
     "usage.cost",
     "tts.status",
     "tts.providers",
+    "stt.status",
+    "stt.providers",
     "models.list",
     "agents.list",
     "agent.identity.get",
@@ -90,6 +92,8 @@ const WRITE_METHODS: &[&str] = &[
     "tts.disable",
     "tts.convert",
     "tts.setProvider",
+    "stt.transcribe",
+    "stt.setProvider",
     "voicewake.set",
     "node.invoke",
     "chat.send",
@@ -2002,6 +2006,60 @@ impl MethodRegistry {
                     ctx.state
                         .services
                         .tts
+                        .set_provider(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        // STT
+        self.register(
+            "stt.status",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .stt
+                        .status()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "stt.providers",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .stt
+                        .providers()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "stt.transcribe",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .stt
+                        .transcribe(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "stt.setProvider",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .stt
                         .set_provider(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))

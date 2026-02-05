@@ -9,6 +9,8 @@ pub mod tts;
 
 pub use {
     config::{SttConfig, TtsAutoMode, TtsConfig, VoiceConfig},
-    stt::{SttProvider, TranscribeRequest, Transcript},
-    tts::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice},
+    stt::{SttProvider, TranscribeRequest, Transcript, WhisperStt},
+    tts::{
+        AudioFormat, AudioOutput, ElevenLabsTts, OpenAiTts, SynthesizeRequest, TtsProvider, Voice,
+    },
 };
