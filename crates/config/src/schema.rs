@@ -86,6 +86,7 @@ pub struct MoltisConfig {
     pub tailscale: TailscaleConfig,
     pub failover: FailoverConfig,
     pub heartbeat: HeartbeatConfig,
+    pub cron: CronConfig,
 }
 
 /// Gateway server configuration.
@@ -185,6 +186,26 @@ impl Default for ActiveHoursConfig {
             start: "08:00".into(),
             end: "24:00".into(),
             timezone: "local".into(),
+        }
+    }
+}
+
+/// Cron scheduler configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CronConfig {
+    /// Maximum number of jobs that can be created within the rate limit window.
+    /// Defaults to 10.
+    pub rate_limit_max: usize,
+    /// Rate limit window in seconds. Defaults to 60 (1 minute).
+    pub rate_limit_window_secs: u64,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            rate_limit_max: 10,
+            rate_limit_window_secs: 60,
         }
     }
 }

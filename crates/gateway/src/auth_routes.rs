@@ -298,6 +298,8 @@ async fn list_api_keys_handler(
 #[derive(serde::Deserialize)]
 struct CreateApiKeyRequest {
     label: String,
+    /// Optional scopes. If omitted or empty, the key has full access.
+    scopes: Option<Vec<String>>,
 }
 
 async fn create_api_key_handler(
@@ -308,9 +310,20 @@ async fn create_api_key_handler(
     if body.label.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "label is required").into_response();
     }
+
+    // Validate scopes if provided
+    if let Some(ref scopes) = body.scopes {
+        for scope in scopes {
+            if !crate::auth::VALID_SCOPES.contains(&scope.as_str()) {
+                return (StatusCode::BAD_REQUEST, format!("invalid scope: {scope}"))
+                    .into_response();
+            }
+        }
+    }
+
     match state
         .credential_store
-        .create_api_key(body.label.trim())
+        .create_api_key(body.label.trim(), body.scopes.as_deref())
         .await
     {
         Ok((id, key)) => Json(serde_json::json!({ "id": id, "key": key })).into_response(),

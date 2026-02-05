@@ -571,6 +571,13 @@ function SecuritySection() {
 	var [akLabel, setAkLabel] = useState("");
 	var [akNew, setAkNew] = useState(null);
 	var [akLoading, setAkLoading] = useState(true);
+	var [akFullAccess, setAkFullAccess] = useState(true);
+	var [akScopes, setAkScopes] = useState({
+		"operator.read": false,
+		"operator.write": false,
+		"operator.approvals": false,
+		"operator.pairing": false,
+	});
 
 	useEffect(() => {
 		fetch("/api/auth/status")
@@ -745,15 +752,33 @@ function SecuritySection() {
 	function onCreateApiKey() {
 		if (!akLabel.trim()) return;
 		setAkNew(null);
+		// Build scopes array if not full access
+		var scopes = null;
+		if (!akFullAccess) {
+			scopes = Object.entries(akScopes)
+				.filter(([, v]) => v)
+				.map(([k]) => k);
+			if (scopes.length === 0) {
+				// Require at least one scope if not full access
+				return;
+			}
+		}
 		fetch("/api/auth/api-keys", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ label: akLabel.trim() }),
+			body: JSON.stringify({ label: akLabel.trim(), scopes }),
 		})
 			.then((r) => r.json())
 			.then((d) => {
 				setAkNew(d.key);
 				setAkLabel("");
+				setAkFullAccess(true);
+				setAkScopes({
+					"operator.read": false,
+					"operator.write": false,
+					"operator.approvals": false,
+					"operator.pairing": false,
+				});
 				return fetch("/api/auth/api-keys").then((r2) => r2.json());
 			})
 			.then((d) => {
@@ -761,6 +786,11 @@ function SecuritySection() {
 				rerender();
 			})
 			.catch(() => rerender());
+	}
+
+	function toggleScope(scope) {
+		setAkScopes((prev) => ({ ...prev, [scope]: !prev[scope] }));
+		rerender();
 	}
 
 	function onRevokeApiKey(id) {
@@ -955,9 +985,10 @@ function SecuritySection() {
 						(ak) => html`<div class="provider-item" style="margin-bottom:0;" key=${ak.id}>
 						<div style="flex:1;min-width:0;">
 							<div class="provider-item-name" style="font-size:.85rem;">${ak.label}</div>
-							<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">
+							<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
 								<span style="font-family:var(--font-mono);">${ak.key_prefix}...</span>
 								<span>${ak.created_at}</span>
+								${ak.scopes ? html`<span style="color:var(--accent);">${ak.scopes.join(", ")}</span>` : html`<span style="color:var(--accent);">Full access</span>`}
 							</div>
 						</div>
 						<button class="provider-btn provider-btn-danger"
@@ -967,11 +998,59 @@ function SecuritySection() {
 				</div>`
 						: html`<div class="text-xs text-[var(--muted)]" style="padding:4px 0 12px;">No API keys.</div>`
 				}
-				<div style="display:flex;gap:8px;align-items:center;">
-					<input type="text" class="provider-key-input" value=${akLabel}
-						onInput=${(e) => setAkLabel(e.target.value)}
-						placeholder="Key label (e.g. CLI tool)" style="flex:1" />
-					<button type="button" class="provider-btn" onClick=${onCreateApiKey} disabled=${!akLabel.trim()}>Generate key</button>
+				<div style="display:flex;flex-direction:column;gap:10px;">
+					<div style="display:flex;gap:8px;align-items:center;">
+						<input type="text" class="provider-key-input" value=${akLabel}
+							onInput=${(e) => setAkLabel(e.target.value)}
+							placeholder="Key label (e.g. CLI tool)" style="flex:1" />
+					</div>
+					<div>
+						<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+							<input type="checkbox" checked=${akFullAccess}
+								onChange=${() => {
+									setAkFullAccess(!akFullAccess);
+									rerender();
+								}} />
+							<span class="text-xs text-[var(--text)]">Full access (all permissions)</span>
+						</label>
+					</div>
+					${
+						akFullAccess
+							? null
+							: html`<div style="padding-left:20px;display:flex;flex-direction:column;gap:6px;">
+							<div class="text-xs text-[var(--muted)]" style="margin-bottom:2px;">Select permissions:</div>
+							<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+								<input type="checkbox" checked=${akScopes["operator.read"]}
+									onChange=${() => toggleScope("operator.read")} />
+								<span class="text-xs text-[var(--text)]">operator.read</span>
+								<span class="text-xs text-[var(--muted)]">\u2014 View data and status</span>
+							</label>
+							<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+								<input type="checkbox" checked=${akScopes["operator.write"]}
+									onChange=${() => toggleScope("operator.write")} />
+								<span class="text-xs text-[var(--text)]">operator.write</span>
+								<span class="text-xs text-[var(--muted)]">\u2014 Create, update, delete</span>
+							</label>
+							<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+								<input type="checkbox" checked=${akScopes["operator.approvals"]}
+									onChange=${() => toggleScope("operator.approvals")} />
+								<span class="text-xs text-[var(--text)]">operator.approvals</span>
+								<span class="text-xs text-[var(--muted)]">\u2014 Handle exec approvals</span>
+							</label>
+							<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+								<input type="checkbox" checked=${akScopes["operator.pairing"]}
+									onChange=${() => toggleScope("operator.pairing")} />
+								<span class="text-xs text-[var(--text)]">operator.pairing</span>
+								<span class="text-xs text-[var(--muted)]">\u2014 Device/node pairing</span>
+							</label>
+						</div>`
+					}
+					<div>
+						<button type="button" class="provider-btn" onClick=${onCreateApiKey}
+							disabled=${!akLabel.trim() || !(akFullAccess || Object.values(akScopes).some((v) => v))}>
+							Generate key
+						</button>
+					</div>
 				</div>
 			`
 			}
