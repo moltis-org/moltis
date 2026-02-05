@@ -17,6 +17,9 @@ pub mod types;
 /// This creates the `cron_jobs` and `cron_runs` tables. Should be called at
 /// application startup when using [`store_sqlite::SqliteStore`].
 pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
-    sqlx::migrate!("./migrations").run(pool).await?;
+    sqlx::migrate!("./migrations")
+        .set_ignore_missing(true)
+        .run(pool)
+        .await?;
     Ok(())
 }

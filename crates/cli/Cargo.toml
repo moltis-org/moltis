@@ -13,7 +13,7 @@ pkg-fmt = "tgz"
 pkg-url = "{ repo }/releases/download/v{ version }/moltis-{ version }-{ target }.tar.gz"
 
 [package.metadata.deb]
-assets     = [["755", "target/release/moltis", "usr/bin/"]]
+assets     = [["target/release/moltis", "usr/bin/", "755"]]
 copyright  = "2025, Moltis Contributors"
 depends    = "$auto"
 maintainer = "Moltis Contributors"
@@ -39,18 +39,26 @@ dotenvy            = { workspace = true }
 moltis-agents      = { workspace = true }
 moltis-common      = { workspace = true }
 moltis-config      = { workspace = true }
+moltis-cron        = { workspace = true }
 moltis-gateway     = { workspace = true }
+moltis-memory      = { workspace = true }
 moltis-oauth       = { workspace = true }
 moltis-onboarding  = { workspace = true }
 moltis-plugins     = { workspace = true }
+moltis-projects    = { workspace = true }
+moltis-sessions    = { workspace = true }
 moltis-skills      = { workspace = true }
 moltis-tools       = { workspace = true }
 open               = { workspace = true }
 reqwest            = { workspace = true }
 serde_json         = { workspace = true }
+sqlx               = { workspace = true }
 tokio              = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
 default   = ["tailscale", "tls"]

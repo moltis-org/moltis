@@ -1,4 +1,5 @@
 mod auth_commands;
+mod db_commands;
 mod hooks_commands;
 mod sandbox_commands;
 #[cfg(feature = "tailscale")]
@@ -106,6 +107,11 @@ enum Commands {
     Sandbox {
         #[command(subcommand)]
         action: sandbox_commands::SandboxAction,
+    },
+    /// Database management (reset, clear, migrate).
+    Db {
+        #[command(subcommand)]
+        action: db_commands::DbAction,
     },
     /// Tailscale Serve/Funnel management.
     #[cfg(feature = "tailscale")]
@@ -327,6 +333,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
+        Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
         Some(Commands::Skills { action }) => handle_skills(action).await,
