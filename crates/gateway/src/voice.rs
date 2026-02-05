@@ -18,8 +18,9 @@ use {base64::Engine, secrecy::Secret, tokio::sync::RwLock, tracing::debug};
 
 #[cfg(feature = "voice")]
 use moltis_voice::{
-    AudioFormat, ElevenLabsTts, OpenAiTts, SttProvider, SynthesizeRequest, TranscribeRequest,
-    TtsConfig, TtsProvider, WhisperStt,
+    AudioFormat, DeepgramStt, ElevenLabsTts, GoogleStt, GroqStt, OpenAiTts, SherpaOnnxStt,
+    SttProvider, SynthesizeRequest, TranscribeRequest, TtsConfig, TtsProvider, WhisperCliStt,
+    WhisperStt,
 };
 
 #[cfg(feature = "voice")]
@@ -301,6 +302,11 @@ pub trait SttService: Send + Sync {
 pub struct LiveSttService {
     provider: String,
     whisper: Option<WhisperStt>,
+    groq: Option<GroqStt>,
+    deepgram: Option<DeepgramStt>,
+    google: Option<GoogleStt>,
+    whisper_cli: Option<WhisperCliStt>,
+    sherpa_onnx: Option<SherpaOnnxStt>,
 }
 
 #[cfg(feature = "voice")]
@@ -308,35 +314,193 @@ impl std::fmt::Debug for LiveSttService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LiveSttService")
             .field("provider", &self.provider)
-            .field("whisper_configured", &self.whisper.is_some())
+            .field(
+                "whisper_configured",
+                &self.whisper.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "groq_configured",
+                &self.groq.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "deepgram_configured",
+                &self.deepgram.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "google_configured",
+                &self.google.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "whisper_cli_configured",
+                &self.whisper_cli.as_ref().is_some_and(|p| p.is_configured()),
+            )
+            .field(
+                "sherpa_onnx_configured",
+                &self.sherpa_onnx.as_ref().is_some_and(|p| p.is_configured()),
+            )
             .finish()
+    }
+}
+
+/// Configuration for constructing LiveSttService.
+#[cfg(feature = "voice")]
+pub struct SttServiceConfig {
+    pub provider: String,
+    pub openai_key: Option<Secret<String>>,
+    pub groq_key: Option<Secret<String>>,
+    pub groq_model: Option<String>,
+    pub groq_language: Option<String>,
+    pub deepgram_key: Option<Secret<String>>,
+    pub deepgram_model: Option<String>,
+    pub deepgram_language: Option<String>,
+    pub deepgram_smart_format: bool,
+    pub google_key: Option<Secret<String>>,
+    pub google_language: Option<String>,
+    pub google_model: Option<String>,
+    pub whisper_cli_binary: Option<String>,
+    pub whisper_cli_model: Option<String>,
+    pub whisper_cli_language: Option<String>,
+    pub sherpa_onnx_binary: Option<String>,
+    pub sherpa_onnx_model_dir: Option<String>,
+    pub sherpa_onnx_language: Option<String>,
+}
+
+#[cfg(feature = "voice")]
+impl Default for SttServiceConfig {
+    fn default() -> Self {
+        Self {
+            provider: "whisper".into(),
+            openai_key: None,
+            groq_key: None,
+            groq_model: None,
+            groq_language: None,
+            deepgram_key: None,
+            deepgram_model: None,
+            deepgram_language: None,
+            deepgram_smart_format: true,
+            google_key: None,
+            google_language: None,
+            google_model: None,
+            whisper_cli_binary: None,
+            whisper_cli_model: None,
+            whisper_cli_language: None,
+            sherpa_onnx_binary: None,
+            sherpa_onnx_model_dir: None,
+            sherpa_onnx_language: None,
+        }
     }
 }
 
 #[cfg(feature = "voice")]
 impl LiveSttService {
-    /// Create a new STT service.
-    pub fn new(openai_key: Option<Secret<String>>) -> Self {
-        let whisper = openai_key.map(|key| WhisperStt::new(Some(key)));
+    /// Create a new STT service from configuration.
+    pub fn new(config: SttServiceConfig) -> Self {
+        let whisper = config.openai_key.map(|key| WhisperStt::new(Some(key)));
+
+        let groq = config
+            .groq_key
+            .map(|key| GroqStt::with_options(Some(key), config.groq_model, config.groq_language));
+
+        let deepgram = config.deepgram_key.map(|key| {
+            DeepgramStt::with_options(
+                Some(key),
+                config.deepgram_model,
+                config.deepgram_language,
+                config.deepgram_smart_format,
+            )
+        });
+
+        let google = config.google_key.map(|key| {
+            GoogleStt::with_options(Some(key), config.google_language, config.google_model)
+        });
+
+        // Local providers are always created, they check config internally
+        let whisper_cli = Some(WhisperCliStt::with_options(
+            config.whisper_cli_binary,
+            config.whisper_cli_model,
+            config.whisper_cli_language,
+        ));
+
+        let sherpa_onnx = Some(SherpaOnnxStt::with_options(
+            config.sherpa_onnx_binary,
+            config.sherpa_onnx_model_dir,
+            config.sherpa_onnx_language,
+        ));
 
         Self {
-            provider: "whisper".into(),
+            provider: config.provider,
             whisper,
+            groq,
+            deepgram,
+            google,
+            whisper_cli,
+            sherpa_onnx,
         }
     }
 
-    /// Create from environment variables.
+    /// Create from environment variables (backwards compatible).
     pub fn from_env() -> Self {
         let openai_key = std::env::var("OPENAI_API_KEY").ok().map(Secret::new);
-        Self::new(openai_key)
+        let groq_key = std::env::var("GROQ_API_KEY").ok().map(Secret::new);
+        let deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok().map(Secret::new);
+        let google_key = std::env::var("GOOGLE_CLOUD_API_KEY").ok().map(Secret::new);
+
+        Self::new(SttServiceConfig {
+            openai_key,
+            groq_key,
+            deepgram_key,
+            google_key,
+            ..Default::default()
+        })
     }
 
     /// Get the active provider.
     fn get_provider(&self, provider_id: &str) -> Option<&dyn SttProvider> {
         match provider_id {
             "whisper" => self.whisper.as_ref().map(|p| p as &dyn SttProvider),
+            "groq" => self.groq.as_ref().map(|p| p as &dyn SttProvider),
+            "deepgram" => self.deepgram.as_ref().map(|p| p as &dyn SttProvider),
+            "google" => self.google.as_ref().map(|p| p as &dyn SttProvider),
+            "whisper-cli" => self.whisper_cli.as_ref().map(|p| p as &dyn SttProvider),
+            "sherpa-onnx" => self.sherpa_onnx.as_ref().map(|p| p as &dyn SttProvider),
             _ => None,
         }
+    }
+
+    /// List all providers with their configuration status.
+    fn list_providers(&self) -> Vec<(&'static str, &'static str, bool)> {
+        vec![
+            (
+                "whisper",
+                "OpenAI Whisper",
+                self.whisper.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "groq",
+                "Groq",
+                self.groq.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "deepgram",
+                "Deepgram",
+                self.deepgram.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "google",
+                "Google Cloud",
+                self.google.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "whisper-cli",
+                "whisper.cpp",
+                self.whisper_cli.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "sherpa-onnx",
+                "sherpa-onnx",
+                self.sherpa_onnx.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+        ]
     }
 }
 
@@ -344,24 +508,28 @@ impl LiveSttService {
 #[async_trait]
 impl SttService for LiveSttService {
     async fn status(&self) -> ServiceResult {
-        let configured = self
-            .whisper
-            .as_ref()
-            .is_some_and(|p: &WhisperStt| p.is_configured());
+        let providers = self.list_providers();
+        let any_configured = providers.iter().any(|(_, _, configured)| *configured);
 
         Ok(json!({
-            "enabled": configured,
+            "enabled": any_configured,
             "provider": self.provider,
-            "configured": configured,
+            "configured": any_configured,
         }))
     }
 
     async fn providers(&self) -> ServiceResult {
-        let providers = vec![json!({
-            "id": "whisper",
-            "name": "OpenAI Whisper",
-            "configured": self.whisper.as_ref().is_some_and(|p: &WhisperStt| p.is_configured()),
-        })];
+        let providers: Vec<_> = self
+            .list_providers()
+            .into_iter()
+            .map(|(id, name, configured)| {
+                json!({
+                    "id": id,
+                    "name": name,
+                    "configured": configured,
+                })
+            })
+            .collect();
 
         Ok(json!(providers))
     }
@@ -506,7 +674,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_stt_service_status_unconfigured() {
-        let service = LiveSttService::new(None);
+        let service = LiveSttService::new(SttServiceConfig::default());
         let status = service.status().await.unwrap();
 
         assert_eq!(status["enabled"], false);
@@ -515,17 +683,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_stt_service_providers() {
-        let service = LiveSttService::new(None);
+        let service = LiveSttService::new(SttServiceConfig::default());
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        assert_eq!(providers_arr.len(), 1);
-        assert_eq!(providers_arr[0]["id"], "whisper");
+        // Now we have 6 providers
+        assert_eq!(providers_arr.len(), 6);
+        // Check all providers are listed
+        let ids: Vec<_> = providers_arr
+            .iter()
+            .filter_map(|p| p["id"].as_str())
+            .collect();
+        assert!(ids.contains(&"whisper"));
+        assert!(ids.contains(&"groq"));
+        assert!(ids.contains(&"deepgram"));
+        assert!(ids.contains(&"google"));
+        assert!(ids.contains(&"whisper-cli"));
+        assert!(ids.contains(&"sherpa-onnx"));
     }
 
     #[tokio::test]
     async fn test_live_stt_service_transcribe_unconfigured() {
-        let service = LiveSttService::new(None);
+        let service = LiveSttService::new(SttServiceConfig::default());
         let result = service
             .transcribe(json!({
                 "audio": base64::engine::general_purpose::STANDARD.encode(b"fake audio"),

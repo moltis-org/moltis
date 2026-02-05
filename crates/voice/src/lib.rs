@@ -8,8 +8,14 @@ pub mod stt;
 pub mod tts;
 
 pub use {
-    config::{SttConfig, TtsAutoMode, TtsConfig, VoiceConfig},
-    stt::{SttProvider, TranscribeRequest, Transcript, WhisperStt},
+    config::{
+        DeepgramConfig, GoogleSttConfig, GroqSttConfig, SherpaOnnxConfig, SttConfig, TtsAutoMode,
+        TtsConfig, VoiceConfig, WhisperCliConfig, WhisperConfig,
+    },
+    stt::{
+        DeepgramStt, GoogleStt, GroqStt, SherpaOnnxStt, SttProvider, TranscribeRequest, Transcript,
+        WhisperCliStt, WhisperStt,
+    },
     tts::{
         AudioFormat, AudioOutput, ElevenLabsTts, OpenAiTts, SynthesizeRequest, TtsProvider, Voice,
     },

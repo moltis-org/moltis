@@ -1311,6 +1311,9 @@ function VoiceSection() {
 
 	var [elevenLabsKey, setElevenLabsKey] = useState("");
 	var [openaiKey, setOpenaiKey] = useState("");
+	var [groqKey, setGroqKey] = useState("");
+	var [deepgramKey, setDeepgramKey] = useState("");
+	var [googleKey, setGoogleKey] = useState("");
 	var [savingProvider, setSavingProvider] = useState(null);
 	var [voiceMsg, setVoiceMsg] = useState(null);
 	var [voiceErr, setVoiceErr] = useState(null);
@@ -1360,6 +1363,9 @@ function VoiceSection() {
 					setVoiceMsg(`${provider} API key saved.`);
 					if (provider === "elevenlabs") setElevenLabsKey("");
 					if (provider === "openai") setOpenaiKey("");
+					if (provider === "groq") setGroqKey("");
+					if (provider === "deepgram") setDeepgramKey("");
+					if (provider === "google") setGoogleKey("");
 					setTimeout(() => {
 						setVoiceMsg(null);
 						rerender();
@@ -1421,6 +1427,11 @@ function VoiceSection() {
 	var elevenLabsConfigured = isProviderConfigured("elevenlabs");
 	var openaiConfigured = isProviderConfigured("openai");
 	var whisperConfigured = isProviderConfigured("whisper");
+	var groqConfigured = isProviderConfigured("groq");
+	var deepgramConfigured = isProviderConfigured("deepgram");
+	var googleConfigured = isProviderConfigured("google");
+	var whisperCliConfigured = isProviderConfigured("whisper-cli");
+	var sherpaOnnxConfigured = isProviderConfigured("sherpa-onnx");
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
@@ -1435,11 +1446,14 @@ function VoiceSection() {
 		<div style="max-width:600px;">
 			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Speech-to-Text (STT)</h3>
 			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
-				Transcribe your voice to text using OpenAI Whisper.
+				Transcribe your voice to text. Cloud providers require an API key. Local providers run on your machine.
 			</p>
 
+			<!-- Cloud STT Providers -->
+			<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Cloud Providers</h4>
+
 			<!-- OpenAI Whisper -->
-			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
 				<div style="display:flex;justify-content:space-between;align-items:center;">
 					<div>
 						<div class="provider-item-name">OpenAI Whisper</div>
@@ -1473,6 +1487,159 @@ function VoiceSection() {
 							Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">platform.openai.com/api-keys</a>
 						</div>`
 				}
+			</div>
+
+			<!-- Groq -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">Groq</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Ultra-fast Whisper inference on Groq hardware
+						</div>
+					</div>
+					${groqConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					groqConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "groq"}
+								onClick=${() => onRemoveKey("groq")}>
+								${savingProvider === "groq" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${groqKey} onInput=${(e) => setGroqKey(e.target.value)}
+								placeholder="gsk_..." />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "groq" || !groqKey.trim()}
+								onClick=${() => onSaveKey("groq", groqKey)}>
+								${savingProvider === "groq" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.groq.com/keys</a>
+						</div>`
+				}
+			</div>
+
+			<!-- Deepgram -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">Deepgram</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Fast and accurate with Nova-3 model
+						</div>
+					</div>
+					${deepgramConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					deepgramConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "deepgram"}
+								onClick=${() => onRemoveKey("deepgram")}>
+								${savingProvider === "deepgram" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${deepgramKey} onInput=${(e) => setDeepgramKey(e.target.value)}
+								placeholder="API key" />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "deepgram" || !deepgramKey.trim()}
+								onClick=${() => onSaveKey("deepgram", deepgramKey)}>
+								${savingProvider === "deepgram" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://console.deepgram.com/api-keys" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.deepgram.com</a>
+						</div>`
+				}
+			</div>
+
+			<!-- Google Cloud -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">Google Cloud</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Supports 125+ languages with Google Speech-to-Text
+						</div>
+					</div>
+					${googleConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : null}
+				</div>
+				${
+					googleConfigured
+						? html`<div style="display:flex;gap:8px;align-items:center;">
+							<span class="text-xs text-[var(--muted)]">API key is set</span>
+							<button type="button" class="provider-btn provider-btn-danger"
+								disabled=${savingProvider === "google"}
+								onClick=${() => onRemoveKey("google")}>
+								${savingProvider === "google" ? "Removing\u2026" : "Remove"}
+							</button>
+						</div>`
+						: html`<div style="display:flex;gap:8px;align-items:center;">
+							<input type="password" class="provider-key-input" style="flex:1;"
+								value=${googleKey} onInput=${(e) => setGoogleKey(e.target.value)}
+								placeholder="API key" />
+							<button type="button" class="provider-btn"
+								disabled=${savingProvider === "google" || !googleKey.trim()}
+								onClick=${() => onSaveKey("google", googleKey)}>
+								${savingProvider === "google" ? "Saving\u2026" : "Save"}
+							</button>
+						</div>
+						<div class="text-xs text-[var(--muted)]">
+							Get your API key at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">console.cloud.google.com</a>
+						</div>`
+				}
+			</div>
+
+			<!-- Local STT Providers -->
+			<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:16px 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Local Providers</h4>
+			<p class="text-xs text-[var(--muted)]" style="margin:0 0 12px;">
+				Local providers run on your machine. Configure them in <code style="font-family:var(--font-mono);font-size:.75rem;">moltis.toml</code>.
+			</p>
+
+			<!-- whisper.cpp -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;margin-bottom:12px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">whisper.cpp</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Local Whisper inference via whisper-cli
+						</div>
+					</div>
+					${whisperCliConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : html`<span class="provider-item-badge">Not Configured</span>`}
+				</div>
+				<div class="text-xs text-[var(--muted)]">
+					Install: <code style="font-family:var(--font-mono);font-size:.75rem;">brew install whisper-cpp</code>
+					<br />
+					Then set <code style="font-family:var(--font-mono);font-size:.75rem;">model_path</code> in <code style="font-family:var(--font-mono);font-size:.75rem;">[voice.stt.whisper_cli]</code>
+				</div>
+			</div>
+
+			<!-- sherpa-onnx -->
+			<div class="provider-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+				<div style="display:flex;justify-content:space-between;align-items:center;">
+					<div>
+						<div class="provider-item-name">sherpa-onnx</div>
+						<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+							Local offline speech recognition via ONNX runtime
+						</div>
+					</div>
+					${sherpaOnnxConfigured ? html`<span class="provider-item-badge configured">Configured</span>` : html`<span class="provider-item-badge">Not Configured</span>`}
+				</div>
+				<div class="text-xs text-[var(--muted)]">
+					See <a href="https://k2-fsa.github.io/sherpa/onnx/install.html" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">sherpa-onnx docs</a> for installation.
+					<br />
+					Then set <code style="font-family:var(--font-mono);font-size:.75rem;">model_dir</code> in <code style="font-family:var(--font-mono);font-size:.75rem;">[voice.stt.sherpa_onnx]</code>
+				</div>
 			</div>
 		</div>
 

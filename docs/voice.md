@@ -33,8 +33,12 @@ When disabled:
 │                   (crates/voice/)                           │
 ├─────────────────────────────────────────────────────────────┤
 │  TtsProvider trait         │  SttProvider trait             │
-│  ├─ ElevenLabsTts          │  └─ WhisperStt (OpenAI)        │
-│  └─ OpenAiTts              │                                │
+│  ├─ ElevenLabsTts          │  ├─ WhisperStt (OpenAI)        │
+│  └─ OpenAiTts              │  ├─ GroqStt (Groq)             │
+│                            │  ├─ DeepgramStt                │
+│                            │  ├─ GoogleStt                  │
+│                            │  ├─ WhisperCliStt (local)      │
+│                            │  └─ SherpaOnnxStt (local)      │
 └─────────────────────────────────────────────────────────────┘
                     │
                     ▼
@@ -208,22 +212,107 @@ Change the active TTS provider.
 
 ### Supported Providers
 
+Moltis supports 6 STT providers: 4 cloud-based and 2 local.
+
+#### Cloud Providers
+
 | Provider | Model | Notes |
 |----------|-------|-------|
-| OpenAI Whisper | `whisper-1` | Handles accents, noise, technical terms |
+| OpenAI Whisper | `whisper-1` | Best accuracy, handles accents, noise, technical terms |
+| Groq | `whisper-large-v3-turbo` | Ultra-fast Whisper inference on Groq hardware |
+| Deepgram | `nova-3` | Fast and accurate with smart formatting |
+| Google Cloud | Various | Supports 125+ languages |
+
+#### Local Providers
+
+| Provider | Binary | Notes |
+|----------|--------|-------|
+| whisper.cpp | `whisper-cli` | Local Whisper inference via C++ port |
+| sherpa-onnx | `sherpa-onnx-offline` | Local offline STT via ONNX runtime |
 
 ### Configuration
 
 ```toml
 [voice.stt]
 enabled = true
-provider = "whisper"
+provider = "whisper"  # or "groq", "deepgram", "google", "whisper-cli", "sherpa-onnx"
 
+# Cloud providers - API key required
 [voice.stt.whisper]
 api_key = "sk-..."  # Uses OPENAI_API_KEY if not set
 model = "whisper-1"
 language = "en"     # Optional ISO 639-1 hint
+
+[voice.stt.groq]
+api_key = "gsk_..."
+model = "whisper-large-v3-turbo"  # default
+language = "en"
+
+[voice.stt.deepgram]
+api_key = "..."
+model = "nova-3"  # default
+language = "en"
+smart_format = true
+
+[voice.stt.google]
+api_key = "..."
+language = "en-US"
+# model = "latest_long"  # optional
+
+# Local providers - no API key, requires binary and model
+[voice.stt.whisper_cli]
+# binary_path = "/usr/local/bin/whisper-cli"  # optional, searches PATH
+model_path = "~/.moltis/models/ggml-base.en.bin"  # required
+language = "en"
+
+[voice.stt.sherpa_onnx]
+# binary_path = "/usr/local/bin/sherpa-onnx-offline"  # optional
+model_dir = "~/.moltis/models/sherpa-onnx-whisper-tiny.en"  # required
+language = "en"
 ```
+
+### Local Provider Setup
+
+#### whisper.cpp
+
+1. Install the binary:
+   ```bash
+   # macOS
+   brew install whisper-cpp
+
+   # From source: https://github.com/ggerganov/whisper.cpp
+   ```
+
+2. Download a model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp):
+   ```bash
+   mkdir -p ~/.moltis/models
+   curl -L -o ~/.moltis/models/ggml-base.en.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+   ```
+
+3. Configure in `moltis.toml`:
+   ```toml
+   [voice.stt]
+   provider = "whisper-cli"
+
+   [voice.stt.whisper_cli]
+   model_path = "~/.moltis/models/ggml-base.en.bin"
+   ```
+
+#### sherpa-onnx
+
+1. Install following the [official docs](https://k2-fsa.github.io/sherpa/onnx/install.html)
+
+2. Download a model from the [model list](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html)
+
+3. Configure in `moltis.toml`:
+   ```toml
+   [voice.stt]
+   provider = "sherpa-onnx"
+
+   [voice.stt.sherpa_onnx]
+   model_dir = "~/.moltis/models/sherpa-onnx-whisper-tiny.en"
+   ```
 
 ### RPC Methods
 
@@ -247,7 +336,12 @@ List available STT providers.
 **Response:**
 ```json
 [
-  { "id": "whisper", "name": "OpenAI Whisper", "configured": true }
+  { "id": "whisper", "name": "OpenAI Whisper", "configured": true },
+  { "id": "groq", "name": "Groq", "configured": false },
+  { "id": "deepgram", "name": "Deepgram", "configured": false },
+  { "id": "google", "name": "Google Cloud", "configured": false },
+  { "id": "whisper-cli", "name": "whisper.cpp", "configured": false },
+  { "id": "sherpa-onnx", "name": "sherpa-onnx", "configured": false }
 ]
 ```
 
@@ -294,8 +388,10 @@ Change the active STT provider.
 
 **Request:**
 ```json
-{ "provider": "whisper" }
+{ "provider": "groq" }
 ```
+
+Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `whisper-cli`, `sherpa-onnx`
 
 ## Code Structure
 
@@ -311,7 +407,13 @@ src/
 │   └── openai.rs    # OpenAI TTS implementation
 └── stt/
     ├── mod.rs       # SttProvider trait, Transcript types
-    └── whisper.rs   # OpenAI Whisper implementation
+    ├── whisper.rs   # OpenAI Whisper implementation
+    ├── groq.rs      # Groq Whisper implementation
+    ├── deepgram.rs  # Deepgram implementation
+    ├── google.rs    # Google Cloud Speech-to-Text
+    ├── cli_utils.rs # Shared utilities for CLI providers
+    ├── whisper_cli.rs # whisper.cpp CLI wrapper
+    └── sherpa_onnx.rs # sherpa-onnx CLI wrapper
 ```
 
 ### Key Traits

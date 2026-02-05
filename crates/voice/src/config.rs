@@ -120,11 +120,26 @@ pub struct SttConfig {
     /// Enable STT globally.
     pub enabled: bool,
 
-    /// Default provider: "whisper".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "whisper-cli", "sherpa-onnx".
     pub provider: String,
 
     /// OpenAI Whisper settings.
     pub whisper: WhisperConfig,
+
+    /// Groq (Whisper-compatible) settings.
+    pub groq: GroqSttConfig,
+
+    /// Deepgram settings.
+    pub deepgram: DeepgramConfig,
+
+    /// Google Cloud Speech-to-Text settings.
+    pub google: GoogleSttConfig,
+
+    /// whisper-cli (whisper.cpp) settings.
+    pub whisper_cli: WhisperCliConfig,
+
+    /// sherpa-onnx offline settings.
+    pub sherpa_onnx: SherpaOnnxConfig,
 }
 
 impl Default for SttConfig {
@@ -133,6 +148,11 @@ impl Default for SttConfig {
             enabled: false,
             provider: "whisper".into(),
             whisper: WhisperConfig::default(),
+            groq: GroqSttConfig::default(),
+            deepgram: DeepgramConfig::default(),
+            google: GoogleSttConfig::default(),
+            whisper_cli: WhisperCliConfig::default(),
+            sherpa_onnx: SherpaOnnxConfig::default(),
         }
     }
 }
@@ -152,6 +172,100 @@ pub struct WhisperConfig {
 
     /// Model to use (whisper-1).
     pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Groq STT configuration (Whisper-compatible API).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GroqSttConfig {
+    /// API key (from GROQ_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Model to use (e.g., "whisper-large-v3-turbo").
+    pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Deepgram STT configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeepgramConfig {
+    /// API key (from DEEPGRAM_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Model to use (e.g., "nova-3").
+    pub model: Option<String>,
+
+    /// Language hint (e.g., "en-US").
+    pub language: Option<String>,
+
+    /// Enable smart formatting (punctuation, capitalization).
+    pub smart_format: bool,
+}
+
+/// Google Cloud Speech-to-Text configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleSttConfig {
+    /// API key for Google Cloud Speech-to-Text.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Path to service account JSON file (alternative to API key).
+    pub service_account_json: Option<String>,
+
+    /// Language code (e.g., "en-US").
+    pub language: Option<String>,
+
+    /// Model variant (e.g., "latest_long", "latest_short").
+    pub model: Option<String>,
+}
+
+/// whisper-cli (whisper.cpp) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WhisperCliConfig {
+    /// Path to whisper-cli binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+
+    /// Path to the GGML model file (e.g., "~/.moltis/models/ggml-base.en.bin").
+    pub model_path: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// sherpa-onnx offline configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SherpaOnnxConfig {
+    /// Path to sherpa-onnx-offline binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+
+    /// Path to the ONNX model directory.
+    pub model_dir: Option<String>,
 
     /// Language hint (ISO 639-1 code).
     pub language: Option<String>,

@@ -2910,6 +2910,11 @@ impl MethodRegistry {
                                 "enabled": config.voice.stt.enabled,
                                 "provider": config.voice.stt.provider,
                                 "whisper_configured": config.voice.stt.whisper.api_key.is_some(),
+                                "groq_configured": config.voice.stt.groq.api_key.is_some(),
+                                "deepgram_configured": config.voice.stt.deepgram.api_key.is_some(),
+                                "google_configured": config.voice.stt.google.api_key.is_some(),
+                                "whisper_cli_configured": config.voice.stt.whisper_cli.model_path.is_some(),
+                                "sherpa_onnx_configured": config.voice.stt.sherpa_onnx.model_dir.is_some(),
                             },
                         }))
                     })
@@ -2937,6 +2942,7 @@ impl MethodRegistry {
                             })?;
 
                         moltis_config::update_config(|cfg| match provider {
+                            // TTS providers
                             "elevenlabs" => {
                                 cfg.voice.tts.elevenlabs.api_key =
                                     Some(Secret::new(api_key.to_string()));
@@ -2945,8 +2951,20 @@ impl MethodRegistry {
                                 cfg.voice.tts.openai.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
+                            // STT providers
                             "whisper" => {
                                 cfg.voice.stt.whisper.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "groq" => {
+                                cfg.voice.stt.groq.api_key = Some(Secret::new(api_key.to_string()));
+                            },
+                            "deepgram" => {
+                                cfg.voice.stt.deepgram.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
+                            "google" => {
+                                cfg.voice.stt.google.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
                             _ => {},
@@ -2984,14 +3002,25 @@ impl MethodRegistry {
                             })?;
 
                         moltis_config::update_config(|cfg| match provider {
+                            // TTS providers
                             "elevenlabs" => {
                                 cfg.voice.tts.elevenlabs.api_key = None;
                             },
                             "openai" => {
                                 cfg.voice.tts.openai.api_key = None;
                             },
+                            // STT providers
                             "whisper" => {
                                 cfg.voice.stt.whisper.api_key = None;
+                            },
+                            "groq" => {
+                                cfg.voice.stt.groq.api_key = None;
+                            },
+                            "deepgram" => {
+                                cfg.voice.stt.deepgram.api_key = None;
+                            },
+                            "google" => {
+                                cfg.voice.stt.google.api_key = None;
                             },
                             _ => {},
                         })

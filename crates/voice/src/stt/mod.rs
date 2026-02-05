@@ -1,8 +1,17 @@
 //! Speech-to-Text provider abstraction and implementations.
 
+mod cli_utils;
+mod deepgram;
+mod google;
+mod groq;
+mod sherpa_onnx;
 mod whisper;
+mod whisper_cli;
 
-pub use whisper::WhisperStt;
+pub use {
+    deepgram::DeepgramStt, google::GoogleStt, groq::GroqStt, sherpa_onnx::SherpaOnnxStt,
+    whisper::WhisperStt, whisper_cli::WhisperCliStt,
+};
 
 use {
     anyhow::Result,
