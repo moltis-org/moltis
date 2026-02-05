@@ -166,7 +166,7 @@ async fn session_cookie_auth_succeeds() {
 async fn api_key_auth_succeeds() {
     let (addr, store) = start_auth_server().await;
     store.set_initial_password("testpass123").await.unwrap();
-    let (_id, raw_key) = store.create_api_key("test").await.unwrap();
+    let (_id, raw_key) = store.create_api_key("test", None).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -359,7 +359,7 @@ async fn reset_auth_requires_session() {
 async fn revoked_api_key_returns_401() {
     let (addr, store) = start_auth_server().await;
     store.set_initial_password("testpass123").await.unwrap();
-    let (id, raw_key) = store.create_api_key("test").await.unwrap();
+    let (id, raw_key) = store.create_api_key("test", None).await.unwrap();
     store.revoke_api_key(id).await.unwrap();
 
     let client = reqwest::Client::new();

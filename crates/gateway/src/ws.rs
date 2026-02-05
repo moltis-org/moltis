@@ -96,14 +96,18 @@ pub async fn handle_connection(
     // Try credential-store auth first (API key, password hash), then fall
     // back to legacy env-var auth.
     let mut authenticated = is_loopback;
+    // Scopes from API key verification (if any).
+    let mut api_key_scopes: Option<Vec<String>> = None;
 
     if !authenticated && let Some(ref cred_store) = state.credential_store {
         if cred_store.is_setup_complete() {
             // Check API key.
             if let Some(ref api_key) = params.auth.as_ref().and_then(|a| a.api_key.clone())
-                && cred_store.verify_api_key(api_key).await.unwrap_or(false)
+                && let Ok(Some(verification)) = cred_store.verify_api_key(api_key).await
             {
                 authenticated = true;
+                // Store the scopes from the API key (empty = full access)
+                api_key_scopes = Some(verification.scopes);
             }
             // Check password against DB hash.
             if !authenticated
@@ -152,15 +156,22 @@ pub async fn handle_connection(
     }
 
     let role = params.role.clone().unwrap_or_else(|| "operator".into());
-    let scopes = params.scopes.clone().unwrap_or_else(|| {
-        vec![
-            "operator.admin".into(),
-            "operator.read".into(),
-            "operator.write".into(),
-            "operator.approvals".into(),
-            "operator.pairing".into(),
-        ]
-    });
+
+    // Determine scopes: use API key scopes if provided, otherwise default to full access.
+    // Empty API key scopes means full access (backward compatibility).
+    let scopes = match api_key_scopes {
+        Some(key_scopes) if !key_scopes.is_empty() => key_scopes,
+        _ => {
+            // Full access: either no API key used, or API key has no scope restrictions
+            vec![
+                "operator.admin".into(),
+                "operator.read".into(),
+                "operator.write".into(),
+                "operator.approvals".into(),
+                "operator.pairing".into(),
+            ]
+        },
+    };
 
     // Build HelloOk with auth info.
     let hello_auth = HelloAuth {

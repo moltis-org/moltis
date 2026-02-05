@@ -1,6 +1,7 @@
 //! Core cron scheduler: timer loop, job execution, CRUD operations.
 
 use std::{
+    collections::VecDeque,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -39,6 +40,65 @@ pub type AgentTurnFn = Arc<
 /// Callback for injecting a system event into the main session.
 pub type SystemEventFn = Arc<dyn Fn(String) + Send + Sync>;
 
+/// Callback for notifying about cron job changes.
+pub type NotifyFn = Arc<dyn Fn(crate::types::CronNotification) + Send + Sync>;
+
+/// Rate limiting configuration for cron job creation.
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Maximum number of jobs that can be created within the window.
+    pub max_per_window: usize,
+    /// Window duration in milliseconds.
+    pub window_ms: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_per_window: 10,
+            window_ms: 60_000, // 1 minute
+        }
+    }
+}
+
+/// Simple sliding-window rate limiter.
+struct RateLimiter {
+    timestamps: VecDeque<u64>,
+    config: RateLimitConfig,
+}
+
+impl RateLimiter {
+    fn new(config: RateLimitConfig) -> Self {
+        Self {
+            timestamps: VecDeque::new(),
+            config,
+        }
+    }
+
+    /// Check if a new job can be created. Returns Ok(()) if allowed, Err if rate limited.
+    fn check(&mut self) -> Result<()> {
+        let now = now_ms();
+        let cutoff = now.saturating_sub(self.config.window_ms);
+
+        // Remove expired timestamps.
+        while self.timestamps.front().is_some_and(|&ts| ts < cutoff) {
+            self.timestamps.pop_front();
+        }
+
+        if self.timestamps.len() >= self.config.max_per_window {
+            bail!(
+                "rate limit exceeded: max {} jobs per {} seconds",
+                self.config.max_per_window,
+                self.config.window_ms / 1000
+            );
+        }
+
+        // Record this attempt.
+        self.timestamps.push_back(now);
+        Ok(())
+    }
+}
+
 /// Parameters passed to the agent turn callback.
 #[derive(Debug, Clone)]
 pub struct AgentTurnRequest {
@@ -61,6 +121,8 @@ pub struct CronService {
     running: RwLock<bool>,
     on_system_event: SystemEventFn,
     on_agent_turn: AgentTurnFn,
+    on_notify: Option<NotifyFn>,
+    rate_limiter: Mutex<RateLimiter>,
 }
 
 /// Max time a job can be in "running" state before we consider it stuck (2 hours).
@@ -79,6 +141,39 @@ impl CronService {
         on_system_event: SystemEventFn,
         on_agent_turn: AgentTurnFn,
     ) -> Arc<Self> {
+        Self::with_config(
+            store,
+            on_system_event,
+            on_agent_turn,
+            None,
+            RateLimitConfig::default(),
+        )
+    }
+
+    /// Create a new cron service with a notification callback.
+    pub fn with_notify(
+        store: Arc<dyn CronStore>,
+        on_system_event: SystemEventFn,
+        on_agent_turn: AgentTurnFn,
+        on_notify: NotifyFn,
+    ) -> Arc<Self> {
+        Self::with_config(
+            store,
+            on_system_event,
+            on_agent_turn,
+            Some(on_notify),
+            RateLimitConfig::default(),
+        )
+    }
+
+    /// Create a new cron service with all configuration options.
+    pub fn with_config(
+        store: Arc<dyn CronStore>,
+        on_system_event: SystemEventFn,
+        on_agent_turn: AgentTurnFn,
+        on_notify: Option<NotifyFn>,
+        rate_limit_config: RateLimitConfig,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             jobs: RwLock::new(Vec::new()),
@@ -87,7 +182,16 @@ impl CronService {
             running: RwLock::new(false),
             on_system_event,
             on_agent_turn,
+            on_notify,
+            rate_limiter: Mutex::new(RateLimiter::new(rate_limit_config)),
         })
+    }
+
+    /// Emit a notification if a callback is registered.
+    fn notify(&self, notification: crate::types::CronNotification) {
+        if let Some(ref notify_fn) = self.on_notify {
+            notify_fn(notification);
+        }
     }
 
     /// Load jobs from store and start the timer loop.
@@ -128,6 +232,11 @@ impl CronService {
 
     /// Add a new job.
     pub async fn add(&self, create: CronJobCreate) -> Result<CronJob> {
+        // Check rate limit (skip for system jobs like heartbeat).
+        if !create.system {
+            self.rate_limiter.lock().await.check()?;
+        }
+
         let now = now_ms();
         let mut job = CronJob {
             id: create
@@ -162,6 +271,7 @@ impl CronService {
         }
 
         self.wake_notify.notify_one();
+        self.notify(crate::types::CronNotification::Created { job: job.clone() });
         info!(id = %job.id, name = %job.name, "cron job added");
         Ok(job)
     }
@@ -213,6 +323,9 @@ impl CronService {
 
         drop(jobs);
         self.wake_notify.notify_one();
+        self.notify(crate::types::CronNotification::Updated {
+            job: updated.clone(),
+        });
         info!(id, "cron job updated");
         Ok(updated)
     }
@@ -222,6 +335,10 @@ impl CronService {
         self.store.delete_job(id).await?;
         let mut jobs = self.jobs.write().await;
         jobs.retain(|j| j.id != id);
+        drop(jobs);
+        self.notify(crate::types::CronNotification::Removed {
+            job_id: id.to_string(),
+        });
         info!(id, "cron job removed");
         Ok(())
     }
@@ -888,5 +1005,99 @@ mod tests {
         let jobs = svc.list().await;
         let j = jobs.iter().find(|j| j.id == job.id).unwrap();
         assert!(!j.enabled, "one-shot job should be disabled after run");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting() {
+        let store = Arc::new(InMemoryStore::new());
+        // Create service with strict rate limit: 3 jobs per 60 seconds.
+        let svc = CronService::with_config(
+            store,
+            noop_system_event(),
+            noop_agent_turn(),
+            None,
+            RateLimitConfig {
+                max_per_window: 3,
+                window_ms: 60_000,
+            },
+        );
+
+        let create_job = || CronJobCreate {
+            id: None,
+            name: "test".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 60_000,
+                anchor_ms: None,
+            },
+            payload: CronPayload::AgentTurn {
+                message: "hi".into(),
+                model: None,
+                timeout_secs: None,
+                deliver: false,
+                channel: None,
+                to: None,
+            },
+            session_target: SessionTarget::Isolated,
+            delete_after_run: false,
+            enabled: true,
+            system: false,
+            sandbox: CronSandboxConfig::default(),
+        };
+
+        // First 3 jobs should succeed.
+        svc.add(create_job()).await.unwrap();
+        svc.add(create_job()).await.unwrap();
+        svc.add(create_job()).await.unwrap();
+
+        // 4th job should fail due to rate limit.
+        let result = svc.add(create_job()).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("rate limit exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiting_skips_system_jobs() {
+        let store = Arc::new(InMemoryStore::new());
+        // Create service with strict rate limit: 1 job per 60 seconds.
+        let svc = CronService::with_config(
+            store,
+            noop_system_event(),
+            noop_agent_turn(),
+            None,
+            RateLimitConfig {
+                max_per_window: 1,
+                window_ms: 60_000,
+            },
+        );
+
+        let create_system_job = || CronJobCreate {
+            id: None,
+            name: "system-job".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 60_000,
+                anchor_ms: None,
+            },
+            payload: CronPayload::SystemEvent {
+                text: "heartbeat".into(),
+            },
+            session_target: SessionTarget::Main,
+            delete_after_run: false,
+            enabled: true,
+            system: true, // This is a system job
+            sandbox: CronSandboxConfig::default(),
+        };
+
+        // System jobs should bypass rate limiting.
+        svc.add(create_system_job()).await.unwrap();
+        svc.add(create_system_job()).await.unwrap();
+        svc.add(create_system_job()).await.unwrap();
+
+        // All should succeed.
+        assert_eq!(svc.list().await.len(), 3);
     }
 }

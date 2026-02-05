@@ -208,6 +208,18 @@ pub struct CronStatus {
     pub next_run_at_ms: Option<u64>,
 }
 
+/// Notification emitted when cron jobs change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CronNotification {
+    /// A new job was created.
+    Created { job: CronJob },
+    /// An existing job was updated.
+    Updated { job: CronJob },
+    /// A job was removed.
+    Removed { job_id: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

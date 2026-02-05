@@ -102,7 +102,12 @@ pub async fn require_auth(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         && let Some(key) = auth_header.strip_prefix("Bearer ")
-        && cred_store.verify_api_key(key).await.unwrap_or(false)
+        && cred_store
+            .verify_api_key(key)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
     {
         return next.run(request).await;
     }
