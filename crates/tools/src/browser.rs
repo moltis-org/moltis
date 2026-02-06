@@ -115,7 +115,29 @@ impl AgentTool for BrowserTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
-        let request: BrowserRequest = serde_json::from_value(params)?;
+        // Try to parse the request, defaulting to "navigate" if action is missing
+        let request: BrowserRequest = match serde_json::from_value(params.clone()) {
+            Ok(req) => req,
+            Err(e) if e.to_string().contains("missing field `action`") => {
+                // Default to navigate action if action is missing but url is present
+                let mut params = params;
+                if let Some(obj) = params.as_object_mut() {
+                    if obj.contains_key("url") {
+                        obj.insert("action".to_string(), serde_json::json!("navigate"));
+                        serde_json::from_value(params)?
+                    } else {
+                        // No URL either - return helpful error
+                        anyhow::bail!(
+                            "Missing required 'action' field. Use: \
+                             {{\"action\": \"navigate\", \"url\": \"https://...\"}} to open a page"
+                        );
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            },
+            Err(e) => return Err(e.into()),
+        };
         let response = self.manager.handle_request(request).await;
         Ok(serde_json::to_value(&response)?)
     }
@@ -142,5 +164,20 @@ mod tests {
             ..Default::default()
         };
         assert!(BrowserTool::from_config(&config).is_none());
+    }
+
+    #[test]
+    fn test_parameters_schema_has_required_action() {
+        let config = moltis_config::schema::BrowserConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let tool = BrowserTool::from_config(&config).unwrap();
+        let schema = tool.parameters_schema();
+        let required = schema["required"].as_array().unwrap();
+        assert!(
+            required.iter().any(|v| v == "action"),
+            "action should be in required fields"
+        );
     }
 }
