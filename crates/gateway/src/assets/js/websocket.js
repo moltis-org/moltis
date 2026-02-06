@@ -81,6 +81,12 @@ function toolCallSummary(name, args) {
 function handleChatToolCallStart(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
+	// Close the current streaming element so new text deltas after this tool
+	// call will create a fresh element positioned after the tool card
+	if (S.streamEl) {
+		S.setStreamEl(null);
+		S.setStreamText("");
+	}
 	var tpl = document.getElementById("tpl-exec-card");
 	var frag = tpl.content.cloneNode(true);
 	var card = frag.firstElementChild;
