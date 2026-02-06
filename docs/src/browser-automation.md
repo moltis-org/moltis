@@ -274,13 +274,63 @@ malicious sites could attempt to inject instructions.
 5. **Sandbox scripts**: Browser scripts running in the sandbox (via exec tool)
    inherit sandbox network restrictions (`no_network: true` by default).
 
+## Browser Detection
+
+Moltis automatically detects installed Chromium-based browsers in the following order:
+
+1. **Custom path** from `chrome_path` config
+2. **CHROME environment variable**
+3. **Platform-specific app bundles** (macOS/Windows)
+   - macOS: `/Applications/Google Chrome.app`, `/Applications/Chromium.app`, etc.
+   - Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`, etc.
+4. **PATH executables** (fallback): `chrome`, `chromium`, `msedge`, `brave`, etc.
+
+If no browser is found, Moltis displays platform-specific installation instructions.
+
+### Supported Browsers
+
+Any Chromium-based browser works:
+- Google Chrome
+- Chromium
+- Microsoft Edge
+- Brave
+- Opera
+- Vivaldi
+- Arc (macOS)
+
+## Screenshot Display
+
+When the browser tool takes a screenshot, it's displayed in the chat UI:
+
+- **Thumbnail view**: Screenshots appear as clickable thumbnails (200×150px max)
+- **Fullscreen lightbox**: Click to view full-size with dark overlay
+- **Close**: Click anywhere or press Escape to close
+
+Screenshots are base64-encoded PNGs returned in the tool result. Note that
+screenshots are not persisted across page reloads (they exist only in the
+streaming response).
+
+## Handling Model Errors
+
+Some models (particularly Claude via GitHub Copilot) occasionally send malformed
+tool calls with missing required fields. Moltis handles this gracefully:
+
+- **Default action**: If `url` is provided but `action` is missing, defaults to
+  `navigate`
+- **Automatic retry**: The agent loop retries with corrected arguments
+- **Muted error display**: Validation errors show as muted/informational cards
+  in the UI (60% opacity, gray text) to indicate they're expected, not alarming
+
 ## Troubleshooting
 
 ### Browser not launching
 
 - Ensure Chrome/Chromium is installed
 - Check `chrome_path` in config if using custom location
+- Set `CHROME` environment variable to specify browser path
 - On Linux, install dependencies: `apt-get install chromium-browser`
+- On macOS, if using Homebrew Chromium, prefer installing Google Chrome or Brave
+  (the Homebrew chromium wrapper can be unreliable)
 
 ### Elements not found
 

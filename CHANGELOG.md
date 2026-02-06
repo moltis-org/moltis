@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Safari/iOS PWA Detection**: Show "Add to Dock" instructions when push notifications
   require PWA installation (Safari doesn't support push in browser mode)
 
+- **Browser Screenshot Thumbnails**: Screenshots from the browser tool now display as
+  clickable thumbnails in the chat UI
+  - Click to view fullscreen in a lightbox overlay
+  - Press Escape or click anywhere to close
+  - Thumbnails are 200×150px max with hover effects
+
+- **Improved Browser Detection**: Better cross-platform browser detection
+  - Checks macOS app bundles before PATH (avoids broken Homebrew chromium wrapper)
+  - Supports Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc
+  - Shows platform-specific installation instructions when no browser found
+  - Custom path via `chrome_path` config or `CHROME` environment variable
+
 ### Changed
 
 - Memory settings UI enhanced with backend comparison and feature explanations
@@ -68,8 +80,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing space in Safari install instructions ("usingFile" → "using File")
 - **WebSocket origin validation** now treats `.localhost` subdomains
   (e.g. `moltis.localhost`) as loopback equivalents per RFC 6761.
+- **Browser tool schema enforcement**: Added `strict: true` and `additionalProperties: false`
+  to OpenAI-compatible tool schemas, improving model compliance with required fields
+- **Browser tool defaults**: When model sends URL without action, defaults to `navigate`
+  instead of erroring
+- **Chat message ordering**: Fixed interleaving of text and tool cards when streaming;
+  messages now appear in correct chronological order
+- **Tool passthrough in ProviderChain**: Fixed tools not being passed to fallback
+  providers when using provider chains
 
 ### Documentation
 
 - Added mobile-pwa.md with PWA installation and push notification documentation
 - Updated CLAUDE.md with cargo feature policy (features enabled by default)
+- Updated browser-automation.md with browser detection, screenshot display, and
+  model error handling sections
