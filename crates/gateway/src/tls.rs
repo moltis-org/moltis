@@ -194,7 +194,7 @@ pub async fn start_http_redirect_server(
 
     let addr: SocketAddr = format!("{bind}:{http_port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!(%addr, "HTTP redirect server listening");
+    info!("HTTP redirect server listening http://{addr}/certs/ca.pem");
     axum::serve(listener, app).await?;
     Ok(())
 }
