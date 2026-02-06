@@ -2,6 +2,7 @@
 
 mod cli_utils;
 mod deepgram;
+mod elevenlabs;
 mod google;
 mod groq;
 mod mistral;
@@ -11,9 +12,9 @@ mod whisper;
 mod whisper_cli;
 
 pub use {
-    deepgram::DeepgramStt, google::GoogleStt, groq::GroqStt, mistral::MistralStt,
-    sherpa_onnx::SherpaOnnxStt, voxtral_local::VoxtralLocalStt, whisper::WhisperStt,
-    whisper_cli::WhisperCliStt,
+    deepgram::DeepgramStt, elevenlabs::ElevenLabsStt, google::GoogleStt, groq::GroqStt,
+    mistral::MistralStt, sherpa_onnx::SherpaOnnxStt, voxtral_local::VoxtralLocalStt,
+    whisper::WhisperStt, whisper_cli::WhisperCliStt,
 };
 
 use {

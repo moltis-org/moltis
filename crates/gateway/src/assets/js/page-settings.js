@@ -1453,6 +1453,16 @@ var VOICE_PROVIDERS = {
 		keyUrl: "https://console.mistral.ai/api-keys",
 		keyUrlLabel: "console.mistral.ai",
 	},
+	"elevenlabs-stt": {
+		id: "elevenlabs-stt",
+		name: "ElevenLabs Scribe",
+		type: "stt",
+		category: "cloud",
+		description: "90+ languages, word timestamps, speaker diarization",
+		keyPlaceholder: "API key",
+		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
+		keyUrlLabel: "elevenlabs.io",
+	},
 	// STT Local
 	"whisper-cli": {
 		id: "whisper-cli",

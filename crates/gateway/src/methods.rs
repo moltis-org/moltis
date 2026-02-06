@@ -3802,6 +3802,24 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             None,
         ),
         build_provider_info(
+            "elevenlabs-stt",
+            "ElevenLabs Scribe",
+            "stt",
+            "cloud",
+            config.voice.stt.elevenlabs.api_key.is_some()
+                || config.voice.tts.elevenlabs.api_key.is_some()
+                || env_elevenlabs_key.is_some(),
+            config.voice.stt.provider == "elevenlabs-stt" && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.elevenlabs.api_key.is_some()
+                    || config.voice.tts.elevenlabs.api_key.is_some(),
+                env_elevenlabs_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
             "voxtral-local",
             "Voxtral (Local)",
             "stt",

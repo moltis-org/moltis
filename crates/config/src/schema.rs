@@ -237,7 +237,7 @@ impl Default for VoiceCoquiTtsConfig {
 pub struct VoiceSttConfig {
     /// Enable STT globally.
     pub enabled: bool,
-    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "elevenlabs-stt", "voxtral-local", "whisper-cli", "sherpa-onnx".
     pub provider: String,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
@@ -249,6 +249,8 @@ pub struct VoiceSttConfig {
     pub google: VoiceGoogleSttConfig,
     /// Mistral AI (Voxtral Transcribe) settings.
     pub mistral: VoiceMistralSttConfig,
+    /// ElevenLabs Scribe settings.
+    pub elevenlabs: VoiceElevenLabsSttConfig,
     /// Voxtral local (vLLM server) settings.
     pub voxtral_local: VoiceVoxtralLocalConfig,
     /// whisper-cli (whisper.cpp) settings.
@@ -267,6 +269,7 @@ impl Default for VoiceSttConfig {
             deepgram: VoiceDeepgramConfig::default(),
             google: VoiceGoogleSttConfig::default(),
             mistral: VoiceMistralSttConfig::default(),
+            elevenlabs: VoiceElevenLabsSttConfig::default(),
             voxtral_local: VoiceVoxtralLocalConfig::default(),
             whisper_cli: VoiceWhisperCliConfig::default(),
             sherpa_onnx: VoiceSherpaOnnxConfig::default(),
@@ -363,6 +366,25 @@ pub struct VoiceMistralSttConfig {
     )]
     pub api_key: Option<Secret<String>>,
     /// Model to use (e.g., "voxtral-mini-latest").
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// ElevenLabs Scribe STT configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceElevenLabsSttConfig {
+    /// API key (from ELEVENLABS_API_KEY env or config).
+    /// Shared with TTS if not specified separately.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (scribe_v1 or scribe_v2).
     pub model: Option<String>,
     /// Language hint (ISO 639-1 code).
     pub language: Option<String>,

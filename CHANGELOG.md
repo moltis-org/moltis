@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Coqui TTS (high-quality neural TTS with voice cloning)
 
 - **New STT Providers**:
+  - ElevenLabs Scribe (90+ languages, word timestamps, speaker diarization)
   - Mistral AI Voxtral (cloud-based, 13 languages)
   - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
