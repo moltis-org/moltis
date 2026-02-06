@@ -56,6 +56,7 @@ const READ_METHODS: &[&str] = &[
     "sessions.list",
     "sessions.preview",
     "sessions.search",
+    "sessions.branches",
     "projects.list",
     "projects.get",
     "projects.context",
@@ -116,6 +117,7 @@ const WRITE_METHODS: &[&str] = &[
     "channels.senders.approve",
     "channels.senders.deny",
     "sessions.switch",
+    "sessions.fork",
     "projects.upsert",
     "projects.delete",
     "projects.detect",
@@ -1212,6 +1214,33 @@ impl MethodRegistry {
                         .services
                         .session
                         .compact(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        self.register(
+            "sessions.fork",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .fork(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "sessions.branches",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .branches(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

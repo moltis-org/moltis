@@ -15,6 +15,8 @@ pub struct McpToolBridge {
     prefixed_name: String,
     /// Original tool name on the MCP server.
     original_name: String,
+    /// Name of the MCP server this tool belongs to.
+    server_name: String,
     description: String,
     input_schema: serde_json::Value,
     client: Arc<tokio::sync::RwLock<dyn McpClientTrait>>,
@@ -30,6 +32,7 @@ impl McpToolBridge {
         Self {
             prefixed_name: format!("mcp__{}__{}", server_name, tool_def.name),
             original_name: tool_def.name.clone(),
+            server_name: server_name.to_string(),
             description: tool_def
                 .description
                 .clone()
@@ -53,6 +56,11 @@ impl McpToolBridge {
 
     pub fn prefixed_name(&self) -> &str {
         &self.prefixed_name
+    }
+
+    /// The name of the MCP server this tool belongs to.
+    pub fn server_name(&self) -> &str {
+        &self.server_name
     }
 }
 

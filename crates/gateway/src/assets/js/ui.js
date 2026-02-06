@@ -70,9 +70,9 @@ export function Modal(props) {
 // ── Confirm dialog ───────────────────────────────────────────
 var confirmState = signal(null);
 
-export function requestConfirm(message) {
+export function requestConfirm(message, opts) {
 	return new Promise((resolve) => {
-		confirmState.value = { message: message, resolve: resolve };
+		confirmState.value = { message: message, resolve: resolve, opts: opts || {} };
 	});
 }
 
@@ -89,11 +89,15 @@ export function ConfirmDialog() {
 		confirmState.value = null;
 	}
 
+	var label = s.opts.confirmLabel || "Confirm";
+	var danger = s.opts.danger;
+	var btnClass = danger ? "provider-btn provider-btn-danger" : "provider-btn";
+
 	return html`<${Modal} show=${true} onClose=${no} title="Confirm">
     <p style="font-size:.85rem;color:var(--text);margin:0 0 16px;">${s.message}</p>
     <div style="display:flex;gap:8px;justify-content:flex-end;">
       <button onClick=${no} class="provider-btn provider-btn-secondary">Cancel</button>
-      <button onClick=${yes} class="provider-btn">Confirm</button>
+      <button onClick=${yes} class=${btnClass}>${label}</button>
     </div>
   </${Modal}>`;
 }

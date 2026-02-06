@@ -5,7 +5,9 @@ use {async_trait::async_trait, serde_json::Value, tracing::warn};
 use {
     moltis_common::hooks::HookRegistry,
     moltis_projects::ProjectStore,
-    moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
+    moltis_sessions::{
+        metadata::SqliteSessionMetadata, state_store::SessionStateStore, store::SessionStore,
+    },
     moltis_tools::sandbox::SandboxRouter,
 };
 
@@ -18,6 +20,7 @@ pub struct LiveSessionService {
     sandbox_router: Option<Arc<SandboxRouter>>,
     project_store: Option<Arc<dyn ProjectStore>>,
     hook_registry: Option<Arc<HookRegistry>>,
+    state_store: Option<Arc<SessionStateStore>>,
 }
 
 impl LiveSessionService {
@@ -28,6 +31,7 @@ impl LiveSessionService {
             sandbox_router: None,
             project_store: None,
             hook_registry: None,
+            state_store: None,
         }
     }
 
@@ -43,6 +47,11 @@ impl LiveSessionService {
 
     pub fn with_hooks(mut self, registry: Arc<HookRegistry>) -> Self {
         self.hook_registry = Some(registry);
+        self
+    }
+
+    pub fn with_state_store(mut self, store: Arc<SessionStateStore>) -> Self {
+        self.state_store = Some(store);
         self
     }
 }
@@ -89,6 +98,9 @@ impl SessionService for LiveSessionService {
                 "worktree_branch": e.worktree_branch,
                 "channelBinding": e.channel_binding,
                 "activeChannel": active_channel,
+                "parentSessionKey": e.parent_session_key,
+                "forkPoint": e.fork_point,
+                "mcpDisabled": e.mcp_disabled,
             }));
         }
         Ok(serde_json::json!(entries))
@@ -148,6 +160,7 @@ impl SessionService for LiveSessionService {
                 "sandbox_enabled": entry.sandbox_enabled,
                 "sandbox_image": entry.sandbox_image,
                 "worktree_branch": entry.worktree_branch,
+                "mcpDisabled": entry.mcp_disabled,
             },
             "history": history,
         }))
@@ -221,6 +234,12 @@ impl SessionService for LiveSessionService {
             }
         }
 
+        // Update mcp_disabled if provided.
+        if params.get("mcp_disabled").is_some() {
+            let mcp_disabled = params.get("mcp_disabled").and_then(|v| v.as_bool());
+            self.metadata.set_mcp_disabled(key, mcp_disabled).await;
+        }
+
         // Update sandbox_enabled if provided.
         if params.get("sandbox_enabled").is_some() {
             let sandbox_enabled = params.get("sandbox_enabled").and_then(|v| v.as_bool());
@@ -246,6 +265,7 @@ impl SessionService for LiveSessionService {
             "sandbox_enabled": entry.sandbox_enabled,
             "sandbox_image": entry.sandbox_image,
             "worktree_branch": entry.worktree_branch,
+            "mcpDisabled": entry.mcp_disabled,
         }))
     }
 
@@ -322,6 +342,13 @@ impl SessionService for LiveSessionService {
             tracing::warn!("sandbox cleanup for session {key}: {e}");
         }
 
+        // Cascade-delete session state.
+        if let Some(ref state_store) = self.state_store
+            && let Err(e) = state_store.delete_session(key).await
+        {
+            tracing::warn!("session state cleanup for {key}: {e}");
+        }
+
         self.metadata.remove(key).await;
 
         // Dispatch SessionEnd hook (read-only).
@@ -339,6 +366,108 @@ impl SessionService for LiveSessionService {
 
     async fn compact(&self, _params: Value) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn fork(&self, params: Value) -> ServiceResult {
+        let parent_key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let label = params
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let messages = self
+            .store
+            .read(parent_key)
+            .await
+            .map_err(|e| e.to_string())?;
+        let msg_count = messages.len();
+
+        let fork_point = params
+            .get("forkPoint")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(msg_count);
+
+        if fork_point > msg_count {
+            return Err(format!(
+                "forkPoint {fork_point} exceeds message count {msg_count}"
+            ));
+        }
+
+        let new_key = format!("session:{}", uuid::Uuid::new_v4());
+        let forked_messages: Vec<Value> = messages[..fork_point].to_vec();
+
+        self.store
+            .replace_history(&new_key, forked_messages)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let entry = self
+            .metadata
+            .upsert(&new_key, label)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        self.metadata.touch(&new_key, fork_point as u32).await;
+
+        // Inherit model, project, and mcp_disabled from parent.
+        if let Some(parent) = self.metadata.get(parent_key).await {
+            if parent.model.is_some() {
+                self.metadata.set_model(&new_key, parent.model).await;
+            }
+            if parent.project_id.is_some() {
+                self.metadata
+                    .set_project_id(&new_key, parent.project_id)
+                    .await;
+            }
+            if parent.mcp_disabled.is_some() {
+                self.metadata
+                    .set_mcp_disabled(&new_key, parent.mcp_disabled)
+                    .await;
+            }
+        }
+
+        // Set parent relationship.
+        self.metadata
+            .set_parent(
+                &new_key,
+                Some(parent_key.to_string()),
+                Some(fork_point as u32),
+            )
+            .await;
+
+        Ok(serde_json::json!({
+            "sessionKey": new_key,
+            "id": entry.id,
+            "label": entry.label,
+            "forkPoint": fork_point,
+            "messageCount": fork_point,
+        }))
+    }
+
+    async fn branches(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+
+        let children = self.metadata.list_children(key).await;
+        let items: Vec<Value> = children
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "key": e.key,
+                    "label": e.label,
+                    "forkPoint": e.fork_point,
+                    "messageCount": e.message_count,
+                    "createdAt": e.created_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!(items))
     }
 
     async fn search(&self, params: Value) -> ServiceResult {

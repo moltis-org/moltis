@@ -12,3 +12,5 @@ pub mod prompt_gen;
 pub mod registry;
 pub mod requirements;
 pub mod types;
+#[cfg(feature = "file-watcher")]
+pub mod watcher;

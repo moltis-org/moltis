@@ -252,6 +252,7 @@ impl LlmProvider for KimiCodeProvider {
                 tools_count = tools.len(),
                 "kimi-code stream_with_tools request"
             );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code stream request body");
 
             let resp = match self
                 .client

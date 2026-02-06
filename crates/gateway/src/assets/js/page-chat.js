@@ -270,6 +270,8 @@ function renderContextMcpSection(card, data) {
 	var section = ctxSection("MCP Tools");
 	if (data.supportsTools === false) {
 		section.appendChild(ctxEl("div", "ctx-disabled", "MCP tools disabled \u2014 model doesn't support tool calling"));
+	} else if (data.mcpDisabled) {
+		section.appendChild(ctxEl("div", "ctx-disabled", "MCP tools disabled for this session"));
 	} else {
 		var running = servers.filter((s) => s.state === "running");
 		if (running.length > 0) {
@@ -455,6 +457,71 @@ export function renderCompactCard(data) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
+// ── Debug panel ──────────────────────────────────────────
+function refreshDebugPanel() {
+	var panel = S.$("debugPanel");
+	if (!panel) return;
+	panel.textContent = "";
+
+	var loading = ctxEl("div", "text-xs text-[var(--muted)]", "Loading context\u2026");
+	panel.appendChild(loading);
+
+	sendRpc("chat.context", {}).then((res) => {
+		panel.textContent = "";
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to load context"));
+			return;
+		}
+		slashInjectStyles();
+		renderContextSessionSection(panel, res.payload);
+		renderContextProjectSection(panel, res.payload);
+		renderContextSkillsSection(panel, res.payload);
+		renderContextMcpSection(panel, res.payload);
+		renderContextToolsSection(panel, res.payload);
+		renderContextSandboxSection(panel, res.payload);
+		renderContextTokensSection(panel, res.payload);
+	});
+}
+
+function toggleDebugPanel() {
+	var panel = S.$("debugPanel");
+	var btn = S.$("debugPanelBtn");
+	if (!panel) return;
+	var hidden = panel.classList.contains("hidden");
+	panel.classList.toggle("hidden", !hidden);
+	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
+	if (hidden) refreshDebugPanel();
+}
+
+// ── MCP toggle ───────────────────────────────────────────
+export function updateMcpToggleUI(enabled) {
+	var btn = S.$("mcpToggleBtn");
+	var label = S.$("mcpToggleLabel");
+	if (!btn) return;
+	if (enabled) {
+		btn.style.color = "var(--ok)";
+		btn.style.borderColor = "var(--ok)";
+		if (label) label.textContent = "MCP";
+		btn.title = "MCP tools enabled — click to disable for this session";
+	} else {
+		btn.style.color = "var(--muted)";
+		btn.style.borderColor = "var(--border)";
+		if (label) label.textContent = "MCP off";
+		btn.title = "MCP tools disabled — click to enable for this session";
+	}
+}
+
+function toggleMcp() {
+	var label = S.$("mcpToggleLabel");
+	var isEnabled = label && label.textContent === "MCP";
+	var newDisabled = isEnabled;
+	sendRpc("sessions.patch", { key: S.activeSessionKey, mcp_disabled: newDisabled }).then((res) => {
+		if (res?.ok) {
+			updateMcpToggleUI(!newDisabled);
+		}
+	});
+}
+
 // ── Model change notice ──────────────────────────────────
 export function showModelNotice(model) {
 	if (!S.chatMsgBox) return;
@@ -589,7 +656,7 @@ function handleHistoryDown() {
 
 // Safe: static hardcoded HTML template string — no user input is interpolated.
 var chatPageHTML =
-	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto 1fr auto auto;overflow:hidden">' +
+	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto;overflow:hidden">' +
 	'<div class="px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
@@ -612,12 +679,22 @@ var chatPageHTML =
 	"</button>" +
 	'<div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div>' +
 	"</div>" +
+	'<button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle MCP tools for this session">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>' +
+	'<span id="mcpToggleLabel">MCP</span>' +
+	"</button>" +
+	'<button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show context debug info">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.194-.14 1.743" /></svg>' +
+	'<span id="debugPanelLabel">Debug</span>' +
+	"</button>" +
 	'<div class="ml-auto flex items-center gap-1.5">' +
 	'<span id="chatSessionName" class="text-xs text-[var(--muted)] cursor-default" title="Click to rename"></span>' +
 	'<input id="chatSessionRenameInput" class="hidden text-xs text-[var(--text)] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] px-1.5 py-0.5 outline-none max-w-[200px]" style="width:0" />' +
+	'<button id="chatSessionFork" class="provider-btn provider-btn-secondary provider-btn-sm hidden">Fork</button>' +
 	'<button id="chatSessionDelete" class="provider-btn provider-btn-danger provider-btn-sm hidden">Delete</button>' +
 	"</div>" +
 	"</div>" +
+	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
 	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
@@ -683,6 +760,13 @@ registerPrefix(
 		bindSandboxImageEvents();
 		updateSandboxImageUI(null);
 		updateChatSessionHeader();
+
+		var mcpToggle = S.$("mcpToggleBtn");
+		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
+		updateMcpToggleUI(true); // default: MCP enabled
+
+		var debugBtn = S.$("debugPanelBtn");
+		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
 
 		if (S.models.length > 0 && S.modelComboLabel) {
 			var found = S.models.find((m) => m.id === S.selectedModelId);

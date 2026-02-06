@@ -51,21 +51,14 @@ pub async fn sync_mcp_tools(
 
     let mut reg = registry.write().await;
 
-    // Remove stale MCP tools.
-    let mcp_names: Vec<String> = reg
-        .list_schemas()
-        .iter()
-        .filter_map(|s| s.get("name").and_then(|v| v.as_str()).map(String::from))
-        .filter(|n| n.starts_with("mcp__"))
-        .collect();
-    for name in &mcp_names {
-        reg.unregister(name);
-    }
+    // Remove all MCP-sourced tools before re-registering current ones.
+    reg.unregister_mcp();
 
-    // Register current bridges.
+    // Register current bridges with their server name metadata.
     let count = bridges.len();
     for bridge in bridges {
-        reg.register(Box::new(McpToolAdapter(bridge)));
+        let server = bridge.server_name().to_string();
+        reg.register_mcp(Box::new(McpToolAdapter(bridge)), server);
     }
 
     if count > 0 {
@@ -316,10 +309,13 @@ mod tests {
         let manager = moltis_mcp::McpManager::new(McpRegistry::new());
         let registry = Arc::new(RwLock::new(ToolRegistry::new()));
 
-        // Manually register a fake mcp__ tool to simulate a stale entry.
+        // Manually register a fake MCP tool to simulate a stale entry.
         {
             let mut reg = registry.write().await;
-            reg.register(Box::new(FakeTool("mcp__old__tool".into())));
+            reg.register_mcp(
+                Box::new(FakeTool("mcp__old__tool".into())),
+                "old".to_string(),
+            );
         }
 
         // Sync should remove it since there are no running MCP servers.

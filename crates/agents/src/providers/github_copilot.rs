@@ -332,6 +332,7 @@ impl LlmProvider for GitHubCopilotProvider {
                 tools_count = tools.len(),
                 "github-copilot stream_with_tools request"
             );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "github-copilot stream request body");
 
             let resp = match self
                 .client
