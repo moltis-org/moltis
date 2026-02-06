@@ -2,9 +2,12 @@
 
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
+import { initMobile } from "./mobile.js";
 import { updateNavCounts } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import { renderProjectSelect } from "./projects.js";
+import { initPWA } from "./pwa.js";
+import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage } from "./router.js";
 import { fetchSessions, refreshActiveSession, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
@@ -39,6 +42,8 @@ registerPage("/", () => {
 
 initTheme();
 injectMarkdownStyles();
+initPWA();
+initMobile();
 
 // Apply server-injected identity immediately (no async wait), and
 // keep the header in sync whenever gon.identity is refreshed.
@@ -160,4 +165,5 @@ function startApp() {
 	mount(location.pathname);
 	connect();
 	fetchBootstrap();
+	initInstallBanner();
 }

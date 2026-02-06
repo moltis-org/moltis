@@ -70,11 +70,119 @@ pub struct TailscaleOpts {
 pub struct AppState {
     pub gateway: Arc<GatewayState>,
     pub methods: Arc<MethodRegistry>,
+    #[cfg(feature = "push-notifications")]
+    pub push_service: Option<Arc<crate::push::PushService>>,
 }
 
 // ── Server startup ───────────────────────────────────────────────────────────
 
 /// Build the gateway router (shared between production startup and tests).
+#[cfg(feature = "push-notifications")]
+pub fn build_gateway_app(
+    state: Arc<GatewayState>,
+    methods: Arc<MethodRegistry>,
+    push_service: Option<Arc<crate::push::PushService>>,
+) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let mut router = Router::new()
+        .route("/health", get(health_handler))
+        .route("/ws", get(ws_upgrade_handler));
+
+    // Nest auth routes if credential store is available.
+    if let Some(ref cred_store) = state.credential_store {
+        let auth_state = AuthState {
+            credential_store: Arc::clone(cred_store),
+            webauthn_state: state.webauthn_state.clone(),
+            gateway_state: Arc::clone(&state),
+        };
+        router = router.nest("/api/auth", auth_router().with_state(auth_state));
+    }
+
+    let app_state = AppState {
+        gateway: state,
+        methods,
+        #[cfg(feature = "push-notifications")]
+        push_service,
+    };
+
+    #[cfg(feature = "web-ui")]
+    let router = {
+        // Protected API routes — require auth when credential store is configured.
+        let mut protected = Router::new()
+            .route("/api/bootstrap", get(api_bootstrap_handler))
+            .route("/api/gon", get(api_gon_handler))
+            .route("/api/skills", get(api_skills_handler))
+            .route("/api/skills/search", get(api_skills_search_handler))
+            .route("/api/mcp", get(api_mcp_handler))
+            .route("/api/plugins", get(api_plugins_handler))
+            .route("/api/plugins/search", get(api_plugins_search_handler))
+            .route(
+                "/api/images/cached",
+                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
+            )
+            .route(
+                "/api/images/cached/{tag}",
+                axum::routing::delete(api_delete_cached_image_handler),
+            )
+            .route(
+                "/api/images/build",
+                axum::routing::post(api_build_image_handler),
+            )
+            .route(
+                "/api/images/check-packages",
+                axum::routing::post(api_check_packages_handler),
+            )
+            .route(
+                "/api/images/default",
+                get(api_get_default_image_handler).put(api_set_default_image_handler),
+            )
+            .route(
+                "/api/env",
+                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
+            )
+            .route(
+                "/api/env/{id}",
+                axum::routing::delete(crate::env_routes::env_delete),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                app_state.clone(),
+                crate::auth_middleware::require_auth,
+            ));
+
+        // Mount tailscale routes (protected) when the feature is enabled.
+        #[cfg(feature = "tailscale")]
+        {
+            protected = protected.nest(
+                "/api/tailscale",
+                crate::tailscale_routes::tailscale_router(),
+            );
+        }
+
+        // Mount push notification routes when the feature is enabled.
+        #[cfg(feature = "push-notifications")]
+        {
+            protected = protected.nest("/api/push", crate::push_routes::push_router());
+        }
+
+        // Public routes (assets, PWA files, SPA fallback).
+        router
+            .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
+            .route("/assets/{*path}", get(asset_handler))
+            .route("/manifest.json", get(manifest_handler))
+            .route("/sw.js", get(service_worker_handler))
+            .merge(protected)
+            .fallback(spa_fallback)
+    };
+
+    router.layer(cors).with_state(app_state)
+}
+
+/// Build the gateway router (shared between production startup and tests).
+#[cfg(not(feature = "push-notifications"))]
 pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -177,10 +285,12 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             crate::tailscale_routes::tailscale_router(),
         );
 
-        // Public routes (assets, SPA fallback).
+        // Public routes (assets, PWA files, SPA fallback).
         router
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
+            .route("/manifest.json", get(manifest_handler))
+            .route("/sw.js", get(service_worker_handler))
             .merge(protected)
             .fallback(spa_fallback)
     };
@@ -259,8 +369,8 @@ pub async fn start_gateway(
             services.with_local_llm(Arc::clone(&svc) as Arc<dyn crate::services::LocalLlmService>);
         Some(svc)
     };
-    #[cfg(not(feature = "local-llm"))]
-    let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = None;
+    // When local-llm feature is disabled, this variable is not needed since
+    // the only usage is also feature-gated.
 
     if !registry.read().await.is_empty() {
         services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
@@ -1357,7 +1467,28 @@ pub async fn start_gateway(
 
     let methods = Arc::new(MethodRegistry::new());
 
+    // Initialize push notification service if the feature is enabled.
+    #[cfg(feature = "push-notifications")]
+    let push_service: Option<Arc<crate::push::PushService>> = {
+        match crate::push::PushService::new(&data_dir).await {
+            Ok(svc) => {
+                info!("push notification service initialized");
+                // Store in GatewayState for use by chat service
+                state.set_push_service(Arc::clone(&svc)).await;
+                Some(svc)
+            },
+            Err(e) => {
+                tracing::warn!("failed to initialize push notification service: {e}");
+                None
+            },
+        }
+    };
+
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    #[cfg(feature = "push-notifications")]
+    let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods), push_service);
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    #[cfg(not(feature = "push-notifications"))]
     let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods));
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
@@ -2871,6 +3002,18 @@ async fn versioned_asset_handler(
 #[cfg(feature = "web-ui")]
 async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     serve_asset(&path, "no-cache")
+}
+
+/// PWA manifest: `/manifest.json` — served from assets root.
+#[cfg(feature = "web-ui")]
+async fn manifest_handler() -> impl IntoResponse {
+    serve_asset("manifest.json", "no-cache")
+}
+
+/// Service worker: `/sw.js` — served from assets root, no-cache for updates.
+#[cfg(feature = "web-ui")]
+async fn service_worker_handler() -> impl IntoResponse {
+    serve_asset("sw.js", "no-cache")
 }
 
 #[cfg(feature = "web-ui")]

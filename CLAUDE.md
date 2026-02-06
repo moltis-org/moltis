@@ -10,6 +10,22 @@ https://docs.openclaw.ai and its code is at https://github.com/openclaw/openclaw
 All code you write must have tests with high coverage. Always check for Security
 to make code safe.
 
+## Cargo Features
+
+When adding a new feature behind a cargo feature flag, **always enable it by
+default** in the CLI crate (`crates/cli/Cargo.toml`) unless explicitly asked
+otherwise. Features should be opt-out, not opt-in. This prevents the common
+bug where a feature works when tested in isolation but isn't compiled into
+the main binary.
+
+Example: when adding a `foo` feature to the gateway crate, also add:
+```toml
+# crates/cli/Cargo.toml
+[features]
+default = ["foo", ...]  # Add to defaults
+foo = ["moltis-gateway/foo"]  # Forward to gateway
+```
+
 ## Rust Style and Idioms
 
 Write idiomatic, Rustacean code. Prioritize clarity, modularity, and
@@ -554,6 +570,10 @@ and any open items.
 ## Git Workflow
 
 Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): description`
+
+**No Co-Authored-By trailers.** Never add `Co-Authored-By` lines (e.g.
+`Co-Authored-By: Claude ...`) to commit messages or documentation. Commits
+should only contain the message itself — no AI attribution trailers.
 
 When adding a new feature (`feat` commits), update the features list in
 `README.md` as part of the same branch/PR.

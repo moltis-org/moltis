@@ -4,8 +4,11 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { onEvent } from "./events.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import * as push from "./push.js";
+import { isStandalone } from "./pwa.js";
 import { navigate, registerPrefix } from "./router.js";
 import * as S from "./state.js";
 
@@ -57,6 +60,11 @@ var sections = [
 		id: "tailscale",
 		label: "Tailscale",
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.466.73-3.558"/></svg>`,
+	},
+	{
+		id: "notifications",
+		label: "Notifications",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>`,
 	},
 ];
 
@@ -1042,7 +1050,7 @@ function SecuritySection() {
 					}
 					<div>
 						<button type="button" class="provider-btn" onClick=${onCreateApiKey}
-							disabled=${!akLabel.trim() || !(akFullAccess || Object.values(akScopes).some((v) => v))}>
+							disabled=${!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}>
 							Generate key
 						</button>
 					</div>
@@ -1368,6 +1376,217 @@ function TailscaleSection() {
 	</div>`;
 }
 
+// ── Notifications section ─────────────────────────────────────
+
+function NotificationsSection() {
+	var [supported, setSupported] = useState(false);
+	var [permission, setPermission] = useState("default");
+	var [subscribed, setSubscribed] = useState(false);
+	var [isLoading, setIsLoading] = useState(true);
+	var [toggling, setToggling] = useState(false);
+	var [error, setError] = useState(null);
+	var [serverStatus, setServerStatus] = useState(null);
+
+	async function checkStatus() {
+		setIsLoading(true);
+		rerender();
+
+		var pushSupported = push.isPushSupported();
+		setSupported(pushSupported);
+
+		if (pushSupported) {
+			setPermission(push.getPermissionState());
+			await push.initPushState();
+			setSubscribed(push.isSubscribed());
+
+			// Check server status
+			var status = await push.getPushStatus();
+			setServerStatus(status);
+		}
+
+		setIsLoading(false);
+		rerender();
+	}
+
+	async function refreshStatus() {
+		var status = await push.getPushStatus();
+		setServerStatus(status);
+		rerender();
+	}
+
+	async function onRemoveSubscription(endpoint) {
+		var result = await push.removeSubscription(endpoint);
+		if (!result.success) {
+			setError(result.error || "Failed to remove subscription");
+			rerender();
+		}
+		// The WebSocket event will trigger refreshStatus automatically
+	}
+
+	useEffect(() => {
+		checkStatus();
+		// Listen for subscription changes via WebSocket
+		var off = onEvent("push.subscriptions", () => {
+			refreshStatus();
+		});
+		return off;
+	}, []);
+
+	async function onToggle() {
+		setError(null);
+		setToggling(true);
+		rerender();
+
+		var result = subscribed ? await push.unsubscribeFromPush() : await push.subscribeToPush();
+
+		if (result.success) {
+			setSubscribed(!subscribed);
+			if (!subscribed) setPermission("granted");
+		} else {
+			setError(result.error || (subscribed ? "Failed to unsubscribe" : "Failed to subscribe"));
+		}
+
+		setToggling(false);
+		rerender();
+	}
+
+	if (isLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+			<div class="text-xs text-[var(--muted)]">Loading…</div>
+		</div>`;
+	}
+
+	if (!supported) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--surface);">
+				<p class="text-sm text-[var(--text)]" style="margin:0;">
+					Push notifications are not supported in this browser.
+				</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
+					Try using Safari, Chrome, or Firefox on a device that supports web push.
+				</p>
+			</div>
+		</div>`;
+	}
+
+	if (serverStatus === null) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--surface);">
+				<p class="text-sm text-[var(--text)]" style="margin:0;">
+					Push notifications are not configured on the server.
+				</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
+					The server was built without the <code style="font-family:var(--font-mono);font-size:.75rem;">push-notifications</code> feature.
+				</p>
+			</div>
+		</div>`;
+	}
+
+	// Check if running as installed PWA - push notifications require installation on Safari
+	var standalone = isStandalone();
+	var needsInstall = !standalone && /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Receive push notifications when the agent completes a task or needs your attention.
+		</p>
+
+		<!-- Push notifications toggle -->
+		<div style="max-width:600px;">
+			<div class="provider-item" style="margin-bottom:0;">
+				<div style="flex:1;min-width:0;">
+					<div class="provider-item-name" style="font-size:.9rem;">Push Notifications</div>
+					<div style="font-size:.75rem;color:var(--muted);margin-top:2px;">
+						${
+							needsInstall
+								? "Add this app to your Dock to enable notifications."
+								: subscribed
+									? "You will receive notifications on this device."
+									: permission === "denied"
+										? "Notifications are blocked. Enable them in browser settings."
+										: "Enable to receive notifications on this device."
+						}
+					</div>
+				</div>
+				<button
+					class="provider-btn ${subscribed ? "provider-btn-danger" : ""}"
+					onClick=${onToggle}
+					disabled=${toggling || permission === "denied" || needsInstall}
+				>
+					${toggling ? "…" : subscribed ? "Disable" : "Enable"}
+				</button>
+			</div>
+			${error ? html`<div class="text-xs" style="margin-top:8px;color:var(--error);">${error}</div>` : null}
+		</div>
+
+		<!-- Install required notice -->
+		${
+			needsInstall
+				? html`
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--surface);">
+				<p class="text-sm text-[var(--text)]" style="margin:0;font-weight:500;">
+					Installation required
+				</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
+					On Safari, push notifications are only available for installed apps. Add moltis to your Dock using <strong>File → Add to Dock</strong> (or Share → Add to Dock on iOS), then open it from there.
+				</p>
+			</div>
+		`
+				: null
+		}
+
+		<!-- Permission status -->
+		${
+			permission === "denied" && !needsInstall
+				? html`
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--error);background:color-mix(in srgb, var(--error) 5%, transparent);">
+				<p class="text-sm" style="color:var(--error);margin:0;font-weight:500;">
+					Notifications are blocked
+				</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
+					You previously blocked notifications for this site. To enable them, you'll need to update your browser's site settings and allow notifications for this origin.
+				</p>
+			</div>
+		`
+				: null
+		}
+
+		<!-- Subscribed devices -->
+		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;margin-top:8px;">
+			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">
+				Subscribed Devices (${serverStatus?.subscription_count || 0})
+			</h3>
+			${
+				serverStatus?.subscriptions?.length > 0
+					? html`<div style="display:flex;flex-direction:column;gap:6px;">
+					${serverStatus.subscriptions.map(
+						(sub) => html`<div class="provider-item" style="margin-bottom:0;" key=${sub.endpoint}>
+						<div style="flex:1;min-width:0;">
+							<div class="provider-item-name" style="font-size:.85rem;">${sub.device}</div>
+							<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
+								${sub.ip ? html`<span style="font-family:var(--font-mono);">${sub.ip}</span>` : null}
+								<time datetime=${sub.created_at}>${new Date(sub.created_at).toLocaleDateString()}</time>
+							</div>
+						</div>
+						<button
+							class="provider-btn provider-btn-danger"
+							onClick=${() => onRemoveSubscription(sub.endpoint)}
+						>
+							Remove
+						</button>
+					</div>`,
+					)}
+				</div>`
+					: html`<div class="text-xs text-[var(--muted)]" style="padding:4px 0;">No devices subscribed yet.</div>`
+			}
+		</div>
+	</div>`;
+}
+
 // ── Main layout ──────────────────────────────────────────────
 
 function SettingsPage() {
@@ -1383,6 +1602,7 @@ function SettingsPage() {
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
+		${section === "notifications" ? html`<${NotificationsSection} />` : null}
 	</div>`;
 }
 

@@ -39,6 +39,10 @@ pub mod onboarding;
 pub mod pairing;
 pub mod project;
 pub mod provider_setup;
+#[cfg(feature = "push-notifications")]
+pub mod push;
+#[cfg(feature = "push-notifications")]
+pub mod push_routes;
 pub mod server;
 pub mod services;
 pub mod session;
