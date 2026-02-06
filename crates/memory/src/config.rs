@@ -1,5 +1,30 @@
 use std::path::PathBuf;
 
+/// Citation mode for memory search results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CitationMode {
+    /// Always include citations in search results.
+    On,
+    /// Never include citations.
+    Off,
+    /// Auto: include citations when results come from multiple files.
+    #[default]
+    Auto,
+}
+
+impl std::str::FromStr for CitationMode {
+    type Err = std::convert::Infallible;
+
+    /// Parse from string (case-insensitive). Never fails - defaults to Auto.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "on" | "true" | "yes" | "always" => Self::On,
+            "off" | "false" | "no" | "never" => Self::Off,
+            _ => Self::Auto,
+        })
+    }
+}
+
 /// Configuration for the memory subsystem.
 #[derive(Debug, Clone)]
 pub struct MemoryConfig {
@@ -22,6 +47,10 @@ pub struct MemoryConfig {
     pub batch_embeddings: bool,
     /// Minimum number of texts before switching to batch API (default: 50).
     pub batch_threshold: usize,
+    /// Citation mode for search results.
+    pub citations: CitationMode,
+    /// Whether to enable LLM reranking for hybrid search results.
+    pub llm_reranking: bool,
 }
 
 impl Default for MemoryConfig {
@@ -36,6 +65,8 @@ impl Default for MemoryConfig {
             local_model_path: None,
             batch_embeddings: false,
             batch_threshold: 50,
+            citations: CitationMode::default(),
+            llm_reranking: false,
         }
     }
 }

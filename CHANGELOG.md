@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mistral AI Voxtral (cloud-based, 13 languages)
   - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
+- **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
+  - Gated behind `qmd` feature flag (enabled by default)
+  - Web UI shows installation instructions and QMD status
+  - Comparison table between built-in SQLite and QMD backends
+- **Citations**: Configurable citation mode (on/off/auto) for memory search results
+  - Auto mode includes citations when results span multiple files
+- **Session Export**: Option to export session transcripts to memory for future reference
+- **LLM Reranking**: Use LLM to rerank search results for improved relevance (requires QMD)
+- **Memory Documentation**: Added `docs/src/memory.md` with comprehensive memory system documentation
+
 - **Mobile PWA Support**: Install moltis as a Progressive Web App on iOS, Android, and desktop
   - Standalone mode with full-screen experience
   - Custom app icon (crab mascot)
@@ -45,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   require PWA installation (Safari doesn't support push in browser mode)
 
 ### Changed
+
+- Memory settings UI enhanced with backend comparison and feature explanations
+- Added `memory.qmd.status` RPC method for checking QMD availability
+- Extended `memory.config.get` to include `qmd_feature_enabled` flag
 
 - Push notifications feature is now enabled by default in the CLI
 

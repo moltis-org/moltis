@@ -134,6 +134,7 @@ function fetchBootstrap() {
 	// as soon as the data arrives, without blocking the initial page render.
 	fetch("/api/bootstrap")
 		.then((r) => r.json())
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Bootstrap requires handling many conditional paths
 		.then((boot) => {
 			if (boot.onboarded === false) {
 				showOnboardingBanner();

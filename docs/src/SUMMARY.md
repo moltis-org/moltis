@@ -16,6 +16,7 @@
 
 - [LLM Providers](providers.md)
 - [MCP Servers](mcp.md)
+- [Memory](memory.md)
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)

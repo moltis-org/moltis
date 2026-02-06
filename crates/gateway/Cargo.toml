@@ -32,6 +32,7 @@ moltis-onboarding     = { workspace = true }
 moltis-plugins        = { workspace = true }
 moltis-projects       = { workspace = true }
 moltis-protocol       = { workspace = true }
+moltis-qmd            = { optional = true, workspace = true }
 moltis-routing        = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
@@ -75,6 +76,7 @@ default = [
   "metrics",
   "prometheus",
   "push-notifications",
+  "qmd",
   "tailscale",
   "tls",
   "voice",
@@ -88,6 +90,7 @@ local-llm-metal = ["moltis-agents/local-llm-metal"]
 metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
+qmd = ["dep:moltis-qmd"]
 tailscale = []
 tls = [
   "dep:axum-server",
