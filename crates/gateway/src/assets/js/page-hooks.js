@@ -212,14 +212,14 @@ function HookCard({ hook }) {
             ${
 							hook.source !== "builtin"
 								? html`
-            <div class="flex items-center gap-0 border-b border-[var(--border)]">
+            <div class="flex items-center gap-1 border-b border-[var(--border)] px-1">
               <button
-                class="px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${tab.value === "preview" ? "border-[var(--accent)] text-[var(--text-strong)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"}"
+                class="px-3 py-1.5 text-xs font-medium rounded-t-[var(--radius-sm)] transition-colors -mb-px ${tab.value === "preview" ? "bg-[var(--surface2)] border border-[var(--border)] border-b-[var(--surface2)] text-[var(--text-strong)]" : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] border border-transparent"}"
                 onClick=${() => {
 									tab.value = "preview";
 								}}>Preview</button>
               <button
-                class="px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${tab.value === "source" ? "border-[var(--accent)] text-[var(--text-strong)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"}"
+                class="px-3 py-1.5 text-xs font-medium rounded-t-[var(--radius-sm)] transition-colors -mb-px ${tab.value === "source" ? "bg-[var(--surface2)] border border-[var(--border)] border-b-[var(--surface2)] text-[var(--text-strong)]" : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] border border-transparent"}"
                 onClick=${() => {
 									tab.value = "source";
 								}}>Source</button>
