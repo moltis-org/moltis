@@ -211,10 +211,12 @@ impl BrowserPool {
     ) -> Result<BrowserInstance, BrowserError> {
         use crate::container;
 
-        // Check Docker availability
-        if !container::is_docker_available() {
+        // Check container runtime availability (Docker or Apple Container)
+        if !container::is_container_available() {
             return Err(BrowserError::LaunchFailed(
-                "Docker is required for sandboxed browser but is not available".to_string(),
+                "No container runtime available for sandboxed browser. \
+                 Please install Docker or Apple Container."
+                    .to_string(),
             ));
         }
 
