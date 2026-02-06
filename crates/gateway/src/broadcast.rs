@@ -78,8 +78,13 @@ pub async fn broadcast(
     }
 }
 
-/// Broadcast a tick event with the current timestamp.
-pub async fn broadcast_tick(state: &Arc<GatewayState>) {
+/// Broadcast a tick event with the current timestamp and memory stats.
+pub async fn broadcast_tick(
+    state: &Arc<GatewayState>,
+    process_memory_bytes: u64,
+    system_available_bytes: u64,
+    system_total_bytes: u64,
+) {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -87,7 +92,14 @@ pub async fn broadcast_tick(state: &Arc<GatewayState>) {
     broadcast(
         state,
         "tick",
-        serde_json::json!({ "ts": ts }),
+        serde_json::json!({
+            "ts": ts,
+            "mem": {
+                "process": process_memory_bytes,
+                "available": system_available_bytes,
+                "total": system_total_bytes
+            }
+        }),
         BroadcastOpts {
             drop_if_slow: true,
             ..Default::default()

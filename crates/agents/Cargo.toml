@@ -17,8 +17,8 @@ provider-openai-codex   = ["dep:base64", "dep:moltis-oauth"]
 
 [dependencies]
 anyhow          = { workspace = true }
-async-stream    = "0.3"
-async-trait     = "0.1"
+async-stream    = { workspace = true }
+async-trait     = { workspace = true }
 futures         = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
@@ -38,17 +38,17 @@ uuid            = { workspace = true }
 async-openai   = { optional = true, workspace = true }
 base64         = { optional = true, workspace = true }
 directories    = { optional = true, workspace = true }
-encoding_rs    = { optional = true, version = "0.8" }
+encoding_rs    = { optional = true, workspace = true }
 genai          = { optional = true, workspace = true }
-llama-cpp-2    = { optional = true, version = "0.1" }
+llama-cpp-2    = { optional = true, workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { optional = true, workspace = true }
-sysinfo        = { optional = true, version = "0.34" }
+sysinfo        = { optional = true, workspace = true }
 
 [dev-dependencies]
 axum     = { workspace = true }
-http     = "1"
-tempfile = "3"
+http     = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

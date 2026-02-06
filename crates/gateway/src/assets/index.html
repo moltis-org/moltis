@@ -29,7 +29,8 @@
     "@preact/signals": "/assets/js/vendor/preact-signals.mjs",
     "htm/preact": "/assets/js/vendor/htm-preact.mjs",
     "luxon": "/assets/js/vendor/luxon.mjs",
-    "uplot": "/assets/js/vendor/uplot.mjs"
+    "uplot": "/assets/js/vendor/uplot.mjs",
+    "pretty-bytes": "/assets/js/vendor/pretty-bytes.mjs"
   }
 }
 </script>
@@ -97,6 +98,8 @@
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
   <div class="flex-1"></div>
+
+  <span id="memoryInfo" class="text-xs text-[var(--muted)]" title="Process memory · System free memory"></span>
 
   <!-- Theme toggle -->
   <div class="theme-toggle" id="themeToggle">

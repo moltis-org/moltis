@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dedicated Docker CI workflow**: Docker image builds now run on every push to `main`
   (in addition to release tags), producing a `latest` tag for cloud deployments
 
+- **Config Check Command**: `moltis config check` validates the configuration file, detects unknown/misspelled fields with Levenshtein-based suggestions, warns about security misconfigurations, and checks file references
+
+- **Memory Usage Indicator**: Display process RSS and system free memory in the header bar, updated every 30 seconds via the tick WebSocket broadcast
+
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
   - Gated behind `qmd` feature flag (enabled by default)
   - Web UI shows installation instructions and QMD status

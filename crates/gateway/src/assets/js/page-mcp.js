@@ -593,11 +593,11 @@ function McpPage() {
           Each tool runs as a <strong>local process</strong> on your machine (spawned via npm/uvx). Moltis connects to it over stdio and the process makes outbound API calls on your behalf using your tokens. No data is sent to third-party MCP hosts.
         </p>
       </div>
-      <div class="max-w-[600px] flex items-start gap-2.5 px-4 py-3 rounded-[var(--radius)] border border-[var(--warn)] bg-[rgba(234,179,8,0.08)]">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="var(--warn)" width="18" height="18" class="shrink-0 mt-0.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
-        <p class="text-xs text-[var(--text)] leading-relaxed">
-          Each enabled MCP server adds tool definitions to every chat session's context, consuming tokens. Only enable servers you actively need.
-        </p>
+      <div class="skills-warn max-w-[600px]">
+        <div class="skills-warn-title">\u26a0\ufe0f MCP servers run as local processes \u2014 review before enabling</div>
+        <div>Each MCP server runs with <strong>your full system privileges</strong>. A malicious or compromised server can read your files, exfiltrate credentials, or execute arbitrary commands \u2014 just like any local process.</div>
+        <div style="margin-top:4px"><strong>Triple-check the source code</strong> of any MCP server before enabling it. Only install servers from authors you trust, and keep them updated.</div>
+        <div style="margin-top:4px">Each enabled server also adds tool definitions to every chat session's context, consuming tokens. Only enable servers you actively need.</div>
       </div>
       <${InstallBox} />
       <${FeaturedSection} />

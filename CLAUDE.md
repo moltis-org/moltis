@@ -26,6 +26,40 @@ default = ["foo", ...]  # Add to defaults
 foo = ["moltis-gateway/foo"]  # Forward to gateway
 ```
 
+## Workspace Dependencies
+
+**Always add new third-party crates to `[workspace.dependencies]` in the
+root `Cargo.toml`**, then reference them with `{ workspace = true }` in
+each crate's `Cargo.toml`. Never add a version directly in a crate's
+`Cargo.toml` — centralising versions in the workspace avoids duplicate
+versions in the lock file and makes upgrades easier.
+
+```toml
+# Root Cargo.toml
+[workspace.dependencies]
+some-crate = "1.2"
+
+# crates/gateway/Cargo.toml
+[dependencies]
+some-crate = { workspace = true }
+```
+
+## Config Schema and Validation
+
+When adding or renaming fields in `MoltisConfig` (or any nested config
+struct in `crates/config/src/schema.rs`), **you must also update the
+schema map in `crates/config/src/validate.rs`** (`build_schema_map()`).
+This map drives the `moltis config check` command — if a field exists in
+the struct but not in the map, the schema drift guard test will fail:
+
+```
+schema map is missing keys present in MoltisConfig::default(): ["new_field"]
+```
+
+The same applies when adding new enum variants for string-typed fields
+(e.g. `tailscale.mode`, `sandbox.backend`, `memory.provider`): update
+the corresponding `valid_*` list in `check_semantic_warnings()`.
+
 ## Rust Style and Idioms
 
 Write idiomatic, Rustacean code. Prioritize clarity, modularity, and
