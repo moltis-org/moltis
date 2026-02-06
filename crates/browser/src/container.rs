@@ -277,26 +277,42 @@ fn start_apple_container(
 
 /// Detect the best available container backend.
 ///
-/// Prefers Apple Container on macOS when available (VM-isolated),
+/// Prefers Apple Container on macOS when available and functional (VM-isolated),
 /// falls back to Docker otherwise.
 pub fn detect_backend() -> Result<ContainerBackend> {
     #[cfg(target_os = "macos")]
     {
-        if is_cli_available("container") {
+        if is_apple_container_functional() {
             info!("browser sandbox backend: apple-container (VM-isolated)");
             return Ok(ContainerBackend::AppleContainer);
         }
     }
 
-    if is_cli_available("docker") {
+    if is_docker_available() {
         info!("browser sandbox backend: docker");
         return Ok(ContainerBackend::Docker);
     }
 
     bail!(
-        "No container runtime available. Please install Docker or Apple Container \
+        "No container runtime available. Please install Docker \
          to use sandboxed browser mode."
     )
+}
+
+/// Check if Apple Container is actually functional (has required plugins).
+#[cfg(target_os = "macos")]
+fn is_apple_container_functional() -> bool {
+    if !is_cli_available("container") {
+        return false;
+    }
+    // Check if the pull plugin is available by running a help command
+    // The pull command will fail gracefully if the plugin is missing
+    Command::new("container")
+        .args(["pull", "--help"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Check if a CLI tool is available.
@@ -366,14 +382,14 @@ pub fn is_docker_available() -> bool {
     is_cli_available("docker")
 }
 
-/// Check if Apple Container is available.
+/// Check if Apple Container is available and functional.
 #[cfg(target_os = "macos")]
 #[must_use]
 pub fn is_apple_container_available() -> bool {
-    is_cli_available("container")
+    is_apple_container_functional()
 }
 
-/// Check if any container runtime is available.
+/// Check if any container runtime is available and functional.
 #[must_use]
 pub fn is_container_available() -> bool {
     #[cfg(target_os = "macos")]
@@ -384,9 +400,26 @@ pub fn is_container_available() -> bool {
 }
 
 /// Pull the browser container image if not present.
+/// Falls back to Docker if the primary backend fails.
 pub fn ensure_image(image: &str) -> Result<()> {
     let backend = detect_backend()?;
-    ensure_image_with_backend(backend, image)
+
+    // Try primary backend first
+    let result = ensure_image_with_backend(backend, image);
+
+    // On macOS, if Apple Container fails, try Docker as fallback
+    #[cfg(target_os = "macos")]
+    if result.is_err() && backend == ContainerBackend::AppleContainer && is_docker_available() {
+        if let Err(ref e) = result {
+            warn!(
+                error = %e,
+                "Apple Container image pull failed, falling back to Docker"
+            );
+        }
+        return ensure_image_with_backend(ContainerBackend::Docker, image);
+    }
+
+    result
 }
 
 /// Pull the browser container image using a specific backend.

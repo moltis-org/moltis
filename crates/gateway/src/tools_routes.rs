@@ -182,9 +182,18 @@ fn validate_config(config: &moltis_config::MoltisConfig) -> Vec<String> {
     // Check browser config
     if config.tools.browser.enabled {
         if config.tools.browser.sandbox {
+            // Check if container runtime is available for sandbox
+            if !moltis_browser::container::is_container_available() {
+                warnings.push(
+                    "Browser sandbox mode is enabled but no container runtime found. \
+                     Please install Docker or Apple Container for sandboxed browsing."
+                        .to_string(),
+                );
+            }
+        } else {
             warnings.push(
-                "Browser sandbox mode is enabled but not yet implemented. \
-                 Browser will run on host."
+                "Browser sandbox is disabled. Browser will run on host without isolation. \
+                 Consider enabling [browser] sandbox = true for better security."
                     .to_string(),
             );
         }

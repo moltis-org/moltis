@@ -198,7 +198,7 @@ pub fn check_and_warn(custom_path: Option<&str>) -> bool {
             result.install_hint
         );
     } else if let Some(ref path) = result.path {
-        tracing::info!(path = %path.display(), "Browser detected");
+        tracing::info!(path = %path.display(), "Host browser detected");
     }
 
     result.found

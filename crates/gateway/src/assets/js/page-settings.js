@@ -1133,7 +1133,20 @@ function ConfigSection() {
 		setLoading(true);
 		rerender();
 		fetch("/api/config")
-			.then((r) => (r.ok ? r.json() : { error: "Failed to load" }))
+			.then((r) => {
+				if (!r.ok) {
+					return r.text().then((text) => {
+						// Try to parse as JSON for structured error
+						try {
+							var json = JSON.parse(text);
+							return { error: json.error || `HTTP ${r.status}: ${r.statusText}` };
+						} catch (_e) {
+							return { error: `HTTP ${r.status}: ${r.statusText}` };
+						}
+					});
+				}
+				return r.json().catch(() => ({ error: "Invalid JSON response from server" }));
+			})
 			.then((d) => {
 				if (d.error) {
 					setErr(d.error);
@@ -1145,8 +1158,13 @@ function ConfigSection() {
 				setLoading(false);
 				rerender();
 			})
-			.catch((e) => {
-				setErr(e.message);
+			.catch((fetchErr) => {
+				// Network error or other fetch failure
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server. Please check if moltis is running.";
+				}
+				setErr(errMsg);
 				setLoading(false);
 				rerender();
 			});
@@ -1169,7 +1187,7 @@ function ConfigSection() {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ toml }),
 		})
-			.then((r) => r.json())
+			.then((r) => r.json().catch(() => ({ error: "Invalid JSON response" })))
 			.then((d) => {
 				setTesting(false);
 				if (d.valid) {
@@ -1180,9 +1198,13 @@ function ConfigSection() {
 				}
 				rerender();
 			})
-			.catch((e) => {
+			.catch((fetchErr) => {
 				setTesting(false);
-				setErr(e.message);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
 				rerender();
 			});
 	}
@@ -1200,7 +1222,7 @@ function ConfigSection() {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ toml }),
 		})
-			.then((r) => r.json())
+			.then((r) => r.json().catch(() => ({ error: "Invalid JSON response" })))
 			.then((d) => {
 				setSaving(false);
 				if (d.ok) {
@@ -1210,9 +1232,13 @@ function ConfigSection() {
 				}
 				rerender();
 			})
-			.catch((e) => {
+			.catch((fetchErr) => {
 				setSaving(false);
-				setErr(e.message);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
 				rerender();
 			});
 	}
@@ -1290,7 +1316,12 @@ function ConfigSection() {
 		rerender();
 
 		fetch("/api/config/template")
-			.then((r) => (r.ok ? r.json() : { error: "Failed to load template" }))
+			.then((r) => {
+				if (!r.ok) {
+					return { error: `HTTP ${r.status}: Failed to load template` };
+				}
+				return r.json().catch(() => ({ error: "Invalid JSON response" }));
+			})
 			.then((d) => {
 				setResettingTemplate(false);
 				if (d.error) {
@@ -1301,9 +1332,13 @@ function ConfigSection() {
 				}
 				rerender();
 			})
-			.catch((e) => {
+			.catch((fetchErr) => {
 				setResettingTemplate(false);
-				setErr(e.message);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
 				rerender();
 			});
 	}
