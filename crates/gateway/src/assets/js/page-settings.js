@@ -1110,6 +1110,7 @@ function ConfigSection() {
 	var [saving, setSaving] = useState(false);
 	var [testing, setTesting] = useState(false);
 	var [resettingTemplate, setResettingTemplate] = useState(false);
+	var [restarting, setRestarting] = useState(false);
 	var [msg, setMsg] = useState(null);
 	var [err, setErr] = useState(null);
 	var [warnings, setWarnings] = useState([]);
@@ -1189,7 +1190,7 @@ function ConfigSection() {
 			.then((d) => {
 				setSaving(false);
 				if (d.ok) {
-					setMsg("Configuration saved. Restart moltis for changes to take effect.");
+					setMsg("Configuration saved. Restart required for changes to take effect.");
 				} else {
 					setErr(d.error || "Failed to save");
 				}
@@ -1200,6 +1201,57 @@ function ConfigSection() {
 				setErr(e.message);
 				rerender();
 			});
+	}
+
+	function onRestart() {
+		setRestarting(true);
+		setMsg("Restarting moltis...");
+		setErr(null);
+		rerender();
+
+		fetch("/api/restart", { method: "POST" })
+			.then((r) => r.json())
+			.then(() => {
+				// Server will restart, wait a bit then start polling for reconnection
+				setTimeout(waitForRestart, 1000);
+			})
+			.catch(() => {
+				// Expected - server restarted before response
+				setTimeout(waitForRestart, 1000);
+			});
+	}
+
+	function waitForRestart() {
+		var attempts = 0;
+		var maxAttempts = 30;
+
+		function check() {
+			attempts++;
+			fetch("/api/gon", { method: "GET" })
+				.then((r) => {
+					if (r.ok) {
+						// Server is back up
+						window.location.reload();
+					} else if (attempts < maxAttempts) {
+						setTimeout(check, 1000);
+					} else {
+						setRestarting(false);
+						setErr("Server did not come back up. Check if moltis is running.");
+						rerender();
+					}
+				})
+				.catch(() => {
+					if (attempts < maxAttempts) {
+						setTimeout(check, 1000);
+					} else {
+						setRestarting(false);
+						setErr("Server did not come back up. Check if moltis is running.");
+						rerender();
+					}
+				});
+		}
+
+		check();
 	}
 
 	function onReset() {
@@ -1269,8 +1321,8 @@ function ConfigSection() {
 			<div style="margin-bottom:12px;">
 				<textarea
 					class="provider-key-input"
-					rows="30"
-					style="width:100%;min-height:500px;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;"
+					rows="20"
+					style="width:100%;min-height:320px;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;"
 					value=${toml}
 					onInput=${(e) => {
 						setToml(e.target.value);
@@ -1294,22 +1346,33 @@ function ConfigSection() {
 			}
 
 			<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onTest} disabled=${testing || saving || resettingTemplate}>
-					${testing ? "Testing\u2026" : "Test Config"}
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onTest} disabled=${testing || saving || resettingTemplate || restarting}>
+					${testing ? "Testing\u2026" : "Test"}
 				</button>
-				<button type="submit" class="provider-btn" disabled=${saving || testing || resettingTemplate}>
-					${saving ? "Saving\u2026" : "Save"}
-				</button>
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onReset} disabled=${saving || testing || resettingTemplate}>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onReset} disabled=${saving || testing || resettingTemplate || restarting}>
 					Reload
 				</button>
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onResetToTemplate} disabled=${saving || testing || resettingTemplate}>
-					${resettingTemplate ? "Loading\u2026" : "Load Template"}
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onResetToTemplate} disabled=${saving || testing || resettingTemplate || restarting}>
+					${resettingTemplate ? "Resetting\u2026" : "Reset to defaults"}
+				</button>
+				<button type="button" class="provider-btn provider-btn-danger" onClick=${onRestart} disabled=${saving || testing || resettingTemplate || restarting}>
+					${restarting ? "Restarting\u2026" : "Restart"}
+				</button>
+				<div style="flex:1;"></div>
+				<button type="submit" class="provider-btn" disabled=${saving || testing || resettingTemplate || restarting}>
+					${saving ? "Saving\u2026" : "Save"}
 				</button>
 			</div>
 
 			${msg ? html`<div class="text-xs" style="margin-top:8px;color:var(--accent);">${msg}</div>` : null}
 			${err ? html`<div class="text-xs" style="margin-top:8px;color:var(--error);white-space:pre-wrap;font-family:var(--font-mono);">${err}</div>` : null}
+			${
+				restarting
+					? html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+						The page will reload automatically when the server is back up.
+					</div>`
+					: null
+			}
 		</form>
 
 		<div style="max-width:800px;margin-top:8px;padding-top:16px;border-top:1px solid var(--border);">

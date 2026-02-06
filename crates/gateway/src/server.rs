@@ -161,6 +161,10 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             .route(
                 "/api/config/template",
                 get(crate::tools_routes::config_template),
+            )
+            .route(
+                "/api/restart",
+                axum::routing::post(crate::tools_routes::restart),
             );
 
         // Add metrics API routes (protected).
@@ -1365,6 +1369,11 @@ pub async fn start_gateway(
             .set_tool_registry(Arc::clone(&shared_tool_registry))
             .await;
         crate::mcp_service::sync_mcp_tools(live_mcp.manager(), &shared_tool_registry).await;
+
+        // Log registered tools for debugging.
+        let schemas = shared_tool_registry.read().await.list_schemas();
+        let tool_names: Vec<&str> = schemas.iter().filter_map(|s| s["name"].as_str()).collect();
+        info!(tools = ?tool_names, "agent tools registered");
     }
 
     // Spawn MCP health polling + auto-restart background task.

@@ -120,6 +120,61 @@ pub async fn config_save(
     }
 }
 
+/// Restart the moltis process.
+///
+/// This re-runs the current binary with the same arguments. On Unix, it uses the exec
+/// syscall to replace the current process. On other platforms, it spawns a new process.
+pub async fn restart(State(_state): State<crate::server::AppState>) -> impl IntoResponse {
+    tracing::info!("restart requested via API");
+
+    // Spawn a task to restart after a short delay, allowing the response to be sent first.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tracing::info!("restarting now");
+
+        let exe = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!("failed to get current executable path: {e}");
+                std::process::exit(1);
+            },
+        };
+
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        tracing::info!(exe = %exe.display(), args = ?args, "re-executing");
+
+        // Use exec on Unix to replace the current process in-place
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // This replaces the current process and never returns on success
+            let err = std::process::Command::new(&exe).args(&args).exec();
+            tracing::error!("failed to exec: {err}");
+            std::process::exit(1);
+        }
+
+        // On non-Unix, spawn a new process and exit the current one
+        #[cfg(not(unix))]
+        {
+            match std::process::Command::new(&exe).args(&args).spawn() {
+                Ok(_) => {
+                    tracing::info!("spawned new process, exiting current");
+                    std::process::exit(0);
+                },
+                Err(e) => {
+                    tracing::error!("failed to spawn new process: {e}");
+                    std::process::exit(1);
+                },
+            }
+        }
+    });
+
+    Json(serde_json::json!({
+        "ok": true,
+        "message": "Moltis is restarting..."
+    }))
+}
+
 /// Validate config and return warnings.
 fn validate_config(config: &moltis_config::MoltisConfig) -> Vec<String> {
     let mut warnings = Vec::new();

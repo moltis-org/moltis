@@ -238,10 +238,21 @@ impl LiveChatService {
     fn has_tools_sync(&self) -> bool {
         // Best-effort check: try_read avoids blocking. If the lock is held,
         // assume tools are present (conservative — enables tool mode).
-        self.tool_registry
+        let result = self
+            .tool_registry
             .try_read()
-            .map(|r| !r.list_schemas().is_empty())
-            .unwrap_or(true)
+            .map(|r| {
+                let schemas = r.list_schemas();
+                let has = !schemas.is_empty();
+                tracing::debug!(
+                    tool_count = schemas.len(),
+                    has_tools = has,
+                    "has_tools_sync check"
+                );
+                has
+            })
+            .unwrap_or(true);
+        result
     }
 
     /// Return the per-session semaphore, creating one if absent.
@@ -317,7 +328,14 @@ impl ChatService for LiveChatService {
             .get("stream_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let stream_only = explicit_stream_only || !self.has_tools_sync();
+        let has_tools = self.has_tools_sync();
+        let stream_only = explicit_stream_only || !has_tools;
+        tracing::debug!(
+            explicit_stream_only,
+            has_tools,
+            stream_only,
+            "send() mode decision"
+        );
 
         // Resolve session key: explicit override (used by cron callbacks) or connection-scoped lookup.
         let session_key = match params.get("_session_key").and_then(|v| v.as_str()) {

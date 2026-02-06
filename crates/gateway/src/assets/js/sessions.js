@@ -266,8 +266,11 @@ function makeThinkingDots() {
 
 function postHistoryLoadActions(key, searchContext, msgEls, sessionList) {
 	sendRpc("chat.context", {}).then((ctxRes) => {
-		if (ctxRes?.ok && ctxRes.payload && ctxRes.payload.tokenUsage) {
-			S.setSessionContextWindow(ctxRes.payload.tokenUsage.contextWindow || 0);
+		if (ctxRes?.ok && ctxRes.payload) {
+			if (ctxRes.payload.tokenUsage) {
+				S.setSessionContextWindow(ctxRes.payload.tokenUsage.contextWindow || 0);
+			}
+			S.setSessionToolsEnabled(ctxRes.payload.supportsTools !== false);
 		}
 		updateTokenBar();
 	});
