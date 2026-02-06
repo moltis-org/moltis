@@ -579,8 +579,6 @@ impl ProviderRegistry {
     fn register_local_gguf_providers(&mut self, config: &ProvidersConfig) {
         use std::path::PathBuf;
 
-        use local_gguf::LazyLocalGgufProvider;
-
         if !config.is_enabled("local") {
             return;
         }
@@ -605,34 +603,52 @@ impl ProviderRegistry {
             .and_then(|e| e.base_url.as_deref()) // Reuse base_url for model_path
             .map(PathBuf::from);
 
-        let gguf_config = local_gguf::LocalGgufConfig {
-            model_id: model_id.into(),
-            model_path,
-            context_size: None, // Use model default
-            gpu_layers: 0,      // CPU by default
-            temperature: 0.7,
-            cache_dir: local_gguf::models::default_models_dir(),
-        };
-
         // Log system info
         local_gguf::log_system_info_and_suggestions();
 
-        // Check if model exists in registry for display name
-        let display_name = local_gguf::models::find_model(model_id)
-            .map(|m| m.display_name.to_string())
-            .unwrap_or_else(|| format!("{} (local)", model_id));
+        // Check for model in registries and determine backend
+        // First try the unified registry, then fall back to legacy MLX models
+        let (display_name, backend, model_path_override) =
+            if let Some(def) = local_llm::models::find_model(model_id) {
+                // Model found in unified registry - auto-detect backend
+                (def.display_name.to_string(), None, model_path)
+            } else if let Some(def) = local_gguf::models::find_model(model_id) {
+                // Model found in legacy registry - check if it's MLX
+                if matches!(def.backend, local_gguf::models::ModelBackend::Mlx) {
+                    // MLX model - force MLX backend and use HuggingFace repo as path
+                    (
+                        def.display_name.to_string(),
+                        Some(local_llm::BackendType::Mlx),
+                        Some(PathBuf::from(def.hf_repo)),
+                    )
+                } else {
+                    // GGUF model from legacy registry
+                    (def.display_name.to_string(), None, model_path)
+                }
+            } else {
+                // Unknown model - proceed with auto-detection
+                (format!("{} (local)", model_id), None, model_path)
+            };
 
-        // We can't load the model synchronously here (async needed for download).
-        // Instead, we create a lazy-loading wrapper or skip registration.
-        // For now, log that the model will be loaded on first use.
+        // Use the unified LocalLlmProvider which handles both GGUF and MLX backends
+        let llm_config = local_llm::LocalLlmConfig {
+            model_id: model_id.into(),
+            model_path: model_path_override,
+            backend, // Force backend for legacy MLX models
+            context_size: None,
+            gpu_layers: 0,
+            temperature: 0.7,
+            cache_dir: local_llm::models::default_models_dir(),
+        };
+
         tracing::info!(
             model = model_id,
             display_name = %display_name,
             "local-llm model configured (will load on first use)"
         );
 
-        // Register a placeholder provider that loads on first use
-        let provider = Arc::new(LazyLocalGgufProvider::new(gguf_config));
+        // Use LocalLlmProvider which properly routes to GGUF or MLX backend
+        let provider = Arc::new(local_llm::LocalLlmProvider::new(llm_config));
         self.register(
             ModelInfo {
                 id: model_id.into(),
