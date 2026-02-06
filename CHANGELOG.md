@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
+  - View all discovered hooks with eligibility status, source, and events
+  - Enable/disable hooks without removing files (persisted across restarts)
+  - Edit HOOK.md content in a monospace textarea and save back to disk
+  - Reload hooks at runtime to pick up changes without restarting
+  - Live stats (call count, failures, avg latency) from the hook registry
+  - WebSocket-driven auto-refresh via `hooks.status` event
+  - RPC methods: `hooks.list`, `hooks.enable`, `hooks.disable`, `hooks.save`, `hooks.reload`
+
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
   - Gated behind `qmd` feature flag (enabled by default)
   - Web UI shows installation instructions and QMD status

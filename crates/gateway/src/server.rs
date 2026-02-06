@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
@@ -118,6 +118,7 @@ pub fn build_gateway_app(
             .route("/api/skills", get(api_skills_handler))
             .route("/api/skills/search", get(api_skills_search_handler))
             .route("/api/mcp", get(api_mcp_handler))
+            .route("/api/hooks", get(api_hooks_handler))
             .route("/api/plugins", get(api_plugins_handler))
             .route("/api/plugins/search", get(api_plugins_search_handler))
             .route(
@@ -226,6 +227,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             .route("/api/skills", get(api_skills_handler))
             .route("/api/skills/search", get(api_skills_search_handler))
             .route("/api/mcp", get(api_mcp_handler))
+            .route("/api/hooks", get(api_hooks_handler))
             .route("/api/plugins", get(api_plugins_handler))
             .route("/api/plugins/search", get(api_plugins_search_handler))
             .route(
@@ -892,56 +894,9 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
-    let hook_registry = {
-        use moltis_plugins::{
-            hook_discovery::{FsHookDiscoverer, HookDiscoverer},
-            hook_eligibility::check_hook_eligibility,
-            shell_hook::ShellHookHandler,
-        };
-
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
-        let discovered = discoverer.discover().await.unwrap_or_default();
-
-        let mut registry = moltis_common::hooks::HookRegistry::new();
-
-        // Load shell hooks from discovered HOOK.md files.
-        for (parsed, source) in &discovered {
-            let meta = &parsed.metadata;
-            let elig = check_hook_eligibility(meta);
-            if !elig.eligible {
-                info!(
-                    hook = %meta.name,
-                    source = ?source,
-                    missing_os = elig.missing_os,
-                    missing_bins = ?elig.missing_bins,
-                    missing_env = ?elig.missing_env,
-                    "hook ineligible, skipping"
-                );
-                continue;
-            }
-            if let Some(ref command) = meta.command {
-                let handler = ShellHookHandler::new(
-                    meta.name.clone(),
-                    command.clone(),
-                    meta.events.clone(),
-                    std::time::Duration::from_secs(meta.timeout),
-                    meta.env.clone(),
-                );
-                registry.register(Arc::new(handler));
-            }
-        }
-
-        if !discovered.is_empty() {
-            info!(
-                "{} hook(s) discovered, {} registered",
-                discovered.len(),
-                registry.handler_names().len()
-            );
-        }
-
-        Some(Arc::new(registry))
-    };
+    let persisted_disabled = crate::methods::load_disabled_hooks();
+    let (hook_registry, discovered_hooks_info) =
+        discover_and_build_hooks(&persisted_disabled).await;
 
     // Wire live session service with sandbox router, project store, and hooks.
     {
@@ -1311,6 +1266,10 @@ pub async fn start_gateway(
         metrics_store.clone(),
     );
 
+    // Store discovered hook info and disabled set in state for the web UI.
+    *state.discovered_hooks.write().await = discovered_hooks_info;
+    *state.disabled_hooks.write().await = persisted_disabled;
+
     // Generate a one-time setup code if setup is pending and auth is not disabled.
     let setup_code_display =
         if !credential_store.is_setup_complete() && !credential_store.is_auth_disabled() {
@@ -1473,7 +1432,7 @@ pub async fn start_gateway(
         .with_tools(Arc::clone(&shared_tool_registry))
         .with_failover(config.failover.clone());
 
-        if let Some(ref hooks) = state.hook_registry {
+        if let Some(ref hooks) = *state.hook_registry.read().await {
             chat_service = chat_service.with_hooks_arc(Arc::clone(hooks));
         }
 
@@ -1752,7 +1711,7 @@ pub async fn start_gateway(
     info!("└{}┘", "─".repeat(width));
 
     // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = state.hook_registry {
+    if let Some(ref hooks) = *state.hook_registry.read().await {
         let payload = moltis_common::hooks::HookPayload::GatewayStart {
             address: addr.to_string(),
         };
@@ -2297,6 +2256,7 @@ struct NavCounts {
     skills: usize,
     mcp: usize,
     crons: usize,
+    hooks: usize,
 }
 
 #[cfg(feature = "web-ui")]
@@ -2440,6 +2400,8 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
+    let hooks = gw.discovered_hooks.read().await.len();
+
     NavCounts {
         projects,
         providers,
@@ -2448,6 +2410,7 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         skills,
         mcp,
         crons,
+        hooks,
     }
 }
 
@@ -2549,6 +2512,13 @@ async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+/// Hooks list for the UI (HTTP endpoint for initial page load).
+#[cfg(feature = "web-ui")]
+async fn api_hooks_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let hooks = state.gateway.discovered_hooks.read().await;
+    axum::Json(serde_json::json!({ "hooks": *hooks }))
 }
 
 /// Lightweight skills overview: repo summaries + enabled skills only.
@@ -3116,6 +3086,104 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
             .into_response(),
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
+}
+
+// ── Hook discovery helper ────────────────────────────────────────────────────
+
+/// Discover hooks from the filesystem, check eligibility, and build a
+/// [`HookRegistry`] plus a `Vec<DiscoveredHookInfo>` for the web UI.
+///
+/// Hooks whose names appear in `disabled` are still returned in the info list
+/// (with `enabled: false`) but are not registered in the registry.
+pub(crate) async fn discover_and_build_hooks(
+    disabled: &HashSet<String>,
+) -> (
+    Option<Arc<moltis_common::hooks::HookRegistry>>,
+    Vec<crate::state::DiscoveredHookInfo>,
+) {
+    use moltis_plugins::{
+        hook_discovery::{FsHookDiscoverer, HookDiscoverer, HookSource},
+        hook_eligibility::check_hook_eligibility,
+        shell_hook::ShellHookHandler,
+    };
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
+    let discovered = discoverer.discover().await.unwrap_or_default();
+
+    let mut registry = moltis_common::hooks::HookRegistry::new();
+    let mut info_list = Vec::with_capacity(discovered.len());
+
+    for (parsed, source) in &discovered {
+        let meta = &parsed.metadata;
+        let elig = check_hook_eligibility(meta);
+        let is_disabled = disabled.contains(&meta.name);
+        let is_enabled = elig.eligible && !is_disabled;
+
+        if !elig.eligible {
+            info!(
+                hook = %meta.name,
+                source = ?source,
+                missing_os = elig.missing_os,
+                missing_bins = ?elig.missing_bins,
+                missing_env = ?elig.missing_env,
+                "hook ineligible, skipping"
+            );
+        }
+
+        // Read the raw HOOK.md content for the UI editor.
+        let raw_content =
+            std::fs::read_to_string(parsed.source_path.join("HOOK.md")).unwrap_or_default();
+
+        let source_str = match source {
+            HookSource::Project => "project",
+            HookSource::User => "user",
+            HookSource::Bundled => "bundled",
+        };
+
+        info_list.push(crate::state::DiscoveredHookInfo {
+            name: meta.name.clone(),
+            description: meta.description.clone(),
+            emoji: meta.emoji.clone(),
+            events: meta.events.iter().map(|e| e.to_string()).collect(),
+            command: meta.command.clone(),
+            timeout: meta.timeout,
+            priority: meta.priority,
+            source: source_str.to_string(),
+            source_path: parsed.source_path.display().to_string(),
+            eligible: elig.eligible,
+            missing_os: elig.missing_os,
+            missing_bins: elig.missing_bins.clone(),
+            missing_env: elig.missing_env.clone(),
+            enabled: is_enabled,
+            body: raw_content,
+            call_count: 0,
+            failure_count: 0,
+            avg_latency_ms: 0,
+        });
+
+        // Only register eligible, non-disabled hooks.
+        if is_enabled && let Some(ref command) = meta.command {
+            let handler = ShellHookHandler::new(
+                meta.name.clone(),
+                command.clone(),
+                meta.events.clone(),
+                std::time::Duration::from_secs(meta.timeout),
+                meta.env.clone(),
+            );
+            registry.register(Arc::new(handler));
+        }
+    }
+
+    if !discovered.is_empty() {
+        info!(
+            "{} hook(s) discovered, {} registered",
+            discovered.len(),
+            registry.handler_names().len()
+        );
+    }
+
+    (Some(Arc::new(registry)), info_list)
 }
 
 #[cfg(test)]
