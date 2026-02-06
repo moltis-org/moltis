@@ -1036,36 +1036,35 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
         }
 
         // First, check the unified registry
-        if let Some(def) = models::find_model(&config.model_id) {
-            if def.has_mlx() {
-                info!(
-                    model = config.model_id,
-                    mlx_repo = ?def.mlx_repo,
-                    "found model in unified registry, downloading"
-                );
-                let model_path = models::ensure_mlx_model(def, &config.cache_dir).await?;
-                let context_size = config.context_size.unwrap_or(def.context_window);
-                return Ok((model_path, Some(def), context_size));
-            }
+        if let Some(def) = models::find_model(&config.model_id)
+            && def.has_mlx()
+        {
+            info!(
+                model = config.model_id,
+                mlx_repo = ?def.mlx_repo,
+                "found model in unified registry, downloading"
+            );
+            let model_path = models::ensure_mlx_model(def, &config.cache_dir).await?;
+            let context_size = config.context_size.unwrap_or(def.context_window);
+            return Ok((model_path, Some(def), context_size));
         }
 
         // Check the legacy registry (for models like mlx-qwen2.5-coder-1.5b-4bit)
         if let Some(legacy_def) = crate::providers::local_gguf::models::find_model(&config.model_id)
+            && legacy_def.backend == crate::providers::local_gguf::models::ModelBackend::Mlx
         {
-            if legacy_def.backend == crate::providers::local_gguf::models::ModelBackend::Mlx {
-                info!(
-                    model = config.model_id,
-                    hf_repo = legacy_def.hf_repo,
-                    "found model in legacy registry, downloading"
-                );
-                let model_path = crate::providers::local_gguf::models::ensure_mlx_model(
-                    legacy_def,
-                    &config.cache_dir,
-                )
-                .await?;
-                let context_size = config.context_size.unwrap_or(legacy_def.context_window);
-                return Ok((model_path, None, context_size));
-            }
+            info!(
+                model = config.model_id,
+                hf_repo = legacy_def.hf_repo,
+                "found model in legacy registry, downloading"
+            );
+            let model_path = crate::providers::local_gguf::models::ensure_mlx_model(
+                legacy_def,
+                &config.cache_dir,
+            )
+            .await?;
+            let context_size = config.context_size.unwrap_or(legacy_def.context_window);
+            return Ok((model_path, None, context_size));
         }
 
         bail!(

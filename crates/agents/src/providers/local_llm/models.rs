@@ -292,15 +292,55 @@ pub fn default_models_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".moltis/models"))
 }
 
+/// Check if a GGUF model file is cached locally.
+#[must_use]
+pub fn is_gguf_model_cached(model: &LocalModelDef, cache_dir: &std::path::Path) -> bool {
+    let model_path = cache_dir.join(model.gguf_filename);
+    model_path.exists()
+}
+
+/// Check if an MLX model directory is cached locally.
+#[must_use]
+pub fn is_mlx_model_cached(model: &LocalModelDef, cache_dir: &std::path::Path) -> bool {
+    let Some(mlx_repo) = model.mlx_repo else {
+        return false;
+    };
+
+    let model_dir_name = mlx_repo.replace('/', "__");
+    let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+
+    let config_path = model_dir.join("config.json");
+    let model_path = model_dir.join("model.safetensors");
+    let index_path = model_dir.join("model.safetensors.index.json");
+
+    config_path.exists() && (model_path.exists() || index_path.exists())
+}
+
+/// Check if a model is cached for the specified backend.
+#[must_use]
+pub fn is_model_cached(
+    model: &LocalModelDef,
+    backend: BackendType,
+    cache_dir: &std::path::Path,
+) -> bool {
+    match backend {
+        BackendType::Gguf => is_gguf_model_cached(model, cache_dir),
+        BackendType::Mlx => is_mlx_model_cached(model, cache_dir),
+    }
+}
+
 /// Ensure a model is downloaded, returning the path to the file.
-pub async fn ensure_model(model: &LocalModelDef, cache_dir: &PathBuf) -> anyhow::Result<PathBuf> {
+pub async fn ensure_model(
+    model: &LocalModelDef,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<PathBuf> {
     ensure_model_with_progress(model, cache_dir, |_| {}).await
 }
 
 /// Ensure a model is downloaded with progress reporting.
 pub async fn ensure_model_with_progress<F>(
     model: &LocalModelDef,
-    cache_dir: &PathBuf,
+    cache_dir: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -399,7 +439,7 @@ const MLX_SHARD_PATTERNS: &[&str] = &[
 /// This function downloads all necessary files from HuggingFace.
 pub async fn ensure_mlx_model(
     model: &LocalModelDef,
-    cache_dir: &PathBuf,
+    cache_dir: &std::path::Path,
 ) -> anyhow::Result<PathBuf> {
     ensure_mlx_model_with_progress(model, cache_dir, |_| {}).await
 }
@@ -407,7 +447,7 @@ pub async fn ensure_mlx_model(
 /// Ensure an MLX model is downloaded with progress reporting.
 pub async fn ensure_mlx_model_with_progress<F>(
     model: &LocalModelDef,
-    cache_dir: &PathBuf,
+    cache_dir: &std::path::Path,
     mut on_progress: F,
 ) -> anyhow::Result<PathBuf>
 where
@@ -631,7 +671,7 @@ where
 pub async fn ensure_model_for_backend(
     model: &LocalModelDef,
     backend: BackendType,
-    cache_dir: &PathBuf,
+    cache_dir: &std::path::Path,
 ) -> anyhow::Result<PathBuf> {
     match backend {
         BackendType::Gguf => ensure_model(model, cache_dir).await,

@@ -388,6 +388,18 @@ impl ChatService for LiveChatService {
             }
         };
 
+        // Check if this is a local model that needs downloading.
+        // Only do this check for local-llm providers.
+        #[cfg(feature = "local-llm")]
+        if provider.name() == "local-llm" {
+            let model_to_check = model_id.unwrap_or(provider.id());
+            if let Err(e) =
+                crate::local_llm_setup::ensure_local_model_cached(model_to_check, &self.state).await
+            {
+                return Err(format!("Failed to prepare local model: {}", e));
+            }
+        }
+
         // Resolve project context for this connection's active project.
         let project_context = {
             let project_id = if let Some(cid) = conn_id.as_deref() {
