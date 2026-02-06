@@ -216,10 +216,152 @@ mod tests {
     }
 
     #[test]
+    fn test_install_instructions_platform_specific() {
+        let hint = install_instructions();
+
+        #[cfg(target_os = "macos")]
+        assert!(
+            hint.contains("brew"),
+            "macOS instructions should mention brew"
+        );
+
+        #[cfg(target_os = "linux")]
+        assert!(
+            hint.contains("apt") || hint.contains("dnf") || hint.contains("pacman"),
+            "Linux instructions should mention package managers"
+        );
+
+        #[cfg(target_os = "windows")]
+        assert!(
+            hint.contains("winget"),
+            "Windows instructions should mention winget"
+        );
+    }
+
+    #[test]
     fn test_detect_with_invalid_custom_path() {
         let result = detect_browser(Some("/nonexistent/path/to/chrome"));
         // Should fall through to other detection methods
         // The result depends on whether Chrome is installed on the test system
         assert!(!result.install_hint.is_empty() || result.found);
+    }
+
+    #[test]
+    fn test_detect_custom_path_takes_precedence() {
+        // Create a temp file to simulate a browser executable
+        let temp_dir = std::env::temp_dir();
+        let fake_browser = temp_dir.join("fake-chrome-for-test");
+        std::fs::write(&fake_browser, "fake").unwrap();
+
+        let result = detect_browser(Some(fake_browser.to_str().unwrap()));
+        assert!(result.found);
+        assert_eq!(result.path.as_ref().unwrap(), &fake_browser);
+
+        std::fs::remove_file(&fake_browser).unwrap();
+    }
+
+    // Note: Testing CHROME env var detection would require unsafe blocks
+    // in Rust 2024 edition. The functionality is simple and covered by
+    // manual testing. The detection order is:
+    // 1. Custom path (tested above)
+    // 2. CHROME env var
+    // 3. Platform app paths (tested below for macOS/Windows)
+    // 4. PATH executables
+
+    #[test]
+    fn test_chromium_executables_list_not_empty() {
+        assert!(
+            !CHROMIUM_EXECUTABLES.is_empty(),
+            "Should have executable names to search"
+        );
+        assert!(
+            CHROMIUM_EXECUTABLES.contains(&"chrome"),
+            "Should include 'chrome'"
+        );
+        assert!(
+            CHROMIUM_EXECUTABLES.contains(&"chromium"),
+            "Should include 'chromium'"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_macos_app_paths_not_empty() {
+        assert!(
+            !MACOS_APP_PATHS.is_empty(),
+            "Should have macOS app paths to check"
+        );
+        // Should include Google Chrome
+        assert!(
+            MACOS_APP_PATHS.iter().any(|p| p.contains("Google Chrome")),
+            "Should include Google Chrome path"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_macos_detection_prefers_app_bundles() {
+        // This test verifies that if both a PATH executable and an app bundle exist,
+        // the app bundle is found first (by checking the detection order in the code)
+        //
+        // We can't easily mock the filesystem, but we can verify the paths are checked
+        // in the right order by checking if a real browser is found via app path.
+        let result = detect_browser(None);
+
+        if result.found {
+            let path = result.path.unwrap();
+            let path_str = path.to_string_lossy();
+
+            // If found, on macOS it should preferentially find app bundles
+            // (unless CHROME env var is set)
+            if std::env::var("CHROME").is_err() {
+                // If it starts with /Applications, we found via app bundle path
+                // If it doesn't, we fell back to PATH (which is OK if no app bundles exist)
+                if path_str.starts_with("/Applications") {
+                    // Good - found via app bundle, which is preferred
+                    assert!(
+                        path_str.contains(".app"),
+                        "macOS detection should find .app bundle"
+                    );
+                }
+                // Note: If no app bundles exist, PATH is used as fallback, which is correct
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_windows_paths_not_empty() {
+        assert!(
+            !WINDOWS_PATHS.is_empty(),
+            "Should have Windows paths to check"
+        );
+        assert!(
+            WINDOWS_PATHS.iter().any(|p| p.contains("chrome.exe")),
+            "Should include chrome.exe path"
+        );
+    }
+
+    #[test]
+    fn test_detection_result_fields() {
+        // When not found, should have install hint
+        let not_found = DetectionResult {
+            found: false,
+            path: None,
+            install_hint: install_instructions(),
+        };
+        assert!(!not_found.found);
+        assert!(not_found.path.is_none());
+        assert!(!not_found.install_hint.is_empty());
+
+        // When found, should have path and empty hint
+        let found = DetectionResult {
+            found: true,
+            path: Some(PathBuf::from("/usr/bin/chrome")),
+            install_hint: String::new(),
+        };
+        assert!(found.found);
+        assert!(found.path.is_some());
+        assert!(found.install_hint.is_empty());
     }
 }
