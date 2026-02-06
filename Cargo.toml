@@ -82,6 +82,7 @@ open         = "5.3"
 rand         = "0.8"
 secrecy      = { features = ["serde"], version = "0.8" }
 sha2         = "0.10"
+sysinfo      = "0.34"
 teloxide     = { features = ["macros"], version = "0.13" }
 tokio-util   = "0.7"
 # TLS / certificate generation

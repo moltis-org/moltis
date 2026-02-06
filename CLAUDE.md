@@ -26,6 +26,24 @@ default = ["foo", ...]  # Add to defaults
 foo = ["moltis-gateway/foo"]  # Forward to gateway
 ```
 
+## Workspace Dependencies
+
+**Always add new third-party crates to `[workspace.dependencies]` in the
+root `Cargo.toml`**, then reference them with `{ workspace = true }` in
+each crate's `Cargo.toml`. Never add a version directly in a crate's
+`Cargo.toml` — centralising versions in the workspace avoids duplicate
+versions in the lock file and makes upgrades easier.
+
+```toml
+# Root Cargo.toml
+[workspace.dependencies]
+some-crate = "1.2"
+
+# crates/gateway/Cargo.toml
+[dependencies]
+some-crate = { workspace = true }
+```
+
 ## Rust Style and Idioms
 
 Write idiomatic, Rustacean code. Prioritize clarity, modularity, and

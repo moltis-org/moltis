@@ -1,5 +1,6 @@
 // ── Entry point ────────────────────────────────────────────
 
+import prettyBytes from "pretty-bytes";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { initMobile } from "./mobile.js";
@@ -59,6 +60,18 @@ onEvent("session", (payload) => {
 		refreshActiveSession();
 	}
 });
+
+function applyMemory(mem) {
+	if (!mem) return;
+	var el = document.getElementById("memoryInfo");
+	if (!el) return;
+	var fmt = (b) => prettyBytes(b, { binary: true });
+	el.textContent = `Process: ${fmt(mem.process)} \u00b7 System: ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+}
+
+applyMemory(gon.get("mem"));
+gon.onChange("mem", applyMemory);
+onEvent("tick", (payload) => applyMemory(payload.mem));
 
 // Check auth status before mounting the app.
 fetch("/api/auth/status")
