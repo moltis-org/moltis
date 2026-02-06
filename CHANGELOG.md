@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Voice Provider Management UI**: Configure TTS and STT providers from Settings > Voice
+  - Auto-detection of API keys from environment variables and LLM provider configs
+  - Toggle switches to enable/disable providers without removing configuration
+  - Local binary detection for whisper.cpp, piper, and sherpa-onnx
+  - Server availability checks for Coqui TTS and Voxtral Local
+  - Setup instructions modal for local provider installation
+  - Shared Google Cloud API key between TTS and STT
+
+- **New TTS Providers**:
+  - Google Cloud Text-to-Speech (380+ voices, 50+ languages)
+  - Piper (fast local neural TTS, runs offline)
+  - Coqui TTS (high-quality neural TTS with voice cloning)
+
+- **New STT Providers**:
+  - Mistral AI Voxtral (cloud-based, 13 languages)
+  - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
+
 - **Mobile PWA Support**: Install moltis as a Progressive Web App on iOS, Android, and desktop
   - Standalone mode with full-screen experience
   - Custom app icon (crab mascot)
@@ -38,5 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Added voice.md with TTS/STT provider documentation and setup guides
 - Added mobile-pwa.md with PWA installation and push notification documentation
 - Updated CLAUDE.md with cargo feature policy (features enabled by default)
