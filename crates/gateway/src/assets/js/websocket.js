@@ -157,6 +157,22 @@ function handleChatToolCallEnd(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
 	if (!toolCard) return;
+
+	// Hide tool cards that fail with schema validation errors - these are
+	// just noise since the agent retries automatically with corrected args
+	if (!p.success && p.error && p.error.detail) {
+		var errDetail = p.error.detail.toLowerCase();
+		if (
+			errDetail.includes("missing field") ||
+			errDetail.includes("missing required") ||
+			errDetail.includes("missing 'action'") ||
+			errDetail.includes("missing 'url'")
+		) {
+			toolCard.remove();
+			return;
+		}
+	}
+
 	toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
