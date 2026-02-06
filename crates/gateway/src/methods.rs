@@ -3299,7 +3299,9 @@ impl MethodRegistry {
 /// Re-run hook discovery, rebuild the registry, and broadcast the update.
 async fn reload_hooks(state: &Arc<GatewayState>) {
     let disabled = state.disabled_hooks.read().await.clone();
-    let (new_registry, new_info) = crate::server::discover_and_build_hooks(&disabled).await;
+    let session_store = state.services.session_store.as_ref();
+    let (new_registry, new_info) =
+        crate::server::discover_and_build_hooks(&disabled, session_store).await;
 
     *state.hook_registry.write().await = new_registry;
     *state.discovered_hooks.write().await = new_info.clone();

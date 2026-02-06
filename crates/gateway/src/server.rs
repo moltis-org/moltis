@@ -897,7 +897,7 @@ pub async fn start_gateway(
     seed_example_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
     let (hook_registry, discovered_hooks_info) =
-        discover_and_build_hooks(&persisted_disabled).await;
+        discover_and_build_hooks(&persisted_disabled, Some(&session_store)).await;
 
     // Wire live session service with sandbox router, project store, and hooks.
     {
@@ -3294,11 +3294,16 @@ env = ["MY_API_KEY"]        # required environment variables
 /// (with `enabled: false`) but are not registered in the registry.
 pub(crate) async fn discover_and_build_hooks(
     disabled: &HashSet<String>,
+    session_store: Option<&Arc<moltis_sessions::store::SessionStore>>,
 ) -> (
     Option<Arc<moltis_common::hooks::HookRegistry>>,
     Vec<crate::state::DiscoveredHookInfo>,
 ) {
     use moltis_plugins::{
+        bundled::{
+            boot_md::BootMdHook, command_logger::CommandLoggerHook,
+            session_memory::SessionMemoryHook,
+        },
         hook_discovery::{FsHookDiscoverer, HookDiscoverer, HookSource},
         hook_eligibility::check_hook_eligibility,
         shell_hook::ShellHookHandler,
@@ -3373,7 +3378,28 @@ pub(crate) async fn discover_and_build_hooks(
         }
     }
 
-    // ── Built-in hooks (compiled Rust, always present) ──────────────────
+    // ── Built-in hooks (compiled Rust, always active) ──────────────────
+    {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let data = moltis_config::data_dir();
+
+        // boot-md: inject BOOT.md content on GatewayStart.
+        let boot = BootMdHook::new(cwd.clone());
+        registry.register(Arc::new(boot));
+
+        // command-logger: append JSONL entries for every slash command.
+        let log_path =
+            CommandLoggerHook::default_path().unwrap_or_else(|| data.join("logs/commands.log"));
+        let logger = CommandLoggerHook::new(log_path);
+        registry.register(Arc::new(logger));
+
+        // session-memory: save conversation to memory on /new or /reset.
+        if let Some(store) = session_store {
+            let memory_hook = SessionMemoryHook::new(data.clone(), Arc::clone(store));
+            registry.register(Arc::new(memory_hook));
+        }
+    }
+
     for (name, description, events, source_file) in builtin_hook_metadata() {
         info_list.push(crate::state::DiscoveredHookInfo {
             name: name.to_string(),
@@ -3389,10 +3415,10 @@ pub(crate) async fn discover_and_build_hooks(
             missing_os: false,
             missing_bins: vec![],
             missing_env: vec![],
-            enabled: false,
+            enabled: true,
             body: String::new(),
             body_html: format!(
-                "<p><em>Built-in hook implemented in Rust \u{2014} not yet wired into the hook registry.</em></p><p>{}</p>",
+                "<p><em>Built-in hook implemented in Rust.</em></p><p>{}</p>",
                 description
             ),
             call_count: 0,
