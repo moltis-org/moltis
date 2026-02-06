@@ -136,7 +136,7 @@ pub fn detect_browser(custom_path: Option<&str>) -> DetectionResult {
 }
 
 /// Get platform-specific install instructions.
-fn install_instructions() -> String {
+pub fn install_instructions() -> String {
     let platform = if cfg!(target_os = "macos") {
         "macOS"
     } else if cfg!(target_os = "linux") {

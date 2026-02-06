@@ -247,9 +247,11 @@ impl BrowserPool {
             BrowserError::LaunchFailed(format!("failed to build browser config: {e}"))
         })?;
 
-        let (browser, mut handler) = Browser::launch(config)
-            .await
-            .map_err(|e| BrowserError::LaunchFailed(e.to_string()))?;
+        let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
+            // Include install instructions in launch failure messages
+            let install_hint = crate::detect::install_instructions();
+            BrowserError::LaunchFailed(format!("browser launch failed: {e}\n\n{install_hint}"))
+        })?;
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
