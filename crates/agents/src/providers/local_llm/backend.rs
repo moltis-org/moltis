@@ -689,30 +689,14 @@ pub mod mlx {
                     }
                 }
             } else {
-                // Check unified registry first, then legacy registry for MLX models
-                if let Some(def) = models::find_model(&config.model_id) {
-                    // For MLX, we use the HuggingFace repo directly
-                    // mlx-lm will handle downloading/caching
-                    let hf_repo = def.mlx_repo.unwrap_or(def.gguf_repo);
-                    (PathBuf::from(hf_repo), Some(def))
-                } else if let Some(legacy_def) =
-                    crate::providers::local_gguf::models::find_model(&config.model_id)
-                {
-                    // Legacy MLX model (mlx-* prefix)
-                    if matches!(
-                        legacy_def.backend,
-                        crate::providers::local_gguf::models::ModelBackend::Mlx
-                    ) {
-                        (PathBuf::from(legacy_def.hf_repo), None)
-                    } else {
-                        bail!(
-                            "Model '{}' is a GGUF model, not MLX. Backend mismatch.",
-                            config.model_id
-                        );
-                    }
-                } else {
+                let Some(def) = models::find_model(&config.model_id) else {
                     bail!("unknown model '{}' for MLX backend", config.model_id);
-                }
+                };
+
+                // For MLX, we use the HuggingFace repo directly
+                // mlx-lm will handle downloading/caching
+                let hf_repo = def.mlx_repo.unwrap_or(def.gguf_repo);
+                (PathBuf::from(hf_repo), Some(def))
             };
 
             let context_size = config
