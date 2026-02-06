@@ -5,31 +5,18 @@ name              = "moltis-metrics"
 version.workspace = true
 
 [dependencies]
-# Metrics facade (always available for no-op when disabled)
-metrics = "0.24"
-
-# Prometheus exporter (optional)
-metrics-exporter-prometheus = { optional = true, version = "0.16" }
-
-# Tracing integration (optional)
-metrics-tracing-context = { optional = true, version = "0.16" }
-tracing-subscriber      = { features = ["env-filter"], optional = true, version = "0.3" }
-
-# For histogram buckets and utilities
-once_cell = "1"
-
-# For async trait
-async-trait = "0.1"
-
-# SQLite storage (optional)
-sqlx = { optional = true, workspace = true }
-
-# Shared dependencies
-anyhow     = { workspace = true }
-serde      = { workspace = true }
-serde_json = { workspace = true }
-tokio      = { workspace = true }
-tracing    = { workspace = true }
+anyhow                      = { workspace = true }
+async-trait                 = { workspace = true }
+metrics                     = { workspace = true }
+metrics-exporter-prometheus = { optional = true, workspace = true }
+metrics-tracing-context     = { optional = true, workspace = true }
+once_cell                   = { workspace = true }
+serde                       = { workspace = true }
+serde_json                  = { workspace = true }
+sqlx                        = { optional = true, workspace = true }
+tokio                       = { workspace = true }
+tracing                     = { workspace = true }
+tracing-subscriber          = { features = ["env-filter"], optional = true, workspace = true }
 
 [features]
 default    = []

@@ -113,6 +113,9 @@ What you get out of the box:
   Hijacking (CSWSH)
 - **Onboarding wizard** — guided setup for agent identity (name, emoji,
   creature, vibe, soul) and user profile
+- **Config validation** — `moltis config check` validates the configuration
+  file, detects unknown/misspelled fields with suggestions, and reports
+  security warnings
 - **Default config on first run** — writes a complete `moltis.toml` with all
   defaults so you can edit packages and settings without recompiling
 - **Random port per installation** — each fresh install picks a unique available
