@@ -11,14 +11,14 @@ metrics          = ["dep:moltis-metrics"]
 
 [dependencies]
 anyhow                = { workspace = true }
-async-trait           = "0.1"
-chrono                = { version = "0.4", features = ["serde"] }
+async-trait           = { workspace = true }
+chrono                = { features = ["serde"], workspace = true }
 directories.workspace = true
-llama-cpp-2           = { optional = true, version = "0.1" }
+llama-cpp-2           = { optional = true, workspace = true }
 moltis-agents         = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
-notify-debouncer-full = { optional = true, version = "0.7" }
+notify-debouncer-full = { optional = true, workspace = true }
 reqwest               = { workspace = true }
 secrecy               = { workspace = true }
 serde                 = { workspace = true }
@@ -27,10 +27,10 @@ sha2                  = { workspace = true }
 sqlx                  = { workspace = true }
 tokio                 = { workspace = true }
 tracing               = { workspace = true }
-walkdir               = "2"
+walkdir               = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
