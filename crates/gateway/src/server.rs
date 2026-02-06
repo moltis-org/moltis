@@ -3152,6 +3152,37 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
 
 // ── Hook discovery helper ────────────────────────────────────────────────────
 
+/// Metadata for built-in hooks (compiled Rust, always active).
+/// Returns `(name, description, events, source_file)` tuples.
+fn builtin_hook_metadata() -> Vec<(
+    &'static str,
+    &'static str,
+    Vec<moltis_common::hooks::HookEvent>,
+    &'static str,
+)> {
+    use moltis_common::hooks::HookEvent;
+    vec![
+        (
+            "boot-md",
+            "Reads BOOT.md from the workspace on startup and injects its content as the initial user message to the agent.",
+            vec![HookEvent::GatewayStart],
+            "crates/plugins/src/bundled/boot_md.rs",
+        ),
+        (
+            "command-logger",
+            "Logs all slash-command invocations to a JSONL audit file at ~/.moltis/logs/commands.log.",
+            vec![HookEvent::Command],
+            "crates/plugins/src/bundled/command_logger.rs",
+        ),
+        (
+            "session-memory",
+            "Saves the conversation history to a markdown file in the memory directory when a session is reset or a new session is created, making it searchable for future sessions.",
+            vec![HookEvent::Command],
+            "crates/plugins/src/bundled/session_memory.rs",
+        ),
+    ]
+}
+
 /// Seed a skeleton example hook into `~/.moltis/hooks/example/` on first run.
 ///
 /// The hook has no command, so it won't execute — it's a template showing
@@ -3342,10 +3373,40 @@ pub(crate) async fn discover_and_build_hooks(
         }
     }
 
-    if !discovered.is_empty() {
+    // ── Built-in hooks (compiled Rust, always present) ──────────────────
+    for (name, description, events, source_file) in builtin_hook_metadata() {
+        info_list.push(crate::state::DiscoveredHookInfo {
+            name: name.to_string(),
+            description: description.to_string(),
+            emoji: Some("\u{2699}\u{fe0f}".to_string()), // ⚙️
+            events: events.iter().map(|e| e.to_string()).collect(),
+            command: None,
+            timeout: 0,
+            priority: 0,
+            source: "builtin".to_string(),
+            source_path: source_file.to_string(),
+            eligible: true,
+            missing_os: false,
+            missing_bins: vec![],
+            missing_env: vec![],
+            enabled: false,
+            body: String::new(),
+            body_html: format!(
+                "<p><em>Built-in hook implemented in Rust \u{2014} not yet wired into the hook registry.</em></p><p>{}</p>",
+                description
+            ),
+            call_count: 0,
+            failure_count: 0,
+            avg_latency_ms: 0,
+        });
+    }
+
+    if !info_list.is_empty() {
         info!(
-            "{} hook(s) discovered, {} registered",
+            "{} hook(s) discovered ({} shell, {} built-in), {} registered",
+            info_list.len(),
             discovered.len(),
+            info_list.len() - discovered.len(),
             registry.handler_names().len()
         );
     }

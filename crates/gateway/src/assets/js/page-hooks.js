@@ -67,7 +67,8 @@ function StatusBadge({ hook }) {
 }
 
 function SourceBadge({ source }) {
-	var label = source === "project" ? "Project" : source === "user" ? "User" : source;
+	var label =
+		source === "project" ? "Project" : source === "user" ? "User" : source === "builtin" ? "Built-in" : source;
 	return html`<span class="tier-badge">${label}</span>`;
 }
 
