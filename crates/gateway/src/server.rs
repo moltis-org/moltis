@@ -3323,6 +3323,7 @@ pub(crate) async fn discover_and_build_hooks(
             missing_env: elig.missing_env.clone(),
             enabled: is_enabled,
             body: raw_content,
+            body_html: crate::services::markdown_to_html(&parsed.body),
             call_count: 0,
             failure_count: 0,
             avg_latency_ms: 0,

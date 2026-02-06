@@ -212,6 +212,8 @@ pub struct DiscoveredHookInfo {
     pub enabled: bool,
     /// Raw HOOK.md content (frontmatter + body).
     pub body: String,
+    /// Server-rendered HTML of the markdown body (after frontmatter).
+    pub body_html: String,
     pub call_count: u64,
     pub failure_count: u64,
     pub avg_latency_ms: u64,

@@ -71,12 +71,28 @@ function SourceBadge({ source }) {
 	return html`<span class="tier-badge">${label}</span>`;
 }
 
+// Safe: body_html is server-rendered trusted HTML produced by the Rust gateway
+// (pulldown-cmark), NOT user-supplied browser input. Same pattern as page-skills.js
+// and page-plugins.js which also render server-produced HTML.
+function MarkdownPreview({ html: serverHtml }) {
+	var divRef = useRef(null);
+	useEffect(() => {
+		if (divRef.current) divRef.current.innerHTML = serverHtml || ""; // eslint-disable-line no-unsanitized/property
+	}, [serverHtml]);
+	return html`<div
+		ref=${divRef}
+		class="skill-body-md text-sm bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 overflow-y-auto"
+		style="min-height:120px;max-height:400px"
+	/>`;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Card component with expand/collapse, stats, and editor
 function HookCard({ hook }) {
 	var expanded = useSignal(false);
 	var editContent = useSignal(hook.body);
 	var saving = useSignal(false);
 	var dirty = useSignal(false);
+	var tab = useSignal("preview");
 	var textareaRef = useRef(null);
 
 	// Reset content when hook body changes (e.g. after reload).
@@ -187,15 +203,34 @@ function HookCard({ hook }) {
 					}
 
           <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-[var(--text-strong)]">HOOK.md</label>
-            <textarea
-              ref=${textareaRef}
-              class="w-full font-mono text-xs bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] resize-y"
-              rows="16"
-              spellcheck="false"
-              value=${editContent.value}
-              onInput=${handleInput}
-            />
+            <div class="flex items-center gap-0 border-b border-[var(--border)]">
+              <button
+                class="px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${tab.value === "preview" ? "border-[var(--accent)] text-[var(--text-strong)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"}"
+                onClick=${() => {
+									tab.value = "preview";
+								}}>Preview</button>
+              <button
+                class="px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${tab.value === "source" ? "border-[var(--accent)] text-[var(--text-strong)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"}"
+                onClick=${() => {
+									tab.value = "source";
+								}}>Source</button>
+            </div>
+            ${
+							tab.value === "source"
+								? html`
+              <textarea
+                ref=${textareaRef}
+                class="w-full font-mono text-xs bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] resize-y"
+                rows="16"
+                spellcheck="false"
+                value=${editContent.value}
+                onInput=${handleInput}
+              />
+            `
+								: html`
+              <${MarkdownPreview} html=${hook.body_html} />
+            `
+						}
           </div>
 
           <div class="flex items-center gap-2">
