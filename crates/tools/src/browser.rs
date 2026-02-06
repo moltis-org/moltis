@@ -48,19 +48,16 @@ impl AgentTool for BrowserTool {
     }
 
     fn description(&self) -> &str {
-        "Control a real browser to interact with web pages. Use this when you need to:\n\
-         - Click buttons, fill forms, or interact with JavaScript-heavy sites\n\
-         - Take screenshots of pages\n\
-         - Navigate sites that require authentication or sessions\n\
-         - Execute JavaScript in the page context\n\
-         - Interact with SPAs (Single Page Applications)\n\n\
-         For simple page content retrieval, prefer `web_fetch` as it's faster.\n\
-         The browser maintains session state across actions via session_id.\n\n\
+        "Control a real browser to interact with web pages.\n\n\
+         REQUIRED: You MUST specify an 'action' parameter. Example:\n\
+         {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
+         Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
          WORKFLOW:\n\
-         1. Use 'navigate' to go to a URL (returns session_id)\n\
-         2. Use 'snapshot' to see interactive elements with ref numbers\n\
-         3. Use 'click' or 'type' with ref numbers to interact\n\
-         4. Use 'screenshot' to capture the current view"
+         1. {\"action\": \"navigate\", \"url\": \"...\"} - go to URL, returns session_id\n\
+         2. {\"action\": \"snapshot\", \"session_id\": \"...\"} - get interactive elements\n\
+         3. {\"action\": \"click\", \"session_id\": \"...\", \"ref_\": N} - click element\n\
+         4. {\"action\": \"screenshot\", \"session_id\": \"...\"} - capture the view\n\n\
+         For simple page content retrieval, prefer `web_fetch` as it's faster."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -71,7 +68,7 @@ impl AgentTool for BrowserTool {
                 "action": {
                     "type": "string",
                     "enum": ["navigate", "screenshot", "snapshot", "click", "type", "scroll", "evaluate", "wait", "get_url", "get_title", "back", "forward", "refresh", "close"],
-                    "description": "The browser action to perform"
+                    "description": "REQUIRED. The browser action to perform. Use 'navigate' with 'url' to open a page, 'snapshot' to see elements, 'screenshot' to capture."
                 },
                 "session_id": {
                     "type": "string",
