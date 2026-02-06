@@ -715,6 +715,7 @@ pub struct TlsConfig {
     /// Path to the CA certificate (PEM) used for trust instructions.
     pub ca_cert_path: Option<String>,
     /// Port for the plain-HTTP redirect/CA-download server.
+    /// Defaults to the gateway port + 1 when not set.
     pub http_redirect_port: Option<u16>,
 }
 
@@ -726,7 +727,7 @@ impl Default for TlsConfig {
             cert_path: None,
             key_path: None,
             ca_cert_path: None,
-            http_redirect_port: Some(18790),
+            http_redirect_port: None,
         }
     }
 }

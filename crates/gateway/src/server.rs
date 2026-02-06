@@ -1238,7 +1238,8 @@ pub async fn start_gateway(
         }
     };
 
-    let is_localhost = matches!(bind, "127.0.0.1" | "::1" | "localhost");
+    let is_localhost =
+        matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
     #[cfg(feature = "tls")]
     let tls_active_for_state = config.tls.enabled;
     #[cfg(not(feature = "tls"))]
@@ -1577,6 +1578,15 @@ pub async fn start_gateway(
     } else {
         "http"
     };
+    // Use moltis.localhost for display URLs when bound to loopback with TLS.
+    #[cfg(feature = "tls")]
+    let display_host = if is_localhost && tls_active {
+        format!("{}:{}", crate::tls::LOCALHOST_DOMAIN, port)
+    } else {
+        addr.to_string()
+    };
+    #[cfg(not(feature = "tls"))]
+    let display_host = addr.to_string();
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),
@@ -1584,7 +1594,7 @@ pub async fn start_gateway(
             "protocol v{}, listening on {}://{} ({})",
             moltis_protocol::PROTOCOL_VERSION,
             scheme,
-            addr,
+            display_host,
             if tls_active {
                 "HTTP/2 + HTTP/1.1"
             } else {
@@ -1639,10 +1649,15 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     if tls_active {
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+            let ca_host = if is_localhost {
+                crate::tls::LOCALHOST_DOMAIN
+            } else {
+                bind
+            };
             lines.push(format!(
                 "CA cert: http://{}:{}/certs/ca.pem",
-                bind, http_port
+                ca_host, http_port
             ));
             lines.push(format!("  or: {}", ca.display()));
         }
@@ -2023,7 +2038,7 @@ pub async fn start_gateway(
     if tls_active {
         // Spawn HTTP redirect server on secondary port.
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             let bind_clone = bind.to_string();
             let ca_clone = ca.clone();
             tokio::spawn(async move {
@@ -2147,7 +2162,9 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
     let hh = strip_port(host);
 
     // Normalise loopback variants so 127.0.0.1 == localhost == ::1.
-    let is_loopback = |h: &str| matches!(h, "localhost" | "127.0.0.1" | "::1");
+    // Subdomains of .localhost (e.g. moltis.localhost) are also loopback per RFC 6761.
+    let is_loopback =
+        |h: &str| matches!(h, "localhost" | "127.0.0.1" | "::1") || h.ends_with(".localhost");
 
     (oh == hh || (is_loopback(oh) && is_loopback(hh))) && origin_port == host_port
 }
@@ -3066,6 +3083,28 @@ mod tests {
         // One has port, other doesn't — different origins.
         assert!(!is_same_origin("http://localhost:8080", "localhost"));
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
+    }
+
+    #[test]
+    fn same_origin_moltis_localhost() {
+        // moltis.localhost ↔ localhost loopback variants
+        assert!(is_same_origin(
+            "https://moltis.localhost:8080",
+            "localhost:8080"
+        ));
+        assert!(is_same_origin(
+            "https://moltis.localhost:8080",
+            "127.0.0.1:8080"
+        ));
+        assert!(is_same_origin(
+            "http://localhost:8080",
+            "moltis.localhost:8080"
+        ));
+        // Any .localhost subdomain is treated as loopback (RFC 6761).
+        assert!(is_same_origin(
+            "https://app.moltis.localhost:8080",
+            "localhost:8080"
+        ));
     }
 
     #[cfg(feature = "web-ui")]

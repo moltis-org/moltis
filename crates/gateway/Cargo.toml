@@ -51,6 +51,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
 sqlx                  = { workspace = true }
+time                  = { optional = true, workspace = true }
 tokio                 = { workspace = true }
 tokio-rustls          = { optional = true, workspace = true }
 tokio-stream          = { workspace = true }
@@ -88,7 +89,14 @@ metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
 tailscale = []
-tls = ["dep:axum-server", "dep:rcgen", "dep:rustls", "dep:rustls-pemfile", "dep:tokio-rustls"]
+tls = [
+  "dep:axum-server",
+  "dep:rcgen",
+  "dep:rustls",
+  "dep:rustls-pemfile",
+  "dep:time",
+  "dep:tokio-rustls",
+]
 voice = ["dep:moltis-voice"]
 web-ui = ["dep:include_dir"]
 

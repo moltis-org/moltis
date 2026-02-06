@@ -90,6 +90,7 @@ axum-server    = { features = ["tls-rustls"], version = "0.7" }
 rcgen          = "0.13"
 rustls         = { features = ["ring"], version = "0.23" }
 rustls-pemfile = "2"
+time           = "0.3"
 tokio-rustls   = "0.26"
 
 # Workspace crates
