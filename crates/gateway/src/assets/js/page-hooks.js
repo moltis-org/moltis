@@ -348,7 +348,7 @@ function HooksPage() {
 					: null
 			}
 
-      <div class="max-w-[700px] flex flex-col gap-3">
+      <div class="max-w-[900px] flex flex-col gap-3">
         ${hooks.value.map((h) => html`<${HookCard} key=${h.name} hook=${h} />`)}
       </div>
 
