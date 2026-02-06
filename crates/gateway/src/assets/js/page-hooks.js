@@ -190,7 +190,12 @@ function HookCard({ hook }) {
           <div class="flex items-center gap-2 text-xs text-[var(--muted)]">
             <span>Priority: ${hook.priority}</span>
             <span>Timeout: ${hook.timeout}s</span>
-            <span class="truncate" title=${hook.source_path}>${hook.source_path}</span>
+            <span class="truncate cursor-pointer hover:text-[var(--text)] transition-colors" title="Click to copy path" onClick=${(
+							e,
+						) => {
+							e.stopPropagation();
+							navigator.clipboard.writeText(hook.source_path).then(() => showToast("Path copied", "success"));
+						}}>${hook.source_path}</span>
           </div>
           ${
 						missingInfo.length > 0
