@@ -258,6 +258,9 @@ pub struct GatewayState {
     /// Persistent metrics store (SQLite or other backend).
     #[cfg(feature = "metrics")]
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
+    /// Push notification service for sending notifications to subscribed devices.
+    #[cfg(feature = "push-notifications")]
+    pub push_service: RwLock<Option<Arc<crate::push::PushService>>>,
 }
 
 impl GatewayState {
@@ -364,12 +367,26 @@ impl GatewayState {
             metrics_history: RwLock::new(MetricsHistory::default()),
             #[cfg(feature = "metrics")]
             metrics_store,
+            #[cfg(feature = "push-notifications")]
+            push_service: RwLock::new(None),
         })
     }
 
     /// Set a late-bound chat service (for circular init).
     pub async fn set_chat(&self, chat: Arc<dyn crate::services::ChatService>) {
         *self.chat_override.write().await = Some(chat);
+    }
+
+    /// Set the push notification service (late-bound initialization).
+    #[cfg(feature = "push-notifications")]
+    pub async fn set_push_service(&self, service: Arc<crate::push::PushService>) {
+        *self.push_service.write().await = Some(service);
+    }
+
+    /// Get the push notification service if configured.
+    #[cfg(feature = "push-notifications")]
+    pub async fn get_push_service(&self) -> Option<Arc<crate::push::PushService>> {
+        self.push_service.read().await.clone()
     }
 
     /// Get the active chat service (override or default).

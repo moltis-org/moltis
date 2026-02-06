@@ -62,7 +62,7 @@ jobs:
 
   clippy:
     name: Clippy
-    needs: zizmor
+    needs: fmt
     runs-on: self-hosted
     permissions:
       contents: read
@@ -99,7 +99,7 @@ jobs:
 
   build:
     name: Build & Test
-    needs: zizmor
+    needs: [clippy, biome]
     runs-on: self-hosted
     permissions:
       contents: read

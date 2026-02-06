@@ -2,11 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
+
+<!-- PWA Meta Tags -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+
+<!-- iOS PWA Meta Tags -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="moltis">
+<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <script>!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
 <title>moltis</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23333'/><text x='16' y='22' font-size='20' text-anchor='middle' fill='white' font-family='system-ui'>M</text></svg>">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/icons/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/icon-72.png">
 <meta name="build-ts" content="__BUILD_TS__">
 <script type="importmap">
 {
@@ -24,9 +37,13 @@
 <link rel="stylesheet" href="/assets/css/layout.css">
 <link rel="stylesheet" href="/assets/css/chat.css">
 <link rel="stylesheet" href="/assets/css/components.css">
+<link rel="stylesheet" href="/assets/css/mobile.css">
 <link rel="stylesheet" href="/assets/css/uplot.css">
 <link rel="stylesheet" href="/assets/style.css">
 <link rel="modulepreload" href="/assets/js/app.js">
+<link rel="modulepreload" href="/assets/js/pwa.js">
+<link rel="modulepreload" href="/assets/js/pwa-install.js">
+<link rel="modulepreload" href="/assets/js/mobile.js">
 <link rel="modulepreload" href="/assets/js/state.js">
 <link rel="modulepreload" href="/assets/js/theme.js">
 <link rel="modulepreload" href="/assets/js/helpers.js">
@@ -63,6 +80,12 @@
 <link rel="modulepreload" href="/assets/js/time-format.js">
 </head>
 <body>
+
+<!-- Git branch banner (shown when running on a non-main branch) -->
+<div id="branchBanner" class="branch-banner" style="display:none">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
+  <span>Running on: <strong id="branchName"></strong></span>
+</div>
 
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
@@ -101,6 +124,22 @@
   <span>Set up your agent's identity to get started.</span>
   <a href="/settings/identity" class="auth-disabled-setup">Go to settings</a>
 </div>
+
+<!-- PWA Install Banner (shown on mobile when not installed) -->
+<div id="installBanner" class="hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--surface)] border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg flex-col gap-3 md:hidden">
+  <div class="flex items-start gap-3">
+    <img src="/assets/icons/icon-72.png" alt="moltis" class="w-12 h-12 rounded-lg shrink-0">
+    <div data-instructions class="flex-1 min-w-0"></div>
+  </div>
+  <div class="flex gap-2 justify-end">
+    <button data-install-btn class="provider-btn" style="display:none">Install</button>
+    <button data-dismiss-btn class="provider-btn provider-btn-secondary">Not now</button>
+  </div>
+</div>
+
+<!-- Overlays for mobile panels -->
+<div id="navOverlay" class="nav-overlay"></div>
+<div id="sessionsOverlay" class="sessions-overlay"></div>
 
 <!-- Main layout -->
 <div class="flex flex-1 min-h-0 overflow-hidden">
@@ -196,6 +235,13 @@
   <!-- Page content (swapped by router) -->
   <div id="pageContent" class="flex-1 flex flex-col min-w-0 overflow-hidden"></div>
 </div>
+
+<!-- Mobile sessions toggle FAB -->
+<button id="sessionsToggle" class="sessions-toggle-btn" title="Toggle sessions">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+  </svg>
+</button>
 
 <!-- Modals (created on demand by modals.js) -->
 <div id="modalRoot"></div>
