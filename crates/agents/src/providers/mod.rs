@@ -599,42 +599,38 @@ impl ProviderRegistry {
 
         // Build config from provider entry
         let entry = config.get("local");
-        let model_path = entry
+        let user_model_path = entry
             .and_then(|e| e.base_url.as_deref()) // Reuse base_url for model_path
             .map(PathBuf::from);
 
         // Log system info
         local_gguf::log_system_info_and_suggestions();
 
-        // Check for model in registries and determine backend
-        // First try the unified registry, then fall back to legacy MLX models
-        let (display_name, backend, model_path_override) =
+        // Look up model in registries to get display name and model path
+        // For MLX models from legacy registry, use HuggingFace repo as path
+        let (display_name, model_path) =
             if let Some(def) = local_llm::models::find_model(model_id) {
-                // Model found in unified registry - auto-detect backend
-                (def.display_name.to_string(), None, model_path)
+                // Model in unified registry - use user path or let backend handle download
+                (def.display_name.to_string(), user_model_path)
             } else if let Some(def) = local_gguf::models::find_model(model_id) {
-                // Model found in legacy registry - check if it's MLX
+                // Model in legacy registry
                 if matches!(def.backend, local_gguf::models::ModelBackend::Mlx) {
-                    // MLX model - force MLX backend and use HuggingFace repo as path
-                    (
-                        def.display_name.to_string(),
-                        Some(local_llm::BackendType::Mlx),
-                        Some(PathBuf::from(def.hf_repo)),
-                    )
+                    // MLX model - use HuggingFace repo as path (mlx_lm handles it)
+                    (def.display_name.to_string(), Some(PathBuf::from(def.hf_repo)))
                 } else {
-                    // GGUF model from legacy registry
-                    (def.display_name.to_string(), None, model_path)
+                    // GGUF model - use user path or let backend handle download
+                    (def.display_name.to_string(), user_model_path)
                 }
             } else {
-                // Unknown model - proceed with auto-detection
-                (format!("{} (local)", model_id), None, model_path)
+                // Unknown model
+                (format!("{} (local)", model_id), user_model_path)
             };
 
-        // Use the unified LocalLlmProvider which handles both GGUF and MLX backends
+        // Use LocalLlmProvider which auto-detects backend based on model type
         let llm_config = local_llm::LocalLlmConfig {
             model_id: model_id.into(),
-            model_path: model_path_override,
-            backend, // Force backend for legacy MLX models
+            model_path,
+            backend: None, // Auto-detect based on model type
             context_size: None,
             gpu_layers: 0,
             temperature: 0.7,

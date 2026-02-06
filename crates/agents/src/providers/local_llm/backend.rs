@@ -67,7 +67,7 @@ pub trait LocalBackend: Send + Sync {
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>>;
 }
 
-/// Detect the best backend for the current system.
+/// Detect the best backend for the current system (ignoring model type).
 #[must_use]
 pub fn detect_best_backend() -> BackendType {
     let sys = super::system_info::SystemInfo::detect();
@@ -79,6 +79,49 @@ pub fn detect_best_backend() -> BackendType {
 
     // Default to GGUF (always available when compiled with local-llm feature)
     BackendType::Gguf
+}
+
+/// Detect the best backend for a specific model.
+///
+/// This checks:
+/// 1. Legacy MLX models (mlx-* prefix) -> requires MLX backend
+/// 2. Unified registry models with MLX support -> prefers MLX on Apple Silicon
+/// 3. GGUF-only models -> uses GGUF backend
+/// 4. Unknown models -> falls back to system detection
+#[must_use]
+pub fn detect_backend_for_model(model_id: &str) -> BackendType {
+    // Check legacy MLX models first (from local_gguf registry)
+    if let Some(def) = crate::providers::local_gguf::models::find_model(model_id) {
+        if matches!(def.backend, crate::providers::local_gguf::models::ModelBackend::Mlx) {
+            // MLX model from legacy registry - requires MLX backend
+            if is_mlx_available() {
+                return BackendType::Mlx;
+            } else {
+                // MLX not available but model requires it - log warning, return Mlx anyway
+                // (will fail with a clear error when loading)
+                tracing::warn!(
+                    model = model_id,
+                    "MLX model selected but MLX backend not available"
+                );
+                return BackendType::Mlx;
+            }
+        }
+        // GGUF model from legacy registry
+        return BackendType::Gguf;
+    }
+
+    // Check unified registry
+    if let Some(def) = super::models::find_model(model_id) {
+        // If model has MLX support and MLX is available, prefer MLX
+        if def.has_mlx() && is_mlx_available() {
+            return BackendType::Mlx;
+        }
+        // Otherwise use GGUF
+        return BackendType::Gguf;
+    }
+
+    // Unknown model - fall back to system detection
+    detect_best_backend()
 }
 
 /// Get list of available backends on this system.
@@ -860,5 +903,54 @@ mod tests {
     fn test_available_backends_includes_gguf() {
         let backends = available_backends();
         assert!(backends.contains(&BackendType::Gguf));
+    }
+
+    // ── detect_backend_for_model tests ─────────────────────────────────────
+
+    #[test]
+    fn test_detect_backend_for_legacy_mlx_model() {
+        // Legacy MLX models (mlx-* prefix) should select MLX backend
+        let backend = detect_backend_for_model("mlx-llama-3.2-1b-4bit");
+        assert_eq!(backend, BackendType::Mlx);
+    }
+
+    #[test]
+    fn test_detect_backend_for_legacy_mlx_qwen_model() {
+        // Another legacy MLX model
+        let backend = detect_backend_for_model("mlx-qwen2.5-coder-1.5b-4bit");
+        assert_eq!(backend, BackendType::Mlx);
+    }
+
+    #[test]
+    fn test_detect_backend_for_gguf_model_from_legacy_registry() {
+        // GGUF models from legacy registry should select GGUF backend
+        let backend = detect_backend_for_model("llama-3.2-1b-q4_k_m");
+        // This model is in the legacy GGUF registry, should be GGUF
+        assert_eq!(backend, BackendType::Gguf);
+    }
+
+    #[test]
+    fn test_detect_backend_for_unified_registry_gguf_model() {
+        // Models from unified registry without MLX should use GGUF
+        // deepseek-coder-6.7b-q4_k_m has no MLX version
+        let backend = detect_backend_for_model("deepseek-coder-6.7b-q4_k_m");
+        assert_eq!(backend, BackendType::Gguf);
+    }
+
+    #[test]
+    fn test_detect_backend_for_unknown_model() {
+        // Unknown models should fall back to system detection
+        let backend = detect_backend_for_model("unknown-model-12345");
+        // Should return a valid backend (GGUF or MLX based on system)
+        assert!(matches!(backend, BackendType::Gguf | BackendType::Mlx));
+    }
+
+    #[test]
+    fn test_detect_backend_for_unified_model_with_mlx_support() {
+        // Models from unified registry with MLX support
+        // Should prefer MLX on Apple Silicon, GGUF otherwise
+        let backend = detect_backend_for_model("qwen2.5-coder-1.5b-q4_k_m");
+        // On non-Apple Silicon, should be GGUF. On Apple Silicon with mlx_lm, MLX.
+        assert!(matches!(backend, BackendType::Gguf | BackendType::Mlx));
     }
 }
