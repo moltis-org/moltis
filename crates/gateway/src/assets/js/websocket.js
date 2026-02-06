@@ -390,12 +390,88 @@ function handleSandboxImageProvision(payload) {
 	}
 }
 
+// Track download indicator element
+var downloadIndicatorEl = null;
+
+function handleLocalLlmDownload(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+
+	var modelName = payload.displayName || payload.modelId || "model";
+
+	if (payload.error) {
+		// Download error
+		if (downloadIndicatorEl) {
+			downloadIndicatorEl.remove();
+			downloadIndicatorEl = null;
+		}
+		chatAddMsg("error", "Failed to download " + modelName + ": " + payload.error);
+		return;
+	}
+
+	if (payload.complete) {
+		// Download complete
+		if (downloadIndicatorEl) {
+			downloadIndicatorEl.remove();
+			downloadIndicatorEl = null;
+		}
+		chatAddMsg("system", modelName + " ready");
+		return;
+	}
+
+	// Download in progress - show/update progress indicator
+	if (!downloadIndicatorEl) {
+		downloadIndicatorEl = document.createElement("div");
+		downloadIndicatorEl.className = "msg system download-indicator";
+
+		var status = document.createElement("div");
+		status.className = "download-status";
+		status.textContent = "Downloading " + modelName + "\u2026";
+		downloadIndicatorEl.appendChild(status);
+
+		var progressContainer = document.createElement("div");
+		progressContainer.className = "download-progress";
+		var progressBar = document.createElement("div");
+		progressBar.className = "download-progress-bar";
+		progressContainer.appendChild(progressBar);
+		downloadIndicatorEl.appendChild(progressContainer);
+
+		var progressText = document.createElement("div");
+		progressText.className = "download-progress-text";
+		downloadIndicatorEl.appendChild(progressText);
+
+		if (S.chatMsgBox) {
+			S.chatMsgBox.appendChild(downloadIndicatorEl);
+			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+		}
+	}
+
+	// Update progress bar
+	var progressBar = downloadIndicatorEl.querySelector(".download-progress-bar");
+	var progressText = downloadIndicatorEl.querySelector(".download-progress-text");
+
+	if (payload.progress != null && progressBar) {
+		progressBar.style.width = payload.progress.toFixed(1) + "%";
+	}
+
+	if (payload.downloaded != null && progressText) {
+		var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
+		if (payload.total != null) {
+			var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
+			progressText.textContent = downloadedMb + " / " + totalMb + " MB";
+		} else {
+			progressText.textContent = downloadedMb + " MB";
+		}
+	}
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
+	"local-llm.download": handleLocalLlmDownload,
 };
 
 function dispatchFrame(frame) {

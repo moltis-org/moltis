@@ -1145,6 +1145,31 @@
     transition: width 0.3s ease;
   }
 
+  /* Download indicator in chat */
+  .download-indicator {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-width: 400px;
+    margin: 8px 0;
+  }
+  .download-indicator .download-status {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .download-indicator .download-progress {
+    width: 100%;
+  }
+  .download-indicator .download-progress-text {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
   .provider-item-badge.local {
     background: rgba(168, 85, 247, 0.12);
     color: #a855f7;
