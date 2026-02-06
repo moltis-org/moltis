@@ -15,7 +15,7 @@ use crate::model::{StreamEvent, ToolCall, Usage};
 ///
 /// This function recursively patches nested objects in `properties`, array
 /// `items`, `anyOf`/`oneOf`/`allOf` variants, etc.
-fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
+pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
@@ -62,14 +62,21 @@ fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
     }
 }
 
-/// Convert tool schemas to OpenAI function-calling format.
+/// Convert tool schemas to OpenAI Chat Completions function-calling format.
+///
+/// Uses the nested `function` object format required by Chat Completions API:
+/// ```json
+/// { "type": "function", "function": { "name": "...", ... } }
+/// ```
 ///
 /// Adds `strict: true` and patches schemas for strict mode compliance:
 /// - `additionalProperties: false` on all object schemas
 /// - All properties included in `required` array
 ///
-/// This is required by some APIs (OpenAI Codex, Claude via Copilot) to ensure
-/// the model provides all required fields.
+/// This is required by some APIs (Claude via Copilot) to ensure the model
+/// provides all required fields.
+///
+/// See: <https://platform.openai.com/docs/guides/function-calling>
 pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
     tools
         .iter()
@@ -86,6 +93,39 @@ pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
                     "parameters": params,
                     "strict": true,
                 }
+            })
+        })
+        .collect()
+}
+
+/// Convert tool schemas to OpenAI Responses API function-calling format.
+///
+/// Uses the flat format required by the Responses API where `name` is at top level:
+/// ```json
+/// { "type": "function", "name": "...", "parameters": {...}, "strict": true }
+/// ```
+///
+/// This is the format used by OpenAI Codex and the Responses API.
+///
+/// Patches schemas for strict mode compliance:
+/// - `additionalProperties: false` on all object schemas
+/// - All properties included in `required` array
+///
+/// See: <https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses>
+pub fn to_responses_api_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            // Clone parameters and patch for strict mode
+            let mut params = t["parameters"].clone();
+            patch_schema_for_strict_mode(&mut params);
+
+            serde_json::json!({
+                "type": "function",
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": params,
+                "strict": true,
             })
         })
         .collect()
@@ -485,5 +525,106 @@ mod tests {
             &events[1],
             StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5
         ));
+    }
+
+    // ============================================================
+    // Tests for to_responses_api_tools (OpenAI Responses API format)
+    // See: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses
+    // ============================================================
+
+    #[test]
+    fn test_to_responses_api_tools_format() {
+        // Responses API uses flat format: name at top level, not nested under "function"
+        let tools = vec![serde_json::json!({
+            "name": "get_weather",
+            "description": "Get the weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            }
+        })];
+        let converted = to_responses_api_tools(&tools);
+        assert_eq!(converted.len(), 1);
+
+        // Verify flat format (name at top level, not nested under function)
+        assert_eq!(converted[0]["type"], "function");
+        assert_eq!(converted[0]["name"], "get_weather");
+        assert_eq!(
+            converted[0]["description"],
+            "Get the weather for a location"
+        );
+        assert_eq!(converted[0]["strict"], true);
+
+        // Should NOT have a "function" wrapper
+        assert!(converted[0].get("function").is_none());
+
+        // Parameters should be patched for strict mode
+        assert_eq!(converted[0]["parameters"]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_to_responses_api_tools_nested_objects() {
+        // Test that nested objects get additionalProperties: false and required
+        let tools = vec![serde_json::json!({
+            "name": "delete_observations",
+            "description": "Delete observations",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "deletions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "observation": {"type": "string"},
+                                "entity": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            }
+        })];
+        let converted = to_responses_api_tools(&tools);
+        let params = &converted[0]["parameters"];
+
+        // Top level should have additionalProperties: false
+        assert_eq!(params["additionalProperties"], false);
+
+        // All properties at top level should be in required
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("deletions")));
+
+        // Array items object should have additionalProperties: false
+        let items = &params["properties"]["deletions"]["items"];
+        assert_eq!(items["additionalProperties"], false);
+
+        // Array items should have all properties in required
+        let items_required = items["required"].as_array().unwrap();
+        assert!(items_required.contains(&serde_json::json!("observation")));
+        assert!(items_required.contains(&serde_json::json!("entity")));
+    }
+
+    #[test]
+    fn test_chat_completions_vs_responses_api_format() {
+        // Verify the two formats are different
+        let tools = vec![serde_json::json!({
+            "name": "test_tool",
+            "description": "A test tool",
+            "parameters": {"type": "object", "properties": {"x": {"type": "string"}}}
+        })];
+
+        let chat_completions = to_openai_tools(&tools);
+        let responses_api = to_responses_api_tools(&tools);
+
+        // Chat Completions: nested under "function"
+        assert!(chat_completions[0].get("function").is_some());
+        assert_eq!(chat_completions[0]["function"]["name"], "test_tool");
+
+        // Responses API: flat format
+        assert!(responses_api[0].get("function").is_none());
+        assert_eq!(responses_api[0]["name"], "test_tool");
     }
 }

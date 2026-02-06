@@ -12,7 +12,7 @@ use {
 
 use crate::{
     model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
-    providers::openai_compat::to_openai_tools,
+    providers::openai_compat::to_responses_api_tools,
 };
 
 pub struct OpenAiCodexProvider {
@@ -232,7 +232,7 @@ impl LlmProvider for OpenAiCodexProvider {
         });
 
         if !tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
+            body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
             body["tool_choice"] = serde_json::json!("auto");
         }
 
@@ -422,7 +422,7 @@ impl LlmProvider for OpenAiCodexProvider {
             });
 
             if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
                 body["tool_choice"] = serde_json::json!("auto");
             }
 
