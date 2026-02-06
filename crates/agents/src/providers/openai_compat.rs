@@ -7,38 +7,49 @@ use std::collections::HashMap;
 
 use crate::model::{StreamEvent, ToolCall, Usage};
 
-/// Recursively add `additionalProperties: false` to all object schemas.
+/// Recursively patch schema for OpenAI strict mode compliance.
 ///
-/// OpenAI's strict mode requires `additionalProperties: false` on every object
-/// in the schema tree, not just the top level. This includes nested objects in
-/// `properties`, objects in array `items`, etc.
-fn add_additional_properties_false(schema: &mut serde_json::Value) {
+/// OpenAI's strict mode requires:
+/// 1. `additionalProperties: false` on every object in the schema tree
+/// 2. All properties must be listed in the `required` array
+///
+/// This function recursively patches nested objects in `properties`, array
+/// `items`, `anyOf`/`oneOf`/`allOf` variants, etc.
+fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
 
-    // If this is an object type, add additionalProperties: false
+    // If this is an object type, apply strict mode requirements
     if obj.get("type").and_then(|t| t.as_str()) == Some("object") {
+        // Add additionalProperties: false
         obj.insert("additionalProperties".to_string(), serde_json::json!(false));
+
+        // Ensure all properties are in required array
+        if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
+            let all_prop_names: Vec<serde_json::Value> =
+                props.keys().map(|k| serde_json::json!(k)).collect();
+            obj.insert("required".to_string(), serde_json::json!(all_prop_names));
+        }
     }
 
     // Recurse into properties
     if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
         for (_, prop_schema) in props.iter_mut() {
-            add_additional_properties_false(prop_schema);
+            patch_schema_for_strict_mode(prop_schema);
         }
     }
 
     // Recurse into array items
     if let Some(items) = obj.get_mut("items") {
-        add_additional_properties_false(items);
+        patch_schema_for_strict_mode(items);
     }
 
     // Recurse into anyOf/oneOf/allOf
     for key in ["anyOf", "oneOf", "allOf"] {
         if let Some(variants) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
             for variant in variants {
-                add_additional_properties_false(variant);
+                patch_schema_for_strict_mode(variant);
             }
         }
     }
@@ -47,22 +58,25 @@ fn add_additional_properties_false(schema: &mut serde_json::Value) {
     if let Some(additional) = obj.get_mut("additionalProperties")
         && additional.is_object()
     {
-        add_additional_properties_false(additional);
+        patch_schema_for_strict_mode(additional);
     }
 }
 
 /// Convert tool schemas to OpenAI function-calling format.
 ///
-/// Adds `strict: true` and `additionalProperties: false` to enforce schema
-/// compliance. This is required by some APIs (OpenAI Codex, Claude via Copilot)
-/// to ensure the model provides all required fields.
+/// Adds `strict: true` and patches schemas for strict mode compliance:
+/// - `additionalProperties: false` on all object schemas
+/// - All properties included in `required` array
+///
+/// This is required by some APIs (OpenAI Codex, Claude via Copilot) to ensure
+/// the model provides all required fields.
 pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
     tools
         .iter()
         .map(|t| {
-            // Clone parameters and recursively add additionalProperties: false
+            // Clone parameters and patch for strict mode
             let mut params = t["parameters"].clone();
-            add_additional_properties_false(&mut params);
+            patch_schema_for_strict_mode(&mut params);
 
             serde_json::json!({
                 "type": "function",
@@ -328,6 +342,34 @@ mod tests {
         // First variant is string, no additionalProperties needed
         // Second variant is object, should have additionalProperties: false
         assert_eq!(any_of[1]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_to_openai_tools_all_properties_required() {
+        // Test that all properties are added to the required array
+        // This is the case that was failing for web_fetch with extract_mode
+        let tools = vec![serde_json::json!({
+            "name": "web_fetch",
+            "description": "Fetch a URL",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "extract_mode": {"type": "string", "enum": ["markdown", "text"]},
+                    "max_chars": {"type": "integer"}
+                },
+                "required": ["url"]  // Only url was originally required
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let params = &converted[0]["function"]["parameters"];
+
+        // All properties should be in required array
+        let required = params["required"].as_array().unwrap();
+        assert_eq!(required.len(), 3);
+        assert!(required.contains(&serde_json::json!("url")));
+        assert!(required.contains(&serde_json::json!("extract_mode")));
+        assert!(required.contains(&serde_json::json!("max_chars")));
     }
 
     #[test]
