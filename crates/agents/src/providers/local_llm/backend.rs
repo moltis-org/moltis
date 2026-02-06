@@ -665,12 +665,29 @@ pub mod mlx {
 
             info!(installation = ?installation, "detected MLX installation");
 
-            // Resolve model
+            // Resolve model - for MLX, paths can be:
+            // 1. Local directory with MLX model files
+            // 2. HuggingFace repo ID (e.g., "mlx-community/Llama-3.2-1B-Instruct-4bit")
+            // mlx_lm handles downloading HF repos automatically
             let (model_path, model_def) = if let Some(path) = &config.model_path {
-                if !path.exists() {
-                    bail!("model path not found: {}", path.display());
+                // If it's a local path that exists, use it directly
+                // Otherwise, treat it as a HuggingFace repo ID (mlx_lm handles the download)
+                if path.exists() {
+                    (path.clone(), models::find_model(&config.model_id))
+                } else {
+                    // Check if it looks like a HuggingFace repo (contains /)
+                    let path_str = path.to_string_lossy();
+                    if path_str.contains('/') && !path_str.starts_with('/') {
+                        // Treat as HuggingFace repo ID
+                        info!(
+                            hf_repo = %path_str,
+                            "using HuggingFace repo (mlx_lm will download if needed)"
+                        );
+                        (path.clone(), models::find_model(&config.model_id))
+                    } else {
+                        bail!("model path not found: {}", path.display());
+                    }
                 }
-                (path.clone(), models::find_model(&config.model_id))
             } else {
                 let Some(def) = models::find_model(&config.model_id) else {
                     bail!("unknown model '{}' for MLX backend", config.model_id);
