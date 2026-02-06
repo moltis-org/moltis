@@ -70,11 +70,119 @@ pub struct TailscaleOpts {
 pub struct AppState {
     pub gateway: Arc<GatewayState>,
     pub methods: Arc<MethodRegistry>,
+    #[cfg(feature = "push-notifications")]
+    pub push_service: Option<Arc<crate::push::PushService>>,
 }
 
 // ── Server startup ───────────────────────────────────────────────────────────
 
 /// Build the gateway router (shared between production startup and tests).
+#[cfg(feature = "push-notifications")]
+pub fn build_gateway_app(
+    state: Arc<GatewayState>,
+    methods: Arc<MethodRegistry>,
+    push_service: Option<Arc<crate::push::PushService>>,
+) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let mut router = Router::new()
+        .route("/health", get(health_handler))
+        .route("/ws", get(ws_upgrade_handler));
+
+    // Nest auth routes if credential store is available.
+    if let Some(ref cred_store) = state.credential_store {
+        let auth_state = AuthState {
+            credential_store: Arc::clone(cred_store),
+            webauthn_state: state.webauthn_state.clone(),
+            gateway_state: Arc::clone(&state),
+        };
+        router = router.nest("/api/auth", auth_router().with_state(auth_state));
+    }
+
+    let app_state = AppState {
+        gateway: state,
+        methods,
+        #[cfg(feature = "push-notifications")]
+        push_service,
+    };
+
+    #[cfg(feature = "web-ui")]
+    let router = {
+        // Protected API routes — require auth when credential store is configured.
+        let mut protected = Router::new()
+            .route("/api/bootstrap", get(api_bootstrap_handler))
+            .route("/api/gon", get(api_gon_handler))
+            .route("/api/skills", get(api_skills_handler))
+            .route("/api/skills/search", get(api_skills_search_handler))
+            .route("/api/mcp", get(api_mcp_handler))
+            .route("/api/plugins", get(api_plugins_handler))
+            .route("/api/plugins/search", get(api_plugins_search_handler))
+            .route(
+                "/api/images/cached",
+                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
+            )
+            .route(
+                "/api/images/cached/{tag}",
+                axum::routing::delete(api_delete_cached_image_handler),
+            )
+            .route(
+                "/api/images/build",
+                axum::routing::post(api_build_image_handler),
+            )
+            .route(
+                "/api/images/check-packages",
+                axum::routing::post(api_check_packages_handler),
+            )
+            .route(
+                "/api/images/default",
+                get(api_get_default_image_handler).put(api_set_default_image_handler),
+            )
+            .route(
+                "/api/env",
+                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
+            )
+            .route(
+                "/api/env/{id}",
+                axum::routing::delete(crate::env_routes::env_delete),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                app_state.clone(),
+                crate::auth_middleware::require_auth,
+            ));
+
+        // Mount tailscale routes (protected) when the feature is enabled.
+        #[cfg(feature = "tailscale")]
+        {
+            protected = protected.nest(
+                "/api/tailscale",
+                crate::tailscale_routes::tailscale_router(),
+            );
+        }
+
+        // Mount push notification routes when the feature is enabled.
+        #[cfg(feature = "push-notifications")]
+        {
+            protected = protected.nest("/api/push", crate::push_routes::push_router());
+        }
+
+        // Public routes (assets, PWA files, SPA fallback).
+        router
+            .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
+            .route("/assets/{*path}", get(asset_handler))
+            .route("/manifest.json", get(manifest_handler))
+            .route("/sw.js", get(service_worker_handler))
+            .merge(protected)
+            .fallback(spa_fallback)
+    };
+
+    router.layer(cors).with_state(app_state)
+}
+
+/// Build the gateway router (shared between production startup and tests).
+#[cfg(not(feature = "push-notifications"))]
 pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -195,10 +303,12 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             crate::tailscale_routes::tailscale_router(),
         );
 
-        // Public routes (assets, SPA fallback).
+        // Public routes (assets, PWA files, SPA fallback).
         router
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
+            .route("/manifest.json", get(manifest_handler))
+            .route("/sw.js", get(service_worker_handler))
             .merge(protected)
             .fallback(spa_fallback)
     };
@@ -282,8 +392,8 @@ pub async fn start_gateway(
             services.with_local_llm(Arc::clone(&svc) as Arc<dyn crate::services::LocalLlmService>);
         Some(svc)
     };
-    #[cfg(not(feature = "local-llm"))]
-    let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = None;
+    // When local-llm feature is disabled, this variable is not needed since
+    // the only usage is also feature-gated.
 
     if !registry.read().await.is_empty() {
         services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
@@ -1151,7 +1261,8 @@ pub async fn start_gateway(
         }
     };
 
-    let is_localhost = matches!(bind, "127.0.0.1" | "::1" | "localhost");
+    let is_localhost =
+        matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
     #[cfg(feature = "tls")]
     let tls_active_for_state = config.tls.enabled;
     #[cfg(not(feature = "tls"))]
@@ -1387,7 +1498,28 @@ pub async fn start_gateway(
 
     let methods = Arc::new(MethodRegistry::new());
 
+    // Initialize push notification service if the feature is enabled.
+    #[cfg(feature = "push-notifications")]
+    let push_service: Option<Arc<crate::push::PushService>> = {
+        match crate::push::PushService::new(&data_dir).await {
+            Ok(svc) => {
+                info!("push notification service initialized");
+                // Store in GatewayState for use by chat service
+                state.set_push_service(Arc::clone(&svc)).await;
+                Some(svc)
+            },
+            Err(e) => {
+                tracing::warn!("failed to initialize push notification service: {e}");
+                None
+            },
+        }
+    };
+
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    #[cfg(feature = "push-notifications")]
+    let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods), push_service);
+    #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
+    #[cfg(not(feature = "push-notifications"))]
     let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods));
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
@@ -1477,6 +1609,15 @@ pub async fn start_gateway(
     } else {
         "http"
     };
+    // Use moltis.localhost for display URLs when bound to loopback with TLS.
+    #[cfg(feature = "tls")]
+    let display_host = if is_localhost && tls_active {
+        format!("{}:{}", crate::tls::LOCALHOST_DOMAIN, port)
+    } else {
+        addr.to_string()
+    };
+    #[cfg(not(feature = "tls"))]
+    let display_host = addr.to_string();
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),
@@ -1484,7 +1625,7 @@ pub async fn start_gateway(
             "protocol v{}, listening on {}://{} ({})",
             moltis_protocol::PROTOCOL_VERSION,
             scheme,
-            addr,
+            display_host,
             if tls_active {
                 "HTTP/2 + HTTP/1.1"
             } else {
@@ -1539,10 +1680,15 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     if tls_active {
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
+            let ca_host = if is_localhost {
+                crate::tls::LOCALHOST_DOMAIN
+            } else {
+                bind
+            };
             lines.push(format!(
                 "CA cert: http://{}:{}/certs/ca.pem",
-                bind, http_port
+                ca_host, http_port
             ));
             lines.push(format!("  or: {}", ca.display()));
         }
@@ -1923,7 +2069,7 @@ pub async fn start_gateway(
     if tls_active {
         // Spawn HTTP redirect server on secondary port.
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             let bind_clone = bind.to_string();
             let ca_clone = ca.clone();
             tokio::spawn(async move {
@@ -2047,7 +2193,9 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
     let hh = strip_port(host);
 
     // Normalise loopback variants so 127.0.0.1 == localhost == ::1.
-    let is_loopback = |h: &str| matches!(h, "localhost" | "127.0.0.1" | "::1");
+    // Subdomains of .localhost (e.g. moltis.localhost) are also loopback per RFC 6761.
+    let is_loopback =
+        |h: &str| matches!(h, "localhost" | "127.0.0.1" | "::1") || h.ends_with(".localhost");
 
     (oh == hh || (is_loopback(oh) && is_loopback(hh))) && origin_port == host_port
 }
@@ -2075,6 +2223,42 @@ struct GonData {
     cron_status: moltis_cron::types::CronStatus,
     heartbeat_config: moltis_config::schema::HeartbeatConfig,
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
+    /// Non-main git branch name, if running from a git checkout on a
+    /// non-default branch. `None` when on `main`/`master` or outside a repo.
+    git_branch: Option<String>,
+}
+
+/// Detect the current git branch, returning `None` for `main`/`master` or
+/// when not inside a git repository. The result is cached in a `OnceLock` so
+/// the `git` subprocess runs at most once per process.
+#[cfg(feature = "web-ui")]
+fn detect_git_branch() -> Option<String> {
+    static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    BRANCH
+        .get_or_init(|| {
+            let output = std::process::Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let raw = String::from_utf8(output.stdout).ok()?;
+            parse_git_branch(&raw)
+        })
+        .clone()
+}
+
+/// Parse the raw output of `git rev-parse --abbrev-ref HEAD`, returning
+/// `None` for default branches (`main`/`master`) or empty/blank output.
+#[cfg(feature = "web-ui")]
+fn parse_git_branch(raw: &str) -> Option<String> {
+    let branch = raw.trim();
+    if branch.is_empty() || branch == "main" || branch == "master" {
+        None
+    } else {
+        Some(branch.to_owned())
+    }
 }
 
 /// Counts shown as badges in the sidebar navigation.
@@ -2133,6 +2317,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         cron_status,
         heartbeat_config,
         heartbeat_runs,
+        git_branch: detect_git_branch(),
     }
 }
 
@@ -2850,6 +3035,18 @@ async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     serve_asset(&path, "no-cache")
 }
 
+/// PWA manifest: `/manifest.json` — served from assets root.
+#[cfg(feature = "web-ui")]
+async fn manifest_handler() -> impl IntoResponse {
+    serve_asset("manifest.json", "no-cache")
+}
+
+/// Service worker: `/sw.js` — served from assets root, no-cache for updates.
+#[cfg(feature = "web-ui")]
+async fn service_worker_handler() -> impl IntoResponse {
+    serve_asset("sw.js", "no-cache")
+}
+
 #[cfg(feature = "web-ui")]
 fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Response {
     match read_asset(path) {
@@ -2915,5 +3112,64 @@ mod tests {
         // One has port, other doesn't — different origins.
         assert!(!is_same_origin("http://localhost:8080", "localhost"));
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
+    }
+
+    #[test]
+    fn same_origin_moltis_localhost() {
+        // moltis.localhost ↔ localhost loopback variants
+        assert!(is_same_origin(
+            "https://moltis.localhost:8080",
+            "localhost:8080"
+        ));
+        assert!(is_same_origin(
+            "https://moltis.localhost:8080",
+            "127.0.0.1:8080"
+        ));
+        assert!(is_same_origin(
+            "http://localhost:8080",
+            "moltis.localhost:8080"
+        ));
+        // Any .localhost subdomain is treated as loopback (RFC 6761).
+        assert!(is_same_origin(
+            "https://app.moltis.localhost:8080",
+            "localhost:8080"
+        ));
+    }
+
+    #[cfg(feature = "web-ui")]
+    mod git_branch_tests {
+        use super::super::parse_git_branch;
+
+        #[test]
+        fn feature_branch_returned() {
+            assert_eq!(
+                parse_git_branch("top-banner-branch\n"),
+                Some("top-banner-branch".to_owned())
+            );
+        }
+
+        #[test]
+        fn main_returns_none() {
+            assert_eq!(parse_git_branch("main\n"), None);
+        }
+
+        #[test]
+        fn master_returns_none() {
+            assert_eq!(parse_git_branch("master\n"), None);
+        }
+
+        #[test]
+        fn empty_returns_none() {
+            assert_eq!(parse_git_branch(""), None);
+            assert_eq!(parse_git_branch("  \n"), None);
+        }
+
+        #[test]
+        fn trims_whitespace() {
+            assert_eq!(
+                parse_git_branch("  feat/my-feature  \n"),
+                Some("feat/my-feature".to_owned())
+            );
+        }
     }
 }

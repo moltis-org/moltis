@@ -19,6 +19,7 @@ members = [
   "crates/plugins",
   "crates/projects",
   "crates/protocol",
+  "crates/qmd",
   "crates/routing",
   "crates/sessions",
   "crates/skills",
@@ -88,6 +89,7 @@ axum-server    = { features = ["tls-rustls"], version = "0.7" }
 rcgen          = "0.13"
 rustls         = { features = ["ring"], version = "0.23" }
 rustls-pemfile = "2"
+time           = "0.3"
 tokio-rustls   = "0.26"
 
 # Workspace crates
@@ -110,6 +112,7 @@ moltis-onboarding = { path = "crates/onboarding" }
 moltis-plugins    = { path = "crates/plugins" }
 moltis-projects   = { path = "crates/projects" }
 moltis-protocol   = { path = "crates/protocol" }
+moltis-qmd        = { path = "crates/qmd" }
 moltis-routing    = { path = "crates/routing" }
 moltis-sessions   = { path = "crates/sessions" }
 moltis-skills     = { path = "crates/skills" }

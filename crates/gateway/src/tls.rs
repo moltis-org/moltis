@@ -18,8 +18,13 @@ use {
     axum::{Router, extract::State, response::IntoResponse, routing::get},
     rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, SanType},
     rustls::ServerConfig,
+    time::OffsetDateTime,
     tracing::info,
 };
+
+/// The hostname used for loopback URLs instead of raw `127.0.0.1`.
+/// Subdomains of `.localhost` resolve to loopback per RFC 6761.
+pub const LOCALHOST_DOMAIN: &str = "moltis.localhost";
 
 /// Trait for TLS certificate management, allowing alternative implementations.
 pub trait CertManager: Send + Sync {
@@ -87,7 +92,13 @@ impl CertManager for FsCertManager {
     }
 }
 
-/// Check if a PEM cert file is older than `days` days (proxy for expiry).
+/// Check if a PEM cert file needs regeneration.
+///
+/// Returns `true` when the file is older than `days` days (proxy for
+/// approaching expiry) **or** when it was generated before the
+/// `moltis.localhost` SAN was added. The DER-encoded cert contains
+/// DNS names as raw ASCII (IA5String), so a byte search on the decoded
+/// DER is sufficient to detect the missing SAN.
 fn is_expired(path: &Path, days: u64) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return true;
@@ -98,11 +109,34 @@ fn is_expired(path: &Path, days: u64) -> bool {
     let age = SystemTime::now()
         .duration_since(modified)
         .unwrap_or_default();
-    age.as_secs() > days * 86400
+    if age.as_secs() > days * 86400 {
+        return true;
+    }
+    // Regenerate if the cert predates the moltis.localhost SAN migration.
+    needs_san_update(path)
+}
+
+/// Returns `true` if the cert at `path` does not contain the
+/// `moltis.localhost` SAN (i.e. was generated before the migration).
+fn needs_san_update(path: &Path) -> bool {
+    let Ok(pem_bytes) = std::fs::read(path) else {
+        return true;
+    };
+    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(pem_bytes.as_slice()))
+        .filter_map(|r| r.ok())
+        .collect();
+    if certs.is_empty() {
+        return true;
+    }
+    let der = certs[0].as_ref();
+    !der.windows(LOCALHOST_DOMAIN.len())
+        .any(|w| w == LOCALHOST_DOMAIN.as_bytes())
 }
 
 /// Generate CA + server certificates. Returns (ca_cert, ca_key, server_cert, server_key) PEM strings.
 fn generate_all() -> Result<(String, String, String, String)> {
+    let now = OffsetDateTime::now_utc();
+
     // --- CA ---
     let ca_key = KeyPair::generate()?;
     let mut ca_params = CertificateParams::new(Vec::<String>::new())?;
@@ -114,25 +148,27 @@ fn generate_all() -> Result<(String, String, String, String)> {
         .push(DnType::OrganizationName, "Moltis");
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    // 10-year validity
-    ca_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
-    ca_params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+    // 10-year validity from today.
+    ca_params.not_before = now;
+    ca_params.not_after = now + time::Duration::days(365 * 10);
     let ca_cert = ca_params.self_signed(&ca_key)?;
 
     // --- Server cert signed by CA ---
     let server_key = KeyPair::generate()?;
-    let mut server_params = CertificateParams::new(vec!["localhost".to_string()])?;
+    let mut server_params = CertificateParams::new(vec![LOCALHOST_DOMAIN.to_string()])?;
     server_params
         .distinguished_name
-        .push(DnType::CommonName, "localhost");
+        .push(DnType::CommonName, LOCALHOST_DOMAIN);
     server_params.subject_alt_names = vec![
+        SanType::DnsName(LOCALHOST_DOMAIN.try_into()?),
+        SanType::DnsName(format!("*.{LOCALHOST_DOMAIN}").as_str().try_into()?),
         SanType::DnsName("localhost".try_into()?),
         SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
         SanType::IpAddress(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)),
     ];
-    // 1-year validity
-    server_params.not_before = rcgen::date_time_ymd(2025, 1, 1);
-    server_params.not_after = rcgen::date_time_ymd(2026, 1, 1);
+    // 1-year validity from today.
+    server_params.not_before = now;
+    server_params.not_after = now + time::Duration::days(365);
     let server_cert = server_params.signed_by(&server_key, &ca_cert, &ca_key)?;
 
     Ok((
@@ -194,7 +230,10 @@ pub async fn start_http_redirect_server(
 
     let addr: SocketAddr = format!("{bind}:{http_port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!(%addr, "HTTP redirect server listening");
+    info!(
+        "HTTP redirect server listening http://{}:{http_port}/certs/ca.pem",
+        LOCALHOST_DOMAIN
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -217,7 +256,7 @@ async fn redirect_to_https(
     uri: axum::http::Uri,
 ) -> impl IntoResponse {
     let path = uri.path();
-    let target = format!("https://127.0.0.1:{}{}", state.https_port, path);
+    let target = format!("https://{}:{}{}", LOCALHOST_DOMAIN, state.https_port, path);
     axum::response::Redirect::temporary(&target)
 }
 

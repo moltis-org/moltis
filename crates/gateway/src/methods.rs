@@ -80,6 +80,9 @@ const READ_METHODS: &[&str] = &[
     "mcp.list",
     "mcp.status",
     "mcp.tools",
+    "memory.status",
+    "memory.config.get",
+    "memory.qmd.status",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -139,6 +142,7 @@ const WRITE_METHODS: &[&str] = &[
     "cron.run",
     "heartbeat.update",
     "heartbeat.run",
+    "memory.config.update",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -2954,6 +2958,149 @@ impl MethodRegistry {
                         .context(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        // ── Memory ─────────────────────────────────────────────────────
+
+        self.register(
+            "memory.status",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    if let Some(ref mm) = ctx.state.memory_manager {
+                        match mm.status().await {
+                            Ok(status) => Ok(serde_json::json!({
+                                "available": true,
+                                "total_files": status.total_files,
+                                "total_chunks": status.total_chunks,
+                                "db_size": status.db_size_bytes,
+                                "db_size_display": status.db_size_display(),
+                                "embedding_model": status.embedding_model,
+                                "has_embeddings": mm.has_embeddings(),
+                            })),
+                            Err(e) => Ok(serde_json::json!({
+                                "available": false,
+                                "error": e.to_string(),
+                            })),
+                        }
+                    } else {
+                        Ok(serde_json::json!({
+                            "available": false,
+                            "error": "Memory system not initialized",
+                        }))
+                    }
+                })
+            }),
+        );
+
+        self.register(
+            "memory.config.get",
+            Box::new(|_ctx| {
+                Box::pin(async move {
+                    // Read memory config from the config file
+                    let config = moltis_config::discover_and_load();
+                    let memory = &config.memory;
+                    Ok(serde_json::json!({
+                        "backend": memory.backend.as_deref().unwrap_or("builtin"),
+                        "citations": memory.citations.as_deref().unwrap_or("auto"),
+                        "llm_reranking": memory.llm_reranking,
+                        "session_export": memory.session_export,
+                        "qmd_feature_enabled": cfg!(feature = "qmd"),
+                    }))
+                })
+            }),
+        );
+
+        self.register(
+            "memory.config.update",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let backend = ctx
+                        .params
+                        .get("backend")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("builtin");
+                    let citations = ctx
+                        .params
+                        .get("citations")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("auto");
+                    let llm_reranking = ctx
+                        .params
+                        .get("llm_reranking")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let session_export = ctx
+                        .params
+                        .get("session_export")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    // Persist to moltis.toml so the config survives restarts.
+                    let backend_str = backend.to_string();
+                    let citations_str = citations.to_string();
+                    if let Err(e) = moltis_config::update_config(|cfg| {
+                        cfg.memory.backend = Some(backend_str.clone());
+                        cfg.memory.citations = Some(citations_str.clone());
+                        cfg.memory.llm_reranking = llm_reranking;
+                        cfg.memory.session_export = session_export;
+                    }) {
+                        tracing::warn!(error = %e, "failed to persist memory config");
+                    }
+
+                    Ok(serde_json::json!({
+                        "backend": backend,
+                        "citations": citations,
+                        "llm_reranking": llm_reranking,
+                        "session_export": session_export,
+                    }))
+                })
+            }),
+        );
+
+        // QMD status check
+        self.register(
+            "memory.qmd.status",
+            Box::new(|_ctx| {
+                Box::pin(async move {
+                    #[cfg(feature = "qmd")]
+                    {
+                        use moltis_qmd::{QmdManager, QmdManagerConfig};
+
+                        let config = moltis_config::discover_and_load();
+                        let qmd_config = QmdManagerConfig {
+                            command: config
+                                .memory
+                                .qmd
+                                .command
+                                .clone()
+                                .unwrap_or_else(|| "qmd".into()),
+                            collections: std::collections::HashMap::new(),
+                            max_results: config.memory.qmd.max_results.unwrap_or(10),
+                            timeout_ms: config.memory.qmd.timeout_ms.unwrap_or(30_000),
+                            work_dir: moltis_config::data_dir(),
+                        };
+
+                        let manager = QmdManager::new(qmd_config);
+                        let status = manager.status().await;
+
+                        Ok(serde_json::json!({
+                            "feature_enabled": true,
+                            "available": status.available,
+                            "version": status.version,
+                            "error": status.error,
+                        }))
+                    }
+
+                    #[cfg(not(feature = "qmd"))]
+                    {
+                        Ok(serde_json::json!({
+                            "feature_enabled": false,
+                            "available": false,
+                            "error": "QMD feature not enabled. Rebuild with --features qmd",
+                        }))
+                    }
                 })
             }),
         );

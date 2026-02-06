@@ -51,8 +51,8 @@ VOLUME ["/home/moltis/.config/moltis", "/home/moltis/.moltis", "/var/run/docker.
 USER moltis
 WORKDIR /home/moltis
 
-# Expose gateway port
-EXPOSE 13131
+# Expose gateway port (HTTPS) and HTTP redirect/CA-download port (gateway port + 1)
+EXPOSE 13131 13132
 
 # Run the gateway on the specified port
 ENTRYPOINT ["moltis"]

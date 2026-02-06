@@ -1794,6 +1794,12 @@ async fn run_with_tools(
                 BroadcastOpts::default(),
             )
             .await;
+            // Send push notification when chat response completes
+            #[cfg(feature = "push-notifications")]
+            {
+                tracing::info!("push: checking push notification (agent mode)");
+                send_chat_push_notification(state, session_key, &result.text).await;
+            }
             deliver_channel_replies(state, session_key, &result.text).await;
             Some((
                 result.text,
@@ -1976,6 +1982,12 @@ async fn run_streaming(
                     BroadcastOpts::default(),
                 )
                 .await;
+                // Send push notification when chat response completes
+                #[cfg(feature = "push-notifications")]
+                {
+                    tracing::info!("push: checking push notification");
+                    send_chat_push_notification(state, session_key, &accumulated).await;
+                }
                 deliver_channel_replies(state, session_key, &accumulated).await;
                 return Some((accumulated, usage.input_tokens, usage.output_tokens));
             },
@@ -2004,6 +2016,59 @@ async fn run_streaming(
         }
     }
     None
+}
+
+/// Send a push notification when a chat response completes.
+/// Only sends if push notifications are configured and there are subscribers.
+#[cfg(feature = "push-notifications")]
+async fn send_chat_push_notification(state: &Arc<GatewayState>, session_key: &str, text: &str) {
+    let push_service = match state.get_push_service().await {
+        Some(svc) => svc,
+        None => {
+            tracing::info!("push notification skipped: service not configured");
+            return;
+        },
+    };
+
+    let sub_count = push_service.subscription_count().await;
+    if sub_count == 0 {
+        tracing::info!("push notification skipped: no subscribers");
+        return;
+    }
+
+    tracing::info!(
+        subscribers = sub_count,
+        session = session_key,
+        "sending push notification"
+    );
+
+    // Create a short summary of the response (first 100 chars)
+    let summary = if text.len() > 100 {
+        format!("{}…", &text[..100])
+    } else {
+        text.to_string()
+    };
+
+    // Build the notification
+    let title = "Message received";
+    let url = format!("/chat/{session_key}");
+
+    match crate::push_routes::send_push_notification(
+        &push_service,
+        title,
+        &summary,
+        Some(&url),
+        Some(session_key),
+    )
+    .await
+    {
+        Ok(sent) => {
+            tracing::info!(sent, "push notification sent");
+        },
+        Err(e) => {
+            tracing::warn!("failed to send push notification: {e}");
+        },
+    }
 }
 
 /// Drain any pending channel reply targets for a session and send the

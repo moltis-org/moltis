@@ -236,6 +236,8 @@ impl Default for TailscaleConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryEmbeddingConfig {
+    /// Memory backend: "builtin" (default) or "qmd" for QMD sidecar.
+    pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
     pub provider: Option<String>,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
@@ -249,6 +251,45 @@ pub struct MemoryEmbeddingConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub api_key: Option<Secret<String>>,
+    /// Citation mode: "on", "off", or "auto" (default).
+    /// When "auto", citations are included when results come from multiple files.
+    pub citations: Option<String>,
+    /// Enable LLM reranking for hybrid search results.
+    #[serde(default)]
+    pub llm_reranking: bool,
+    /// Enable session export to memory for cross-run recall.
+    #[serde(default)]
+    pub session_export: bool,
+    /// QMD-specific configuration (only used when backend = "qmd").
+    #[serde(default)]
+    pub qmd: QmdConfig,
+}
+
+/// QMD backend configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QmdConfig {
+    /// Path to the qmd binary (default: "qmd").
+    pub command: Option<String>,
+    /// Named collections with paths and glob patterns.
+    #[serde(default)]
+    pub collections: HashMap<String, QmdCollection>,
+    /// Maximum results to retrieve.
+    pub max_results: Option<usize>,
+    /// Search timeout in milliseconds.
+    pub timeout_ms: Option<u64>,
+}
+
+/// A QMD collection configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct QmdCollection {
+    /// Paths to include in this collection.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Glob patterns to filter files.
+    #[serde(default)]
+    pub globs: Vec<String>,
 }
 
 /// Hooks configuration section (shell hooks defined in config file).
@@ -390,6 +431,7 @@ pub struct TlsConfig {
     /// Path to the CA certificate (PEM) used for trust instructions.
     pub ca_cert_path: Option<String>,
     /// Port for the plain-HTTP redirect/CA-download server.
+    /// Defaults to the gateway port + 1 when not set.
     pub http_redirect_port: Option<u16>,
 }
 
@@ -401,7 +443,7 @@ impl Default for TlsConfig {
             cert_path: None,
             key_path: None,
             ca_cert_path: None,
-            http_redirect_port: Some(18790),
+            http_redirect_port: None,
         }
     }
 }

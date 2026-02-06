@@ -11,6 +11,7 @@ axum                  = { workspace = true }
 axum-extra            = { features = ["cookie"], version = "0.10" }
 axum-server           = { optional = true, workspace = true }
 base64                = { workspace = true }
+chrono                = { features = ["serde"], optional = true, version = "0.4" }
 dashmap               = "6"
 directories.workspace = true
 futures               = { workspace = true }
@@ -32,11 +33,13 @@ moltis-onboarding     = { workspace = true }
 moltis-plugins        = { workspace = true }
 moltis-projects       = { workspace = true }
 moltis-protocol       = { workspace = true }
+moltis-qmd            = { optional = true, workspace = true }
 moltis-routing        = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tools          = { workspace = true }
+p256                  = { features = ["ecdsa"], optional = true, version = "0.13" }
 password-hash         = "0.5"
 pulldown-cmark        = { default-features = false, features = ["html"], version = "0.12" }
 rand                  = { workspace = true }
@@ -49,6 +52,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
 sqlx                  = { workspace = true }
+time                  = { optional = true, workspace = true }
 tokio                 = { workspace = true }
 tokio-rustls          = { optional = true, workspace = true }
 tokio-stream          = { workspace = true }
@@ -58,6 +62,7 @@ tower-http            = { features = ["cors"], version = "0.6" }
 tracing               = { workspace = true }
 tracing-subscriber    = { workspace = true }
 uuid                  = { workspace = true }
+web-push              = { optional = true, version = "0.10" }
 webauthn-rs           = { features = ["danger-allow-state-serialisation"], version = "0.5" }
 webauthn-rs-proto     = "0.5"
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
@@ -65,17 +70,36 @@ openssl     = { workspace = true }
 urlencoding = "2.1.3"
 
 [features]
-default          = ["file-watcher", "local-llm", "metrics", "prometheus", "tailscale", "tls", "web-ui"]
-file-watcher     = ["moltis-memory/file-watcher"]
+default = [
+  "file-watcher",
+  "local-llm",
+  "metrics",
+  "prometheus",
+  "push-notifications",
+  "qmd",
+  "tailscale",
+  "tls",
+  "web-ui",
+]
+file-watcher = ["moltis-memory/file-watcher"]
 local-embeddings = ["moltis-memory/local-embeddings"]
-local-llm        = ["moltis-agents/local-llm"]
-local-llm-cuda   = ["moltis-agents/local-llm-cuda"]
-local-llm-metal  = ["moltis-agents/local-llm-metal"]
-metrics          = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
-prometheus       = ["metrics", "moltis-metrics/prometheus"]
-tailscale        = []
-tls              = ["dep:axum-server", "dep:rcgen", "dep:rustls", "dep:rustls-pemfile", "dep:tokio-rustls"]
-web-ui           = ["dep:include_dir"]
+local-llm = ["moltis-agents/local-llm"]
+local-llm-cuda = ["moltis-agents/local-llm-cuda"]
+local-llm-metal = ["moltis-agents/local-llm-metal"]
+metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
+prometheus = ["metrics", "moltis-metrics/prometheus"]
+push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
+qmd = ["dep:moltis-qmd"]
+tailscale = []
+tls = [
+  "dep:axum-server",
+  "dep:rcgen",
+  "dep:rustls",
+  "dep:rustls-pemfile",
+  "dep:time",
+  "dep:tokio-rustls",
+]
+web-ui = ["dep:include_dir"]
 
 [dev-dependencies]
 reqwest           = { workspace = true }

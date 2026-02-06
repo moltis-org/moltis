@@ -79,6 +79,16 @@ impl MemoryManager {
         self.embedder.is_some()
     }
 
+    /// Get the citation mode for this manager.
+    pub fn citation_mode(&self) -> crate::config::CitationMode {
+        self.config.citations
+    }
+
+    /// Whether LLM reranking is enabled.
+    pub fn llm_reranking_enabled(&self) -> bool {
+        self.config.llm_reranking
+    }
+
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.
     pub async fn sync(&self) -> anyhow::Result<SyncReport> {
         let mut report = SyncReport::default();

@@ -415,6 +415,7 @@ export function switchSession(key, searchContext, projectId) {
 	S.setSessionSwitchInProgress(true);
 	var switchParams = { key: key };
 	if (projectId) switchParams.project_id = projectId;
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Session switch handles many state updates
 	sendRpc("sessions.switch", switchParams).then((res) => {
 		if (res?.ok && res.payload) {
 			var entry = res.payload.entry || {};

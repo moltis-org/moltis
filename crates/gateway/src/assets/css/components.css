@@ -1000,6 +1000,19 @@
   flex-shrink: 0;
 }
 
+.branch-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--warn, #f59e0b);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
 /* ── Tailscale status bar ── */
 
 .info-bar {
