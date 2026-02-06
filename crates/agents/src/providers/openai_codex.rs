@@ -10,7 +10,10 @@ use {
     tracing::{debug, info, trace},
 };
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
+use crate::{
+    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    providers::openai_compat::to_openai_tools,
+};
 
 pub struct OpenAiCodexProvider {
     model: String,
@@ -229,24 +232,7 @@ impl LlmProvider for OpenAiCodexProvider {
         });
 
         if !tools.is_empty() {
-            let api_tools: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| {
-                    // Clone parameters and ensure additionalProperties: false for strict mode
-                    let mut params = t["parameters"].clone();
-                    if let Some(obj) = params.as_object_mut() {
-                        obj.insert("additionalProperties".to_string(), serde_json::json!(false));
-                    }
-                    serde_json::json!({
-                        "type": "function",
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": params,
-                        "strict": true,
-                    })
-                })
-                .collect();
-            body["tools"] = serde_json::Value::Array(api_tools);
+            body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
             body["tool_choice"] = serde_json::json!("auto");
         }
 
@@ -436,24 +422,7 @@ impl LlmProvider for OpenAiCodexProvider {
             });
 
             if !tools.is_empty() {
-                let api_tools: Vec<serde_json::Value> = tools
-                    .iter()
-                    .map(|t| {
-                        // Clone parameters and ensure additionalProperties: false for strict mode
-                        let mut params = t["parameters"].clone();
-                        if let Some(obj) = params.as_object_mut() {
-                            obj.insert("additionalProperties".to_string(), serde_json::json!(false));
-                        }
-                        serde_json::json!({
-                            "type": "function",
-                            "name": t["name"],
-                            "description": t["description"],
-                            "parameters": params,
-                            "strict": true,
-                        })
-                    })
-                    .collect();
-                body["tools"] = serde_json::Value::Array(api_tools);
+                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
                 body["tool_choice"] = serde_json::json!("auto");
             }
 
