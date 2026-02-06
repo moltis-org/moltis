@@ -13,7 +13,7 @@ use {
     tracing::info,
 };
 
-use moltis_agents::providers::{ProviderRegistry, local_gguf};
+use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -536,16 +536,18 @@ impl LocalLlmService for LiveLocalLlmService {
                     }
 
                     // Register the provider in the registry
-                    let gguf_config = local_gguf::LocalGgufConfig {
+                    // Use LocalLlmProvider which auto-detects backend (GGUF or MLX)
+                    let llm_config = local_llm::LocalLlmConfig {
                         model_id: model_id_clone.clone(),
                         model_path: None,
+                        backend: None, // Auto-detect based on model type
                         context_size: None,
                         gpu_layers: 0,
                         temperature: 0.7,
                         cache_dir,
                     };
 
-                    let provider = Arc::new(local_gguf::LazyLocalGgufProvider::new(gguf_config));
+                    let provider = Arc::new(local_llm::LocalLlmProvider::new(llm_config));
 
                     let mut reg = registry.write().await;
                     reg.register(
