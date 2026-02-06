@@ -638,10 +638,13 @@ pub mod mlx {
     use {
         super::{BackendType, LocalBackend, LocalLlmConfig},
         crate::providers::local_llm::models::{
-            self, LocalModelDef,
+            LocalModelDef,
             chat_templates::{ChatTemplateHint, format_messages},
         },
     };
+
+    // Import the models module for model lookup and download
+    use crate::providers::local_llm::models;
 
     /// MLX backend implementation.
     pub struct MlxBackend {
@@ -665,50 +668,14 @@ pub mod mlx {
 
             info!(installation = ?installation, "detected MLX installation");
 
-            // Resolve model - for MLX, paths can be:
-            // 1. Local directory with MLX model files
-            // 2. HuggingFace repo ID (e.g., "mlx-community/Llama-3.2-1B-Instruct-4bit")
-            // mlx_lm handles downloading HF repos automatically
-            let (model_path, model_def) = if let Some(path) = &config.model_path {
-                // If it's a local path that exists, use it directly
-                // Otherwise, treat it as a HuggingFace repo ID (mlx_lm handles the download)
-                if path.exists() {
-                    (path.clone(), models::find_model(&config.model_id))
-                } else {
-                    // Check if it looks like a HuggingFace repo (contains /)
-                    let path_str = path.to_string_lossy();
-                    if path_str.contains('/') && !path_str.starts_with('/') {
-                        // Treat as HuggingFace repo ID
-                        info!(
-                            hf_repo = %path_str,
-                            "using HuggingFace repo (mlx_lm will download if needed)"
-                        );
-                        (path.clone(), models::find_model(&config.model_id))
-                    } else {
-                        bail!("model path not found: {}", path.display());
-                    }
-                }
-            } else {
-                let Some(def) = models::find_model(&config.model_id) else {
-                    bail!("unknown model '{}' for MLX backend", config.model_id);
-                };
-
-                // For MLX, we use the HuggingFace repo directly
-                // mlx-lm will handle downloading/caching
-                let hf_repo = def.mlx_repo.unwrap_or(def.gguf_repo);
-                (PathBuf::from(hf_repo), Some(def))
-            };
-
-            let context_size = config
-                .context_size
-                .or_else(|| model_def.map(|d| d.context_window))
-                .unwrap_or(8192);
+            // Resolve model - for MLX, we always download models to local cache
+            let (model_path, model_def, context_size) = resolve_mlx_model(config).await?;
 
             info!(
                 model = %config.model_id,
                 path = %model_path.display(),
                 context_size,
-                "initialized MLX backend"
+                "initialized MLX backend with locally cached model"
             );
 
             Ok(Self {
@@ -1041,6 +1008,70 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
         let _ = tx.blocking_send(StreamEvent::Delta(text));
 
         Ok((input_tokens, output_tokens))
+    }
+
+    /// Resolve an MLX model, downloading it if necessary.
+    ///
+    /// Checks both the unified and legacy registries, downloads the model
+    /// to the local cache, and returns the path to the model directory.
+    async fn resolve_mlx_model(
+        config: &LocalLlmConfig,
+    ) -> Result<(PathBuf, Option<&'static LocalModelDef>, u32)> {
+        // If a custom path is provided, use it directly (if it exists)
+        if let Some(path) = &config.model_path {
+            if path.exists() {
+                info!(
+                    path = %path.display(),
+                    "using custom MLX model path"
+                );
+                let model_def = models::find_model(&config.model_id);
+                let context_size = config
+                    .context_size
+                    .or_else(|| model_def.map(|d| d.context_window))
+                    .unwrap_or(8192);
+                return Ok((path.clone(), model_def, context_size));
+            } else {
+                bail!("model path not found: {}", path.display());
+            }
+        }
+
+        // First, check the unified registry
+        if let Some(def) = models::find_model(&config.model_id) {
+            if def.has_mlx() {
+                info!(
+                    model = config.model_id,
+                    mlx_repo = ?def.mlx_repo,
+                    "found model in unified registry, downloading"
+                );
+                let model_path = models::ensure_mlx_model(def, &config.cache_dir).await?;
+                let context_size = config.context_size.unwrap_or(def.context_window);
+                return Ok((model_path, Some(def), context_size));
+            }
+        }
+
+        // Check the legacy registry (for models like mlx-qwen2.5-coder-1.5b-4bit)
+        if let Some(legacy_def) = crate::providers::local_gguf::models::find_model(&config.model_id)
+        {
+            if legacy_def.backend == crate::providers::local_gguf::models::ModelBackend::Mlx {
+                info!(
+                    model = config.model_id,
+                    hf_repo = legacy_def.hf_repo,
+                    "found model in legacy registry, downloading"
+                );
+                let model_path = crate::providers::local_gguf::models::ensure_mlx_model(
+                    legacy_def,
+                    &config.cache_dir,
+                )
+                .await?;
+                let context_size = config.context_size.unwrap_or(legacy_def.context_window);
+                return Ok((model_path, None, context_size));
+            }
+        }
+
+        bail!(
+            "unknown MLX model '{}'. Use model_path for custom MLX models.",
+            config.model_id
+        );
     }
 }
 

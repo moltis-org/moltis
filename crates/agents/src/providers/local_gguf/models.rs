@@ -497,6 +497,250 @@ where
     Ok(model_path)
 }
 
+// ── MLX Model Download ───────────────────────────────────────────────────────
+
+/// Ensure an MLX model is downloaded, returning the path to the model directory.
+///
+/// MLX models are directories containing multiple files (config.json, model.safetensors, etc.).
+pub async fn ensure_mlx_model(
+    model: &GgufModelDef,
+    cache_dir: &PathBuf,
+) -> anyhow::Result<PathBuf> {
+    ensure_mlx_model_with_progress(model, cache_dir, |_| {}).await
+}
+
+/// Ensure an MLX model is downloaded with progress reporting.
+pub async fn ensure_mlx_model_with_progress<F>(
+    model: &GgufModelDef,
+    cache_dir: &PathBuf,
+    mut on_progress: F,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnMut(DownloadProgress),
+{
+    if model.backend != ModelBackend::Mlx {
+        anyhow::bail!(
+            "model '{}' is not an MLX model (backend: {:?})",
+            model.id,
+            model.backend
+        );
+    }
+
+    // Create model directory using sanitized repo name
+    let model_dir_name = model.hf_repo.replace('/', "__");
+    let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+
+    // Check if model is already fully downloaded
+    let config_path = model_dir.join("config.json");
+    let model_path = model_dir.join("model.safetensors");
+    let index_path = model_dir.join("model.safetensors.index.json");
+
+    // A model is considered cached if it has config.json and either model.safetensors or an index file
+    if config_path.exists() && (model_path.exists() || index_path.exists()) {
+        info!(
+            path = %model_dir.display(),
+            model = model.id,
+            "MLX model found in cache"
+        );
+        return Ok(model_dir);
+    }
+
+    // Create the model directory
+    tokio::fs::create_dir_all(&model_dir)
+        .await
+        .context("creating MLX model cache dir")?;
+
+    info!(
+        hf_repo = model.hf_repo,
+        model = model.id,
+        "downloading MLX model from HuggingFace"
+    );
+
+    // First, get the list of files in the repository
+    let files = list_hf_repo_files(model.hf_repo).await?;
+    debug!(file_count = files.len(), "found files in HuggingFace repo");
+
+    // Filter to only the files we need
+    let files_to_download: Vec<String> = files
+        .into_iter()
+        .filter(|f| {
+            // Include essential config/tokenizer files
+            matches!(
+                f.as_str(),
+                "config.json"
+                    | "model.safetensors"
+                    | "model.safetensors.index.json"
+                    | "tokenizer.json"
+                    | "tokenizer_config.json"
+                    | "special_tokens_map.json"
+                    | "generation_config.json"
+            )
+            // Include sharded weight files
+            || (f.starts_with("model-") && f.ends_with(".safetensors"))
+            || (f.starts_with("weights.") && f.ends_with(".safetensors"))
+            // Include any .safetensors file
+            || f.ends_with(".safetensors")
+        })
+        .collect();
+
+    if files_to_download.is_empty() {
+        anyhow::bail!(
+            "no model files found in HuggingFace repo '{}'",
+            model.hf_repo
+        );
+    }
+
+    info!(
+        file_count = files_to_download.len(),
+        "downloading files for MLX model"
+    );
+    debug!(files = ?files_to_download, "files to download");
+
+    // Download each file
+    let mut total_downloaded: u64 = 0;
+    for filename in &files_to_download {
+        let file_path = model_dir.join(filename);
+
+        // Skip if already downloaded
+        if file_path.exists() {
+            debug!(file = filename, "file already cached, skipping");
+            continue;
+        }
+
+        // Create parent directories if needed (for sharded files)
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            model.hf_repo, filename
+        );
+        debug!(url = %url, file = filename, "downloading file");
+
+        let downloaded = download_mlx_file(&url, &file_path, |progress| {
+            on_progress(DownloadProgress {
+                downloaded: total_downloaded + progress.downloaded,
+                total: None,
+            });
+        })
+        .await
+        .with_context(|| format!("downloading {}", filename))?;
+
+        total_downloaded += downloaded;
+        debug!(
+            file = filename,
+            size_mb = downloaded / (1024 * 1024),
+            "file downloaded"
+        );
+    }
+
+    // Final progress report
+    on_progress(DownloadProgress {
+        downloaded: total_downloaded,
+        total: Some(total_downloaded),
+    });
+
+    info!(
+        path = %model_dir.display(),
+        total_size_mb = total_downloaded / (1024 * 1024),
+        model = model.id,
+        "MLX model downloaded successfully"
+    );
+
+    Ok(model_dir)
+}
+
+/// List files in a HuggingFace repository.
+async fn list_hf_repo_files(repo: &str) -> anyhow::Result<Vec<String>> {
+    let url = format!("https://huggingface.co/api/models/{}/tree/main", repo);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("User-Agent", "moltis/1.0")
+        .send()
+        .await
+        .context("fetching HuggingFace repo file list")?
+        .error_for_status()
+        .with_context(|| format!("HuggingFace API error for repo '{}'", repo))?;
+
+    let entries: Vec<serde_json::Value> = response
+        .json()
+        .await
+        .context("parsing HuggingFace API response")?;
+
+    // Extract file paths from the response
+    let files: Vec<String> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            if entry["type"].as_str() == Some("file") {
+                entry["path"].as_str().map(String::from)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(files)
+}
+
+/// Download a single file with progress reporting.
+async fn download_mlx_file<F>(url: &str, path: &PathBuf, mut on_progress: F) -> anyhow::Result<u64>
+where
+    F: FnMut(DownloadProgress),
+{
+    let client = reqwest::Client::new();
+    let response = client
+        .get(url)
+        .header("User-Agent", "moltis/1.0")
+        .send()
+        .await
+        .context("starting download")?
+        .error_for_status()
+        .context("download failed")?;
+
+    let total = response.content_length();
+    let mut downloaded: u64 = 0;
+
+    on_progress(DownloadProgress { downloaded, total });
+
+    let tmp_path = path.with_extension("tmp");
+    let mut file = tokio::fs::File::create(&tmp_path)
+        .await
+        .context("creating temp file")?;
+
+    let mut stream = response.bytes_stream();
+    let mut last_report = std::time::Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("reading chunk")?;
+        downloaded += chunk.len() as u64;
+
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+            .await
+            .context("writing chunk")?;
+
+        if last_report.elapsed() >= std::time::Duration::from_millis(100) {
+            on_progress(DownloadProgress { downloaded, total });
+            last_report = std::time::Instant::now();
+        }
+    }
+
+    on_progress(DownloadProgress { downloaded, total });
+
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .context("flushing file")?;
+    drop(file);
+
+    tokio::fs::rename(&tmp_path, path)
+        .await
+        .context("renaming file")?;
+
+    Ok(downloaded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
