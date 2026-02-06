@@ -102,16 +102,25 @@ documentation, and avoids stringly-typed field access. Reserve
   library-level errors that callers need to match on.
 - Propagate errors with `?`; avoid `.unwrap()` outside of tests.
 
-### Date and time
+### Date, time, and crate reuse
 
-Never hand-roll date/time arithmetic (epoch conversions, calendar math,
-seconds-per-day constants). Use the **`time`** crate, which is already a
-workspace dependency. For example, to get `YYYY-MM-DD`:
+Prefer short, readable code that leverages existing workspace crates over
+hand-rolled arithmetic. For date/time specifically, use the **`time`** crate
+(already a workspace dependency) instead of manual epoch conversions,
+calendar math, or magic constants like `86400`:
 
 ```rust
-let d = time::OffsetDateTime::now_utc().date();
-format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day());
+// Good — concise, self-documenting
+time::Duration::days(30).unsigned_abs()
+time::OffsetDateTime::now_utc().date()
+
+// Bad — manual arithmetic, magic constants
+days * 86400
+days * 24 * 60 * 60
 ```
+
+This principle applies broadly: if a crate in the workspace already
+provides a clear one-liner, use it rather than reimplementing the logic.
 
 The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
 whichever is already imported in the crate you're editing, but default to
