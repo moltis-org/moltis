@@ -113,6 +113,21 @@ function appendToolResult(toolCard, result) {
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
 	}
+	// Browser screenshot support - display as thumbnail
+	if (result.screenshot) {
+		var imgContainer = document.createElement("div");
+		imgContainer.className = "screenshot-container";
+		var img = document.createElement("img");
+		img.src = `data:image/png;base64,${result.screenshot}`;
+		img.className = "screenshot-thumbnail";
+		img.alt = "Browser screenshot";
+		img.title = "Click to view full size";
+		img.onclick = () => {
+			window.open(img.src, "_blank");
+		};
+		imgContainer.appendChild(img);
+		toolCard.appendChild(imgContainer);
+	}
 }
 
 function handleChatToolCallEnd(p, isActive, isChatPage) {

@@ -341,6 +341,22 @@
     font-size: 0.78rem;
     color: var(--error);
   }
+  /* Browser screenshot thumbnail */
+  .screenshot-container {
+    margin-top: 8px;
+  }
+  .screenshot-thumbnail {
+    max-width: 200px;
+    max-height: 150px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .screenshot-thumbnail:hover {
+    border-color: var(--accent);
+    transform: scale(1.02);
+  }
   .msg code {
     background: var(--surface2);
     padding: 1px 6px;
