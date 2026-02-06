@@ -126,12 +126,12 @@ function SecurityWarning() {
 		dismissed.value = true;
 	}
 	return html`<div class="skills-warn">
-    <div class="skills-warn-title">Security Warning: Review skills before installing</div>
-    <div>Skills are community-authored instructions that the AI agent follows. A malicious skill can instruct the agent to:</div>
+    <div class="skills-warn-title">\u26a0\ufe0f Skills run code on your machine \u2014 treat every skill as untrusted</div>
+    <div>Skills are community-authored instructions that the AI agent follows <strong>with your full system privileges</strong>. Popularity or download count does not mean a skill is safe. A malicious skill can instruct the agent to:</div>
     <ul style="margin:6px 0 6px 18px;padding:0">
       ${threats.map((t) => html`<li>${t}</li>`)}
     </ul>
-    <div style="margin-top:4px">Only install skills from authors and repositories you trust. Always read the full SKILL.md before enabling a skill \u2014 the instructions in the body are what the agent will execute.</div>
+    <div style="margin-top:4px"><strong>Triple-check the source code</strong> of every skill before enabling it. Read the full SKILL.md and any scripts it references \u2014 these are the exact instructions the agent will execute on your behalf. Do not trust a skill just because it is popular, highly downloaded, or appears on a leaderboard.</div>
     <div style="margin-top:6px;color:var(--success, #4a4)">With sandbox mode enabled (Docker, Apple Container, or cgroup), command execution is isolated and the damage a malicious skill can do is significantly limited.</div>
     <button onClick=${dismiss} style="margin-top:8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.72rem;padding:3px 10px;cursor:pointer;color:var(--muted)">Dismiss</button>
   </div>`;

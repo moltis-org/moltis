@@ -46,13 +46,25 @@ injectMarkdownStyles();
 initPWA();
 initMobile();
 
+// State for favicon/title restoration when switching branches.
+var originalFavicons = [];
+var originalTitle = document.title;
+
 // Apply server-injected identity immediately (no async wait), and
 // keep the header in sync whenever gon.identity is refreshed.
-applyIdentity(gon.get("identity"));
+try {
+	applyIdentity(gon.get("identity"));
+} catch (_) {
+	// Non-fatal — page still works without identity in the header.
+}
 gon.onChange("identity", applyIdentity);
 
 // Show git branch banner when running on a non-main branch.
-showBranchBanner(gon.get("git_branch"));
+try {
+	showBranchBanner(gon.get("git_branch"));
+} catch (_) {
+	// Non-fatal — branch indicator is cosmetic.
+}
 gon.onChange("git_branch", showBranchBanner);
 onEvent("session", (payload) => {
 	fetchSessions();
@@ -110,9 +122,6 @@ function showOnboardingBanner() {
 	var el = document.getElementById("onboardingBanner");
 	if (el) el.style.display = "";
 }
-
-var originalFavicons = [];
-var originalTitle = document.title;
 
 function showBranchBanner(branch) {
 	var el = document.getElementById("branchBanner");
