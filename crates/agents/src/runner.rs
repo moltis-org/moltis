@@ -712,7 +712,14 @@ pub async fn run_agent_loop_streaming(
         // Accumulate text and tool calls from the stream.
         let mut accumulated_text = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
+        // Map streaming index → accumulated JSON args string.
         let mut tool_call_args: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        // Map streaming index → position in the `tool_calls` vec.
+        // The streaming index may not start at 0 (e.g. Copilot proxying
+        // Anthropic uses the content-block index, so a text block at index 0
+        // pushes the tool_use to index 1).
+        let mut stream_idx_to_vec_pos: std::collections::HashMap<usize, usize> =
             std::collections::HashMap::new();
         let mut input_tokens: u32 = 0;
         let mut output_tokens: u32 = 0;
@@ -727,12 +734,14 @@ pub async fn run_agent_loop_streaming(
                     }
                 },
                 StreamEvent::ToolCallStart { id, name, index } => {
-                    debug!(tool = %name, id = %id, index, "tool call started in stream");
+                    let vec_pos = tool_calls.len();
+                    debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
                     tool_calls.push(ToolCall {
                         id,
                         name,
                         arguments: serde_json::json!({}),
                     });
+                    stream_idx_to_vec_pos.insert(index, vec_pos);
                     tool_call_args.insert(index, String::new());
                 },
                 StreamEvent::ToolCallArgumentsDelta { index, delta } => {
@@ -773,12 +782,15 @@ pub async fn run_agent_loop_streaming(
         total_output_tokens = total_output_tokens.saturating_add(output_tokens);
 
         // Finalize tool call arguments from accumulated strings.
-        for (index, args_str) in &tool_call_args {
-            if *index < tool_calls.len()
+        // Use stream_idx_to_vec_pos to map streaming indices (which may not
+        // start at 0) to the actual position in the tool_calls vec.
+        for (stream_idx, args_str) in &tool_call_args {
+            if let Some(&vec_pos) = stream_idx_to_vec_pos.get(stream_idx)
+                && vec_pos < tool_calls.len()
                 && !args_str.is_empty()
                 && let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str)
             {
-                tool_calls[*index].arguments = args;
+                tool_calls[vec_pos].arguments = args;
             }
         }
 
@@ -1850,5 +1862,314 @@ mod tests {
         let input = format!("code: {hex}");
         let result = sanitize_tool_result(&input, 50_000);
         assert!(result.contains(hex));
+    }
+
+    // ── Streaming tool-call index mapping tests ─────────────────────
+
+    /// Mock streaming provider that emits text + a tool call at a non-zero
+    /// streaming index. This simulates GitHub Copilot proxying Anthropic
+    /// where the text content block is at index 0 and the tool_use block
+    /// is at index 1.
+    ///
+    /// On the first call it streams text + tool call (index 1).
+    /// On the second call it streams a final text response.
+    struct NonZeroIndexStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NonZeroIndexStreamProvider {
+        fn name(&self) -> &str {
+            "mock-nonzero-idx"
+        }
+
+        fn id(&self) -> &str {
+            "mock-nonzero-idx"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(_messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            _messages: Vec<serde_json::Value>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                // First call: text block (implicit index 0) then tool call at index 1.
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("I'll create that for you.".into()),
+                    StreamEvent::ToolCallStart {
+                        id: "call_abc".into(),
+                        name: "echo_tool".into(),
+                        index: 1, // non-zero — the bug trigger
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: r#"{"text""#.into(),
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: r#": "hello"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 1 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    }),
+                ]))
+            } else {
+                // Second call: just text.
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Done!".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 3,
+                    }),
+                ]))
+            }
+        }
+    }
+
+    /// Regression test: when a streaming provider emits a tool call with a
+    /// non-zero index (e.g. index 1 because index 0 is a text block), the
+    /// runner must still correctly assemble the tool call arguments.
+    ///
+    /// Before the fix, the finalization code used the streaming index as the
+    /// vec position directly: `tool_calls[1]` when `tool_calls.len() == 1`,
+    /// silently dropping the arguments.
+    #[tokio::test]
+    async fn test_streaming_nonzero_tool_call_index_preserves_args() {
+        let provider = Arc::new(NonZeroIndexStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Create something",
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // The tool should have been called with the correct arguments.
+        assert_eq!(result.tool_calls_made, 1, "should execute 1 tool call");
+        assert_eq!(result.iterations, 2, "tool call + final text");
+        assert!(
+            result.text.contains("Done!"),
+            "final text should be 'Done!'"
+        );
+
+        // Verify the tool was actually invoked with the correct args, not {}.
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                arguments, name, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should have a ToolCallStart event");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "echo_tool");
+        // The args in RunnerEvent::ToolCallStart should contain the parsed arguments.
+        assert_eq!(
+            args["text"].as_str(),
+            Some("hello"),
+            "tool call arguments must not be empty — got: {args}"
+        );
+    }
+
+    /// Similar to the above, but with TWO tool calls at non-zero indices
+    /// (e.g. index 2 and 4 with text blocks in between) to ensure the
+    /// mapping handles multiple non-contiguous indices.
+    struct MultiNonZeroIndexStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for MultiNonZeroIndexStreamProvider {
+        fn name(&self) -> &str {
+            "mock-multi-nonzero"
+        }
+
+        fn id(&self) -> &str {
+            "mock-multi-nonzero"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                },
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(_messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            _messages: Vec<serde_json::Value>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                // Two tool calls with gaps: indices 1 and 3 (text at 0 and 2).
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Starting...".into()),
+                    StreamEvent::ToolCallStart {
+                        id: "call_1".into(),
+                        name: "echo_tool".into(),
+                        index: 1,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 1,
+                        delta: r#"{"text": "first"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 1 },
+                    StreamEvent::ToolCallStart {
+                        id: "call_2".into(),
+                        name: "echo_tool".into(),
+                        index: 3,
+                    },
+                    StreamEvent::ToolCallArgumentsDelta {
+                        index: 3,
+                        delta: r#"{"text": "second"}"#.into(),
+                    },
+                    StreamEvent::ToolCallComplete { index: 3 },
+                    StreamEvent::Done(Usage {
+                        input_tokens: 15,
+                        output_tokens: 10,
+                    }),
+                ]))
+            } else {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("All done!".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 3,
+                    }),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_multiple_nonzero_indices() {
+        let provider = Arc::new(MultiNonZeroIndexStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EchoTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Do two things",
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.tool_calls_made, 2, "should execute 2 tool calls");
+        assert!(result.text.contains("All done!"));
+
+        // Verify both tool calls had correct arguments.
+        let evts = events.lock().unwrap();
+        let tool_starts: Vec<_> = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::ToolCallStart { arguments, .. } = e {
+                    Some(arguments.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(tool_starts.len(), 2, "should have 2 ToolCallStart events");
+        assert_eq!(
+            tool_starts[0]["text"].as_str(),
+            Some("first"),
+            "first tool call args — got: {}",
+            tool_starts[0]
+        );
+        assert_eq!(
+            tool_starts[1]["text"].as_str(),
+            Some("second"),
+            "second tool call args — got: {}",
+            tool_starts[1]
+        );
     }
 }

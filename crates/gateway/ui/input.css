@@ -765,9 +765,15 @@
     min-width: 0;
   }
   .session-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 0.82rem;
     color: var(--text);
     white-space: nowrap;
+    min-width: 0;
+  }
+  .session-label [data-label-text] {
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -781,6 +787,7 @@
     gap: 4px;
     opacity: 0;
     transition: opacity 0.15s;
+    flex-shrink: 0;
   }
   .session-item:hover .session-actions {
     opacity: 1;
@@ -796,6 +803,27 @@
     transition: color 0.15s, background 0.15s;
   }
   .session-action-btn:hover {
+    color: var(--text);
+    background: var(--surface2);
+  }
+  .session-fork-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: color 0.15s, background 0.15s;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .session-fork-btn svg {
+    flex-shrink: 0;
+    min-width: 14px;
+    min-height: 14px;
+  }
+  .session-fork-btn:hover {
     color: var(--text);
     background: var(--surface2);
   }

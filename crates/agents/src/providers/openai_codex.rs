@@ -376,6 +376,15 @@ impl LlmProvider for OpenAiCodexProvider {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let token = match self.get_valid_token() {
                 Ok(t) => t,
@@ -406,7 +415,7 @@ impl LlmProvider for OpenAiCodexProvider {
                 .collect();
             let input = Self::convert_messages(&non_system);
 
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": self.model,
                 "store": false,
                 "stream": true,
@@ -415,6 +424,29 @@ impl LlmProvider for OpenAiCodexProvider {
                 "text": {"verbosity": "medium"},
                 "include": ["reasoning.encrypted_content"],
             });
+
+            if !tools.is_empty() {
+                let api_tools: Vec<serde_json::Value> = tools
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "type": "function",
+                            "name": t["name"],
+                            "description": t["description"],
+                            "parameters": t["parameters"],
+                        })
+                    })
+                    .collect();
+                body["tools"] = serde_json::Value::Array(api_tools);
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            debug!(
+                model = %self.model,
+                messages_count = messages.len(),
+                tools_count = tools.len(),
+                "openai-codex stream_with_tools request"
+            );
 
             let resp = match self
                 .client
@@ -447,6 +479,8 @@ impl LlmProvider for OpenAiCodexProvider {
             let mut buf = String::new();
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
+            // Track function calls by index for streaming tool call events.
+            let mut fn_call_index: usize = 0;
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -485,6 +519,31 @@ impl LlmProvider for OpenAiCodexProvider {
                                         yield StreamEvent::Delta(delta.to_string());
                                     }
                                 }
+                            }
+                            "response.output_item.added" => {
+                                if evt["item"]["type"].as_str() == Some("function_call") {
+                                    let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                                    let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                                    let index = fn_call_index;
+                                    fn_call_index += 1;
+                                    yield StreamEvent::ToolCallStart { id, name, index };
+                                }
+                            }
+                            "response.function_call_arguments.delta" => {
+                                if let Some(delta) = evt["delta"].as_str() {
+                                    if !delta.is_empty() {
+                                        // The current tool call is fn_call_index - 1
+                                        let index = fn_call_index.saturating_sub(1);
+                                        yield StreamEvent::ToolCallArgumentsDelta {
+                                            index,
+                                            delta: delta.to_string(),
+                                        };
+                                    }
+                                }
+                            }
+                            "response.function_call_arguments.done" => {
+                                let index = fn_call_index.saturating_sub(1);
+                                yield StreamEvent::ToolCallComplete { index };
                             }
                             "response.completed" => {
                                 if let Some(u) = evt["response"]["usage"].as_object() {

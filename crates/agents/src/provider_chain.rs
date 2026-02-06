@@ -327,16 +327,24 @@ impl LlmProvider for ProviderChain {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         // For streaming, we try the first non-tripped provider.
         // If the stream yields an Error event, we can't transparently retry mid-stream,
         // so we pick the best available provider upfront.
         for entry in &self.chain {
             if !entry.state.is_tripped() {
-                return entry.provider.stream(messages);
+                return entry.provider.stream_with_tools(messages, tools);
             }
         }
         // All tripped — try primary anyway (it may have cooled down by now).
-        self.primary().provider.stream(messages)
+        self.primary().provider.stream_with_tools(messages, tools)
     }
 }
 
@@ -624,5 +632,114 @@ mod tests {
         let chain = ProviderChain::single(Arc::new(SuccessProvider { id: "only" }));
         assert_eq!(chain.id(), "only");
         assert_eq!(chain.chain.len(), 1);
+    }
+
+    // ── Regression: stream_with_tools must forward tools to the provider ──
+
+    /// A mock provider that records whether stream_with_tools received tools.
+    struct ToolTrackingProvider {
+        received_tools: std::sync::Mutex<Option<Vec<serde_json::Value>>>,
+    }
+
+    impl ToolTrackingProvider {
+        fn new() -> Self {
+            Self {
+                received_tools: std::sync::Mutex::new(None),
+            }
+        }
+
+        fn received_tools_count(&self) -> usize {
+            self.received_tools
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(0, |t| t.len())
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for ToolTrackingProvider {
+        fn name(&self) -> &str {
+            "tool-tracker"
+        }
+
+        fn id(&self) -> &str {
+            "tool-tracker"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("ok".into()),
+                tool_calls: vec![],
+                usage: Usage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                },
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            })))
+        }
+
+        fn stream_with_tools(
+            &self,
+            _messages: Vec<serde_json::Value>,
+            tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            *self.received_tools.lock().unwrap() = Some(tools);
+            Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+            })))
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_stream_with_tools_forwards_tools() {
+        // Regression test: before the fix, ProviderChain::stream_with_tools()
+        // used the default trait impl which dropped tools and called stream().
+        let tracker = Arc::new(ToolTrackingProvider::new());
+        let chain = ProviderChain::single(tracker.clone());
+
+        let tools = vec![serde_json::json!({
+            "name": "test_tool",
+            "description": "A test",
+            "parameters": {"type": "object"}
+        })];
+
+        let mut stream = chain.stream_with_tools(vec![], tools);
+        while stream.next().await.is_some() {}
+
+        assert_eq!(
+            tracker.received_tools_count(),
+            1,
+            "ProviderChain must forward tools to the underlying provider's stream_with_tools()"
+        );
+    }
+
+    #[tokio::test]
+    async fn chain_stream_with_tools_forwards_empty_tools() {
+        let tracker = Arc::new(ToolTrackingProvider::new());
+        let chain = ProviderChain::single(tracker.clone());
+
+        let mut stream = chain.stream_with_tools(vec![], vec![]);
+        while stream.next().await.is_some() {}
+
+        assert_eq!(tracker.received_tools_count(), 0);
     }
 }

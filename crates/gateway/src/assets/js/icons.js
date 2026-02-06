@@ -31,6 +31,41 @@ export function makeCronIcon() {
 	return svg;
 }
 
+export function makeBranchIcon() {
+	var ns = "http://www.w3.org/2000/svg";
+	var svg = document.createElementNS(ns, "svg");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("viewBox", "0 0 24 24");
+	svg.setAttribute("fill", "none");
+	svg.setAttribute("stroke", "currentColor");
+	svg.setAttribute("stroke-width", "1.5");
+	var path = document.createElementNS(ns, "path");
+	path.setAttribute("stroke-linecap", "round");
+	path.setAttribute("stroke-linejoin", "round");
+	// Simple branch: trunk line + branch curving off to the right
+	path.setAttribute("d", "M4 3v18M20 3v6c0 2-2 3-4 3H4");
+	svg.appendChild(path);
+	return svg;
+}
+
+export function makeForkIcon() {
+	var ns = "http://www.w3.org/2000/svg";
+	var svg = document.createElementNS(ns, "svg");
+	svg.setAttribute("width", "14");
+	svg.setAttribute("height", "14");
+	svg.setAttribute("viewBox", "0 0 24 24");
+	svg.setAttribute("fill", "none");
+	svg.setAttribute("stroke", "currentColor");
+	svg.setAttribute("stroke-width", "1.5");
+	var path = document.createElementNS(ns, "path");
+	path.setAttribute("stroke-linecap", "round");
+	path.setAttribute("stroke-linejoin", "round");
+	path.setAttribute("d", "M4 3v18M20 3v6c0 2-2 3-4 3H4");
+	svg.appendChild(path);
+	return svg;
+}
+
 export function makeChatIcon() {
 	var ns = "http://www.w3.org/2000/svg";
 	var svg = document.createElementNS(ns, "svg");

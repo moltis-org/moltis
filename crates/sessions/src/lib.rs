@@ -7,6 +7,7 @@
 pub mod compaction;
 pub mod key;
 pub mod metadata;
+pub mod state_store;
 pub mod store;
 
 pub use {key::SessionKey, store::SearchResult};

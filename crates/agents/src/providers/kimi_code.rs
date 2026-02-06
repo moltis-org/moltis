@@ -250,6 +250,15 @@ impl LlmProvider for KimiCodeProvider {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let token = match self.get_valid_token().await {
                 Ok(t) => t,
@@ -259,12 +268,24 @@ impl LlmProvider for KimiCodeProvider {
                 }
             };
 
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": self.model,
                 "messages": messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
+
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
+            }
+
+            debug!(
+                model = %self.model,
+                messages_count = messages.len(),
+                tools_count = tools.len(),
+                "kimi-code stream_with_tools request"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code stream request body");
 
             let resp = match self
                 .client
@@ -295,6 +316,7 @@ impl LlmProvider for KimiCodeProvider {
             let mut buf = String::new();
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
+            let mut started_tool_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -329,9 +351,37 @@ impl LlmProvider for KimiCodeProvider {
                             output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
                         }
 
-                        if let Some(delta) = evt["choices"][0]["delta"]["content"].as_str() {
-                            if !delta.is_empty() {
-                                yield StreamEvent::Delta(delta.to_string());
+                        let delta = &evt["choices"][0]["delta"];
+
+                        if let Some(text) = delta["content"].as_str() {
+                            if !text.is_empty() {
+                                yield StreamEvent::Delta(text.to_string());
+                            }
+                        }
+
+                        if let Some(tool_calls) = delta["tool_calls"].as_array() {
+                            for tc in tool_calls {
+                                let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                                if !started_tool_indices.contains(&index) {
+                                    if let Some(id) = tc["id"].as_str() {
+                                        let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
+                                        started_tool_indices.insert(index);
+                                        yield StreamEvent::ToolCallStart { id: id.to_string(), name, index };
+                                    }
+                                }
+                                if let Some(args_delta) = tc["function"]["arguments"].as_str() {
+                                    if !args_delta.is_empty() {
+                                        yield StreamEvent::ToolCallArgumentsDelta { index, delta: args_delta.to_string() };
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(finish) = evt["choices"][0]["finish_reason"].as_str() {
+                            if finish == "tool_calls" {
+                                for &idx in &started_tool_indices {
+                                    yield StreamEvent::ToolCallComplete { index: idx };
+                                }
                             }
                         }
                     }

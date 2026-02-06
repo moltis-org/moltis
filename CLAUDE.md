@@ -567,6 +567,23 @@ a significant piece of work, write a brief session summary to
 `prompts/session-YYYY-MM-DD-<topic>.md` capturing what was done, key decisions,
 and any open items.
 
+## Changelog
+
+This project keeps a changelog at `CHANGELOG.md` following
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). When making
+user-facing changes, **always** update the `[Unreleased]` section with a
+bullet under the appropriate heading:
+
+- **Added** — new features
+- **Changed** — changes in existing functionality
+- **Deprecated** — soon-to-be removed features
+- **Removed** — now removed features
+- **Fixed** — bug fixes
+- **Security** — vulnerability fixes
+
+At release time the `[Unreleased]` section is renamed to the version number
+with a date.
+
 ## Git Workflow
 
 Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): description`

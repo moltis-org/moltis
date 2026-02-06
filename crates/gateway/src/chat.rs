@@ -534,6 +534,14 @@ impl ChatService for LiveChatService {
             },
         };
 
+        // Check if MCP tools are disabled for this session.
+        let mcp_disabled = self
+            .session_metadata
+            .get(&session_key)
+            .await
+            .and_then(|e| e.mcp_disabled)
+            .unwrap_or(false);
+
         let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
@@ -755,6 +763,7 @@ impl ChatService for LiveChatService {
                         hook_registry,
                         accept_language.clone(),
                         Some(&session_store),
+                        mcp_disabled,
                     )
                     .await
                 }
@@ -967,6 +976,7 @@ impl ChatService for LiveChatService {
                 hook_registry,
                 None,
                 Some(&self.session_store),
+                false, // send_sync: MCP tools always enabled for API calls
             )
             .await
         };
@@ -1339,9 +1349,21 @@ impl ChatService for LiveChatService {
         };
 
         // Tools (only include if the provider supports tool calling)
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|e| e.mcp_disabled)
+            .unwrap_or(false);
         let tools: Vec<serde_json::Value> = if supports_tools {
-            let tool_schemas = self.tool_registry.read().await.list_schemas();
-            tool_schemas
+            let registry_guard = self.tool_registry.read().await;
+            let filtered;
+            let effective_registry: &ToolRegistry = if mcp_disabled {
+                filtered = registry_guard.clone_without_mcp();
+                &filtered
+            } else {
+                &registry_guard
+            };
+            effective_registry
+                .list_schemas()
                 .iter()
                 .map(|s| {
                     serde_json::json!({
@@ -1457,6 +1479,7 @@ impl ChatService for LiveChatService {
             "tools": tools,
             "skills": skills_list,
             "mcpServers": mcp_servers,
+            "mcpDisabled": mcp_disabled,
             "sandbox": sandbox_info,
             "supportsTools": supports_tools,
             "tokenUsage": {
@@ -1487,6 +1510,7 @@ async fn run_with_tools(
     hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
     accept_language: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
+    mcp_disabled: bool,
 ) -> Option<(String, u32, u32)> {
     // Load identity and user profile from config so the LLM knows who it is.
     let config = moltis_config::discover_and_load();
@@ -1497,8 +1521,15 @@ async fn run_with_tools(
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
         let registry_guard = tool_registry.read().await;
+        let owned_filtered;
+        let tools_for_prompt: &ToolRegistry = if mcp_disabled {
+            owned_filtered = registry_guard.clone_without_mcp();
+            &owned_filtered
+        } else {
+            &registry_guard
+        };
         let prompt = build_system_prompt_with_session(
-            &registry_guard,
+            tools_for_prompt,
             native_tools,
             project_context,
             session_context,
@@ -1650,9 +1681,16 @@ async fn run_with_tools(
 
     let provider_ref = provider.clone();
     let registry_guard = tool_registry.read().await;
+    let owned_filtered_loop;
+    let tools_for_loop: &ToolRegistry = if mcp_disabled {
+        owned_filtered_loop = registry_guard.clone_without_mcp();
+        &owned_filtered_loop
+    } else {
+        &registry_guard
+    };
     let first_result = run_agent_loop_streaming(
         provider,
-        &registry_guard,
+        tools_for_loop,
         &system_prompt,
         text,
         Some(&on_event),
@@ -1714,7 +1752,7 @@ async fn run_with_tools(
 
                     run_agent_loop_streaming(
                         provider_ref.clone(),
-                        &registry_guard,
+                        tools_for_loop,
                         &system_prompt,
                         text,
                         Some(&on_event),

@@ -66,6 +66,8 @@ pub trait SessionService: Send + Sync {
     async fn delete(&self, params: Value) -> ServiceResult;
     async fn compact(&self, params: Value) -> ServiceResult;
     async fn search(&self, params: Value) -> ServiceResult;
+    async fn fork(&self, params: Value) -> ServiceResult;
+    async fn branches(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopSessionService;
@@ -101,6 +103,14 @@ impl SessionService for NoopSessionService {
     }
 
     async fn search(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn fork(&self, _p: Value) -> ServiceResult {
+        Err("session forking not available".into())
+    }
+
+    async fn branches(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!([]))
     }
 }
@@ -652,6 +662,13 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn skill_disable(&self, params: Value) -> ServiceResult {
+        let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Personal/project skills live as files — delete the directory to disable.
+        if source == "personal" || source == "project" {
+            return delete_discovered_skill(source, &params);
+        }
+
         toggle_skill(&params, false)
     }
 
@@ -666,6 +683,11 @@ impl SkillsService for NoopSkillsService {
             .get("skill")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+        // Personal/project skills: look up directly by name in discovered paths.
+        if source == "personal" || source == "project" {
+            return skill_detail_discovered(source, skill_name);
+        }
 
         let install_dir =
             moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
@@ -926,6 +948,13 @@ impl PluginsService for NoopPluginsService {
     }
 
     async fn skill_disable(&self, params: Value) -> ServiceResult {
+        let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Personal/project skills live as files — delete the directory to disable.
+        if source == "personal" || source == "project" {
+            return delete_discovered_skill(source, &params);
+        }
+
         toggle_plugin_skill(&params, false)
     }
 
@@ -1026,6 +1055,77 @@ fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
     store.save(&manifest).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
+}
+
+/// Delete a personal or project skill directory to disable it.
+fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
+    let skill_name = params
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+    if !moltis_skills::parse::validate_name(skill_name) {
+        return Err(format!("invalid skill name '{skill_name}'"));
+    }
+
+    let search_dir = if source_type == "personal" {
+        moltis_config::data_dir().join("skills")
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(".moltis/skills")
+    };
+
+    let skill_dir = search_dir.join(skill_name);
+    if !skill_dir.exists() {
+        return Err(format!("skill '{skill_name}' not found"));
+    }
+
+    std::fs::remove_dir_all(&skill_dir)
+        .map_err(|e| format!("failed to delete skill '{skill_name}': {e}"))?;
+
+    Ok(serde_json::json!({ "source": source_type, "skill": skill_name, "deleted": true }))
+}
+
+/// Load skill detail for a personal or project skill by name.
+fn skill_detail_discovered(source_type: &str, skill_name: &str) -> ServiceResult {
+    use moltis_skills::requirements::check_requirements;
+
+    // Build search paths for the requested source type.
+    let search_dir = if source_type == "personal" {
+        moltis_config::data_dir().join("skills")
+    } else {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join(".moltis/skills")
+    };
+
+    let skill_dir = search_dir.join(skill_name);
+    let skill_md = skill_dir.join("SKILL.md");
+    let raw = std::fs::read_to_string(&skill_md)
+        .map_err(|e| format!("failed to read SKILL.md for '{skill_name}': {e}"))?;
+
+    let content = moltis_skills::parse::parse_skill(&raw, &skill_dir)
+        .map_err(|e| format!("failed to parse SKILL.md: {e}"))?;
+
+    let elig = check_requirements(&content.metadata);
+
+    Ok(serde_json::json!({
+        "name": content.metadata.name,
+        "description": content.metadata.description,
+        "license": content.metadata.license,
+        "compatibility": content.metadata.compatibility,
+        "allowed_tools": content.metadata.allowed_tools,
+        "requires": content.metadata.requires,
+        "eligible": elig.eligible,
+        "missing_bins": elig.missing_bins,
+        "install_options": elig.install_options,
+        "enabled": true,
+        "body": content.body,
+        "body_html": markdown_to_html(&content.body),
+        "source": source_type,
+        "path": skill_dir.to_string_lossy(),
+    }))
 }
 
 fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {

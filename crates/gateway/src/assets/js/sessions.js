@@ -10,7 +10,7 @@ import {
 	updateTokenBar,
 } from "./chat-ui.js";
 import { formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
-import { makeChatIcon, makeCronIcon, makeTelegramIcon } from "./icons.js";
+import { makeBranchIcon, makeChatIcon, makeCronIcon, makeForkIcon, makeTelegramIcon } from "./icons.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -48,13 +48,18 @@ function isTelegramSession(s) {
 	}
 }
 
-function createSessionIcon(s) {
+function pickSessionIcon(s, isBranch) {
+	if (isBranch) return makeBranchIcon();
+	if (s.key.startsWith("cron:")) return makeCronIcon();
+	if (isTelegramSession(s)) return makeTelegramIcon();
+	return makeChatIcon();
+}
+
+function createSessionIcon(s, isBranch) {
 	var iconWrap = document.createElement("span");
 	iconWrap.className = "session-icon";
+	iconWrap.appendChild(pickSessionIcon(s, isBranch));
 	var telegram = isTelegramSession(s);
-	var cron = s.key.startsWith("cron:");
-	var icon = cron ? makeCronIcon() : telegram ? makeTelegramIcon() : makeChatIcon();
-	iconWrap.appendChild(icon);
 	if (telegram) {
 		iconWrap.style.color = s.activeChannel ? "var(--accent)" : "var(--muted)";
 		iconWrap.style.opacity = s.activeChannel ? "1" : "0.5";
@@ -74,6 +79,9 @@ function createSessionMeta(s) {
 	meta.setAttribute("data-session-key", s.key);
 	var count = s.messageCount || 0;
 	var metaText = `${count} msg${count !== 1 ? "s" : ""}`;
+	if (s.forkPoint != null) {
+		metaText += ` \u00b7 fork@${s.forkPoint}`;
+	}
 	if (s.worktree_branch) {
 		metaText += ` \u00b7 \u2387 ${s.worktree_branch}`;
 	}
@@ -89,9 +97,26 @@ function createSessionMeta(s) {
 	return meta;
 }
 
-function createSessionActions() {
+function createSessionActions(s) {
 	var actions = document.createElement("div");
 	actions.className = "session-actions";
+	// Fork button — not available for cron sessions
+	if (!s.key.startsWith("cron:")) {
+		var forkBtn = document.createElement("button");
+		forkBtn.className = "session-fork-btn";
+		forkBtn.title = "Fork session";
+		forkBtn.appendChild(makeForkIcon());
+		forkBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			sendRpc("sessions.fork", { key: s.key }).then((res) => {
+				if (res?.ok && res.payload?.sessionKey) {
+					fetchSessions();
+					switchSession(res.payload.sessionKey);
+				}
+			});
+		});
+		actions.appendChild(forkBtn);
+	}
 	return actions;
 }
 
@@ -102,15 +127,34 @@ export function renderSessionList() {
 	if (S.projectFilterId) {
 		filtered = S.sessions.filter((s) => s.projectId === S.projectFilterId);
 	}
-	var tpl = document.getElementById("tpl-session-item");
+
+	// Build parent→children map for tree rendering.
+	var childrenMap = {};
+	var keyMap = {};
 	filtered.forEach((s) => {
+		keyMap[s.key] = s;
+		if (s.parentSessionKey) {
+			if (!childrenMap[s.parentSessionKey]) childrenMap[s.parentSessionKey] = [];
+			childrenMap[s.parentSessionKey].push(s);
+		}
+	});
+	// Root sessions: no parent, or parent not in filtered set.
+	var roots = filtered.filter((s) => !(s.parentSessionKey && keyMap[s.parentSessionKey]));
+
+	var tpl = document.getElementById("tpl-session-item");
+
+	function renderSession(s, depth) {
+		var isBranch = depth > 0;
 		var frag = tpl.content.cloneNode(true);
 		var item = frag.firstElementChild;
 		item.className = `session-item${s.key === S.activeSessionKey ? " active" : ""}`;
 		item.setAttribute("data-session-key", s.key);
+		if (isBranch) {
+			item.style.paddingLeft = `${12 + depth * 16}px`;
+		}
 
 		var iconWrap = item.querySelector(".session-icon");
-		iconWrap.replaceWith(createSessionIcon(s));
+		iconWrap.replaceWith(createSessionIcon(s, isBranch));
 
 		item.querySelector("[data-label-text]").textContent = s.label || s.key;
 
@@ -119,7 +163,7 @@ export function renderSessionList() {
 		meta.replaceWith(newMeta);
 
 		var actionsSlot = item.querySelector(".session-actions");
-		actionsSlot.replaceWith(createSessionActions());
+		actionsSlot.replaceWith(createSessionActions(s));
 
 		item.addEventListener("click", () => {
 			if (currentPrefix !== "/chats") {
@@ -130,6 +174,16 @@ export function renderSessionList() {
 		});
 
 		sessionList.appendChild(item);
+
+		// Render children recursively.
+		var children = childrenMap[s.key] || [];
+		children.forEach((child) => {
+			renderSession(child, depth + 1);
+		});
+	}
+
+	roots.forEach((s) => {
+		renderSession(s, 0);
 	});
 }
 
@@ -183,6 +237,17 @@ newSessionBtn.addEventListener("click", () => {
 	navigate(sessionPath(key));
 });
 
+// ── MCP toggle restore ──────────────────────────────────────
+function restoreMcpToggle(mcpEnabled) {
+	var mcpBtn = S.$("mcpToggleBtn");
+	var mcpLabel = S.$("mcpToggleLabel");
+	if (mcpBtn) {
+		mcpBtn.style.color = mcpEnabled ? "var(--ok)" : "var(--muted)";
+		mcpBtn.style.borderColor = mcpEnabled ? "var(--ok)" : "var(--border)";
+	}
+	if (mcpLabel) mcpLabel.textContent = mcpEnabled ? "MCP" : "MCP off";
+}
+
 // ── Switch session ──────────────────────────────────────────
 
 function restoreSessionState(entry, projectId) {
@@ -198,6 +263,7 @@ function restoreSessionState(entry, projectId) {
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);
+	restoreMcpToggle(!entry.mcpDisabled);
 	updateChatSessionHeader();
 }
 
@@ -295,6 +361,8 @@ function postHistoryLoadActions(key, searchContext, msgEls, sessionList) {
 }
 
 function nextSessionKey(currentKey) {
+	var s = S.sessions.find((x) => x.key === currentKey);
+	if (s?.parentSessionKey) return s.parentSessionKey;
 	var idx = S.sessions.findIndex((x) => x.key === currentKey);
 	if (idx >= 0 && idx + 1 < S.sessions.length) return S.sessions[idx + 1].key;
 	if (idx > 0) return S.sessions[idx - 1].key;
@@ -354,6 +422,19 @@ export function updateChatSessionHeader() {
 				inputEl.value = nameEl.dataset.fullName || nameEl.textContent;
 				inputEl.blur();
 			}
+		};
+	}
+
+	var forkBtn = S.$("chatSessionFork");
+	if (forkBtn) {
+		forkBtn.classList.toggle("hidden", isCron);
+		forkBtn.onclick = () => {
+			sendRpc("sessions.fork", { key: S.activeSessionKey }).then((res) => {
+				if (res?.ok && res.payload?.sessionKey) {
+					fetchSessions();
+					switchSession(res.payload.sessionKey);
+				}
+			});
 		};
 	}
 

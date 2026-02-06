@@ -461,7 +461,7 @@ function ServerCard({ server }) {
         <${StatusBadge} state=${server.state} />
         <span class="font-mono text-sm font-medium text-[var(--text-strong)]">${server.name}</span>
         <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${server.state || "stopped"}</span>
-        <span class="text-xs text-[var(--muted)]">${server.tool_count} tool${server.tool_count !== 1 ? "s" : ""}</span>
+        <span class="text-xs text-[var(--muted)]">${server.tool_count} tool${server.tool_count !== 1 ? "s" : ""}${server.state === "running" && server.tool_count > 0 ? ` · ~${server.tool_count * 300} tokens` : ""}</span>
       </div>
       <div class="flex items-center gap-1.5">
         <button onClick=${startEdit}
@@ -591,6 +591,12 @@ function McpPage() {
         </div>
         <p class="text-xs text-[var(--muted)]">
           Each tool runs as a <strong>local process</strong> on your machine (spawned via npm/uvx). Moltis connects to it over stdio and the process makes outbound API calls on your behalf using your tokens. No data is sent to third-party MCP hosts.
+        </p>
+      </div>
+      <div class="max-w-[600px] flex items-start gap-2.5 px-4 py-3 rounded-[var(--radius)] border border-[var(--warn)] bg-[rgba(234,179,8,0.08)]">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="var(--warn)" width="18" height="18" class="shrink-0 mt-0.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+        <p class="text-xs text-[var(--text)] leading-relaxed">
+          Each enabled MCP server adds tool definitions to every chat session's context, consuming tokens. Only enable servers you actively need.
         </p>
       </div>
       <${InstallBox} />

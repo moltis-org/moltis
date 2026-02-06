@@ -21,6 +21,9 @@
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
+- [Session State](session-state.md)
+- [Session Branching](session-branching.md)
+- [Skill Self-Extension](skill-tools.md)
 - [Mobile PWA](mobile-pwa.md)
 
 ---
@@ -42,3 +45,4 @@
 - [Streaming](streaming.md)
 - [SQLite Migrations](sqlite-migration.md)
 - [Metrics & Tracing](metrics-and-tracing.md)
+- [Tool Registry](tool-registry.md)
