@@ -290,9 +290,16 @@ pub struct BrowserConfig {
     /// Run browser in a container for isolation.
     #[serde(default)]
     pub sandbox: bool,
+    /// Docker image to use for sandboxed browser.
+    #[serde(default = "default_sandbox_image")]
+    pub sandbox_image: String,
     /// Allowed domains for navigation (empty = all allowed).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+}
+
+fn default_sandbox_image() -> String {
+    "browserless/chrome".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -309,6 +316,7 @@ impl Default for BrowserConfig {
             user_agent: None,
             chrome_args: Vec::new(),
             sandbox: false,
+            sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
         }
     }
@@ -328,6 +336,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             user_agent: cfg.user_agent.clone(),
             chrome_args: cfg.chrome_args.clone(),
             sandbox: cfg.sandbox,
+            sandbox_image: cfg.sandbox_image.clone(),
             allowed_domains: cfg.allowed_domains.clone(),
         }
     }

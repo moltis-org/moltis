@@ -636,11 +636,19 @@ pub struct BrowserConfig {
     /// filesystem isolation from the host.
     #[serde(default)]
     pub sandbox: bool,
+    /// Docker image to use for sandboxed browser.
+    /// Default: "browserless/chrome" - a purpose-built headless Chrome container.
+    #[serde(default = "default_sandbox_image")]
+    pub sandbox_image: String,
     /// Allowed domains for navigation. Empty list means all domains allowed.
     /// When set, the browser will refuse to navigate to non-matching domains.
     /// Supports wildcards: "*.example.com" matches subdomains.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+}
+
+fn default_sandbox_image() -> String {
+    "browserless/chrome".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -657,6 +665,7 @@ impl Default for BrowserConfig {
             user_agent: None,
             chrome_args: Vec::new(),
             sandbox: false,
+            sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
         }
     }

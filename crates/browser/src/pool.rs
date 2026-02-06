@@ -13,13 +13,16 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::{error::BrowserError, types::BrowserConfig};
+use crate::{container::BrowserContainer, error::BrowserError, types::BrowserConfig};
 
 /// A pooled browser instance with one or more pages.
 struct BrowserInstance {
     browser: Browser,
     pages: HashMap<String, Page>,
     last_used: Instant,
+    /// Container for sandboxed instances (None for host browser).
+    #[allow(dead_code)]
+    container: Option<BrowserContainer>,
 }
 
 /// Pool of browser instances for reuse.
@@ -194,6 +197,78 @@ impl BrowserPool {
 
     /// Launch a new browser instance.
     async fn launch_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
+        if self.config.sandbox {
+            self.launch_sandboxed_browser(session_id).await
+        } else {
+            self.launch_host_browser(session_id).await
+        }
+    }
+
+    /// Launch a browser inside a container (sandboxed mode).
+    async fn launch_sandboxed_browser(
+        &self,
+        session_id: &str,
+    ) -> Result<BrowserInstance, BrowserError> {
+        use crate::container;
+
+        // Check Docker availability
+        if !container::is_docker_available() {
+            return Err(BrowserError::LaunchFailed(
+                "Docker is required for sandboxed browser but is not available".to_string(),
+            ));
+        }
+
+        // Ensure the container image is available
+        container::ensure_image(&self.config.sandbox_image).map_err(|e| {
+            BrowserError::LaunchFailed(format!("failed to ensure browser image: {e}"))
+        })?;
+
+        // Start the container
+        let container = BrowserContainer::start(
+            &self.config.sandbox_image,
+            self.config.viewport_width,
+            self.config.viewport_height,
+        )
+        .map_err(|e| {
+            BrowserError::LaunchFailed(format!("failed to start browser container: {e}"))
+        })?;
+
+        let ws_url = container.websocket_url();
+        info!(
+            session_id,
+            container_id = container.id(),
+            ws_url,
+            "connecting to sandboxed browser"
+        );
+
+        // Connect to the containerized browser
+        let (browser, mut handler) = Browser::connect(&ws_url).await.map_err(|e| {
+            BrowserError::LaunchFailed(format!(
+                "failed to connect to containerized browser at {}: {}",
+                ws_url, e
+            ))
+        })?;
+
+        // Spawn handler to process browser events
+        let session_id_clone = session_id.to_string();
+        tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                debug!(session_id = session_id_clone, ?event, "browser event");
+            }
+        });
+
+        info!(session_id, "sandboxed browser connected successfully");
+
+        Ok(BrowserInstance {
+            browser,
+            pages: HashMap::new(),
+            last_used: Instant::now(),
+            container: Some(container),
+        })
+    }
+
+    /// Launch a browser on the host (non-sandboxed mode).
+    async fn launch_host_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
         // Check if Chrome/Chromium is available before attempting to launch
         let detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
         if !detection.found {
@@ -265,6 +340,7 @@ impl BrowserPool {
             browser,
             pages: HashMap::new(),
             last_used: Instant::now(),
+            container: None,
         })
     }
 }
