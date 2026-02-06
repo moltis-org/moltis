@@ -7,7 +7,7 @@ use {
     moltis_oauth::{OAuthFlow, TokenStore, load_oauth_config},
     secrecy::{ExposeSecret, Secret},
     tokio_stream::Stream,
-    tracing::debug,
+    tracing::{debug, info, trace},
 };
 
 use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
@@ -232,11 +232,17 @@ impl LlmProvider for OpenAiCodexProvider {
             let api_tools: Vec<serde_json::Value> = tools
                 .iter()
                 .map(|t| {
+                    // Clone parameters and ensure additionalProperties: false for strict mode
+                    let mut params = t["parameters"].clone();
+                    if let Some(obj) = params.as_object_mut() {
+                        obj.insert("additionalProperties".to_string(), serde_json::json!(false));
+                    }
                     serde_json::json!({
                         "type": "function",
                         "name": t["name"],
                         "description": t["description"],
-                        "parameters": t["parameters"],
+                        "parameters": params,
+                        "strict": true,
                     })
                 })
                 .collect();
@@ -244,7 +250,7 @@ impl LlmProvider for OpenAiCodexProvider {
             body["tool_choice"] = serde_json::json!("auto");
         }
 
-        debug!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
+        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
 
         let http_resp = self
             .client
@@ -376,6 +382,19 @@ impl LlmProvider for OpenAiCodexProvider {
         &self,
         messages: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools(messages, vec![])
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        info!(
+            tools_received = tools.len(),
+            "stream_with_tools entry (before async_stream)"
+        );
         Box::pin(async_stream::stream! {
             let token = match self.get_valid_token() {
                 Ok(t) => t,
@@ -406,7 +425,7 @@ impl LlmProvider for OpenAiCodexProvider {
                 .collect();
             let input = Self::convert_messages(&non_system);
 
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": self.model,
                 "store": false,
                 "stream": true,
@@ -415,6 +434,36 @@ impl LlmProvider for OpenAiCodexProvider {
                 "text": {"verbosity": "medium"},
                 "include": ["reasoning.encrypted_content"],
             });
+
+            if !tools.is_empty() {
+                let api_tools: Vec<serde_json::Value> = tools
+                    .iter()
+                    .map(|t| {
+                        // Clone parameters and ensure additionalProperties: false for strict mode
+                        let mut params = t["parameters"].clone();
+                        if let Some(obj) = params.as_object_mut() {
+                            obj.insert("additionalProperties".to_string(), serde_json::json!(false));
+                        }
+                        serde_json::json!({
+                            "type": "function",
+                            "name": t["name"],
+                            "description": t["description"],
+                            "parameters": params,
+                            "strict": true,
+                        })
+                    })
+                    .collect();
+                body["tools"] = serde_json::Value::Array(api_tools);
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+
+            info!(
+                model = %self.model,
+                messages_count = messages.len(),
+                tools_count = tools.len(),
+                "openai-codex stream_with_tools request"
+            );
+            debug!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex stream request body");
 
             let resp = match self
                 .client
@@ -448,6 +497,11 @@ impl LlmProvider for OpenAiCodexProvider {
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
 
+            // Track tool calls being streamed (index -> (id, name))
+            let mut tool_calls: std::collections::HashMap<usize, (String, String)> =
+                std::collections::HashMap::new();
+            let mut current_tool_index: usize = 0;
+
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
                     Ok(c) => c,
@@ -471,12 +525,17 @@ impl LlmProvider for OpenAiCodexProvider {
                     };
 
                     if data == "[DONE]" {
+                        // Emit completion for any pending tool calls
+                        for index in tool_calls.keys() {
+                            yield StreamEvent::ToolCallComplete { index: *index };
+                        }
                         yield StreamEvent::Done(Usage { input_tokens, output_tokens });
                         return;
                     }
 
                     if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
                         let evt_type = evt["type"].as_str().unwrap_or("");
+                        trace!(evt_type = %evt_type, evt = %evt, "openai-codex stream event");
 
                         match evt_type {
                             "response.output_text.delta" => {
@@ -486,6 +545,36 @@ impl LlmProvider for OpenAiCodexProvider {
                                     }
                                 }
                             }
+                            "response.output_item.added" => {
+                                // New output item - could be text or function_call
+                                if evt["item"]["type"].as_str() == Some("function_call") {
+                                    let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                                    let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                                    let index = current_tool_index;
+                                    current_tool_index += 1;
+                                    tool_calls.insert(index, (id.clone(), name.clone()));
+                                    yield StreamEvent::ToolCallStart { id, name, index };
+                                }
+                            }
+                            "response.function_call_arguments.delta" => {
+                                if let Some(delta) = evt["delta"].as_str() {
+                                    if !delta.is_empty() {
+                                        // Find the index for this tool call (use the most recent one)
+                                        let index = if current_tool_index > 0 {
+                                            current_tool_index - 1
+                                        } else {
+                                            0
+                                        };
+                                        yield StreamEvent::ToolCallArgumentsDelta {
+                                            index,
+                                            delta: delta.to_string(),
+                                        };
+                                    }
+                                }
+                            }
+                            "response.function_call_arguments.done" => {
+                                // Function call arguments complete - tool call will be finalized at [DONE]
+                            }
                             "response.completed" => {
                                 if let Some(u) = evt["response"]["usage"].as_object() {
                                     input_tokens = u.get("input_tokens")
@@ -494,6 +583,10 @@ impl LlmProvider for OpenAiCodexProvider {
                                     output_tokens = u.get("output_tokens")
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0) as u32;
+                                }
+                                // Emit completion for any pending tool calls
+                                for index in tool_calls.keys() {
+                                    yield StreamEvent::ToolCallComplete { index: *index };
                                 }
                                 yield StreamEvent::Done(Usage { input_tokens, output_tokens });
                                 return;

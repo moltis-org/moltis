@@ -338,6 +338,21 @@ impl LlmProvider for ProviderChain {
         // All tripped — try primary anyway (it may have cooled down by now).
         self.primary().provider.stream(messages)
     }
+
+    fn stream_with_tools(
+        &self,
+        messages: Vec<serde_json::Value>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        // For streaming with tools, try the first non-tripped provider.
+        for entry in &self.chain {
+            if !entry.state.is_tripped() {
+                return entry.provider.stream_with_tools(messages, tools);
+            }
+        }
+        // All tripped — try primary anyway.
+        self.primary().provider.stream_with_tools(messages, tools)
+    }
 }
 
 #[cfg(test)]
