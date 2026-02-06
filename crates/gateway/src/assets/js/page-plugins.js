@@ -436,13 +436,37 @@ function ReposSection() {
 
 function EnabledPluginsTable() {
 	var s = enabledPlugins.value;
+	var activeDetail = useSignal(null);
+	var detailLoading = useSignal(false);
 	if (!s || s.length === 0) return null;
 
 	function onDisable(skill) {
 		var source = skill.source;
 		if (!(source && S.connected)) return;
 		sendRpc("plugins.skill.disable", { source: source, skill: skill.name }).then((res) => {
-			if (res?.ok) fetchAll();
+			if (res?.ok) {
+				activeDetail.value = null;
+				fetchAll();
+			}
+		});
+	}
+
+	function loadDetail(skill) {
+		// Toggle: close if clicking the same skill
+		if (activeDetail.value && activeDetail.value.name === skill.name) {
+			activeDetail.value = null;
+			return;
+		}
+		var source = skill.source;
+		if (!source) return;
+		detailLoading.value = true;
+		sendRpc("plugins.skill.detail", { source: source, skill: skill.name }).then((res) => {
+			detailLoading.value = false;
+			if (res?.ok) {
+				activeDetail.value = res.payload || {};
+			} else {
+				showToast(`Failed to load: ${res?.error || "unknown"}`, "error");
+			}
 		});
 	}
 
@@ -459,17 +483,21 @@ function EnabledPluginsTable() {
         </thead>
         <tbody>
           ${s.map(
-						(skill) => html`<tr key=${skill.name} style="border-bottom:1px solid var(--border)"
+						(skill) => html`<tr key=${skill.name} class="cursor-pointer" style="border-bottom:1px solid var(--border)"
+              onClick=${() => {
+								loadDetail(skill);
+							}}
               onMouseEnter=${(e) => {
 								e.currentTarget.style.background = "var(--bg-hover)";
 							}}
               onMouseLeave=${(e) => {
 								e.currentTarget.style.background = "";
 							}}>
-              <td style="padding:8px 12px;font-weight:500;color:var(--text-strong);font-family:var(--font-mono)">${skill.name}</td>
+              <td style="padding:8px 12px;font-weight:500;color:var(--accent);font-family:var(--font-mono)">${skill.name}</td>
               <td style="padding:8px 12px;color:var(--muted);font-size:.75rem">${skill.source}</td>
               <td style="padding:8px 12px;text-align:right">
-                <button class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${() => {
+                <button class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${(e) => {
+									e.stopPropagation();
 									onDisable(skill);
 								}}>Disable</button>
               </td>
@@ -478,6 +506,17 @@ function EnabledPluginsTable() {
         </tbody>
       </table>
     </div>
+    ${detailLoading.value && html`<div class="text-sm text-[var(--muted)] p-3">Loading\u2026</div>`}
+    ${
+			activeDetail.value &&
+			html`<${SkillDetail}
+      detail=${activeDetail.value}
+      repoSource=${activeDetail.value.source}
+      onClose=${() => {
+				activeDetail.value = null;
+			}}
+    />`
+		}
   </div>`;
 }
 
