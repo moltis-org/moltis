@@ -83,6 +83,40 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
     200_000
 }
 
+/// Check if a model supports vision (image inputs).
+///
+/// Vision-capable models can process images in tool results and user messages.
+/// When true, the runner sends images as multimodal content blocks rather than
+/// stripping them from the context.
+pub fn supports_vision_for_model(model_id: &str) -> bool {
+    // Claude models: all modern Claude models support vision
+    if model_id.starts_with("claude-") {
+        return true;
+    }
+    // GPT-4o and variants support vision
+    if model_id.starts_with("gpt-4o") {
+        return true;
+    }
+    // GPT-4 turbo supports vision
+    if model_id.starts_with("gpt-4-turbo") {
+        return true;
+    }
+    // GPT-5 series supports vision
+    if model_id.starts_with("gpt-5") {
+        return true;
+    }
+    // o3/o4 series supports vision
+    if model_id.starts_with("o3") || model_id.starts_with("o4") {
+        return true;
+    }
+    // Gemini models support vision
+    if model_id.starts_with("gemini-") {
+        return true;
+    }
+    // Default: no vision support
+    false
+}
+
 /// Info about an available model.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
@@ -984,6 +1018,69 @@ mod tests {
     }
 
     #[test]
+    fn supports_vision_for_known_models() {
+        // Claude models support vision
+        assert!(super::supports_vision_for_model("claude-sonnet-4-20250514"));
+        assert!(super::supports_vision_for_model("claude-opus-4-5-20251101"));
+        assert!(super::supports_vision_for_model("claude-3-haiku-20240307"));
+
+        // GPT-4o variants support vision
+        assert!(super::supports_vision_for_model("gpt-4o"));
+        assert!(super::supports_vision_for_model("gpt-4o-mini"));
+
+        // GPT-4 turbo supports vision
+        assert!(super::supports_vision_for_model("gpt-4-turbo"));
+
+        // GPT-5 supports vision
+        assert!(super::supports_vision_for_model("gpt-5.2-codex"));
+
+        // o3/o4 series supports vision
+        assert!(super::supports_vision_for_model("o3"));
+        assert!(super::supports_vision_for_model("o3-mini"));
+        assert!(super::supports_vision_for_model("o4-mini"));
+
+        // Gemini supports vision
+        assert!(super::supports_vision_for_model("gemini-2.0-flash"));
+    }
+
+    #[test]
+    fn supports_vision_false_for_non_vision_models() {
+        // Codestral is code-focused, no vision
+        assert!(!super::supports_vision_for_model("codestral-latest"));
+
+        // Mistral Large - no vision
+        assert!(!super::supports_vision_for_model("mistral-large-latest"));
+
+        // Kimi - no vision
+        assert!(!super::supports_vision_for_model("kimi-k2.5"));
+
+        // Unknown models default to no vision
+        assert!(!super::supports_vision_for_model("some-unknown-model"));
+    }
+
+    #[test]
+    fn provider_supports_vision_uses_lookup() {
+        let provider = openai::OpenAiProvider::new(secret("k"), "gpt-4o".into(), "u".into());
+        assert!(provider.supports_vision());
+
+        let anthropic = anthropic::AnthropicProvider::new(
+            secret("k"),
+            "claude-sonnet-4-20250514".into(),
+            "u".into(),
+        );
+        assert!(anthropic.supports_vision());
+
+        // Non-vision model
+        let mistral = openai::OpenAiProvider::new_with_name(
+            secret("k"),
+            "codestral-latest".into(),
+            "u".into(),
+            "mistral".into(),
+        );
+        assert!(!mistral.supports_vision());
+    }
+
+    #[test]
     fn default_context_window_trait() {
         // OpenAiProvider with unknown model should get the fallback
         let provider =
@@ -1405,5 +1502,141 @@ mod tests {
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
+    }
+
+    // ── Vision Support Tests (Extended) ────────────────────────────────
+
+    #[test]
+    fn supports_vision_for_all_claude_variants() {
+        // All Claude model variants should support vision
+        let claude_models = [
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-20250514",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-3-7-sonnet-20250219",
+        ];
+        for model in claude_models {
+            assert!(
+                super::supports_vision_for_model(model),
+                "expected {} to support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn supports_vision_for_all_gpt4o_variants() {
+        // All GPT-4o variants should support vision
+        let gpt4o_models = [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4o-2024-05-13",
+            "gpt-4o-2024-08-06",
+            "gpt-4o-audio-preview",
+            "gpt-4o-mini-2024-07-18",
+        ];
+        for model in gpt4o_models {
+            assert!(
+                super::supports_vision_for_model(model),
+                "expected {} to support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn supports_vision_for_gpt5_series() {
+        // GPT-5 series (including Codex variants) should support vision
+        let gpt5_models = [
+            "gpt-5",
+            "gpt-5-turbo",
+            "gpt-5.2-codex",
+            "gpt-5.2",
+            "gpt-5-preview",
+        ];
+        for model in gpt5_models {
+            assert!(
+                super::supports_vision_for_model(model),
+                "expected {} to support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn supports_vision_for_o3_o4_series() {
+        // o3 and o4 reasoning models should support vision
+        let reasoning_models = ["o3", "o3-mini", "o3-preview", "o4", "o4-mini", "o4-preview"];
+        for model in reasoning_models {
+            assert!(
+                super::supports_vision_for_model(model),
+                "expected {} to support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn supports_vision_for_gemini_variants() {
+        // All Gemini model variants should support vision
+        let gemini_models = [
+            "gemini-1.0-pro-vision",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-pro",
+            "gemini-ultra",
+        ];
+        for model in gemini_models {
+            assert!(
+                super::supports_vision_for_model(model),
+                "expected {} to support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn no_vision_for_text_only_models() {
+        // Models known to NOT support vision
+        let text_only_models = [
+            "codestral-latest",
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "mistral-7b",
+            "kimi-k2.5",
+            "llama-4-scout-17b-16e-instruct",
+            "MiniMax-M2.1",
+            "gpt-3.5-turbo", // old model without vision
+            "text-davinci-003",
+        ];
+        for model in text_only_models {
+            assert!(
+                !super::supports_vision_for_model(model),
+                "expected {} to NOT support vision",
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn vision_support_is_case_sensitive() {
+        // Model IDs are case-sensitive - uppercase should not match
+        assert!(!super::supports_vision_for_model("CLAUDE-SONNET-4"));
+        assert!(!super::supports_vision_for_model("GPT-4O"));
+        assert!(!super::supports_vision_for_model("Gemini-2.0-flash"));
+    }
+
+    #[test]
+    fn vision_support_requires_exact_prefix() {
+        // Vision support is based on prefix matching - partial matches shouldn't work
+        assert!(!super::supports_vision_for_model("my-claude-model"));
+        assert!(!super::supports_vision_for_model("custom-gpt-4o-wrapper"));
+        assert!(!super::supports_vision_for_model("not-gemini-model"));
     }
 }

@@ -247,6 +247,118 @@ pub fn sanitize_tool_result(input: &str, max_bytes: usize) -> String {
     result
 }
 
+// ── Multimodal tool result helpers ─────────────────────────────────────────
+
+/// Image extracted from a tool result for multimodal handling.
+#[derive(Debug)]
+pub struct ExtractedImage {
+    /// MIME type (e.g., "image/png", "image/jpeg")
+    pub media_type: String,
+    /// Base64-encoded image data
+    pub data: String,
+}
+
+/// Extract image data URIs from text, returning the images and remaining text.
+///
+/// Searches for patterns like `data:image/png;base64,AAAA...` and extracts them.
+/// Returns the list of images found and the text with images removed.
+fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
+    let mut images = Vec::new();
+    let mut remaining = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find(BASE64_TAG) {
+        remaining.push_str(&rest[..start]);
+        let after_tag = &rest[start + BASE64_TAG.len()..];
+
+        // Check for image MIME type
+        if let Some(marker_pos) = after_tag.find(BASE64_MARKER) {
+            let mime_part = &after_tag[..marker_pos];
+
+            // Only extract image/* MIME types
+            if let Some(image_subtype) = mime_part.strip_prefix("image/") {
+                let payload_start = marker_pos + BASE64_MARKER.len();
+                let payload = &after_tag[payload_start..];
+                let payload_len = payload.bytes().take_while(|b| is_base64_byte(*b)).count();
+
+                if payload_len >= BLOB_MIN_LEN {
+                    // Extract the image
+                    let media_type = format!("image/{image_subtype}");
+                    let data = payload[..payload_len].to_string();
+                    images.push(ExtractedImage { media_type, data });
+
+                    // Skip past the full data URI
+                    let total_uri_len = BASE64_TAG.len() + payload_start + payload_len;
+                    rest = &rest[start + total_uri_len..];
+                    continue;
+                }
+            }
+        }
+
+        // Not an extractable image, keep the tag and continue
+        remaining.push_str(BASE64_TAG);
+        rest = after_tag;
+    }
+    remaining.push_str(rest);
+
+    (images, remaining)
+}
+
+/// Convert a tool result to multimodal content for vision-capable providers.
+///
+/// For providers with `supports_vision() == true`, this extracts images from
+/// the tool result and returns them as OpenAI-style content blocks:
+/// ```json
+/// [
+///   { "type": "text", "text": "..." },
+///   { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } }
+/// ]
+/// ```
+///
+/// For non-vision providers, returns a simple string with images stripped.
+pub fn tool_result_to_content(
+    result: &str,
+    max_bytes: usize,
+    supports_vision: bool,
+) -> serde_json::Value {
+    if !supports_vision {
+        // Non-vision provider: strip images and return string
+        return serde_json::Value::String(sanitize_tool_result(result, max_bytes));
+    }
+
+    // Vision provider: extract images and create multimodal content
+    let (images, text) = extract_images_from_text(result);
+
+    if images.is_empty() {
+        // No images found, just sanitize and return string
+        return serde_json::Value::String(sanitize_tool_result(result, max_bytes));
+    }
+
+    // Build multimodal content array
+    let mut content_blocks = Vec::new();
+
+    // Sanitize remaining text (strips any remaining hex blobs, truncates if needed)
+    let sanitized_text = sanitize_tool_result(&text, max_bytes);
+    if !sanitized_text.trim().is_empty() {
+        content_blocks.push(serde_json::json!({
+            "type": "text",
+            "text": sanitized_text
+        }));
+    }
+
+    // Add image blocks
+    for image in images {
+        // Reconstruct data URI for OpenAI format
+        let data_uri = format!("data:{};base64,{}", image.media_type, image.data);
+        content_blocks.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": data_uri }
+        }));
+    }
+
+    serde_json::json!(content_blocks)
+}
+
 /// Run the agent loop: send messages to the LLM, execute tool calls, repeat.
 ///
 /// If `history` is provided, those messages are inserted between the system
@@ -616,6 +728,9 @@ pub async fn run_agent_loop_with_context(
                 });
             }
 
+            // Always sanitize tool results as strings - most LLM APIs don't support
+            // multimodal content in tool results. Images are stripped but the UI
+            // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
             debug!(
                 tool = %tc.name,
@@ -1035,6 +1150,9 @@ pub async fn run_agent_loop_streaming(
                 });
             }
 
+            // Always sanitize tool results as strings - most LLM APIs don't support
+            // multimodal content in tool results. Images are stripped but the UI
+            // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
             debug!(
                 tool = %tc.name,
@@ -1892,5 +2010,433 @@ mod tests {
         let input = format!("code: {hex}");
         let result = sanitize_tool_result(&input, 50_000);
         assert!(result.contains(hex));
+    }
+
+    // ── extract_images_from_text tests ───────────────────────────────
+
+    #[test]
+    fn test_extract_images_basic() {
+        let payload = "A".repeat(300);
+        let input = format!("before data:image/png;base64,{payload} after");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/png");
+        assert_eq!(images[0].data, payload);
+        assert!(remaining.contains("before"));
+        assert!(remaining.contains("after"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    #[test]
+    fn test_extract_images_jpeg() {
+        let payload = "B".repeat(300);
+        let input = format!("data:image/jpeg;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/jpeg");
+        assert_eq!(images[0].data, payload);
+        assert!(remaining.trim().is_empty());
+    }
+
+    #[test]
+    fn test_extract_images_multiple() {
+        let payload1 = "A".repeat(300);
+        let payload2 = "B".repeat(300);
+        let input = format!(
+            "first data:image/png;base64,{payload1} middle data:image/jpeg;base64,{payload2} end"
+        );
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].media_type, "image/png");
+        assert_eq!(images[1].media_type, "image/jpeg");
+        assert!(remaining.contains("first"));
+        assert!(remaining.contains("middle"));
+        assert!(remaining.contains("end"));
+    }
+
+    #[test]
+    fn test_extract_images_ignores_non_image() {
+        let payload = "A".repeat(300);
+        let input = format!("data:text/plain;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert!(images.is_empty());
+        // Non-image data URIs are kept as-is
+        assert!(remaining.contains("data:text/plain"));
+    }
+
+    #[test]
+    fn test_extract_images_ignores_short_payload() {
+        let payload = "QUFB"; // Short base64
+        let input = format!("data:image/png;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert!(images.is_empty());
+        assert!(remaining.contains(payload));
+    }
+
+    // ── tool_result_to_content tests ─────────────────────────────────
+
+    #[test]
+    fn test_tool_result_to_content_no_vision() {
+        let payload = "A".repeat(300);
+        let input = format!(r#"{{"screenshot": "data:image/png;base64,{payload}"}}"#);
+        let result = tool_result_to_content(&input, 50_000, false);
+
+        // Should strip the image for non-vision providers
+        assert!(result.is_string());
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[base64 data removed"));
+        assert!(!s.contains(&payload));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_with_vision() {
+        let payload = "A".repeat(300);
+        let input = format!(r#"Result: data:image/png;base64,{payload} done"#);
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        // Should return array with text and image blocks
+        assert!(result.is_array());
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // Check text block
+        assert_eq!(arr[0]["type"], "text");
+        assert!(arr[0]["text"].as_str().unwrap().contains("Result:"));
+        assert!(arr[0]["text"].as_str().unwrap().contains("done"));
+
+        // Check image block
+        assert_eq!(arr[1]["type"], "image_url");
+        let url = arr[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+        assert!(url.contains(&payload));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_vision_no_images() {
+        let input = r#"{"result": "success", "message": "done"}"#;
+        let result = tool_result_to_content(input, 50_000, true);
+
+        // No images, should return plain string
+        assert!(result.is_string());
+        assert!(result.as_str().unwrap().contains("success"));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_vision_only_image() {
+        let payload = "A".repeat(300);
+        let input = format!("data:image/png;base64,{payload}");
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        // Only image, no text - should return array with just image
+        assert!(result.is_array());
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "image_url");
+    }
+
+    // ── Vision Provider Integration Tests ─────────────────────────────
+
+    /// Mock provider that supports vision.
+    struct VisionEnabledProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for VisionEnabledProvider {
+        fn name(&self) -> &str {
+            "mock-vision"
+        }
+
+        fn id(&self) -> &str {
+            "gpt-4o" // Vision-capable model
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        fn supports_vision(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                // First call: request a tool that returns an image
+                Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "call_screenshot".into(),
+                        name: "screenshot_tool".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                })
+            } else {
+                // Second call: verify tool result was sanitized (image stripped)
+                // because tool results don't support multimodal content
+                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
+                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+
+                // Tool result should be sanitized (image data removed)
+                assert!(
+                    tool_content.contains("[base64 data removed"),
+                    "tool result should have image stripped: {tool_content}"
+                );
+                assert!(
+                    !tool_content.contains("AAAA"),
+                    "tool result should not contain raw base64: {tool_content}"
+                );
+
+                Ok(CompletionResponse {
+                    text: Some("Screenshot processed successfully".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 20,
+                        output_tokens: 10,
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    /// Tool that returns a result with an embedded screenshot
+    struct ScreenshotTool;
+
+    #[async_trait]
+    impl crate::tool_registry::AgentTool for ScreenshotTool {
+        fn name(&self) -> &str {
+            "screenshot_tool"
+        }
+
+        fn description(&self) -> &str {
+            "Takes a screenshot and returns it as base64"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+
+        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+            // Return a result with a base64 image data URI
+            let fake_image_data = "A".repeat(500); // Long enough to be detected
+            Ok(serde_json::json!({
+                "success": true,
+                "screenshot": format!("data:image/png;base64,{fake_image_data}"),
+                "message": "Screenshot captured"
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vision_provider_tool_result_sanitized() {
+        // Even for vision-capable providers, tool results are sanitized
+        // because most LLM APIs don't support multimodal content in tool results
+        let provider = Arc::new(VisionEnabledProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(ScreenshotTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Take a screenshot",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Screenshot processed successfully");
+        assert_eq!(result.tool_calls_made, 1);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_end_event_contains_raw_result() {
+        // Verify that ToolCallEnd events contain the raw (unsanitized) result
+        // so the UI can display images even though they're stripped from LLM context
+        let provider = Arc::new(VisionEnabledProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(ScreenshotTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Take a screenshot",
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.tool_calls_made, 1);
+
+        // Find the ToolCallEnd event
+        let evts = events.lock().unwrap();
+        let tool_end = evts
+            .iter()
+            .find(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }));
+
+        if let Some(RunnerEvent::ToolCallEnd {
+            success,
+            result: Some(result_json),
+            ..
+        }) = tool_end
+        {
+            assert!(success);
+            // The raw result should contain the screenshot data
+            let result_str = result_json.to_string();
+            assert!(
+                result_str.contains("screenshot"),
+                "result should contain screenshot field"
+            );
+            // Note: the result contains the base64 data because it's raw
+            assert!(
+                result_str.contains("data:image/png;base64,"),
+                "result should contain image data URI"
+            );
+        } else {
+            panic!("expected ToolCallEnd event with success and result");
+        }
+    }
+
+    // ── Extract Images Edge Cases ─────────────────────────────────────
+
+    #[test]
+    fn test_extract_images_webp() {
+        let payload = "B".repeat(300);
+        let input = format!("data:image/webp;base64,{payload}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/webp");
+    }
+
+    #[test]
+    fn test_extract_images_gif() {
+        let payload = "C".repeat(300);
+        let input = format!("data:image/gif;base64,{payload}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/gif");
+    }
+
+    #[test]
+    fn test_extract_images_with_special_base64_chars() {
+        // Base64 can contain +, /, and = characters
+        let payload = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/==";
+        let padded = format!("{}{}", payload, "A".repeat(200));
+        let input = format!("data:image/png;base64,{padded}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(images[0].data.contains("+"));
+        assert!(images[0].data.contains("/"));
+    }
+
+    #[test]
+    fn test_extract_images_preserves_surrounding_text() {
+        let payload = "A".repeat(300);
+        let input = format!(
+            "Before the image\n\ndata:image/png;base64,{payload}\n\nAfter the image with special chars: <>&"
+        );
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(remaining.contains("Before the image"));
+        assert!(remaining.contains("After the image with special chars: <>&"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    #[test]
+    fn test_extract_images_in_json_context() {
+        // Images often appear in JSON tool results
+        let payload = "A".repeat(300);
+        let input =
+            format!(r#"{{"screenshot": "data:image/png;base64,{payload}", "success": true}}"#);
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(remaining.contains("screenshot"));
+        assert!(remaining.contains("success"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    // ── Tool Result Content Format Tests ──────────────────────────────
+
+    #[test]
+    fn test_tool_result_to_content_openai_format() {
+        // Verify the OpenAI multimodal format is correct
+        let payload = "A".repeat(300);
+        let input = format!("Text: data:image/png;base64,{payload}");
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        let arr = result.as_array().unwrap();
+        // Check text block format
+        assert_eq!(arr[0]["type"], "text");
+        assert!(arr[0]["text"].is_string());
+
+        // Check image block format matches OpenAI spec
+        assert_eq!(arr[1]["type"], "image_url");
+        assert!(arr[1]["image_url"].is_object());
+        assert!(arr[1]["image_url"]["url"].is_string());
+        let url = arr[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_truncation() {
+        // Test that truncation works correctly with vision enabled
+        let payload = "A".repeat(300);
+        let long_text = "X".repeat(10_000);
+        let input = format!("{long_text} data:image/png;base64,{payload}");
+
+        // With small max_bytes, text should be truncated but image preserved
+        let result = tool_result_to_content(&input, 500, true);
+
+        let arr = result.as_array().unwrap();
+        // Text should be truncated
+        let text = arr[0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("[truncated"),
+            "text should be truncated: {text}"
+        );
+
+        // Image should still be present
+        assert_eq!(arr[1]["type"], "image_url");
     }
 }

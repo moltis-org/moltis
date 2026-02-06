@@ -61,6 +61,13 @@ pub trait LlmProvider: Send + Sync {
         200_000
     }
 
+    /// Whether this provider supports vision (image inputs).
+    /// When true, tool results containing images will be sent as multimodal
+    /// content blocks instead of stripping the image data.
+    fn supports_vision(&self) -> bool {
+        false
+    }
+
     /// Stream a completion, yielding delta/done/error events.
     fn stream(
         &self,

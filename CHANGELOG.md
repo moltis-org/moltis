@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shows platform-specific installation instructions when no browser found
   - Custom path via `chrome_path` config or `CHROME` environment variable
 
+- **Vision Support for Screenshots**: Vision-capable models can now interpret
+  browser screenshots instead of having them stripped from context
+  - Screenshots sent as multimodal image content blocks for GPT-4o, Claude, Gemini
+  - Non-vision models continue to receive `[base64 data removed]` placeholder
+  - `supports_vision()` trait method added to `LlmProvider` for capability detection
+
 ### Changed
 
 - Memory settings UI enhanced with backend comparison and feature explanations

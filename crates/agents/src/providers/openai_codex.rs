@@ -135,11 +135,18 @@ impl OpenAiCodexProvider {
                         }
                     },
                     "tool" => {
-                        // Convert tool result to function_call_output
+                        // Convert tool result to function_call_output.
+                        // Content can be a string or array (multimodal).
+                        let output = if let Some(s) = msg["content"].as_str() {
+                            s.to_string()
+                        } else {
+                            // Array content (e.g., multimodal with images) - serialize as JSON
+                            msg["content"].to_string()
+                        };
                         vec![serde_json::json!({
                             "type": "function_call_output",
                             "call_id": msg["tool_call_id"],
-                            "output": msg["content"].as_str().unwrap_or(""),
+                            "output": output,
                         })]
                     },
                     _ => {
@@ -672,5 +679,178 @@ mod tests {
         assert_eq!(converted[1]["type"], "function_call_output");
         assert_eq!(converted[1]["call_id"], "call_1");
         assert_eq!(converted[1]["output"], "12:00");
+    }
+
+    // ── Array Content Handling Tests ───────────────────────────────────
+    // These tests verify that the Codex provider correctly handles array
+    // content (multimodal) in tool results, which can occur even when we
+    // send string content due to model behavior or content format.
+
+    #[test]
+    fn convert_messages_tool_result_with_string_content() {
+        // Standard case: tool result content is a string
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_123",
+            "content": "Command executed successfully"
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_123");
+        assert_eq!(converted[0]["output"], "Command executed successfully");
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_array_content() {
+        // Edge case: tool result content is an array (multimodal format)
+        // This can happen if content was accidentally left as an array
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_456",
+            "content": [
+                {"type": "text", "text": "Screenshot captured"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC123"}}
+            ]
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_456");
+        // Array content should be serialized to JSON string
+        let output = converted[0]["output"].as_str().unwrap();
+        assert!(
+            output.contains("Screenshot captured"),
+            "output should contain text: {output}"
+        );
+        assert!(
+            output.contains("image_url"),
+            "output should contain image type: {output}"
+        );
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_null_content() {
+        // Edge case: tool result content is null
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_789",
+            "content": null
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_789");
+        // Null content should be serialized as "null"
+        assert_eq!(converted[0]["output"], "null");
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_object_content() {
+        // Edge case: tool result content is an object
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_abc",
+            "content": {"result": "success", "data": [1, 2, 3]}
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_abc");
+        // Object content should be serialized to JSON string
+        let output = converted[0]["output"].as_str().unwrap();
+        assert!(output.contains("success"), "output should contain result");
+        assert!(
+            output.contains("[1,2,3]"),
+            "output should contain data array"
+        );
+    }
+
+    #[test]
+    fn convert_messages_preserves_tool_call_id() {
+        // Verify that tool_call_id is correctly preserved for various content types
+        let test_cases = vec![
+            ("call_str", "simple string"),
+            ("call_empty", ""),
+            ("call_unicode", "日本語テスト"),
+        ];
+
+        for (call_id, content) in test_cases {
+            let messages = vec![serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": content
+            })];
+            let converted = OpenAiCodexProvider::convert_messages(&messages);
+            assert_eq!(
+                converted[0]["call_id"], call_id,
+                "call_id should be preserved for content: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn convert_messages_empty_array_content() {
+        // Edge case: tool result content is an empty array
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_empty_arr",
+            "content": []
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["output"], "[]");
+    }
+
+    #[test]
+    fn convert_messages_mixed_conversation_with_array_content() {
+        // Full conversation with various message types including array content
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "Take a screenshot"}),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_screenshot",
+                    "type": "function",
+                    "function": {"name": "browser_screenshot", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_screenshot",
+                "content": [
+                    {"type": "text", "text": "Screenshot taken"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,XYZ"}}
+                ]
+            }),
+            serde_json::json!({"role": "assistant", "content": "Here is the screenshot."}),
+        ];
+
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+
+        // Verify all messages are converted
+        assert_eq!(converted.len(), 4);
+
+        // User message
+        assert_eq!(converted[0]["content"][0]["type"], "input_text");
+        assert_eq!(converted[0]["content"][0]["text"], "Take a screenshot");
+
+        // Tool call
+        assert_eq!(converted[1]["type"], "function_call");
+        assert_eq!(converted[1]["name"], "browser_screenshot");
+
+        // Tool result with array content
+        assert_eq!(converted[2]["type"], "function_call_output");
+        let output = converted[2]["output"].as_str().unwrap();
+        assert!(output.contains("Screenshot taken"));
+        assert!(output.contains("image_url"));
+
+        // Assistant response
+        assert_eq!(converted[3]["type"], "message");
+        assert_eq!(
+            converted[3]["content"][0]["text"],
+            "Here is the screenshot."
+        );
     }
 }
