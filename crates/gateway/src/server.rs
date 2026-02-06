@@ -894,6 +894,7 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
+    seed_example_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
     let (hook_registry, discovered_hooks_info) =
         discover_and_build_hooks(&persisted_disabled).await;
@@ -3150,6 +3151,113 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
 }
 
 // ── Hook discovery helper ────────────────────────────────────────────────────
+
+/// Seed a skeleton example hook into `~/.moltis/hooks/example/` on first run.
+///
+/// The hook has no command, so it won't execute — it's a template showing
+/// users what's possible. If the directory already exists it's a no-op.
+fn seed_example_hook() {
+    let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) else {
+        return;
+    };
+    let hook_dir = home.join(".moltis/hooks/example");
+    let hook_md = hook_dir.join("HOOK.md");
+    if hook_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&hook_dir) {
+        tracing::debug!("could not create example hook dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&hook_md, EXAMPLE_HOOK_MD) {
+        tracing::debug!("could not write example HOOK.md: {e}");
+    }
+}
+
+/// Content for the skeleton example hook.
+const EXAMPLE_HOOK_MD: &str = r#"+++
+name = "example"
+description = "Skeleton hook — edit this to build your own"
+emoji = "🪝"
+events = ["BeforeToolCall"]
+# command = "./handler.sh"
+# timeout = 10
+# priority = 0
+
+# [requires]
+# os = ["darwin", "linux"]
+# bins = ["jq", "curl"]
+# env = ["SLACK_WEBHOOK_URL"]
++++
+
+# Example Hook
+
+This is a skeleton hook to help you get started. It subscribes to
+`BeforeToolCall` but has no `command`, so it won't execute anything.
+
+## Quick start
+
+1. Uncomment the `command` line above and point it at your script
+2. Create `handler.sh` (or any executable) in this directory
+3. Click **Reload** in the Hooks UI (or restart moltis)
+
+## How hooks work
+
+Your script receives the event payload as **JSON on stdin** and communicates
+its decision via **exit code** and **stdout**:
+
+| Exit code | Stdout | Action |
+|-----------|--------|--------|
+| 0 | *(empty)* | **Continue** — let the action proceed |
+| 0 | `{"action":"modify","data":{...}}` | **Modify** — alter the payload |
+| 1 | *(stderr used as reason)* | **Block** — prevent the action |
+
+## Example handler (bash)
+
+```bash
+#!/usr/bin/env bash
+# handler.sh — log every tool call to a file
+payload=$(cat)
+tool=$(echo "$payload" | jq -r '.tool_name // "unknown"')
+echo "$(date -Iseconds) tool=$tool" >> /tmp/moltis-hook.log
+# Exit 0 with no stdout = Continue
+```
+
+## Available events
+
+**Can modify or block (sequential dispatch):**
+- `BeforeAgentStart` — before a new agent run begins
+- `BeforeToolCall` — before executing a tool (inspect/modify arguments)
+- `BeforeCompaction` — before compacting chat history
+- `MessageSending` — before sending a message to the LLM
+- `ToolResultPersist` — before persisting a tool result
+
+**Read-only (parallel dispatch, Block/Modify ignored):**
+- `AgentEnd` — after an agent run completes
+- `AfterToolCall` — after a tool finishes (observe result)
+- `AfterCompaction` — after compaction completes
+- `MessageReceived` — after receiving an LLM response
+- `MessageSent` — after a message is sent
+- `SessionStart` / `SessionEnd` — session lifecycle
+- `GatewayStart` / `GatewayStop` — server lifecycle
+
+## Frontmatter reference
+
+```toml
+name = "my-hook"           # unique identifier
+description = "What it does"
+emoji = "🔧"               # optional, shown in UI
+events = ["BeforeToolCall"] # which events to subscribe to
+command = "./handler.sh"    # script to run (relative to this dir)
+timeout = 10                # seconds before kill (default: 10)
+priority = 0                # higher runs first (default: 0)
+
+[requires]
+os = ["darwin", "linux"]    # skip on other OSes
+bins = ["jq"]               # required binaries in PATH
+env = ["MY_API_KEY"]        # required environment variables
+```
+"#;
 
 /// Discover hooks from the filesystem, check eligibility, and build a
 /// [`HookRegistry`] plus a `Vec<DiscoveredHookInfo>` for the web UI.
