@@ -124,7 +124,8 @@ function appendToolResult(toolCard, result) {
 		var imgContainer = document.createElement("div");
 		imgContainer.className = "screenshot-container";
 		var img = document.createElement("img");
-		img.src = `data:image/png;base64,${result.screenshot}`;
+		// Handle both raw base64 and data URI formats
+		img.src = result.screenshot.startsWith("data:") ? result.screenshot : `data:image/png;base64,${result.screenshot}`;
 		img.className = "screenshot-thumbnail";
 		img.alt = "Browser screenshot";
 		img.title = "Click to view full size";
