@@ -209,6 +209,9 @@ function HookCard({ hook }) {
 					}
 
           <div class="flex flex-col gap-1">
+            ${
+							hook.source !== "builtin"
+								? html`
             <div class="flex items-center gap-0 border-b border-[var(--border)]">
               <button
                 class="px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${tab.value === "preview" ? "border-[var(--accent)] text-[var(--text-strong)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"}"
@@ -221,9 +224,26 @@ function HookCard({ hook }) {
 									tab.value = "source";
 								}}>Source</button>
             </div>
+            `
+								: null
+						}
             ${
-							tab.value === "source"
+							hook.source === "builtin"
 								? html`
+              <div class="skill-body-md text-sm bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 overflow-y-auto"
+                   style="min-height:60px;max-height:400px">
+                <p>${hook.description}</p>
+                <p class="mt-2">
+                  <a href="https://github.com/moltis-org/moltis/blob/main/${hook.source_path}"
+                     target="_blank" rel="noopener noreferrer"
+                     class="text-[var(--accent)] hover:underline">
+                    View source on GitHub \u2197
+                  </a>
+                </p>
+              </div>
+            `
+								: tab.value === "source"
+									? html`
               <textarea
                 ref=${textareaRef}
                 class="w-full font-mono text-xs bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] p-3 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] resize-y"
@@ -233,17 +253,23 @@ function HookCard({ hook }) {
                 onInput=${handleInput}
               />
             `
-								: html`
+									: html`
               <${MarkdownPreview} html=${hook.body_html} />
             `
 						}
           </div>
 
           <div class="flex items-center gap-2">
+            ${
+							hook.source !== "builtin"
+								? html`
             <button class=${`provider-btn provider-btn-sm ${hook.enabled ? "provider-btn-secondary" : ""}`}
                     onClick=${handleEnableDisable}>
               ${hook.enabled ? "Disable" : "Enable"}
             </button>
+            `
+								: null
+						}
             ${
 							dirty.value
 								? html`
