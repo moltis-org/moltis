@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use tracing::trace;
+
 use crate::model::{StreamEvent, ToolCall, Usage};
 
 /// Recursively patch schema for OpenAI strict mode compliance.
@@ -26,10 +28,15 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
         obj.insert("additionalProperties".to_string(), serde_json::json!(false));
 
         // Ensure all properties are in required array
+        // Objects without properties need empty properties + empty required
         if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
             let all_prop_names: Vec<serde_json::Value> =
                 props.keys().map(|k| serde_json::json!(k)).collect();
             obj.insert("required".to_string(), serde_json::json!(all_prop_names));
+        } else {
+            // Object without properties - add empty properties and required
+            obj.insert("properties".to_string(), serde_json::json!({}));
+            obj.insert("required".to_string(), serde_json::json!([]));
         }
     }
 
@@ -78,14 +85,14 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
 ///
 /// See: <https://platform.openai.com/docs/guides/function-calling>
 pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools
+    let result: Vec<serde_json::Value> = tools
         .iter()
         .map(|t| {
             // Clone parameters and patch for strict mode
             let mut params = t["parameters"].clone();
             patch_schema_for_strict_mode(&mut params);
 
-            serde_json::json!({
+            let tool = serde_json::json!({
                 "type": "function",
                 "function": {
                     "name": t["name"],
@@ -93,9 +100,19 @@ pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
                     "parameters": params,
                     "strict": true,
                 }
-            })
+            });
+
+            trace!(
+                tool_name = %t["name"].as_str().unwrap_or("unknown"),
+                "converted tool to Chat Completions format"
+            );
+
+            tool
         })
-        .collect()
+        .collect();
+
+    trace!(tools_count = result.len(), "to_openai_tools complete");
+    result
 }
 
 /// Convert tool schemas to OpenAI Responses API function-calling format.
@@ -113,22 +130,35 @@ pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
 ///
 /// See: <https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses>
 pub fn to_responses_api_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools
+    let result: Vec<serde_json::Value> = tools
         .iter()
         .map(|t| {
             // Clone parameters and patch for strict mode
             let mut params = t["parameters"].clone();
             patch_schema_for_strict_mode(&mut params);
 
-            serde_json::json!({
+            let tool = serde_json::json!({
                 "type": "function",
                 "name": t["name"],
                 "description": t["description"],
                 "parameters": params,
                 "strict": true,
-            })
+            });
+
+            trace!(
+                tool_name = %t["name"].as_str().unwrap_or("unknown"),
+                "converted tool to Responses API format"
+            );
+
+            tool
         })
-        .collect()
+        .collect();
+
+    trace!(
+        tools_count = result.len(),
+        "to_responses_api_tools complete"
+    );
+    result
 }
 
 /// Parse tool_calls from an OpenAI response message (non-streaming).
@@ -605,6 +635,41 @@ mod tests {
         let items_required = items["required"].as_array().unwrap();
         assert!(items_required.contains(&serde_json::json!("observation")));
         assert!(items_required.contains(&serde_json::json!("entity")));
+    }
+
+    #[test]
+    fn test_object_without_properties() {
+        // Objects without explicit properties need empty properties + empty required
+        // This was failing for the cron tool's "patch" field
+        let tools = vec![serde_json::json!({
+            "name": "cron",
+            "description": "Cron tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "patch": {
+                        "type": "object",
+                        "description": "Fields to update (no properties defined)"
+                    }
+                },
+                "required": ["action"]
+            }
+        })];
+        let converted = to_responses_api_tools(&tools);
+        let params = &converted[0]["parameters"];
+
+        // Top level should have all properties in required
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("action")));
+        assert!(required.contains(&serde_json::json!("patch")));
+
+        // The "patch" object should have empty properties and empty required
+        let patch = &params["properties"]["patch"];
+        assert_eq!(patch["type"], "object");
+        assert_eq!(patch["additionalProperties"], false);
+        assert_eq!(patch["properties"], serde_json::json!({}));
+        assert_eq!(patch["required"], serde_json::json!([]));
     }
 
     #[test]
