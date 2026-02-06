@@ -249,7 +249,9 @@ impl BrowserManager {
             let _ = self.remove_highlights(&page).await;
         }
 
-        let base64_screenshot = BASE64.encode(&screenshot);
+        // Use data URI format so the sanitizer can strip it for LLM context
+        // while the UI can still display it as an image
+        let data_uri = format!("data:image/png;base64,{}", BASE64.encode(&screenshot));
 
         #[cfg(feature = "metrics")]
         moltis_metrics::counter!(moltis_metrics::browser::SCREENSHOTS_TOTAL).increment(1);
@@ -262,7 +264,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_screenshot(base64_screenshot),
+            BrowserResponse::success(sid, 0).with_screenshot(data_uri),
         ))
     }
 
