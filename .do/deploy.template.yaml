@@ -1,0 +1,18 @@
+spec:
+  name: moltis
+  services:
+    - name: moltis
+      image:
+        registry_type: GHCR
+        registry: ghcr.io
+        repository: moltis-org/moltis
+        tag: latest
+      instance_count: 1
+      instance_size_slug: basic-xxs
+      http_port: 8080
+      run_command: moltis --bind 0.0.0.0 --port 8080 --no-tls
+      health_check:
+        http_path: /health
+      envs:
+        - key: MOLTIS_DATA_DIR
+          value: /data

@@ -302,6 +302,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 pub async fn start_gateway(
     bind: &str,
     port: u16,
+    no_tls: bool,
     log_buffer: Option<crate::logs::LogBuffer>,
     config_dir: Option<std::path::PathBuf>,
     data_dir: Option<std::path::PathBuf>,
@@ -321,7 +322,12 @@ pub async fn start_gateway(
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
-    let config = moltis_config::discover_and_load();
+    let mut config = moltis_config::discover_and_load();
+
+    // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
+    if no_tls {
+        config.tls.enabled = false;
+    }
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.

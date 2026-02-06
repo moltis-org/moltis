@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--no-tls` CLI flag**: `--no-tls` flag and `MOLTIS_NO_TLS` environment variable to disable
+  TLS for cloud deployments where the provider handles TLS termination
+- **One-click cloud deploy**: Deploy configs for Fly.io (`fly.toml`), DigitalOcean
+  (`.do/deploy.template.yaml`), Render (`render.yaml`), and Railway (`railway.json`)
+  with deploy buttons in the README
+- **Dedicated Docker CI workflow**: Docker image builds now run on every push to `main`
+  (in addition to release tags), producing a `latest` tag for cloud deployments
+
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
   - Gated behind `qmd` feature flag (enabled by default)
   - Web UI shows installation instructions and QMD status
