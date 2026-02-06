@@ -5,9 +5,56 @@
 
 use std::collections::HashMap;
 
-use tracing::trace;
+use {serde::Serialize, tracing::trace};
 
 use crate::model::{StreamEvent, ToolCall, Usage};
+
+// ============================================================================
+// OpenAI Tool Schema Types
+// ============================================================================
+// These types enforce the correct structure for OpenAI-compatible APIs.
+// Using typed structs instead of manual JSON prevents missing fields at compile time.
+//
+// References:
+// - Chat Completions: https://platform.openai.com/docs/guides/function-calling
+// - Responses API: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses
+// ============================================================================
+
+/// Chat Completions API tool format (nested under "function").
+///
+/// ```json
+/// { "type": "function", "function": { "name": "...", ... } }
+/// ```
+#[derive(Debug, Serialize)]
+pub struct ChatCompletionsTool {
+    #[serde(rename = "type")]
+    pub tool_type: &'static str,
+    pub function: ChatCompletionsFunction,
+}
+
+/// The function definition nested inside ChatCompletionsTool.
+#[derive(Debug, Serialize)]
+pub struct ChatCompletionsFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub strict: bool,
+}
+
+/// Responses API tool format (flat, name at top level).
+///
+/// ```json
+/// { "type": "function", "name": "...", "parameters": {...}, "strict": true }
+/// ```
+#[derive(Debug, Serialize)]
+pub struct ResponsesApiTool {
+    #[serde(rename = "type")]
+    pub tool_type: &'static str,
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub strict: bool,
+}
 
 /// Recursively patch schema for OpenAI strict mode compliance.
 ///
@@ -87,27 +134,29 @@ pub fn patch_schema_for_strict_mode(schema: &mut serde_json::Value) {
 pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
     let result: Vec<serde_json::Value> = tools
         .iter()
-        .map(|t| {
+        .filter_map(|t| {
             // Clone parameters and patch for strict mode
             let mut params = t["parameters"].clone();
             patch_schema_for_strict_mode(&mut params);
 
-            let tool = serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": params,
-                    "strict": true,
-                }
-            });
+            let name = t["name"].as_str()?.to_string();
+            let description = t["description"].as_str().unwrap_or("").to_string();
 
-            trace!(
-                tool_name = %t["name"].as_str().unwrap_or("unknown"),
-                "converted tool to Chat Completions format"
-            );
+            // Use typed struct to ensure all required fields are present
+            let tool = ChatCompletionsTool {
+                tool_type: "function",
+                function: ChatCompletionsFunction {
+                    name: name.clone(),
+                    description,
+                    parameters: params,
+                    strict: true,
+                },
+            };
 
-            tool
+            trace!(tool_name = %name, "converted tool to Chat Completions format");
+
+            // Serialize to Value for compatibility with existing API
+            serde_json::to_value(tool).ok()
         })
         .collect();
 
@@ -132,25 +181,27 @@ pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
 pub fn to_responses_api_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
     let result: Vec<serde_json::Value> = tools
         .iter()
-        .map(|t| {
+        .filter_map(|t| {
             // Clone parameters and patch for strict mode
             let mut params = t["parameters"].clone();
             patch_schema_for_strict_mode(&mut params);
 
-            let tool = serde_json::json!({
-                "type": "function",
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": params,
-                "strict": true,
-            });
+            let name = t["name"].as_str()?.to_string();
+            let description = t["description"].as_str().unwrap_or("").to_string();
 
-            trace!(
-                tool_name = %t["name"].as_str().unwrap_or("unknown"),
-                "converted tool to Responses API format"
-            );
+            // Use typed struct to ensure all required fields are present
+            let tool = ResponsesApiTool {
+                tool_type: "function",
+                name: name.clone(),
+                description,
+                parameters: params,
+                strict: true,
+            };
 
-            tool
+            trace!(tool_name = %name, "converted tool to Responses API format");
+
+            // Serialize to Value for compatibility with existing API
+            serde_json::to_value(tool).ok()
         })
         .collect();
 
