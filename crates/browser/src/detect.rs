@@ -61,11 +61,13 @@ pub struct DetectionResult {
 
 /// Detect if a Chromium-based browser is available on the system.
 ///
-/// Checks:
+/// Checks (in order):
 /// 1. Custom path from config (if provided)
 /// 2. CHROME environment variable
-/// 3. Known executable names in PATH
-/// 4. Platform-specific installation paths (macOS, Windows)
+/// 3. Platform-specific installation paths (macOS app bundles, Windows paths)
+///    - These are checked first because they're more reliable than PATH lookups
+///    - PATH can contain broken wrapper scripts (e.g., Homebrew's deprecated chromium)
+/// 4. Known executable names in PATH (fallback)
 pub fn detect_browser(custom_path: Option<&str>) -> DetectionResult {
     // Check custom path first
     if let Some(path) = custom_path {
@@ -91,18 +93,8 @@ pub fn detect_browser(custom_path: Option<&str>) -> DetectionResult {
         }
     }
 
-    // Check known executable names in PATH
-    for name in CHROMIUM_EXECUTABLES {
-        if let Ok(path) = which::which(name) {
-            return DetectionResult {
-                found: true,
-                path: Some(path),
-                install_hint: String::new(),
-            };
-        }
-    }
-
-    // Check platform-specific installation paths
+    // Check platform-specific installation paths FIRST (more reliable than PATH)
+    // PATH can contain broken wrapper scripts (e.g., Homebrew's deprecated chromium)
     #[cfg(target_os = "macos")]
     for path in MACOS_APP_PATHS {
         let p = PathBuf::from(path);
@@ -122,6 +114,17 @@ pub fn detect_browser(custom_path: Option<&str>) -> DetectionResult {
             return DetectionResult {
                 found: true,
                 path: Some(p),
+                install_hint: String::new(),
+            };
+        }
+    }
+
+    // Fallback: check known executable names in PATH
+    for name in CHROMIUM_EXECUTABLES {
+        if let Ok(path) = which::which(name) {
+            return DetectionResult {
+                found: true,
+                path: Some(path),
                 install_hint: String::new(),
             };
         }
