@@ -7,6 +7,50 @@ use std::collections::HashMap;
 
 use crate::model::{StreamEvent, ToolCall, Usage};
 
+/// Recursively add `additionalProperties: false` to all object schemas.
+///
+/// OpenAI's strict mode requires `additionalProperties: false` on every object
+/// in the schema tree, not just the top level. This includes nested objects in
+/// `properties`, objects in array `items`, etc.
+fn add_additional_properties_false(schema: &mut serde_json::Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+
+    // If this is an object type, add additionalProperties: false
+    if obj.get("type").and_then(|t| t.as_str()) == Some("object") {
+        obj.insert("additionalProperties".to_string(), serde_json::json!(false));
+    }
+
+    // Recurse into properties
+    if let Some(props) = obj.get_mut("properties").and_then(|p| p.as_object_mut()) {
+        for (_, prop_schema) in props.iter_mut() {
+            add_additional_properties_false(prop_schema);
+        }
+    }
+
+    // Recurse into array items
+    if let Some(items) = obj.get_mut("items") {
+        add_additional_properties_false(items);
+    }
+
+    // Recurse into anyOf/oneOf/allOf
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(variants) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
+            for variant in variants {
+                add_additional_properties_false(variant);
+            }
+        }
+    }
+
+    // Recurse into additionalProperties if it's a schema (not just true/false)
+    if let Some(additional) = obj.get_mut("additionalProperties")
+        && additional.is_object()
+    {
+        add_additional_properties_false(additional);
+    }
+}
+
 /// Convert tool schemas to OpenAI function-calling format.
 ///
 /// Adds `strict: true` and `additionalProperties: false` to enforce schema
@@ -16,11 +60,9 @@ pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
     tools
         .iter()
         .map(|t| {
-            // Clone parameters and add additionalProperties: false
+            // Clone parameters and recursively add additionalProperties: false
             let mut params = t["parameters"].clone();
-            if let Some(obj) = params.as_object_mut() {
-                obj.insert("additionalProperties".to_string(), serde_json::json!(false));
-            }
+            add_additional_properties_false(&mut params);
 
             serde_json::json!({
                 "type": "function",
@@ -186,6 +228,106 @@ mod tests {
             converted[0]["function"]["parameters"]["additionalProperties"],
             false
         );
+    }
+
+    #[test]
+    fn test_to_openai_tools_nested_objects() {
+        // Test that nested objects get additionalProperties: false
+        let tools = vec![serde_json::json!({
+            "name": "nested_tool",
+            "description": "Tool with nested objects",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "outer": {
+                        "type": "object",
+                        "properties": {
+                            "inner": {
+                                "type": "object",
+                                "properties": {
+                                    "value": {"type": "string"}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let params = &converted[0]["function"]["parameters"];
+
+        // Top level should have additionalProperties: false
+        assert_eq!(params["additionalProperties"], false);
+
+        // Nested object should have additionalProperties: false
+        let outer = &params["properties"]["outer"];
+        assert_eq!(outer["additionalProperties"], false);
+
+        // Deeply nested object should also have additionalProperties: false
+        let inner = &outer["properties"]["inner"];
+        assert_eq!(inner["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_to_openai_tools_array_items() {
+        // Test that array items with object type get additionalProperties: false
+        // This is the case that was failing for mcp__memory__delete_observations
+        let tools = vec![serde_json::json!({
+            "name": "delete_observations",
+            "description": "Delete observations",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "deletions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "observation": {"type": "string"}
+                            },
+                            "required": ["observation"]
+                        }
+                    }
+                }
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let params = &converted[0]["function"]["parameters"];
+
+        // Top level should have additionalProperties: false
+        assert_eq!(params["additionalProperties"], false);
+
+        // Array items object should have additionalProperties: false
+        let items = &params["properties"]["deletions"]["items"];
+        assert_eq!(items["additionalProperties"], false);
+    }
+
+    #[test]
+    fn test_to_openai_tools_anyof() {
+        // Test that anyOf/oneOf/allOf variants get additionalProperties: false
+        let tools = vec![serde_json::json!({
+            "name": "union_tool",
+            "description": "Tool with anyOf",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "object", "properties": {"x": {"type": "number"}}}
+                        ]
+                    }
+                }
+            }
+        })];
+        let converted = to_openai_tools(&tools);
+        let params = &converted[0]["function"]["parameters"];
+
+        // The object variant in anyOf should have additionalProperties: false
+        let any_of = params["properties"]["value"]["anyOf"].as_array().unwrap();
+        // First variant is string, no additionalProperties needed
+        // Second variant is object, should have additionalProperties: false
+        assert_eq!(any_of[1]["additionalProperties"], false);
     }
 
     #[test]
