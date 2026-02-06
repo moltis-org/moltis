@@ -3157,10 +3157,7 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
 /// The hook has no command, so it won't execute — it's a template showing
 /// users what's possible. If the directory already exists it's a no-op.
 fn seed_example_hook() {
-    let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) else {
-        return;
-    };
-    let hook_dir = home.join(".moltis/hooks/example");
+    let hook_dir = moltis_config::data_dir().join("hooks/example");
     let hook_md = hook_dir.join("HOOK.md");
     if hook_md.exists() {
         return;

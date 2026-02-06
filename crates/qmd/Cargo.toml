@@ -1,5 +1,5 @@
 [package]
-description = "QMD memory backend for moltis - optional sidecar-based hybrid search"
+description       = "QMD memory backend for moltis - optional sidecar-based hybrid search"
 edition.workspace = true
 name              = "moltis-qmd"
 version.workspace = true

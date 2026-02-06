@@ -4,67 +4,66 @@ name              = "moltis-gateway"
 version.workspace = true
 
 [dependencies]
-anyhow                = { workspace = true }
-argon2                = "0.5"
-async-trait           = "0.1"
-axum                  = { workspace = true }
-axum-extra            = { features = ["cookie"], version = "0.10" }
-axum-server           = { optional = true, workspace = true }
-base64                = { workspace = true }
-chrono                = { features = ["serde"], optional = true, version = "0.4" }
-dashmap               = "6"
-directories.workspace = true
-futures               = { workspace = true }
-hostname              = "0.4"
-include_dir           = { optional = true, version = "0.7" }
-moltis-agents         = { workspace = true }
-moltis-canvas         = { workspace = true }
-moltis-channels       = { workspace = true }
-moltis-common         = { workspace = true }
-moltis-config         = { workspace = true }
-moltis-cron           = { workspace = true }
-moltis-mcp            = { workspace = true }
-moltis-media          = { workspace = true }
-moltis-memory         = { workspace = true }
-moltis-metrics        = { optional = true, workspace = true }
-moltis-oauth          = { workspace = true }
-moltis-onboarding     = { workspace = true }
-moltis-plugins        = { workspace = true }
-moltis-projects       = { workspace = true }
-moltis-protocol       = { workspace = true }
-moltis-qmd            = { optional = true, workspace = true }
-moltis-routing        = { workspace = true }
-moltis-sessions       = { workspace = true }
-moltis-skills         = { workspace = true }
-moltis-telegram       = { workspace = true }
-moltis-tools          = { workspace = true }
-p256                  = { features = ["ecdsa"], optional = true, version = "0.13" }
-password-hash         = "0.5"
-pulldown-cmark        = { default-features = false, features = ["html"], version = "0.12" }
-rand                  = { workspace = true }
-rcgen                 = { optional = true, workspace = true }
-reqwest               = { workspace = true }
-rustls                = { optional = true, workspace = true }
-rustls-pemfile        = { optional = true, workspace = true }
-secrecy               = { workspace = true }
-serde                 = { workspace = true }
-serde_json            = { workspace = true }
-sha2                  = { workspace = true }
-sqlx                  = { workspace = true }
-sysinfo               = { workspace = true }
-time                  = { optional = true, workspace = true }
-tokio                 = { workspace = true }
-tokio-rustls          = { optional = true, workspace = true }
-tokio-stream          = { workspace = true }
-tokio-tungstenite     = { workspace = true }
-toml                  = { workspace = true }
-tower-http            = { features = ["cors"], version = "0.6" }
-tracing               = { workspace = true }
-tracing-subscriber    = { workspace = true }
-uuid                  = { workspace = true }
-web-push              = { optional = true, version = "0.10" }
-webauthn-rs           = { features = ["danger-allow-state-serialisation"], version = "0.5" }
-webauthn-rs-proto     = "0.5"
+anyhow             = { workspace = true }
+argon2             = "0.5"
+async-trait        = "0.1"
+axum               = { workspace = true }
+axum-extra         = { features = ["cookie"], version = "0.10" }
+axum-server        = { optional = true, workspace = true }
+base64             = { workspace = true }
+chrono             = { features = ["serde"], optional = true, version = "0.4" }
+dashmap            = "6"
+futures            = { workspace = true }
+hostname           = "0.4"
+include_dir        = { optional = true, version = "0.7" }
+moltis-agents      = { workspace = true }
+moltis-canvas      = { workspace = true }
+moltis-channels    = { workspace = true }
+moltis-common      = { workspace = true }
+moltis-config      = { workspace = true }
+moltis-cron        = { workspace = true }
+moltis-mcp         = { workspace = true }
+moltis-media       = { workspace = true }
+moltis-memory      = { workspace = true }
+moltis-metrics     = { optional = true, workspace = true }
+moltis-oauth       = { workspace = true }
+moltis-onboarding  = { workspace = true }
+moltis-plugins     = { workspace = true }
+moltis-projects    = { workspace = true }
+moltis-protocol    = { workspace = true }
+moltis-qmd         = { optional = true, workspace = true }
+moltis-routing     = { workspace = true }
+moltis-sessions    = { workspace = true }
+moltis-skills      = { workspace = true }
+moltis-telegram    = { workspace = true }
+moltis-tools       = { workspace = true }
+p256               = { features = ["ecdsa"], optional = true, version = "0.13" }
+password-hash      = "0.5"
+pulldown-cmark     = { default-features = false, features = ["html"], version = "0.12" }
+rand               = { workspace = true }
+rcgen              = { optional = true, workspace = true }
+reqwest            = { workspace = true }
+rustls             = { optional = true, workspace = true }
+rustls-pemfile     = { optional = true, workspace = true }
+secrecy            = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+sha2               = { workspace = true }
+sqlx               = { workspace = true }
+sysinfo            = { workspace = true }
+time               = { optional = true, workspace = true }
+tokio              = { workspace = true }
+tokio-rustls       = { optional = true, workspace = true }
+tokio-stream       = { workspace = true }
+tokio-tungstenite  = { workspace = true }
+toml               = { workspace = true }
+tower-http         = { features = ["cors"], version = "0.6" }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid               = { workspace = true }
+web-push           = { optional = true, version = "0.10" }
+webauthn-rs        = { features = ["danger-allow-state-serialisation"], version = "0.5" }
+webauthn-rs-proto  = "0.5"
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
 openssl     = { workspace = true }
 urlencoding = "2.1.3"

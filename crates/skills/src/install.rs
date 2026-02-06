@@ -257,9 +257,7 @@ fn parse_source(source: &str) -> anyhow::Result<(String, String)> {
 
 /// Get the default installation directory.
 pub fn default_install_dir() -> anyhow::Result<PathBuf> {
-    let home = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
-    Ok(home.home_dir().join(".moltis/installed-skills"))
+    Ok(moltis_config::data_dir().join("installed-skills"))
 }
 
 #[cfg(test)]
