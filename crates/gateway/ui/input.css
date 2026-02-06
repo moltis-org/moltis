@@ -357,6 +357,25 @@
     border-color: var(--accent);
     transform: scale(1.02);
   }
+  /* Fullscreen lightbox for screenshots */
+  .screenshot-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    cursor: zoom-out;
+    padding: 20px;
+  }
+  .screenshot-lightbox-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
   .msg code {
     background: var(--surface2);
     padding: 1px 6px;

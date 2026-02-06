@@ -113,7 +113,7 @@ function appendToolResult(toolCard, result) {
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
 	}
-	// Browser screenshot support - display as thumbnail
+	// Browser screenshot support - display as thumbnail with lightbox
 	if (result.screenshot) {
 		var imgContainer = document.createElement("div");
 		imgContainer.className = "screenshot-container";
@@ -123,7 +123,24 @@ function appendToolResult(toolCard, result) {
 		img.alt = "Browser screenshot";
 		img.title = "Click to view full size";
 		img.onclick = () => {
-			window.open(img.src, "_blank");
+			// Create fullscreen lightbox overlay
+			var overlay = document.createElement("div");
+			overlay.className = "screenshot-lightbox";
+			var fullImg = document.createElement("img");
+			fullImg.src = img.src;
+			fullImg.className = "screenshot-lightbox-img";
+			overlay.appendChild(fullImg);
+			// Close on click anywhere
+			overlay.onclick = () => overlay.remove();
+			// Close on Escape key
+			var closeOnEscape = (e) => {
+				if (e.key === "Escape") {
+					overlay.remove();
+					document.removeEventListener("keydown", closeOnEscape);
+				}
+			};
+			document.addEventListener("keydown", closeOnEscape);
+			document.body.appendChild(overlay);
 		};
 		imgContainer.appendChild(img);
 		toolCard.appendChild(imgContainer);
