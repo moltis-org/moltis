@@ -390,6 +390,21 @@ function handleSandboxImageProvision(payload) {
 	}
 }
 
+function handleBrowserImagePull(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	var image = payload.image || "browser container";
+	if (payload.phase === "start") {
+		chatAddMsg("system", `Pulling browser container image (${image})\u2026 This may take a few minutes on first run.`);
+	} else if (payload.phase === "done") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("system", `Browser container image ready: ${image}`);
+	} else if (payload.phase === "error") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("error", `Browser container image pull failed: ${payload.error || "unknown"}`);
+	}
+}
+
 // Track download indicator element
 var downloadIndicatorEl = null;
 
@@ -480,6 +495,7 @@ var eventHandlers = {
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
+	"browser.image.pull": handleBrowserImagePull,
 	"local-llm.download": handleLocalLlmDownload,
 };
 

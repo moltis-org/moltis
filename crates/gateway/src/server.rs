@@ -818,6 +818,71 @@ pub async fn start_gateway(
         }
     }
 
+    // Pre-pull browser container image if browser sandbox is enabled.
+    // This ensures the image is ready before the user tries to use the browser tool.
+    if config.tools.browser.enabled && config.tools.browser.sandbox {
+        let sandbox_image = config.tools.browser.sandbox_image.clone();
+        let deferred_for_browser = Arc::clone(&deferred_state);
+        tokio::spawn(async move {
+            // Broadcast pull start event.
+            if let Some(state) = deferred_for_browser.get() {
+                crate::broadcast::broadcast(
+                    state,
+                    "browser.image.pull",
+                    serde_json::json!({
+                        "phase": "start",
+                        "image": sandbox_image,
+                    }),
+                    crate::broadcast::BroadcastOpts {
+                        drop_if_slow: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            }
+
+            match moltis_browser::container::ensure_image(&sandbox_image) {
+                Ok(()) => {
+                    info!(image = %sandbox_image, "browser container image ready");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "done",
+                                "image": sandbox_image,
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(image = %sandbox_image, error = %e, "browser container image pull failed");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "error",
+                                "image": sandbox_image,
+                                "error": e.to_string(),
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+            }
+        });
+    }
+
     // Load any persisted sandbox overrides from session metadata.
     {
         for entry in session_metadata.list().await {
