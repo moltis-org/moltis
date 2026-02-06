@@ -774,11 +774,37 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         let result: serde_json::Value =
             serde_json::from_str(&stdout).context("failed to parse mlx-lm output")?;
 
-        let text = result["text"].as_str().unwrap_or("").to_string();
+        let text = result["text"].as_str().unwrap_or("");
+        let text = strip_chat_template_tokens(text);
         let input_tokens = result["input_tokens"].as_u64().unwrap_or(0) as u32;
         let output_tokens = result["output_tokens"].as_u64().unwrap_or(0) as u32;
 
         Ok((text, input_tokens, output_tokens))
+    }
+
+    /// Strip common chat template stop tokens from model output.
+    fn strip_chat_template_tokens(text: &str) -> String {
+        // Common stop tokens from various chat templates
+        const STOP_TOKENS: &[&str] = &[
+            "<|im_end|>",    // ChatML (Qwen, Yi, etc.)
+            "<|eot_id|>",    // Llama 3
+            "</s>",          // Llama 2, Mistral
+            "<|end|>",       // Phi
+            "<|endoftext|>", // GPT-2 style
+        ];
+
+        let mut result = text.to_string();
+        for token in STOP_TOKENS {
+            // Strip from end (most common case)
+            if result.ends_with(token) {
+                result = result[..result.len() - token.len()].to_string();
+            }
+            // Also handle if it appears mid-response (model continued after stop)
+            if let Some(pos) = result.find(token) {
+                result = result[..pos].to_string();
+            }
+        }
+        result.trim_end().to_string()
     }
 
     /// Generate text using mlx-lm CLI (Homebrew installation).
@@ -811,13 +837,14 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         let parser = MlxCliResponseParser;
         let parsed = parser.parse(&raw_output);
 
+        // Strip chat template stop tokens from the response
+        let text = strip_chat_template_tokens(&parsed.text);
+
         // Fallback to estimation if parser didn't get token counts
         let input_tokens = parsed.input_tokens.unwrap_or((prompt.len() / 4) as u32);
-        let output_tokens = parsed
-            .output_tokens
-            .unwrap_or((parsed.text.len() / 4) as u32);
+        let output_tokens = parsed.output_tokens.unwrap_or((text.len() / 4) as u32);
 
-        Ok((parsed.text, input_tokens, output_tokens))
+        Ok((text, input_tokens, output_tokens))
     }
 
     #[async_trait]

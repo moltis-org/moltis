@@ -449,9 +449,18 @@ function handleLocalLlmDownload(payload) {
 	// Update progress bar
 	var progressBar = downloadIndicatorEl.querySelector(".download-progress-bar");
 	var progressText = downloadIndicatorEl.querySelector(".download-progress-text");
+	var progressContainer = downloadIndicatorEl.querySelector(".download-progress");
 
-	if (payload.progress != null && progressBar) {
-		progressBar.style.width = payload.progress.toFixed(1) + "%";
+	if (progressBar && progressContainer) {
+		if (payload.progress != null) {
+			// Determinate progress - show actual percentage
+			progressContainer.classList.remove("indeterminate");
+			progressBar.style.width = payload.progress.toFixed(1) + "%";
+		} else if (payload.total == null && payload.downloaded != null) {
+			// Indeterminate progress - CSS handles the animation
+			progressContainer.classList.add("indeterminate");
+			progressBar.style.width = ""; // Let CSS control width
+		}
 	}
 
 	if (payload.downloaded != null && progressText) {

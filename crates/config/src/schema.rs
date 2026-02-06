@@ -855,6 +855,11 @@ pub struct ProvidersConfig {
     /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
     #[serde(flatten)]
     pub providers: HashMap<String, ProviderEntry>,
+
+    /// Additional local model IDs to register (from local-llm.json).
+    /// This is populated at runtime by the gateway and not persisted.
+    #[serde(skip)]
+    pub local_models: Vec<String>,
 }
 
 /// Configuration for a single LLM provider.

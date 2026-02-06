@@ -285,11 +285,11 @@ pub fn models_for_backend(backend: BackendType) -> Vec<&'static LocalModelDef> {
 }
 
 /// Default cache directory for downloaded models.
+///
+/// Returns `~/.moltis/models` (same base as config/data directories).
 #[must_use]
 pub fn default_models_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "", "moltis")
-        .map(|d| d.data_dir().join("models"))
-        .unwrap_or_else(|| PathBuf::from(".moltis/models"))
+    moltis_config::data_dir().join("models")
 }
 
 /// Check if a GGUF model file is cached locally.

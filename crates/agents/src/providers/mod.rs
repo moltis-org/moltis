@@ -583,71 +583,77 @@ impl ProviderRegistry {
             return;
         }
 
-        // User must configure a model explicitly (bring your own model pattern)
-        let Some(model_id) = config.get("local").and_then(|e| e.model.as_deref()) else {
-            // Log system info and suggestions even when no model is configured
-            local_gguf::log_system_info_and_suggestions();
+        // Log system info once
+        local_gguf::log_system_info_and_suggestions();
+
+        // Collect all model IDs to register:
+        // 1. From local_models (multi-model config from local-llm.json)
+        // 2. From the single model field (for backward compatibility)
+        let mut model_ids: Vec<String> = config.local_models.clone();
+
+        // Add the single model if not already in the list
+        if let Some(model_id) = config.get("local").and_then(|e| e.model.as_deref())
+            && !model_ids.contains(&model_id.to_string())
+        {
+            model_ids.push(model_id.to_string());
+        }
+
+        if model_ids.is_empty() {
             tracing::info!(
                 "local-llm enabled but no model configured. Add [providers.local] model = \"...\" to config."
             );
             return;
-        };
-
-        if self.providers.contains_key(model_id) {
-            return;
         }
 
-        // Build config from provider entry
+        // Build config from provider entry for user overrides
         let entry = config.get("local");
         let user_model_path = entry
             .and_then(|e| e.base_url.as_deref()) // Reuse base_url for model_path
             .map(PathBuf::from);
 
-        // Log system info
-        local_gguf::log_system_info_and_suggestions();
+        // Register each model
+        for model_id in model_ids {
+            if self.providers.contains_key(&model_id) {
+                continue;
+            }
 
-        // Look up model in registries to get display name
-        // Let the backend handle model resolution and caching
-        let (display_name, model_path) = if let Some(def) = local_llm::models::find_model(model_id)
-        {
-            // Model in unified registry - use user path or let backend handle download
-            (def.display_name.to_string(), user_model_path)
-        } else if let Some(def) = local_gguf::models::find_model(model_id) {
-            // Model in legacy registry - let backend handle download/cache resolution
-            // (user_model_path allows override if explicitly set in config)
-            (def.display_name.to_string(), user_model_path)
-        } else {
-            // Unknown model
-            (format!("{} (local)", model_id), user_model_path)
-        };
+            // Look up model in registries to get display name
+            let display_name = if let Some(def) = local_llm::models::find_model(&model_id) {
+                def.display_name.to_string()
+            } else if let Some(def) = local_gguf::models::find_model(&model_id) {
+                def.display_name.to_string()
+            } else {
+                format!("{} (local)", model_id)
+            };
 
-        // Use LocalLlmProvider which auto-detects backend based on model type
-        let llm_config = local_llm::LocalLlmConfig {
-            model_id: model_id.into(),
-            model_path,
-            backend: None, // Auto-detect based on model type
-            context_size: None,
-            gpu_layers: 0,
-            temperature: 0.7,
-            cache_dir: local_llm::models::default_models_dir(),
-        };
+            // Use LocalLlmProvider which auto-detects backend based on model type
+            let llm_config = local_llm::LocalLlmConfig {
+                model_id: model_id.clone(),
+                model_path: user_model_path.clone(),
+                backend: None, // Auto-detect based on model type
+                context_size: None,
+                gpu_layers: 0,
+                temperature: 0.7,
+                cache_dir: local_llm::models::default_models_dir(),
+            };
 
-        tracing::info!(
-            model = model_id,
-            display_name = %display_name,
-            "local-llm model configured (will load on first use)"
-        );
+            tracing::info!(
+                model = %model_id,
+                display_name = %display_name,
+                "local-llm model configured (will load on first use)"
+            );
 
-        // Use LocalLlmProvider which properly routes to GGUF or MLX backend
-        let provider = Arc::new(local_llm::LocalLlmProvider::new(llm_config));
-        self.register(
-            ModelInfo {
-                id: model_id.into(),
-                provider: "local-llm".into(),
-                display_name,
-            },
-            provider,
-        );
+            // Use LocalLlmProvider which properly routes to GGUF or MLX backend
+            let provider = Arc::new(local_llm::LocalLlmProvider::new(llm_config));
+            self.register(
+                ModelInfo {
+                    id: model_id,
+                    provider: "local-llm".into(),
+                    display_name,
+                },
+                provider,
+            );
+        }
     }
 
     fn register_builtin_providers(&mut self, config: &ProvidersConfig) {

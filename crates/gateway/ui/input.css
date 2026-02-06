@@ -1141,30 +1141,43 @@
   }
   .download-progress-bar {
     height: 100%;
+    width: 0;
     background: var(--accent);
     transition: width 0.3s ease;
   }
+  .download-progress.indeterminate .download-progress-bar {
+    width: 40%;
+    animation: indeterminate-slide 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate-slide {
+    0% { margin-left: 0; }
+    50% { margin-left: 60%; }
+    100% { margin-left: 0; }
+  }
 
-  /* Download indicator in chat */
-  .download-indicator {
+  /* Download indicator in chat - use .msg.system.download-indicator for higher specificity */
+  .msg.system.download-indicator {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px 16px;
+    gap: 8px;
+    padding: 16px 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     max-width: 400px;
-    margin: 8px 0;
+    margin: 12px 0;
+    align-self: flex-start;
+    color: var(--text);
+    font-size: 0.9rem;
   }
-  .download-indicator .download-status {
+  .msg.system.download-indicator .download-status {
     font-size: 0.85rem;
     color: var(--text);
   }
-  .download-indicator .download-progress {
+  .msg.system.download-indicator .download-progress {
     width: 100%;
   }
-  .download-indicator .download-progress-text {
+  .msg.system.download-indicator .download-progress-text {
     font-size: 0.75rem;
     color: var(--muted);
     font-family: var(--font-mono);

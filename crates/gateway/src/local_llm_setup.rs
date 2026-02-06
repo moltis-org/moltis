@@ -736,6 +736,7 @@ impl LocalLlmService for LiveLocalLlmService {
         let state_cell = Arc::clone(&self.state);
         let cache_dir = local_gguf::models::default_models_dir();
         let display_name = model_def.display_name.to_string();
+        let backend_for_download = backend.clone();
 
         tokio::spawn(async move {
             // Get state if available (for broadcasting progress)
@@ -779,12 +780,18 @@ impl LocalLlmService for LiveLocalLlmService {
                 }
             });
 
-            let result =
-                local_gguf::models::ensure_model_with_progress(model_def, &cache_dir, |p| {
-                    // Send progress to the broadcast task (ignore errors if channel closed)
+            // Download the model using the appropriate function based on backend
+            let result = if backend_for_download == "MLX" {
+                local_gguf::models::ensure_mlx_model_with_progress(model_def, &cache_dir, |p| {
                     let _ = tx.send((p.downloaded, p.total));
                 })
-                .await;
+                .await
+            } else {
+                local_gguf::models::ensure_model_with_progress(model_def, &cache_dir, |p| {
+                    let _ = tx.send((p.downloaded, p.total));
+                })
+                .await
+            };
 
             // Drop the sender to signal the broadcast task to finish
             drop(tx);
