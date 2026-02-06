@@ -86,6 +86,21 @@ documentation, and avoids stringly-typed field access. Reserve
   library-level errors that callers need to match on.
 - Propagate errors with `?`; avoid `.unwrap()` outside of tests.
 
+### Date and time
+
+Never hand-roll date/time arithmetic (epoch conversions, calendar math,
+seconds-per-day constants). Use the **`time`** crate, which is already a
+workspace dependency. For example, to get `YYYY-MM-DD`:
+
+```rust
+let d = time::OffsetDateTime::now_utc().date();
+format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day());
+```
+
+The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
+whichever is already imported in the crate you're editing, but default to
+`time` for new code since it's lighter.
+
 ### General style
 
 - Prefer iterators and combinators (`.map()`, `.filter()`, `.collect()`)
