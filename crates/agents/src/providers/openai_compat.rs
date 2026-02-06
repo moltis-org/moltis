@@ -1,0 +1,305 @@
+//! Shared helpers for OpenAI-compatible streaming with tools.
+//!
+//! This module provides reusable functions for parsing OpenAI-style SSE streams
+//! that include tool calls. Used by openai.rs, github_copilot.rs, and kimi_code.rs.
+
+use std::collections::HashMap;
+
+use crate::model::{StreamEvent, ToolCall, Usage};
+
+/// Convert tool schemas to OpenAI function-calling format.
+///
+/// Adds `strict: true` and `additionalProperties: false` to enforce schema
+/// compliance. This is required by some APIs (OpenAI Codex, Claude via Copilot)
+/// to ensure the model provides all required fields.
+pub fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            // Clone parameters and add additionalProperties: false
+            let mut params = t["parameters"].clone();
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert("additionalProperties".to_string(), serde_json::json!(false));
+            }
+
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": params,
+                    "strict": true,
+                }
+            })
+        })
+        .collect()
+}
+
+/// Parse tool_calls from an OpenAI response message (non-streaming).
+pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
+    message["tool_calls"]
+        .as_array()
+        .map(|tcs| {
+            tcs.iter()
+                .filter_map(|tc| {
+                    let id = tc["id"].as_str()?.to_string();
+                    let name = tc["function"]["name"].as_str()?.to_string();
+                    let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
+                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    Some(ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// State for tracking streaming tool calls.
+#[derive(Default)]
+pub struct StreamingToolState {
+    /// Map from index -> (id, name, arguments_buffer)
+    pub tool_calls: HashMap<usize, (String, String, String)>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+/// Result of processing a single SSE line.
+pub enum SseLineResult {
+    /// No actionable event (empty line, non-data prefix)
+    Skip,
+    /// Stream is done
+    Done,
+    /// Events to yield
+    Events(Vec<StreamEvent>),
+}
+
+/// Process a single SSE data line and return any events to yield.
+///
+/// This handles the common OpenAI streaming format used by:
+/// - OpenAI API
+/// - GitHub Copilot API
+/// - Kimi Code API
+/// - Any other OpenAI-compatible API
+pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> SseLineResult {
+    if data == "[DONE]" {
+        return SseLineResult::Done;
+    }
+
+    let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) else {
+        return SseLineResult::Skip;
+    };
+
+    let mut events = Vec::new();
+
+    // Usage chunk (sent with stream_options.include_usage)
+    if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
+        state.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
+        state.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
+    }
+
+    let delta = &evt["choices"][0]["delta"];
+
+    // Handle text content
+    if let Some(content) = delta["content"].as_str()
+        && !content.is_empty()
+    {
+        events.push(StreamEvent::Delta(content.to_string()));
+    }
+
+    // Handle tool calls
+    if let Some(tcs) = delta["tool_calls"].as_array() {
+        for tc in tcs {
+            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+
+            // Check if this is a new tool call (has id and function.name)
+            if let (Some(id), Some(name)) = (tc["id"].as_str(), tc["function"]["name"].as_str()) {
+                state
+                    .tool_calls
+                    .insert(index, (id.to_string(), name.to_string(), String::new()));
+                events.push(StreamEvent::ToolCallStart {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    index,
+                });
+            }
+
+            // Handle arguments delta
+            if let Some(args_delta) = tc["function"]["arguments"].as_str()
+                && !args_delta.is_empty()
+            {
+                if let Some((_, _, args_buf)) = state.tool_calls.get_mut(&index) {
+                    args_buf.push_str(args_delta);
+                }
+                events.push(StreamEvent::ToolCallArgumentsDelta {
+                    index,
+                    delta: args_delta.to_string(),
+                });
+            }
+        }
+    }
+
+    if events.is_empty() {
+        SseLineResult::Skip
+    } else {
+        SseLineResult::Events(events)
+    }
+}
+
+/// Generate the final events when stream ends (tool call completions + done).
+pub fn finalize_stream(state: &StreamingToolState) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+
+    // Emit completion for any pending tool calls
+    for index in state.tool_calls.keys() {
+        events.push(StreamEvent::ToolCallComplete { index: *index });
+    }
+
+    events.push(StreamEvent::Done(Usage {
+        input_tokens: state.input_tokens,
+        output_tokens: state.output_tokens,
+    }));
+
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_openai_tools() {
+        let tools = vec![serde_json::json!({
+            "name": "test_tool",
+            "description": "A test tool",
+            "parameters": {"type": "object", "properties": {"x": {"type": "string"}}}
+        })];
+        let converted = to_openai_tools(&tools);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function");
+        assert_eq!(converted[0]["function"]["name"], "test_tool");
+        // Verify strict mode and additionalProperties
+        assert_eq!(converted[0]["function"]["strict"], true);
+        assert_eq!(
+            converted[0]["function"]["parameters"]["additionalProperties"],
+            false
+        );
+    }
+
+    #[test]
+    fn test_to_openai_tools_empty() {
+        let converted = to_openai_tools(&[]);
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_calls_empty() {
+        let msg = serde_json::json!({"content": "hello"});
+        assert!(parse_tool_calls(&msg).is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_calls_with_calls() {
+        let msg = serde_json::json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": "{\"city\":\"SF\"}"
+                }
+            }]
+        });
+        let calls = parse_tool_calls(&msg);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["city"], "SF");
+    }
+
+    #[test]
+    fn test_process_sse_done() {
+        let mut state = StreamingToolState::default();
+        matches!(
+            process_openai_sse_line("[DONE]", &mut state),
+            SseLineResult::Done
+        );
+    }
+
+    #[test]
+    fn test_process_sse_text_delta() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"Hello"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_process_sse_tool_call_start() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"test"}}]}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(
+                    &events[0],
+                    StreamEvent::ToolCallStart { id, name, index }
+                    if id == "call_1" && name == "test" && *index == 0
+                ));
+            },
+            _ => panic!("Expected Events"),
+        }
+        assert!(state.tool_calls.contains_key(&0));
+    }
+
+    #[test]
+    fn test_process_sse_tool_call_args_delta() {
+        let mut state = StreamingToolState::default();
+        // First, start the tool call
+        let start_data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"test"}}]}}]}"#;
+        let _ = process_openai_sse_line(start_data, &mut state);
+
+        // Then, send args delta
+        let args_data = r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"x\":"}}]}}]}"#;
+        let result = process_openai_sse_line(args_data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(
+                    &events[0],
+                    StreamEvent::ToolCallArgumentsDelta { index, delta }
+                    if *index == 0 && delta == "{\"x\":"
+                ));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_finalize_stream() {
+        let mut state = StreamingToolState::default();
+        state
+            .tool_calls
+            .insert(0, ("call_1".into(), "test".into(), "{}".into()));
+        state.input_tokens = 10;
+        state.output_tokens = 5;
+
+        let events = finalize_stream(&state);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
+            index: 0
+        }));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5
+        ));
+    }
+}

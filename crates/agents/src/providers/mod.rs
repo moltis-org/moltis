@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod openai;
+pub mod openai_compat;
 
 #[cfg(feature = "provider-genai")]
 pub mod genai_provider;
