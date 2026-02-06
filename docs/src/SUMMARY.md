@@ -20,6 +20,7 @@
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
+- [Mobile PWA](mobile-pwa.md)
 
 ---
 

@@ -1,0 +1,429 @@
+/* ══ Mobile Responsive Styles ══ */
+/* Mobile-first approach: base styles are for mobile, md: prefix for desktop */
+
+/* ── Safe Area Insets ── */
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* Adjust body padding for safe areas */
+body {
+  padding-top: var(--safe-top);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* ── Navigation Panel Mobile Styles ── */
+
+@media (max-width: 767px) {
+  /* Navigation as slide-out drawer on mobile */
+  .nav-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+
+  .nav-panel.open {
+    transform: translateX(0);
+  }
+
+  /* Navigation overlay */
+  .nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s, visibility 0.25s;
+  }
+
+  .nav-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Larger touch targets for nav links */
+  .nav-link {
+    padding: 14px 18px;
+    min-height: 48px;
+  }
+
+  /* Show burger button on mobile */
+  .burger-btn {
+    display: flex;
+  }
+}
+
+@media (min-width: 768px) {
+  /* Desktop: nav panel visible by default */
+  .nav-panel {
+    transform: translateX(0);
+    position: relative;
+  }
+
+  .nav-panel.hidden {
+    display: none;
+  }
+
+  /* Hide overlay on desktop */
+  .nav-overlay {
+    display: none;
+  }
+
+  /* Optional: hide burger on desktop if nav is always visible */
+  /* .burger-btn { display: none; } */
+}
+
+/* ── Sessions Panel Mobile Styles ── */
+
+@media (max-width: 767px) {
+  /* Sessions as bottom sheet on mobile */
+  #sessionsPanel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 70vh;
+    max-height: calc(100vh - 60px - var(--safe-top));
+    z-index: 90;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 16px 16px 0 0;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    padding-bottom: var(--safe-bottom);
+  }
+
+  #sessionsPanel.open {
+    transform: translateY(0);
+  }
+
+  /* Bottom sheet drag handle */
+  #sessionsPanel::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--border-strong);
+    border-radius: 2px;
+  }
+
+  /* Sessions overlay */
+  .sessions-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 89;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s, visibility 0.25s;
+  }
+
+  .sessions-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Larger session items on mobile */
+  .session-item {
+    padding: 12px 14px;
+    min-height: 56px;
+  }
+
+  /* Session actions always visible on touch */
+  .session-actions {
+    opacity: 1;
+  }
+}
+
+@media (min-width: 768px) {
+  #sessionsPanel {
+    position: relative;
+    transform: translateY(0);
+    height: auto;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  #sessionsPanel::before {
+    display: none;
+  }
+
+  .sessions-overlay {
+    display: none;
+  }
+}
+
+/* ── Header Mobile Adjustments ── */
+
+@media (max-width: 767px) {
+  header {
+    padding-left: calc(12px + var(--safe-left));
+    padding-right: calc(12px + var(--safe-right));
+  }
+
+  /* Smaller title link on mobile */
+  #titleLink {
+    font-size: 0.9rem;
+  }
+
+  /* Theme toggle more compact on mobile */
+  .theme-toggle {
+    gap: 1px;
+    padding: 1px;
+  }
+
+  .theme-btn {
+    width: 26px;
+    height: 26px;
+  }
+
+  .theme-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+/* ── Chat Area Mobile Styles ── */
+
+@media (max-width: 767px) {
+  /* Messages take more width on mobile */
+  .msg {
+    max-width: 92%;
+  }
+
+  .msg.exec-card {
+    max-width: 95%;
+  }
+
+  /* Chat input adjustments */
+  .chat-input-area {
+    padding-left: calc(12px + var(--safe-left));
+    padding-right: calc(12px + var(--safe-right));
+    padding-bottom: calc(8px + var(--safe-bottom));
+  }
+
+  /* Larger touch target for send button */
+  #sendBtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Approval cards full width on mobile */
+  .approval-card {
+    max-width: 100%;
+  }
+}
+
+/* ── Settings Sidebar Mobile ── */
+
+@media (max-width: 767px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+
+  .settings-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .settings-sidebar-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+  }
+
+  .settings-nav-item {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+    flex: 0 0 auto;
+  }
+}
+
+/* ── Tables Mobile Styles ── */
+
+@media (max-width: 767px) {
+  /* Cron table horizontal scroll */
+  .cron-table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  /* Logs horizontal scroll */
+  .logs-area {
+    overflow-x: auto;
+  }
+
+  .logs-row {
+    min-width: 600px;
+  }
+}
+
+/* ── Forms Mobile Styles ── */
+
+@media (max-width: 767px) {
+  .max-w-form {
+    max-width: 100%;
+  }
+
+  .project-form-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .skills-install-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .skills-install-input {
+    max-width: 100%;
+  }
+}
+
+/* ── Modal Mobile Styles ── */
+
+@media (max-width: 767px) {
+  .provider-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - var(--safe-top) - var(--safe-bottom));
+    border-radius: 16px 16px 0 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin-bottom: var(--safe-bottom);
+  }
+
+  .provider-modal-backdrop {
+    align-items: flex-end;
+  }
+
+  .auth-card {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 16px 16px 0 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding-bottom: calc(2rem + var(--safe-bottom));
+  }
+}
+
+/* ── Touch-Friendly Buttons ── */
+
+@media (max-width: 767px) {
+  /* Minimum touch target size */
+  button,
+  .provider-btn,
+  .cron-action-btn,
+  .logs-btn,
+  .auth-submit,
+  [role="button"] {
+    min-height: 44px;
+  }
+
+  select,
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  textarea {
+    min-height: 44px;
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+}
+
+/* ── Banners Mobile Adjustment ── */
+
+@media (max-width: 767px) {
+  .auth-disabled-banner,
+  .info-banner {
+    flex-wrap: wrap;
+    text-align: center;
+    padding: 8px 16px;
+    gap: 6px;
+  }
+}
+
+/* ── Mobile Sessions Toggle Button ── */
+
+.sessions-toggle-btn {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .sessions-toggle-btn {
+    display: flex;
+    position: fixed;
+    bottom: calc(16px + var(--safe-bottom));
+    right: calc(16px + var(--safe-right));
+    z-index: 80;
+    width: 56px;
+    height: 56px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+  }
+
+  .sessions-toggle-btn:hover {
+    background: var(--accent-hover);
+    transform: scale(1.05);
+  }
+
+  .sessions-toggle-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* Hide when sessions panel is open */
+  .sessions-toggle-btn.hidden {
+    display: none;
+  }
+}
+
+/* ── Scrollbar on Mobile ── */
+
+@media (max-width: 767px) {
+  /* Thinner scrollbars on mobile */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+/* ── PWA Standalone Mode Adjustments ── */
+
+@media (display-mode: standalone) {
+  /* Extra top padding when in standalone PWA mode */
+  header {
+    padding-top: calc(8px + var(--safe-top));
+  }
+}

@@ -2,9 +2,12 @@
 
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
+import { initMobile } from "./mobile.js";
 import { updateNavCounts } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import { renderProjectSelect } from "./projects.js";
+import { initPWA } from "./pwa.js";
+import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage } from "./router.js";
 import { fetchSessions, refreshActiveSession, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
@@ -39,11 +42,17 @@ registerPage("/", () => {
 
 initTheme();
 injectMarkdownStyles();
+initPWA();
+initMobile();
 
 // Apply server-injected identity immediately (no async wait), and
 // keep the header in sync whenever gon.identity is refreshed.
 applyIdentity(gon.get("identity"));
 gon.onChange("identity", applyIdentity);
+
+// Show git branch banner when running on a non-main branch.
+showBranchBanner(gon.get("git_branch"));
+gon.onChange("git_branch", showBranchBanner);
 onEvent("session", (payload) => {
 	fetchSessions();
 	if (payload && payload.kind === "patched" && payload.sessionKey === S.activeSessionKey) {
@@ -87,6 +96,17 @@ function showAuthDisabledBanner() {
 function showOnboardingBanner() {
 	var el = document.getElementById("onboardingBanner");
 	if (el) el.style.display = "";
+}
+
+function showBranchBanner(branch) {
+	var el = document.getElementById("branchBanner");
+	if (!el) return;
+	if (branch) {
+		document.getElementById("branchName").textContent = branch;
+		el.style.display = "";
+	} else {
+		el.style.display = "none";
+	}
 }
 
 function applyIdentity(identity) {
@@ -145,4 +165,5 @@ function startApp() {
 	mount(location.pathname);
 	connect();
 	fetchBootstrap();
+	initInstallBanner();
 }
