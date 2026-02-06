@@ -31,18 +31,19 @@ async function fetchMetrics() {
 		if (!resp.ok) {
 			if (resp.status === 503) {
 				error.value = "Metrics are not enabled. Enable them in moltis.toml with [metrics] enabled = true";
-			} else {
-				error.value = `Failed to fetch metrics: ${resp.statusText}`;
+				loading.value = false;
 			}
+			// For transient errors (401, 5xx, etc.) stay in loading state —
+			// the WebSocket subscription will deliver data once connected.
 			return;
 		}
 		var data = await resp.json();
 		metricsData.value = data;
 		error.value = null;
-	} catch (e) {
-		error.value = `Failed to fetch metrics: ${e.message}`;
-	} finally {
 		loading.value = false;
+	} catch (_e) {
+		// Network or parse errors are transient — stay in loading state
+		// and let the WebSocket subscription deliver data.
 	}
 }
 

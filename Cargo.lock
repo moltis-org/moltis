@@ -3141,6 +3141,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "sysinfo",
  "tempfile",
  "time",
  "tokio",

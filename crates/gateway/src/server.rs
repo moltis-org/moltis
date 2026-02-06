@@ -1782,9 +1782,28 @@ pub async fn start_gateway(
     tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_millis(TICK_INTERVAL_MS));
+        let mut sys = sysinfo::System::new();
+        let pid = sysinfo::get_current_pid().ok();
         loop {
             interval.tick().await;
-            broadcast_tick(&tick_state).await;
+            sys.refresh_memory();
+            if let Some(pid) = pid {
+                sys.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::Some(&[pid]),
+                    false,
+                    sysinfo::ProcessRefreshKind::nothing().with_memory(),
+                );
+            }
+            let process_mem = pid
+                .and_then(|p| sys.process(p))
+                .map(|p| p.memory())
+                .unwrap_or(0);
+            let total = sys.total_memory();
+            let available = match sys.available_memory() {
+                0 => total.saturating_sub(sys.used_memory()),
+                v => v,
+            };
+            broadcast_tick(&tick_state, process_mem, available, total).await;
         }
     });
 
@@ -2252,6 +2271,47 @@ struct GonData {
     /// Non-main git branch name, if running from a git checkout on a
     /// non-default branch. `None` when on `main`/`master` or outside a repo.
     git_branch: Option<String>,
+    /// Memory stats snapshot (process RSS + system available/total).
+    mem: MemSnapshot,
+}
+
+/// Memory snapshot included in gon data and tick broadcasts.
+#[cfg(feature = "web-ui")]
+#[derive(serde::Serialize)]
+struct MemSnapshot {
+    process: u64,
+    available: u64,
+    total: u64,
+}
+
+/// Collect a point-in-time memory snapshot (process RSS + system memory).
+#[cfg(feature = "web-ui")]
+fn collect_mem_snapshot() -> MemSnapshot {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let pid = sysinfo::get_current_pid().ok();
+    if let Some(pid) = pid {
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            false,
+            sysinfo::ProcessRefreshKind::nothing().with_memory(),
+        );
+    }
+    let process = pid
+        .and_then(|p| sys.process(p))
+        .map(|p| p.memory())
+        .unwrap_or(0);
+    let total = sys.total_memory();
+    // available_memory() returns 0 on macOS; fall back to total − used.
+    let available = match sys.available_memory() {
+        0 => total.saturating_sub(sys.used_memory()),
+        v => v,
+    };
+    MemSnapshot {
+        process,
+        available,
+        total,
+    }
 }
 
 /// Detect the current git branch, returning `None` for `main`/`master` or
@@ -2345,6 +2405,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_runs,
         voice_enabled: cfg!(feature = "voice"),
         git_branch: detect_git_branch(),
+        mem: collect_mem_snapshot(),
     }
 }
 

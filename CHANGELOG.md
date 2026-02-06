@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mistral AI Voxtral (cloud-based, 13 languages)
   - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
+- **Memory Usage Indicator**: Display process RSS and system free memory in the header bar, updated every 30 seconds via the tick WebSocket broadcast
+
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
   - Gated behind `qmd` feature flag (enabled by default)
   - Web UI shows installation instructions and QMD status

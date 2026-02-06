@@ -1,5 +1,6 @@
 // ── Entry point ────────────────────────────────────────────
 
+import prettyBytes from "pretty-bytes";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { initMobile } from "./mobile.js";
@@ -60,6 +61,18 @@ onEvent("session", (payload) => {
 	}
 });
 
+function applyMemory(mem) {
+	if (!mem) return;
+	var el = document.getElementById("memoryInfo");
+	if (!el) return;
+	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0 });
+	el.textContent = `Process: ${fmt(mem.process)} \u00b7 System: ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+}
+
+applyMemory(gon.get("mem"));
+gon.onChange("mem", applyMemory);
+onEvent("tick", (payload) => applyMemory(payload.mem));
+
 // Check auth status before mounting the app.
 fetch("/api/auth/status")
 	.then((r) => (r.ok ? r.json() : null))
@@ -98,14 +111,46 @@ function showOnboardingBanner() {
 	if (el) el.style.display = "";
 }
 
+var originalFavicons = [];
+var originalTitle = document.title;
+
 function showBranchBanner(branch) {
 	var el = document.getElementById("branchBanner");
 	if (!el) return;
+
+	// Capture original favicon hrefs on first call
+	if (originalFavicons.length === 0) {
+		document.querySelectorAll('link[rel="icon"]').forEach((link) => {
+			originalFavicons.push({ el: link, href: link.href, type: link.type, sizes: link.sizes?.value });
+		});
+	}
+
 	if (branch) {
 		document.getElementById("branchName").textContent = branch;
 		el.style.display = "";
+
+		// Swap favicon to red SVG variant
+		document.querySelectorAll('link[rel="icon"]').forEach((link) => {
+			link.type = "image/svg+xml";
+			link.removeAttribute("sizes");
+			link.href = "/assets/icons/icon-branch.svg";
+		});
+
+		// Prefix page title with branch name
+		var name = document.getElementById("titleName")?.textContent || "moltis";
+		document.title = `[${branch}] ${name}`;
 	} else {
 		el.style.display = "none";
+
+		// Restore original favicons
+		originalFavicons.forEach((o) => {
+			o.el.type = o.type;
+			if (o.sizes) o.el.sizes = o.sizes;
+			o.el.href = o.href;
+		});
+
+		// Restore original title
+		document.title = originalTitle;
 	}
 }
 
@@ -114,6 +159,15 @@ function applyIdentity(identity) {
 	var nameEl = document.getElementById("titleName");
 	if (emojiEl) emojiEl.textContent = identity?.emoji ? `${identity.emoji} ` : "";
 	if (nameEl) nameEl.textContent = identity?.name || "moltis";
+
+	// Keep page title in sync with identity name and branch
+	var name = identity?.name || "moltis";
+	var branch = gon.get("git_branch");
+	if (branch) {
+		document.title = `[${branch}] ${name}`;
+	} else {
+		document.title = name;
+	}
 }
 
 function applyModels(models) {

@@ -52,6 +52,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
 sqlx                  = { workspace = true }
+sysinfo               = { workspace = true }
 time                  = { optional = true, workspace = true }
 tokio                 = { workspace = true }
 tokio-rustls          = { optional = true, workspace = true }
