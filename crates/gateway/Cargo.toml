@@ -5,18 +5,18 @@ version.workspace = true
 
 [dependencies]
 anyhow                = { workspace = true }
-argon2                = "0.5"
-async-trait           = "0.1"
+argon2                = { workspace = true }
+async-trait           = { workspace = true }
 axum                  = { workspace = true }
-axum-extra            = { features = ["cookie"], version = "0.10" }
+axum-extra            = { features = ["cookie"], workspace = true }
 axum-server           = { optional = true, workspace = true }
 base64                = { workspace = true }
-chrono                = { features = ["serde"], optional = true, version = "0.4" }
-dashmap               = "6"
+chrono                = { features = ["serde"], optional = true, workspace = true }
+dashmap               = { workspace = true }
 directories.workspace = true
 futures               = { workspace = true }
-hostname              = "0.4"
-include_dir           = { optional = true, version = "0.7" }
+hostname              = { workspace = true }
+include_dir           = { optional = true, workspace = true }
 moltis-agents         = { workspace = true }
 moltis-canvas         = { workspace = true }
 moltis-channels       = { workspace = true }
@@ -38,9 +38,9 @@ moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tools          = { workspace = true }
-p256                  = { features = ["ecdsa"], optional = true, version = "0.13" }
-password-hash         = "0.5"
-pulldown-cmark        = { default-features = false, features = ["html"], version = "0.12" }
+p256                  = { features = ["ecdsa"], optional = true, workspace = true }
+password-hash         = { workspace = true }
+pulldown-cmark        = { features = ["html"], workspace = true }
 rand                  = { workspace = true }
 rcgen                 = { optional = true, workspace = true }
 reqwest               = { workspace = true }
@@ -58,16 +58,16 @@ tokio-rustls          = { optional = true, workspace = true }
 tokio-stream          = { workspace = true }
 tokio-tungstenite     = { workspace = true }
 toml                  = { workspace = true }
-tower-http            = { features = ["cors"], version = "0.6" }
+tower-http            = { features = ["cors"], workspace = true }
 tracing               = { workspace = true }
 tracing-subscriber    = { workspace = true }
 uuid                  = { workspace = true }
-web-push              = { optional = true, version = "0.10" }
-webauthn-rs           = { features = ["danger-allow-state-serialisation"], version = "0.5" }
-webauthn-rs-proto     = "0.5"
+web-push              = { optional = true, workspace = true }
+webauthn-rs           = { features = ["danger-allow-state-serialisation"], workspace = true }
+webauthn-rs-proto     = { workspace = true }
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
 openssl     = { workspace = true }
-urlencoding = "2.1.3"
+urlencoding = { workspace = true }
 
 [features]
 default = [
@@ -104,7 +104,7 @@ web-ui = ["dep:include_dir"]
 [dev-dependencies]
 reqwest           = { workspace = true }
 sqlx              = { workspace = true }
-tempfile          = "3"
+tempfile          = { workspace = true }
 tokio-tungstenite = { workspace = true }
 
 [lints]
