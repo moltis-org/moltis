@@ -93,7 +93,12 @@ impl BrowserPool {
             moltis_metrics::counter!(moltis_metrics::browser::INSTANCES_CREATED_TOTAL).increment(1);
         }
 
-        info!(session_id = sid, "launched new browser instance");
+        let mode = if self.config.sandbox {
+            "sandboxed"
+        } else {
+            "host"
+        };
+        info!(session_id = sid, mode, "launched new browser instance");
         Ok(sid)
     }
 

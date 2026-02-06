@@ -49,24 +49,25 @@ impl Default for BrowserManager {
 impl BrowserManager {
     /// Create a new browser manager with the given configuration.
     pub fn new(config: BrowserConfig) -> Self {
-        // Warn if sandbox mode is enabled (not yet implemented)
+        // Log sandbox mode status
         if config.sandbox {
-            tracing::warn!(
-                "Browser sandbox mode is enabled but not yet implemented. \
-                 The browser will run on the host. Consider using allowed_domains \
-                 to restrict navigation."
+            info!(
+                sandbox_image = %config.sandbox_image,
+                "browser sandbox mode enabled"
             );
-            eprintln!(
-                "\n⚠️  Browser sandbox mode is enabled but not yet implemented.\n\
-                 The browser will run on the host. Consider using allowed_domains\n\
-                 to restrict navigation for better security.\n"
-            );
+        } else {
+            info!("browser running on host (sandbox disabled)");
         }
 
         Self {
             pool: Arc::new(BrowserPool::new(config.clone())),
             config,
         }
+    }
+
+    /// Check if browser is running in sandbox mode.
+    pub fn is_sandboxed(&self) -> bool {
+        self.config.sandbox
     }
 
     /// Check if browser support is enabled.
@@ -205,7 +206,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_url(current_url),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(current_url),
         ))
     }
 
@@ -264,7 +265,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_screenshot(data_uri),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_screenshot(data_uri),
         ))
     }
 
@@ -286,7 +287,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_snapshot(snapshot),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_snapshot(snapshot),
         ))
     }
 
@@ -344,7 +345,10 @@ impl BrowserManager {
             "clicked element"
         );
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox),
+        ))
     }
 
     /// Type text into an element.
@@ -391,7 +395,10 @@ impl BrowserManager {
             "typed text"
         );
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox),
+        ))
     }
 
     /// Scroll the page or an element.
@@ -424,7 +431,10 @@ impl BrowserManager {
 
         debug!(session_id = sid, ref_ = ?ref_, x = x, y = y, "scrolled");
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox),
+        ))
     }
 
     /// Execute JavaScript in the page context.
@@ -448,7 +458,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_result(result),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_result(result),
         ))
     }
 
@@ -490,7 +500,10 @@ impl BrowserManager {
 
             if found {
                 debug!(session_id = sid, "element found");
-                return Ok((sid.clone(), BrowserResponse::success(sid, 0)));
+                return Ok((
+                    sid.clone(),
+                    BrowserResponse::success(sid, 0, self.config.sandbox),
+                ));
             }
 
             tokio::time::sleep(interval).await;
@@ -512,7 +525,10 @@ impl BrowserManager {
         let page = self.pool.get_page(&sid).await?;
         let url = page.url().await.ok().flatten().unwrap_or_default();
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0).with_url(url)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+        ))
     }
 
     /// Get the page title.
@@ -527,7 +543,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0).with_title(title),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_title(title),
         ))
     }
 
@@ -549,7 +565,10 @@ impl BrowserManager {
 
         let url = page.url().await.ok().flatten().unwrap_or_default();
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0).with_url(url)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+        ))
     }
 
     /// Go forward in history.
@@ -570,7 +589,10 @@ impl BrowserManager {
 
         let url = page.url().await.ok().flatten().unwrap_or_default();
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0).with_url(url)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+        ))
     }
 
     /// Refresh the page.
@@ -591,7 +613,10 @@ impl BrowserManager {
 
         let url = page.url().await.ok().flatten().unwrap_or_default();
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0).with_url(url)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+        ))
     }
 
     /// Close the browser session.
@@ -605,7 +630,10 @@ impl BrowserManager {
 
         info!(session_id = sid, "closed browser session");
 
-        Ok((sid.clone(), BrowserResponse::success(sid, 0)))
+        Ok((
+            sid.clone(),
+            BrowserResponse::success(sid, 0, self.config.sandbox),
+        ))
     }
 
     /// Highlight an element (for screenshots).

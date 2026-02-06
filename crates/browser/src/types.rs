@@ -179,6 +179,9 @@ pub struct BrowserResponse {
     /// Session ID for this browser instance.
     pub session_id: String,
 
+    /// Whether the browser is running in a sandboxed container.
+    pub sandboxed: bool,
+
     /// Error message if action failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -208,10 +211,11 @@ pub struct BrowserResponse {
 }
 
 impl BrowserResponse {
-    pub fn success(session_id: String, duration_ms: u64) -> Self {
+    pub fn success(session_id: String, duration_ms: u64, sandboxed: bool) -> Self {
         Self {
             success: true,
             session_id,
+            sandboxed,
             error: None,
             screenshot: None,
             snapshot: None,
@@ -226,6 +230,7 @@ impl BrowserResponse {
         Self {
             success: false,
             session_id,
+            sandboxed: false,
             error: Some(error.into()),
             screenshot: None,
             snapshot: None,
