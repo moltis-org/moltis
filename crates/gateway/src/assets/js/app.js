@@ -65,7 +65,7 @@ function applyMemory(mem) {
 	if (!mem) return;
 	var el = document.getElementById("memoryInfo");
 	if (!el) return;
-	var fmt = (b) => prettyBytes(b, { binary: true, maximumFractionDigits: 0 });
+	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0 });
 	el.textContent = `Process: ${fmt(mem.process)} \u00b7 System: ${fmt(mem.available)} free / ${fmt(mem.total)}`;
 }
 
