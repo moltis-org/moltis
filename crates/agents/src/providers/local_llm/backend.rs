@@ -821,6 +821,8 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         max_tokens: u32,
         temperature: f32,
     ) -> Result<(String, u32, u32)> {
+        use crate::providers::local_llm::response_parser::{MlxCliResponseParser, ResponseParser};
+
         // mlx_lm generate --model <model> --prompt <prompt> --max-tokens <N> --temp <T>
         let output = Command::new("mlx_lm")
             .arg("generate")
@@ -838,58 +840,17 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
 
         let raw_output = String::from_utf8_lossy(&output.stdout);
 
-        // Parse mlx_lm CLI output format:
-        // ==========
-        // Response text here
-        // ==========
-        // Prompt: 346 tokens, 502.788 tokens-per-sec
-        // Generation: 35 tokens, 448.124 tokens-per-sec
-        // Peak memory: 1.042 GB
-        let (text, input_tokens, output_tokens) = parse_mlx_cli_output(&raw_output);
+        // Use the MlxCliResponseParser to parse the decorated output
+        let parser = MlxCliResponseParser;
+        let parsed = parser.parse(&raw_output);
 
-        Ok((text, input_tokens, output_tokens))
-    }
+        // Fallback to estimation if parser didn't get token counts
+        let input_tokens = parsed.input_tokens.unwrap_or((prompt.len() / 4) as u32);
+        let output_tokens = parsed
+            .output_tokens
+            .unwrap_or((parsed.text.len() / 4) as u32);
 
-    /// Parse mlx_lm CLI output to extract response text and token counts.
-    #[cfg_attr(test, allow(dead_code))]
-    pub(super) fn parse_mlx_cli_output(raw: &str) -> (String, u32, u32) {
-        let mut text = String::new();
-        let mut input_tokens = 0u32;
-        let mut output_tokens = 0u32;
-
-        // Split by the separator line
-        let parts: Vec<&str> = raw.split("==========").collect();
-
-        // The response text is between the first and second separator
-        if parts.len() >= 2 {
-            text = parts[1].trim().to_string();
-        }
-
-        // Parse token counts from the stats lines after the second separator
-        if parts.len() >= 3 {
-            for line in parts[2].lines() {
-                let line = line.trim();
-                // "Prompt: 346 tokens, 502.788 tokens-per-sec"
-                if let Some(tokens_part) = line.strip_prefix("Prompt:")
-                    && let Some(tokens_str) = tokens_part.split_whitespace().next()
-                {
-                    input_tokens = tokens_str.parse().unwrap_or(0);
-                // "Generation: 35 tokens, 448.124 tokens-per-sec"
-                } else if let Some(tokens_part) = line.strip_prefix("Generation:")
-                    && let Some(tokens_str) = tokens_part.split_whitespace().next()
-                {
-                    output_tokens = tokens_str.parse().unwrap_or(0);
-                }
-            }
-        }
-
-        // Fallback to estimation if parsing failed
-        if input_tokens == 0 && output_tokens == 0 {
-            input_tokens = (text.len() / 4) as u32;
-            output_tokens = (text.len() / 4) as u32;
-        }
-
-        (text, input_tokens, output_tokens)
+        Ok((parsed.text, input_tokens, output_tokens))
     }
 
     #[async_trait]
@@ -1064,7 +1025,7 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
     /// Streaming generation using mlx-lm CLI (Homebrew).
     ///
     /// Note: The CLI doesn't support true streaming output, so we collect all
-    /// output, parse it, and send the response as a single delta.
+    /// output, parse it with the response parser, and send the cleaned text.
     fn stream_generate_cli(
         model_path: &str,
         prompt: &str,
@@ -1072,7 +1033,7 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
         temperature: f32,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> Result<(u32, u32)> {
-        // Use the non-streaming generate function and send result as delta
+        // Use the non-streaming generate function which already uses the parser
         let (text, input_tokens, output_tokens) =
             generate_with_cli(model_path, prompt, max_tokens, temperature)?;
 
@@ -1175,52 +1136,5 @@ mod tests {
         assert_ne!(python, homebrew);
         assert_eq!(python, MlxInstallation::PythonPackage);
         assert_eq!(homebrew, MlxInstallation::HomebrewCli);
-    }
-
-    #[test]
-    fn test_parse_mlx_cli_output() {
-        let raw = r#"==========
-I'd be happy to help you with a joke.
-
-Here's one:
-
-What do you call a fake noodle?
-
-An impasta!
-
-I hope you find it amusing!
-==========
-Prompt: 449 tokens, 1635.874 tokens-per-sec
-Generation: 36 tokens, 453.661 tokens-per-sec
-Peak memory: 1.138 GB
-"#;
-        let (text, input_tokens, output_tokens) = mlx::parse_mlx_cli_output(raw);
-
-        assert!(text.starts_with("I'd be happy"));
-        assert!(text.contains("An impasta!"));
-        assert!(text.ends_with("amusing!"));
-        assert_eq!(input_tokens, 449);
-        assert_eq!(output_tokens, 36);
-    }
-
-    #[test]
-    fn test_parse_mlx_cli_output_simple() {
-        let raw = "==========\nHello world!\n==========\nPrompt: 10 tokens, 100.0 tokens-per-sec\nGeneration: 2 tokens, 50.0 tokens-per-sec\n";
-        let (text, input_tokens, output_tokens) = mlx::parse_mlx_cli_output(raw);
-
-        assert_eq!(text, "Hello world!");
-        assert_eq!(input_tokens, 10);
-        assert_eq!(output_tokens, 2);
-    }
-
-    #[test]
-    fn test_parse_mlx_cli_output_fallback() {
-        // If parsing fails, should return empty/estimated values
-        let raw = "Some unexpected output format";
-        let (text, input_tokens, output_tokens) = mlx::parse_mlx_cli_output(raw);
-
-        assert!(text.is_empty());
-        assert_eq!(input_tokens, 0);
-        assert_eq!(output_tokens, 0);
     }
 }

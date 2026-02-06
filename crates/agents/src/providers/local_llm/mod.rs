@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod models;
+pub mod response_parser;
 pub mod system_info;
 
 use std::{path::PathBuf, pin::Pin};
