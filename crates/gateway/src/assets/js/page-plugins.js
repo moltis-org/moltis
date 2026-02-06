@@ -495,6 +495,11 @@ function PluginsPage() {
         <button class="logs-btn" onClick=${fetchAll}>Refresh</button>
       </div>
       <p class="text-sm text-[var(--muted)]">Multi-format plugin repositories (Claude Code, Codex, etc.) normalized into the skills system.</p>
+      <div class="skills-warn max-w-[600px]">
+        <div class="skills-warn-title">\u26a0\ufe0f Third-party plugins run code on your machine</div>
+        <div>Plugins from external repositories execute with <strong>your full system privileges</strong>. The featured Anthropic repository is maintained by a known source, but third-party repositories you add yourself may contain malicious code.</div>
+        <div style="margin-top:4px"><strong>Triple-check the source code</strong> of any third-party repository before installing it. Review every plugin's instructions before enabling \u2014 these are the commands the agent will execute on your behalf.</div>
+      </div>
       <${InstallBox} />
       <${FeaturedSection} />
       <${ReposSection} />
