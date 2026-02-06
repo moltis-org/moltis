@@ -1508,7 +1508,7 @@ pub async fn start_gateway(
     #[cfg(feature = "tls")]
     if tls_active {
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             lines.push(format!(
                 "CA cert: http://{}:{}/certs/ca.pem",
                 bind, http_port
@@ -1892,7 +1892,7 @@ pub async fn start_gateway(
     if tls_active {
         // Spawn HTTP redirect server on secondary port.
         if let Some(ref ca) = ca_cert_path {
-            let http_port = config.tls.http_redirect_port.unwrap_or(18790);
+            let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             let bind_clone = bind.to_string();
             let ca_clone = ca.clone();
             tokio::spawn(async move {

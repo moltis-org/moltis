@@ -164,7 +164,13 @@ enabled = true
 cert_path = "~/.config/moltis/cert.pem"
 key_path = "~/.config/moltis/key.pem"
 # If paths don't exist, a self-signed certificate is generated
+
+# Port for the plain-HTTP redirect / CA-download server.
+# Defaults to the gateway port + 1 when not set.
+# http_redirect_port = 13132
 ```
+
+Override via environment variable: `MOLTIS_TLS__HTTP_REDIRECT_PORT=8080`.
 
 ## Tailscale Integration
 

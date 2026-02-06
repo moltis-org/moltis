@@ -1,46 +1,46 @@
 [book]
-title = "Moltis Documentation"
-authors = ["Moltis Team"]
+authors     = ["Moltis Team"]
 description = "Documentation for Moltis - Your AI coding assistant"
-language = "en"
-src = "src"
+language    = "en"
+src         = "src"
+title       = "Moltis Documentation"
 
 [build]
-build-dir = "book"
+build-dir      = "book"
 create-missing = false
 
 [output.html]
-default-theme = "light"
+additional-css       = ["theme/admonish.css", "theme/custom.css"]
+additional-js        = []
+copy-fonts           = true
+default-theme        = "light"
+edit-url-template    = "https://github.com/moltis-org/moltis/edit/main/docs/src/{path}"
+git-repository-icon  = "fa-github"
+git-repository-url   = "https://github.com/moltis-org/moltis"
+mathjax-support      = false
+no-section-label     = false
 preferred-dark-theme = "navy"
-smart-punctuation = true
-mathjax-support = false
-copy-fonts = true
-additional-css = ["theme/custom.css", "theme/admonish.css"]
-additional-js = []
-no-section-label = false
-git-repository-url = "https://github.com/moltis-org/moltis"
-git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/moltis-org/moltis/edit/main/docs/src/{path}"
+smart-punctuation    = true
 
 [output.html.fold]
 enable = true
-level = 1
+level  = 1
 
 [output.html.playground]
-editable = false
-copyable = true
-copy-js = true
+copy-js      = true
+copyable     = true
+editable     = false
 line-numbers = true
 
 [output.html.search]
-enable = true
-limit-results = 30
-teaser-word-count = 30
+enable                    = true
+limit-results             = 30
+teaser-word-count         = 30
 use-hierarchical-sections = true
 
 [output.html.code.hidelines]
 rust = "# "
 
 [preprocessor.admonish]
-command = "mdbook-admonish"
 assets_version = "3.1.0" # do not edit: managed by `mdbook-admonish install`
+command        = "mdbook-admonish"
