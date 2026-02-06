@@ -341,6 +341,16 @@
     font-size: 0.78rem;
     color: var(--error);
   }
+  /* Muted style for validation/retry errors (expected, not alarming) */
+  .exec-card.exec-retry {
+    opacity: 0.6;
+    border-left-color: var(--muted);
+  }
+  .exec-retry-detail {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-style: italic;
+  }
   /* Browser screenshot thumbnail */
   .screenshot-container {
     margin-top: 8px;

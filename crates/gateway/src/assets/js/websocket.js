@@ -158,29 +158,32 @@ function handleChatToolCallEnd(p, isActive, isChatPage) {
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
 	if (!toolCard) return;
 
-	// Hide tool cards that fail with schema validation errors - these are
-	// just noise since the agent retries automatically with corrected args
+	// Check if this is a schema validation error (model sent malformed args)
+	// These are expected sometimes and the agent retries automatically
+	var isValidationError = false;
 	if (!p.success && p.error && p.error.detail) {
 		var errDetail = p.error.detail.toLowerCase();
-		if (
+		isValidationError =
 			errDetail.includes("missing field") ||
 			errDetail.includes("missing required") ||
 			errDetail.includes("missing 'action'") ||
-			errDetail.includes("missing 'url'")
-		) {
-			toolCard.remove();
-			return;
-		}
+			errDetail.includes("missing 'url'");
 	}
 
-	toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
+	// Use muted "retry" style for validation errors, normal styles otherwise
+	if (isValidationError) {
+		toolCard.className = "msg exec-card exec-retry";
+	} else {
+		toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
+	}
+
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
 	if (p.success && p.result) {
 		appendToolResult(toolCard, p.result);
 	} else if (!p.success && p.error && p.error.detail) {
 		var errMsg = document.createElement("div");
-		errMsg.className = "exec-error-detail";
+		errMsg.className = isValidationError ? "exec-retry-detail" : "exec-error-detail";
 		errMsg.textContent = p.error.detail;
 		toolCard.appendChild(errMsg);
 	}
