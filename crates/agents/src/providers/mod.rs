@@ -606,24 +606,16 @@ impl ProviderRegistry {
         // Log system info
         local_gguf::log_system_info_and_suggestions();
 
-        // Look up model in registries to get display name and model path
-        // For MLX models from legacy registry, use HuggingFace repo as path
+        // Look up model in registries to get display name
+        // Let the backend handle model resolution and caching
         let (display_name, model_path) = if let Some(def) = local_llm::models::find_model(model_id)
         {
             // Model in unified registry - use user path or let backend handle download
             (def.display_name.to_string(), user_model_path)
         } else if let Some(def) = local_gguf::models::find_model(model_id) {
-            // Model in legacy registry
-            if matches!(def.backend, local_gguf::models::ModelBackend::Mlx) {
-                // MLX model - use HuggingFace repo as path (mlx_lm handles it)
-                (
-                    def.display_name.to_string(),
-                    Some(PathBuf::from(def.hf_repo)),
-                )
-            } else {
-                // GGUF model - use user path or let backend handle download
-                (def.display_name.to_string(), user_model_path)
-            }
+            // Model in legacy registry - let backend handle download/cache resolution
+            // (user_model_path allows override if explicitly set in config)
+            (def.display_name.to_string(), user_model_path)
         } else {
             // Unknown model
             (format!("{} (local)", model_id), user_model_path)

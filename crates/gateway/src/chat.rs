@@ -393,6 +393,11 @@ impl ChatService for LiveChatService {
         #[cfg(feature = "local-llm")]
         if provider.name() == "local-llm" {
             let model_to_check = model_id.unwrap_or(provider.id());
+            tracing::info!(
+                provider_name = provider.name(),
+                model_to_check,
+                "checking local model cache"
+            );
             if let Err(e) =
                 crate::local_llm_setup::ensure_local_model_cached(model_to_check, &self.state).await
             {

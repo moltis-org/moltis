@@ -812,4 +812,161 @@ mod tests {
         let model = find_model("deepseek-coder-6.7b-q4_k_m").unwrap();
         assert!(!model.has_mlx(), "deepseek model should not have MLX");
     }
+
+    // ── Cache Detection Tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_gguf_model_cached_returns_false_when_not_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let model = find_model("qwen2.5-coder-1.5b-q4_k_m").unwrap();
+
+        // Model should not be cached in empty directory
+        assert!(!is_gguf_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_gguf_model_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let model = find_model("qwen2.5-coder-1.5b-q4_k_m").unwrap();
+
+        // Create the model file
+        let model_path = cache_dir.join(model.gguf_filename);
+        std::fs::write(&model_path, b"fake model content").unwrap();
+
+        // Model should now be cached
+        assert!(is_gguf_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_when_not_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a model with MLX support
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.has_mlx())
+            .expect("should have at least one model with MLX");
+
+        // Model should not be cached in empty directory
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a model with MLX support
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.has_mlx())
+            .expect("should have at least one model with MLX");
+
+        let mlx_repo = model.mlx_repo.unwrap();
+
+        // Create the model directory structure
+        let model_dir_name = mlx_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Create required files
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), b"fake weights").unwrap();
+
+        // Model should now be cached
+        assert!(is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_with_sharded_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.has_mlx())
+            .expect("should have at least one model with MLX");
+
+        let mlx_repo = model.mlx_repo.unwrap();
+        let model_dir_name = mlx_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Create config.json and index file (for sharded models)
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors.index.json"), b"{}").unwrap();
+
+        // Model should be cached (index file instead of model.safetensors)
+        assert!(is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_for_model_without_mlx() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a model without MLX support
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| !m.has_mlx())
+            .expect("should have at least one model without MLX");
+
+        // Should return false for models without MLX support
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_when_incomplete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.has_mlx())
+            .expect("should have at least one model with MLX");
+
+        let mlx_repo = model.mlx_repo.unwrap();
+        let model_dir_name = mlx_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Only create config.json (missing model.safetensors)
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+
+        // Model should NOT be cached (incomplete)
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_model_cached_routes_correctly() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Test GGUF backend
+        let model = find_model("qwen2.5-coder-1.5b-q4_k_m").unwrap();
+        assert!(!is_model_cached(model, BackendType::Gguf, cache_dir));
+
+        // Create GGUF file
+        let gguf_path = cache_dir.join(model.gguf_filename);
+        std::fs::write(&gguf_path, b"fake").unwrap();
+        assert!(is_model_cached(model, BackendType::Gguf, cache_dir));
+
+        // Test MLX backend (same model, different caching)
+        assert!(!is_model_cached(model, BackendType::Mlx, cache_dir));
+
+        // Create MLX cache
+        if let Some(mlx_repo) = model.mlx_repo {
+            let mlx_dir_name = mlx_repo.replace('/', "__");
+            let mlx_dir = cache_dir.join("mlx").join(&mlx_dir_name);
+            std::fs::create_dir_all(&mlx_dir).unwrap();
+            std::fs::write(mlx_dir.join("config.json"), b"{}").unwrap();
+            std::fs::write(mlx_dir.join("model.safetensors"), b"fake").unwrap();
+            assert!(is_model_cached(model, BackendType::Mlx, cache_dir));
+        }
+    }
 }

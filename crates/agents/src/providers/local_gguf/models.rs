@@ -925,4 +925,199 @@ mod tests {
         assert_eq!(ModelBackend::Gguf.to_string(), "GGUF");
         assert_eq!(ModelBackend::Mlx.to_string(), "MLX");
     }
+
+    #[test]
+    fn test_is_gguf_model_cached_returns_false_when_not_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a GGUF model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Gguf)
+            .expect("should have at least one GGUF model");
+
+        // Model should not be cached in empty directory
+        assert!(!is_gguf_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_gguf_model_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a GGUF model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Gguf)
+            .expect("should have at least one GGUF model");
+
+        // Create the model file
+        let model_path = cache_dir.join(model.hf_filename);
+        std::fs::write(&model_path, b"fake model content").unwrap();
+
+        // Model should now be cached
+        assert!(is_gguf_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_gguf_model_cached_returns_false_for_mlx_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get an MLX model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // Should return false for MLX models (they use different caching)
+        assert!(!is_gguf_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_when_not_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get an MLX model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // Model should not be cached in empty directory
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_true_when_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get an MLX model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // Create the model directory structure
+        let model_dir_name = model.hf_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Create required files (config.json and either model.safetensors or index)
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), b"fake weights").unwrap();
+
+        // Model should now be cached
+        assert!(is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_with_sharded_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get an MLX model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // Create the model directory structure
+        let model_dir_name = model.hf_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Create config.json and index file (for sharded models)
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(model_dir.join("model.safetensors.index.json"), b"{}").unwrap();
+
+        // Model should be cached (index file instead of model.safetensors)
+        assert!(is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_for_gguf_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get a GGUF model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Gguf)
+            .expect("should have at least one GGUF model");
+
+        // Should return false for GGUF models
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_mlx_model_cached_returns_false_when_incomplete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Get an MLX model from registry
+        let model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // Create the model directory structure
+        let model_dir_name = model.hf_repo.replace('/', "__");
+        let model_dir = cache_dir.join("mlx").join(&model_dir_name);
+        std::fs::create_dir_all(&model_dir).unwrap();
+
+        // Only create config.json (missing model.safetensors)
+        std::fs::write(model_dir.join("config.json"), b"{}").unwrap();
+
+        // Model should NOT be cached (incomplete)
+        assert!(!is_mlx_model_cached(model, cache_dir));
+    }
+
+    #[test]
+    fn test_is_model_cached_routes_to_correct_function() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+
+        // Test GGUF model
+        let gguf_model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Gguf)
+            .expect("should have at least one GGUF model");
+
+        // Create GGUF model file
+        let gguf_path = cache_dir.join(gguf_model.hf_filename);
+        std::fs::write(&gguf_path, b"fake").unwrap();
+        assert!(is_model_cached(gguf_model, cache_dir));
+
+        // Test MLX model
+        let mlx_model = MODEL_REGISTRY
+            .iter()
+            .find(|m| m.backend == ModelBackend::Mlx)
+            .expect("should have at least one MLX model");
+
+        // MLX model not cached yet
+        assert!(!is_model_cached(mlx_model, cache_dir));
+
+        // Create MLX model directory
+        let mlx_dir_name = mlx_model.hf_repo.replace('/', "__");
+        let mlx_dir = cache_dir.join("mlx").join(&mlx_dir_name);
+        std::fs::create_dir_all(&mlx_dir).unwrap();
+        std::fs::write(mlx_dir.join("config.json"), b"{}").unwrap();
+        std::fs::write(mlx_dir.join("model.safetensors"), b"fake").unwrap();
+
+        assert!(is_model_cached(mlx_model, cache_dir));
+    }
+
+    #[test]
+    fn test_find_mlx_model_in_legacy_registry() {
+        // MLX models should be findable by their ID
+        let model = find_model("mlx-llama-3.2-1b-4bit");
+        assert!(model.is_some());
+        let model = model.unwrap();
+        assert_eq!(model.backend, ModelBackend::Mlx);
+        assert_eq!(model.hf_repo, "mlx-community/Llama-3.2-1B-Instruct-4bit");
+    }
 }

@@ -31,6 +31,7 @@ pub async fn ensure_local_model_cached(
     state: &Arc<crate::state::GatewayState>,
 ) -> Result<bool, String> {
     let cache_dir = local_gguf::models::default_models_dir();
+    info!(model_id, ?cache_dir, "checking if local model is cached");
 
     // First check the unified registry
     if let Some(def) = moltis_agents::providers::local_llm::models::find_model(model_id) {
@@ -39,6 +40,8 @@ pub async fn ensure_local_model_cached(
             moltis_agents::providers::local_llm::backend::detect_backend_for_model(model_id);
         let is_cached =
             moltis_agents::providers::local_llm::models::is_model_cached(def, backend, &cache_dir);
+
+        info!(model_id, is_cached, "found in unified registry");
 
         if is_cached {
             return Ok(false);
@@ -52,6 +55,14 @@ pub async fn ensure_local_model_cached(
     if let Some(def) = local_gguf::models::find_model(model_id) {
         let is_cached = local_gguf::models::is_model_cached(def, &cache_dir);
 
+        info!(
+            model_id,
+            is_cached,
+            backend = ?def.backend,
+            hf_repo = def.hf_repo,
+            "found in legacy registry"
+        );
+
         if is_cached {
             return Ok(false);
         }
@@ -61,6 +72,7 @@ pub async fn ensure_local_model_cached(
     }
 
     // Unknown model - let the provider handle it (will fail with a clear error)
+    info!(model_id, "model not found in any registry");
     Ok(false)
 }
 
