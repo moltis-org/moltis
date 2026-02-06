@@ -238,8 +238,7 @@ impl LiveChatService {
     fn has_tools_sync(&self) -> bool {
         // Best-effort check: try_read avoids blocking. If the lock is held,
         // assume tools are present (conservative — enables tool mode).
-        let result = self
-            .tool_registry
+        self.tool_registry
             .try_read()
             .map(|r| {
                 let schemas = r.list_schemas();
@@ -251,8 +250,7 @@ impl LiveChatService {
                 );
                 has
             })
-            .unwrap_or(true);
-        result
+            .unwrap_or(true)
     }
 
     /// Return the per-session semaphore, creating one if absent.

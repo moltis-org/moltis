@@ -608,23 +608,26 @@ impl ProviderRegistry {
 
         // Look up model in registries to get display name and model path
         // For MLX models from legacy registry, use HuggingFace repo as path
-        let (display_name, model_path) =
-            if let Some(def) = local_llm::models::find_model(model_id) {
-                // Model in unified registry - use user path or let backend handle download
-                (def.display_name.to_string(), user_model_path)
-            } else if let Some(def) = local_gguf::models::find_model(model_id) {
-                // Model in legacy registry
-                if matches!(def.backend, local_gguf::models::ModelBackend::Mlx) {
-                    // MLX model - use HuggingFace repo as path (mlx_lm handles it)
-                    (def.display_name.to_string(), Some(PathBuf::from(def.hf_repo)))
-                } else {
-                    // GGUF model - use user path or let backend handle download
-                    (def.display_name.to_string(), user_model_path)
-                }
+        let (display_name, model_path) = if let Some(def) = local_llm::models::find_model(model_id)
+        {
+            // Model in unified registry - use user path or let backend handle download
+            (def.display_name.to_string(), user_model_path)
+        } else if let Some(def) = local_gguf::models::find_model(model_id) {
+            // Model in legacy registry
+            if matches!(def.backend, local_gguf::models::ModelBackend::Mlx) {
+                // MLX model - use HuggingFace repo as path (mlx_lm handles it)
+                (
+                    def.display_name.to_string(),
+                    Some(PathBuf::from(def.hf_repo)),
+                )
             } else {
-                // Unknown model
-                (format!("{} (local)", model_id), user_model_path)
-            };
+                // GGUF model - use user path or let backend handle download
+                (def.display_name.to_string(), user_model_path)
+            }
+        } else {
+            // Unknown model
+            (format!("{} (local)", model_id), user_model_path)
+        };
 
         // Use LocalLlmProvider which auto-detects backend based on model type
         let llm_config = local_llm::LocalLlmConfig {

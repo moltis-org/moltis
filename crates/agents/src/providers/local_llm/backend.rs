@@ -92,7 +92,10 @@ pub fn detect_best_backend() -> BackendType {
 pub fn detect_backend_for_model(model_id: &str) -> BackendType {
     // Check legacy MLX models first (from local_gguf registry)
     if let Some(def) = crate::providers::local_gguf::models::find_model(model_id) {
-        if matches!(def.backend, crate::providers::local_gguf::models::ModelBackend::Mlx) {
+        if matches!(
+            def.backend,
+            crate::providers::local_gguf::models::ModelBackend::Mlx
+        ) {
             // MLX model from legacy registry - requires MLX backend
             if is_mlx_available() {
                 return BackendType::Mlx;
@@ -136,23 +139,56 @@ pub fn available_backends() -> Vec<BackendType> {
     backends
 }
 
-/// Check if MLX backend is available.
+/// How mlx-lm is installed on this system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlxInstallation {
+    /// Installed as a Python package (pip install mlx-lm)
+    PythonPackage,
+    /// Installed as a standalone command (brew install mlx-lm)
+    HomebrewCli,
+}
+
+/// Detect how mlx-lm is installed, if at all.
 #[must_use]
-pub fn is_mlx_available() -> bool {
+pub fn detect_mlx_installation() -> Option<MlxInstallation> {
     // Check if we're on Apple Silicon macOS
     if !(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")) {
-        return false;
+        return None;
     }
 
-    // Check if mlx-lm is installed (Python package)
-    // We use subprocess to call mlx_lm for inference
-    std::process::Command::new("python3")
+    // Method 1: Check if mlx_lm can be imported in Python (pip install)
+    let python_available = std::process::Command::new("python3")
         .args(["-c", "import mlx_lm"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+
+    if python_available {
+        return Some(MlxInstallation::PythonPackage);
+    }
+
+    // Method 2: Check if mlx_lm command exists (Homebrew installation)
+    let cli_available = std::process::Command::new("which")
+        .arg("mlx_lm")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if cli_available {
+        return Some(MlxInstallation::HomebrewCli);
+    }
+
+    None
+}
+
+/// Check if MLX backend is available.
+#[must_use]
+pub fn is_mlx_available() -> bool {
+    detect_mlx_installation().is_some()
 }
 
 /// Create a backend instance for the given type and config.
@@ -614,17 +650,20 @@ pub mod mlx {
         model_def: Option<&'static LocalModelDef>,
         context_size: u32,
         temperature: f32,
+        installation: super::MlxInstallation,
     }
 
     impl MlxBackend {
         /// Create an MLX backend from configuration.
         pub async fn from_config(config: &LocalLlmConfig) -> Result<Self> {
-            // Check if MLX is available
-            if !super::is_mlx_available() {
-                bail!(
-                    "MLX backend requires mlx-lm Python package. Install with: pip install mlx-lm"
-                );
-            }
+            // Check if MLX is available and detect installation method
+            let installation = super::detect_mlx_installation().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MLX backend requires mlx-lm. Install with: brew install mlx-lm (or pip install mlx-lm)"
+                )
+            })?;
+
+            info!(installation = ?installation, "detected MLX installation");
 
             // Resolve model
             let (model_path, model_def) = if let Some(path) = &config.model_path {
@@ -661,6 +700,7 @@ pub mod mlx {
                 model_def,
                 context_size,
                 temperature: config.temperature,
+                installation,
             })
         }
 
@@ -671,16 +711,48 @@ pub mod mlx {
                 .unwrap_or(ChatTemplateHint::Auto)
         }
 
-        /// Generate text using mlx-lm CLI.
+        /// Generate text using mlx-lm.
         async fn generate(&self, prompt: &str, max_tokens: u32) -> Result<(String, u32, u32)> {
             let model_path = self.model_path.to_string_lossy().to_string();
             let prompt = prompt.to_string();
             let temperature = self.temperature;
+            let installation = self.installation;
 
             tokio::task::spawn_blocking(move || {
-                // Use mlx_lm.generate via Python
-                let script = format!(
-                    r#"
+                generate_with_mlx(&model_path, &prompt, max_tokens, temperature, installation)
+            })
+            .await
+            .context("MLX generation task panicked")?
+        }
+    }
+
+    /// Generate text using mlx-lm based on installation method.
+    fn generate_with_mlx(
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+        installation: super::MlxInstallation,
+    ) -> Result<(String, u32, u32)> {
+        match installation {
+            super::MlxInstallation::PythonPackage => {
+                generate_with_python(model_path, prompt, max_tokens, temperature)
+            },
+            super::MlxInstallation::HomebrewCli => {
+                generate_with_cli(model_path, prompt, max_tokens, temperature)
+            },
+        }
+    }
+
+    /// Generate text using mlx-lm as a Python package.
+    fn generate_with_python(
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<(String, u32, u32)> {
+        let script = format!(
+            r#"
 import mlx_lm
 import json
 
@@ -698,35 +770,63 @@ input_tokens = len(tokenizer.encode(prompt))
 output_tokens = len(tokenizer.encode(response))
 print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_tokens": output_tokens}}))
 "#,
-                    model_path = model_path,
-                    prompt_json = serde_json::to_string(&prompt).unwrap_or_default(),
-                    max_tokens = max_tokens,
-                    temperature = temperature,
-                );
+            model_path = model_path,
+            prompt_json = serde_json::to_string(&prompt).unwrap_or_default(),
+            max_tokens = max_tokens,
+            temperature = temperature,
+        );
 
-                let output = Command::new("python3")
-                    .args(["-c", &script])
-                    .output()
-                    .context("failed to run mlx-lm")?;
+        let output = Command::new("python3")
+            .args(["-c", &script])
+            .output()
+            .context("failed to run mlx-lm via Python")?;
 
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    bail!("mlx-lm failed: {}", stderr);
-                }
-
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let result: serde_json::Value =
-                    serde_json::from_str(&stdout).context("failed to parse mlx-lm output")?;
-
-                let text = result["text"].as_str().unwrap_or("").to_string();
-                let input_tokens = result["input_tokens"].as_u64().unwrap_or(0) as u32;
-                let output_tokens = result["output_tokens"].as_u64().unwrap_or(0) as u32;
-
-                Ok((text, input_tokens, output_tokens))
-            })
-            .await
-            .context("MLX generation task panicked")?
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("mlx-lm (Python) failed: {}", stderr);
         }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let result: serde_json::Value =
+            serde_json::from_str(&stdout).context("failed to parse mlx-lm output")?;
+
+        let text = result["text"].as_str().unwrap_or("").to_string();
+        let input_tokens = result["input_tokens"].as_u64().unwrap_or(0) as u32;
+        let output_tokens = result["output_tokens"].as_u64().unwrap_or(0) as u32;
+
+        Ok((text, input_tokens, output_tokens))
+    }
+
+    /// Generate text using mlx-lm CLI (Homebrew installation).
+    fn generate_with_cli(
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<(String, u32, u32)> {
+        // mlx_lm generate --model <model> --prompt <prompt> --max-tokens <N> --temp <T>
+        let output = Command::new("mlx_lm")
+            .arg("generate")
+            .args(["--model", model_path])
+            .args(["--prompt", prompt])
+            .args(["--max-tokens", &max_tokens.to_string()])
+            .args(["--temp", &temperature.to_string()])
+            .output()
+            .context("failed to run mlx_lm CLI")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("mlx_lm CLI failed: {}", stderr);
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // CLI doesn't provide token counts, estimate based on output
+        // Rough estimation: ~4 chars per token
+        let input_tokens = (prompt.len() / 4) as u32;
+        let output_tokens = (text.len() / 4) as u32;
+
+        Ok((text, input_tokens, output_tokens))
     }
 
     #[async_trait]
@@ -764,13 +864,14 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
             let prompt = format_messages(messages, self.chat_template());
             let model_path = self.model_path.to_string_lossy().to_string();
             let temperature = self.temperature;
+            let installation = self.installation;
 
             Box::pin(async_stream::stream! {
                 // Use spawn_blocking for the streaming generation
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(32);
 
                 let handle = tokio::task::spawn_blocking(move || {
-                    stream_generate_mlx(&model_path, &prompt, 4096, temperature, tx)
+                    stream_generate_mlx(&model_path, &prompt, 4096, temperature, installation, tx)
                 });
 
                 while let Some(event) = rx.recv().await {
@@ -794,12 +895,41 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         prompt: &str,
         max_tokens: u32,
         temperature: f32,
+        installation: super::MlxInstallation,
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
-        let result = (|| -> Result<(u32, u32)> {
-            // Use mlx_lm with streaming output
-            let script = format!(
-                r#"
+        let result = match installation {
+            super::MlxInstallation::PythonPackage => {
+                stream_generate_python(model_path, prompt, max_tokens, temperature, &tx)
+            },
+            super::MlxInstallation::HomebrewCli => {
+                stream_generate_cli(model_path, prompt, max_tokens, temperature, &tx)
+            },
+        };
+
+        match result {
+            Ok((input_tokens, output_tokens)) => {
+                let _ = tx.blocking_send(StreamEvent::Done(Usage {
+                    input_tokens,
+                    output_tokens,
+                }));
+            },
+            Err(e) => {
+                let _ = tx.blocking_send(StreamEvent::Error(e.to_string()));
+            },
+        }
+    }
+
+    /// Streaming generation using mlx-lm Python package.
+    fn stream_generate_python(
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> Result<(u32, u32)> {
+        let script = format!(
+            r#"
 import mlx_lm
 import sys
 
@@ -822,63 +952,107 @@ for token in mlx_lm.stream_generate(
 # Print token counts at the end (special marker)
 print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
 "#,
-                model_path = model_path,
-                prompt_json = serde_json::to_string(&prompt).unwrap_or_default(),
-                max_tokens = max_tokens,
-                temperature = temperature,
-            );
+            model_path = model_path,
+            prompt_json = serde_json::to_string(&prompt).unwrap_or_default(),
+            max_tokens = max_tokens,
+            temperature = temperature,
+        );
 
-            let mut child = Command::new("python3")
-                .args(["-c", &script])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .context("failed to spawn mlx-lm")?;
+        let mut child = Command::new("python3")
+            .args(["-c", &script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("failed to spawn mlx-lm")?;
 
-            let stdout = child.stdout.take().context("no stdout")?;
-            let reader = BufReader::new(stdout);
+        let stdout = child.stdout.take().context("no stdout")?;
+        let reader = BufReader::new(stdout);
 
-            let mut input_tokens = 0u32;
-            let mut output_tokens = 0u32;
+        let mut input_tokens = 0u32;
+        let mut output_tokens = 0u32;
 
-            // Read lines from the process output
-            for line in reader.lines() {
-                let line = line.context("failed to read line")?;
+        // Read lines from the process output
+        for line in reader.lines() {
+            let line = line.context("failed to read line")?;
 
-                if line.starts_with("__TOKENS__:") {
-                    // Parse token counts
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() >= 3 {
-                        input_tokens = parts[1].parse().unwrap_or(0);
-                        output_tokens = parts[2].parse().unwrap_or(0);
-                    }
-                } else {
-                    // Send as delta
-                    if tx.blocking_send(StreamEvent::Delta(line)).is_err() {
-                        break;
-                    }
+            if line.starts_with("__TOKENS__:") {
+                // Parse token counts
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    input_tokens = parts[1].parse().unwrap_or(0);
+                    output_tokens = parts[2].parse().unwrap_or(0);
+                }
+            } else {
+                // Send as delta
+                if tx.blocking_send(StreamEvent::Delta(line)).is_err() {
+                    break;
                 }
             }
-
-            let status = child.wait().context("failed to wait for mlx-lm")?;
-            if !status.success() {
-                bail!("mlx-lm exited with error");
-            }
-
-            Ok((input_tokens, output_tokens))
-        })();
-
-        match result {
-            Ok((input_tokens, output_tokens)) => {
-                let _ = tx.blocking_send(StreamEvent::Done(Usage {
-                    input_tokens,
-                    output_tokens,
-                }));
-            },
-            Err(e) => {
-                let _ = tx.blocking_send(StreamEvent::Error(e.to_string()));
-            },
         }
+
+        let status = child.wait().context("failed to wait for mlx-lm")?;
+        if !status.success() {
+            bail!("mlx-lm (Python) exited with error");
+        }
+
+        Ok((input_tokens, output_tokens))
+    }
+
+    /// Streaming generation using mlx-lm CLI (Homebrew).
+    ///
+    /// Note: The CLI doesn't support true streaming output, so we run the command
+    /// and send the result as a single delta followed by done.
+    fn stream_generate_cli(
+        model_path: &str,
+        prompt: &str,
+        max_tokens: u32,
+        temperature: f32,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> Result<(u32, u32)> {
+        // mlx_lm generate doesn't support streaming output, so we run and send result
+        let mut child = Command::new("mlx_lm")
+            .arg("generate")
+            .args(["--model", model_path])
+            .args(["--prompt", prompt])
+            .args(["--max-tokens", &max_tokens.to_string()])
+            .args(["--temp", &temperature.to_string()])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("failed to spawn mlx_lm CLI")?;
+
+        let stdout = child.stdout.take().context("no stdout")?;
+        let reader = BufReader::new(stdout);
+
+        let mut output_text = String::new();
+
+        // Read output line by line and stream
+        for line in reader.lines() {
+            let line = line.context("failed to read line")?;
+            output_text.push_str(&line);
+            output_text.push('\n');
+
+            // Send each line as a delta for some streaming effect
+            if tx.blocking_send(StreamEvent::Delta(line)).is_err() {
+                break;
+            }
+        }
+
+        let status = child.wait().context("failed to wait for mlx_lm CLI")?;
+        if !status.success() {
+            let stderr_output = child
+                .stderr
+                .take()
+                .map(|s| std::io::read_to_string(s).unwrap_or_default())
+                .unwrap_or_default();
+            bail!("mlx_lm CLI exited with error: {}", stderr_output);
+        }
+
+        // Estimate tokens
+        let input_tokens = (prompt.len() / 4) as u32;
+        let output_tokens = (output_text.len() / 4) as u32;
+
+        Ok((input_tokens, output_tokens))
     }
 }
 
@@ -952,5 +1126,27 @@ mod tests {
         let backend = detect_backend_for_model("qwen2.5-coder-1.5b-q4_k_m");
         // On non-Apple Silicon, should be GGUF. On Apple Silicon with mlx_lm, MLX.
         assert!(matches!(backend, BackendType::Gguf | BackendType::Mlx));
+    }
+
+    #[test]
+    fn test_detect_mlx_installation_consistency() {
+        // detect_mlx_installation and is_mlx_available should be consistent
+        let installation = detect_mlx_installation();
+        let available = is_mlx_available();
+
+        // If installation is Some, available should be true
+        // If installation is None, available should be false
+        assert_eq!(installation.is_some(), available);
+    }
+
+    #[test]
+    fn test_mlx_installation_enum_values() {
+        // Test that MlxInstallation enum values exist and can be compared
+        let python = MlxInstallation::PythonPackage;
+        let homebrew = MlxInstallation::HomebrewCli;
+
+        assert_ne!(python, homebrew);
+        assert_eq!(python, MlxInstallation::PythonPackage);
+        assert_eq!(homebrew, MlxInstallation::HomebrewCli);
     }
 }
