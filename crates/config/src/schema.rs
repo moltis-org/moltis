@@ -620,6 +620,9 @@ pub struct BrowserConfig {
     pub viewport_width: u32,
     /// Default viewport height.
     pub viewport_height: u32,
+    /// Device scale factor for HiDPI/Retina displays.
+    /// 1.0 = standard, 2.0 = Retina/HiDPI, 3.0 = 3x scaling.
+    pub device_scale_factor: f64,
     /// Maximum concurrent browser instances.
     pub max_instances: usize,
     /// Instance idle timeout in seconds before closing.
@@ -657,8 +660,9 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             headless: true,
-            viewport_width: 1920,
-            viewport_height: 1080,
+            viewport_width: 2560,
+            viewport_height: 1440,
+            device_scale_factor: 2.0,
             max_instances: 3,
             idle_timeout_secs: 300,
             navigation_timeout_ms: 30000,

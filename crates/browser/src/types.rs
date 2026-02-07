@@ -320,6 +320,8 @@ pub struct BrowserConfig {
     pub viewport_width: u32,
     /// Default viewport height.
     pub viewport_height: u32,
+    /// Device scale factor for HiDPI/Retina displays.
+    pub device_scale_factor: f64,
     /// Maximum concurrent browser instances.
     pub max_instances: usize,
     /// Instance idle timeout in seconds before closing.
@@ -352,8 +354,9 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             headless: true,
-            viewport_width: 1920,
-            viewport_height: 1080,
+            viewport_width: 2560,
+            viewport_height: 1440,
+            device_scale_factor: 2.0,
             max_instances: 3,
             idle_timeout_secs: 300,
             navigation_timeout_ms: 30000,
@@ -374,6 +377,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             headless: cfg.headless,
             viewport_width: cfg.viewport_width,
             viewport_height: cfg.viewport_height,
+            device_scale_factor: cfg.device_scale_factor,
             max_instances: cfg.max_instances,
             idle_timeout_secs: cfg.idle_timeout_secs,
             navigation_timeout_ms: cfg.navigation_timeout_ms,

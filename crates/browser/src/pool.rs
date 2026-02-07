@@ -305,7 +305,7 @@ impl BrowserPool {
             .viewport(chromiumoxide::handler::viewport::Viewport {
                 width: self.config.viewport_width,
                 height: self.config.viewport_height,
-                device_scale_factor: Some(1.0),
+                device_scale_factor: Some(self.config.device_scale_factor),
                 emulating_mobile: false,
                 is_landscape: true,
                 has_touch: false,
