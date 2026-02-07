@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser Sandbox Mode**: Run browser in isolated Docker containers for security
+  - Automatic container lifecycle management
+  - Uses `browserless/chrome` image by default (configurable via `sandbox_image`)
+  - Container readiness detection via HTTP endpoint probing
+  - Enable with `sandbox = true` in browser config
+
+- **Memory-Based Browser Pool Limits**: Browser instances now limited by system memory
+  - `max_instances = 0` (default) allows unlimited instances, limited only by memory
+  - `memory_limit_percent = 90` blocks new instances when system memory exceeds threshold
+  - Idle browsers cleaned up automatically before blocking
+  - Set `max_instances > 0` for hard limit if preferred
+
+- **Automatic Browser Session Tracking**: Browser tool automatically reuses sessions
+  - Session ID is tracked internally and injected when LLM doesn't provide one
+  - Prevents pool exhaustion from LLMs forgetting to pass session_id
+  - Session cleared on explicit "close" action
+
+- **HiDPI Screenshot Support**: Screenshots scale correctly on Retina displays
+  - `device_scale_factor` config (default: 2.0) for high-DPI rendering
+  - Screenshot display in UI scales according to device pixel ratio
+  - Viewport increased to 2560×1440 for sharper captures
+
+- **Enhanced Screenshot Lightbox**:
+  - Scrollable container for viewing long/tall screenshots
+  - Download button at top of lightbox
+  - Visible ✕ close button instead of text hint
+  - Proper scaling for HiDPI displays
+
+- **Telegram Screenshot Support**: Browser screenshots sent to Telegram channels
+  - Automatic retry as document when image dimensions exceed Telegram limits
+  - Error messages sent to channel when screenshot delivery fails
+  - Handles `PHOTO_INVALID_DIMENSIONS` and `PHOTO_SAVE_FILE_INVALID` errors
+
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)

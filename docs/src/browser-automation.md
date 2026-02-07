@@ -42,26 +42,44 @@ faster and more lightweight.
 
 ## Configuration
 
-Browser automation is **enabled by default**. The browser tool runs Chrome on
-the host machine (not inside the sandbox). To customize, add to your `moltis.toml`:
+Browser automation is **enabled by default**. To customize, add to your `moltis.toml`:
 
 ```toml
 [tools.browser]
 enabled = true              # Enable browser support
 headless = true             # Run without visible window (default)
-viewport_width = 1280       # Default viewport width
-viewport_height = 720       # Default viewport height
-max_instances = 3           # Maximum concurrent browsers
+viewport_width = 2560       # Default viewport width
+viewport_height = 1440      # Default viewport height
+device_scale_factor = 2.0   # HiDPI/Retina scaling (1.0 = standard, 2.0 = Retina)
+
+# Pool management
+max_instances = 0           # 0 = unlimited (limited by memory), >0 = hard limit
+memory_limit_percent = 90   # Block new instances when memory exceeds this %
 idle_timeout_secs = 300     # Close idle browsers after 5 min
 navigation_timeout_ms = 30000  # Page load timeout
-# chrome_path = "/path/to/chrome"  # Optional: custom Chrome path
-# user_agent = "Custom UA"         # Optional: custom user agent
-# chrome_args = ["--disable-extensions"]  # Optional: extra args
+
+# Optional customization
+# chrome_path = "/path/to/chrome"  # Custom Chrome path
+# user_agent = "Custom UA"         # Custom user agent
+# chrome_args = ["--disable-extensions"]  # Extra args
 
 # Security options (see Security section below)
-# sandbox = true            # Run browser in container (not yet implemented)
+sandbox = false             # Run browser in Docker container for isolation
+sandbox_image = "browserless/chrome"  # Container image for sandbox mode
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 ```
+
+### Memory-Based Pool Limits
+
+By default, browser instances are limited by system memory rather than a fixed count:
+
+- `max_instances = 0` (default): Unlimited instances, blocked only when memory
+  exceeds `memory_limit_percent`
+- `memory_limit_percent = 90`: New browsers blocked when system memory > 90%
+- Set `max_instances > 0` for a hard limit if you prefer fixed constraints
+
+This allows multiple chat sessions to each have their own browser without
+artificial limits, while protecting system stability when memory is constrained.
 
 ### Domain Restrictions
 
@@ -101,6 +119,31 @@ also the base domain itself.
 | `refresh` | Reload the page | - |
 | `close` | Close browser session | - |
 
+### Automatic Session Tracking
+
+The browser tool automatically tracks and reuses session IDs. After a `navigate`
+action creates a session, subsequent actions will reuse it without needing to
+pass `session_id` explicitly:
+
+```json
+// 1. Navigate (creates session)
+{ "action": "navigate", "url": "https://example.com" }
+
+// 2. Snapshot (session_id auto-injected)
+{ "action": "snapshot" }
+
+// 3. Click (session_id auto-injected)
+{ "action": "click", "ref_": 1 }
+
+// 4. Screenshot (session_id auto-injected)
+{ "action": "screenshot" }
+
+// 5. Close (clears tracked session)
+{ "action": "close" }
+```
+
+This prevents pool exhaustion from LLMs that forget to pass the session_id.
+
 ### Workflow Example
 
 ```json
@@ -111,10 +154,9 @@ also the base domain itself.
 }
 // Returns: { "session_id": "browser-abc123", "url": "https://..." }
 
-// 2. Get interactive elements
+// 2. Get interactive elements (session_id optional - auto-tracked)
 {
-  "action": "snapshot",
-  "session_id": "browser-abc123"
+  "action": "snapshot"
 }
 // Returns element refs like:
 // { "elements": [
@@ -126,14 +168,12 @@ also the base domain itself.
 // 3. Fill in the form
 {
   "action": "type",
-  "session_id": "browser-abc123",
   "ref_": 1,
   "text": "user@example.com"
 }
 
 {
   "action": "type",
-  "session_id": "browser-abc123",
   "ref_": 2,
   "text": "password123"
 }
@@ -141,14 +181,12 @@ also the base domain itself.
 // 4. Click the submit button
 {
   "action": "click",
-  "session_id": "browser-abc123",
   "ref_": 3
 }
 
 // 5. Take a screenshot of the result
 {
-  "action": "screenshot",
-  "session_id": "browser-abc123"
+  "action": "screenshot"
 }
 // Returns: { "screenshot": "data:image/png;base64,..." }
 ```
@@ -218,18 +256,44 @@ When the `metrics` feature is enabled, the browser module records:
 | `moltis_browser_navigation_duration_seconds` | Page load time histogram |
 | `moltis_browser_errors_total` | Errors by type |
 
-## Browser Tool vs Sandbox
+## Sandbox Mode
 
-The `browser` tool runs Chrome **on the host machine**, not inside the sandbox.
-This is intentional:
+The browser can run in two modes:
 
-- The browser tool uses Chrome DevTools Protocol (CDP) for real-time interaction
-- CDP requires a persistent connection to the browser process
-- Running inside the sandbox would add latency and complexity
+### Host Mode (default)
 
-However, if agents need to run browser automation **scripts** (Puppeteer,
-Playwright, Selenium) inside the sandbox, Chromium is included in the default
-sandbox packages. To run a script:
+```toml
+[tools.browser]
+sandbox = false
+```
+
+Chrome runs directly on the host machine. This is faster but the browser has
+full access to the host network and filesystem.
+
+### Sandbox Mode
+
+```toml
+[tools.browser]
+sandbox = true
+sandbox_image = "browserless/chrome"  # or custom image
+```
+
+Chrome runs inside a Docker container with:
+
+- **Network isolation**: Browser can access the internet but not local services
+- **Filesystem isolation**: No access to host filesystem
+- **Automatic lifecycle**: Container started/stopped with browser session
+- **Readiness detection**: Waits for Chrome to be fully ready before connecting
+
+Requirements:
+- Docker must be installed and running
+- The container image is pulled automatically on first use
+
+### Exec Tool Scripts
+
+If agents need to run browser automation **scripts** (Puppeteer, Playwright,
+Selenium) inside the command sandbox, Chromium is included in the default
+sandbox packages:
 
 ```bash
 # Inside sandbox (via exec tool)
@@ -254,25 +318,27 @@ malicious sites could attempt to inject instructions.
 2. **Review returned content**: The snapshot action returns element text which
    could contain injected prompts. Be cautious with untrusted sites.
 
-3. **Sandbox mode** (planned): Future versions will support running the browser
-   in an isolated container. Set `sandbox = true` to enable when available.
+3. **Sandbox mode**: Run the browser in an isolated Docker container for
+   additional security. Set `sandbox = true` in your config.
 
 ### Other Security Considerations
 
-1. **Host browser**: The browser tool runs Chrome on the host with `--no-sandbox`
-   for container compatibility. For additional isolation, consider running
-   Moltis itself in a container.
+1. **Host vs Sandbox mode**: By default, the browser runs on the host with
+   `--no-sandbox` for container compatibility. Enable `sandbox = true` to run
+   in a Docker container with network/filesystem isolation.
 
-2. **Resource limits**: Configure `max_instances` to prevent resource exhaustion.
+2. **Resource limits**: Browser instances are limited by memory usage (default:
+   block when > 90% used). Set `max_instances > 0` for a hard limit.
 
 3. **Idle cleanup**: Browsers are automatically closed after `idle_timeout_secs`
    of inactivity.
 
-4. **Network access**: The browser has full network access. Use firewall rules
-   if you need to restrict outbound connections.
+4. **Network access**: In host mode, the browser has full network access. In
+   sandbox mode, the browser can reach the internet but not local services.
+   Use firewall rules for additional restrictions.
 
-5. **Sandbox scripts**: Browser scripts running in the sandbox (via exec tool)
-   inherit sandbox network restrictions (`no_network: true` by default).
+5. **Sandbox scripts**: Browser scripts running in the exec sandbox (Puppeteer,
+   Playwright) inherit sandbox network restrictions (`no_network: true` by default).
 
 ## Browser Detection
 
@@ -304,11 +370,22 @@ When the browser tool takes a screenshot, it's displayed in the chat UI:
 
 - **Thumbnail view**: Screenshots appear as clickable thumbnails (200×150px max)
 - **Fullscreen lightbox**: Click to view full-size with dark overlay
-- **Close**: Click anywhere or press Escape to close
+- **Scrollable view**: Long screenshots can be scrolled within the lightbox
+- **Download button**: Save screenshot to disk (top of lightbox)
+- **Close button**: Click ✕ button, click outside, or press Escape to close
+- **HiDPI scaling**: Screenshots display at correct size on Retina displays
 
-Screenshots are base64-encoded PNGs returned in the tool result. Note that
-screenshots are not persisted across page reloads (they exist only in the
-streaming response).
+Screenshots are base64-encoded PNGs returned in the tool result. The
+`device_scale_factor` config (default: 2.0) controls the rendering resolution
+for high-DPI displays.
+
+### Telegram Integration
+
+When using the Telegram channel, screenshots are automatically sent to the chat:
+
+- Images sent as photos when dimensions are within Telegram limits
+- Automatically retried as documents for oversized images (aspect ratio > 20)
+- Error messages sent to channel if delivery fails
 
 ## Handling Model Errors
 
@@ -346,6 +423,14 @@ tool calls with missing required fields. Moltis handles this gracefully:
 
 ### High memory usage
 
-- Reduce `max_instances`
+- Browser instances are now limited by memory (blocks at 90% by default)
+- Set `max_instances > 0` for a hard limit if preferred
 - Lower `idle_timeout_secs` to clean up faster
 - Consider enabling headless mode if not already
+
+### Pool exhaustion
+
+- Browser tool now auto-tracks session IDs, preventing pool exhaustion from
+  LLMs that forget to pass session_id
+- If you still hit limits, check `memory_limit_percent` threshold
+- Use `close` action when done to free up sessions
