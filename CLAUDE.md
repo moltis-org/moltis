@@ -774,6 +774,14 @@ integrate them together so nothing is lost.
 tests locally. When pushing code to an open pull request, pass the PR number
 (e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
 
+**PR description quality:** Every pull request must include a clear, reviewer-friendly
+description with at least these sections:
+- `## Summary` (what changed and why)
+- `## Validation` (exact commands run, e.g. fmt/lint/tests)
+- `## Manual QA` (UI/manual checks performed, or explicitly say `None`)
+
+Do not leave PR bodies as a raw commit dump. Keep them concise and actionable.
+
 ## Code Quality Checklist
 
 **You MUST run all checks before every commit and fix any issues they report:**
