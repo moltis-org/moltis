@@ -187,6 +187,9 @@ impl BrowserManager {
         session_id: Option<&str>,
         url: &str,
     ) -> Result<(String, BrowserResponse), BrowserError> {
+        // Validate URL before navigation
+        validate_url(url)?;
+
         // Check if the domain is allowed
         if !crate::types::is_domain_allowed(url, &self.config.allowed_domains) {
             return Err(BrowserError::NavigationFailed(format!(
@@ -737,6 +740,72 @@ impl BrowserManager {
     }
 }
 
+/// Validate a URL before attempting navigation.
+///
+/// Checks for:
+/// - Valid URL structure (can be parsed)
+/// - Allowed schemes (http, https)
+/// - Not obviously malformed (LLM garbage in path)
+fn validate_url(url: &str) -> Result<(), BrowserError> {
+    // Check if URL is empty
+    if url.is_empty() {
+        return Err(BrowserError::InvalidAction(
+            "URL cannot be empty".to_string(),
+        ));
+    }
+
+    // Parse the URL
+    let parsed = url::Url::parse(url).map_err(|e| {
+        BrowserError::InvalidAction(format!("invalid URL '{}': {}", truncate_url(url), e))
+    })?;
+
+    // Check scheme
+    match parsed.scheme() {
+        "http" | "https" => {},
+        scheme => {
+            return Err(BrowserError::InvalidAction(format!(
+                "unsupported URL scheme '{}', only http/https allowed",
+                scheme
+            )));
+        },
+    }
+
+    // Check for obviously malformed URLs (LLM garbage)
+    // Check the original URL string (before normalization) to catch garbage
+    let suspicious_patterns = [
+        "}}}",           // JSON garbage
+        "]}",            // JSON array closing
+        "}<",            // Mixed JSON/XML
+        "assistant to=", // LLM prompt leakage
+        "functions.",    // LLM function call leakage (e.g., "functions.browser")
+    ];
+
+    for pattern in suspicious_patterns {
+        if url.contains(pattern) {
+            warn!(
+                url = %truncate_url(url),
+                pattern = pattern,
+                "rejecting URL with suspicious pattern (likely LLM garbage)"
+            );
+            return Err(BrowserError::InvalidAction(format!(
+                "URL contains invalid characters or LLM garbage: '{}'",
+                truncate_url(url)
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Truncate a URL for error messages (to avoid huge garbage URLs in logs).
+fn truncate_url(url: &str) -> String {
+    if url.len() > 100 {
+        format!("{}...", &url[..100])
+    } else {
+        url.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,5 +822,44 @@ mod tests {
     fn test_browser_manager_enabled_by_default() {
         let manager = BrowserManager::default();
         assert!(manager.is_enabled());
+    }
+
+    #[test]
+    fn test_validate_url_valid() {
+        assert!(validate_url("https://example.com").is_ok());
+        assert!(validate_url("http://localhost:8080/path").is_ok());
+        assert!(validate_url("https://www.lemonde.fr/").is_ok());
+    }
+
+    #[test]
+    fn test_validate_url_empty() {
+        assert!(validate_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_invalid_scheme() {
+        assert!(validate_url("ftp://example.com").is_err());
+        assert!(validate_url("file:///etc/passwd").is_err());
+        assert!(validate_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_llm_garbage() {
+        // The actual garbage URL from the bug report (contains "assistant to=")
+        let garbage = "https://www.lemonde.fr/path>assistant to=functions.browser";
+        assert!(validate_url(garbage).is_err());
+
+        // LLM function leakage
+        assert!(validate_url("https://example.com/path/functions.browser").is_err());
+
+        // Test with the closing brace pattern from JSON garbage
+        // Note: `}}<` would match the `}<` pattern
+        assert!(validate_url("https://example.com/path}}<tag").is_err());
+    }
+
+    #[test]
+    fn test_validate_url_malformed() {
+        assert!(validate_url("not a url").is_err());
+        assert!(validate_url("://missing.scheme").is_err());
     }
 }
