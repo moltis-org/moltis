@@ -18,6 +18,73 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  local-validation:
+    name: Local Validation / ${{ matrix.label }}
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: fmt
+            context: local/fmt
+          - label: clippy
+            context: local/lint
+          - label: test
+            context: local/test
+    steps:
+      - name: Verify local status context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_CONTEXT: ${{ matrix.context }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          repo = os.environ["REPO"]
+          sha = os.environ["PR_HEAD_SHA"]
+          token = os.environ["GH_TOKEN"]
+          required = os.environ["REQUIRED_CONTEXT"]
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/commits/{sha}/status",
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req) as resp:
+              payload = json.loads(resp.read().decode("utf-8"))
+
+          found_state = None
+          for status in payload.get("statuses", []):
+              if status.get("context") == required:
+                  found_state = status.get("state")
+                  break
+
+          if found_state == "success":
+              print(f"{required} is success")
+              raise SystemExit(0)
+
+          if found_state is None:
+              print(f"Missing required local status: {required}", file=sys.stderr)
+          else:
+              print(
+                  f"Local status {required} is '{found_state}', expected 'success'",
+                  file=sys.stderr,
+              )
+          raise SystemExit(1)
+          PY
+
   zizmor:
     name: Workflow Security
     if: ${{ github.event_name != 'pull_request' }}
