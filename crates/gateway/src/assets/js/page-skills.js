@@ -20,7 +20,6 @@ var toasts = signal([]);
 var toastId = 0;
 var installProgresses = signal([]);
 var installProgressId = 0;
-var installProgressTimers = {};
 
 // Lazy prefetch: starts on first navigation to /skills, not at module load
 var prefetchPromise = null;
@@ -82,30 +81,15 @@ function shortSha(sha) {
 function startInstallProgress(source, id) {
 	if (!id) id = `install-${++installProgressId}`;
 	if (installProgresses.value.some((p) => p.id === id)) return id;
-	installProgresses.value = installProgresses.value.concat([{ id: id, source: source || "repository", percent: 8 }]);
-	installProgressTimers[id] = setInterval(() => {
-		installProgresses.value = installProgresses.value.map((p) => {
-			if (p.id !== id) return p;
-			var next = Math.min(92, p.percent + Math.max(1, Math.floor((100 - p.percent) / 12)));
-			return { ...p, percent: next };
-		});
-	}, 450);
+	installProgresses.value = installProgresses.value.concat([
+		{ id: id, source: source || "repository", state: "running" },
+	]);
 	return id;
 }
 
 function stopInstallProgress(id, ok) {
-	if (installProgressTimers[id]) {
-		clearInterval(installProgressTimers[id]);
-		delete installProgressTimers[id];
-	}
-	if (ok) {
-		installProgresses.value = installProgresses.value.map((p) => (p.id === id ? { ...p, percent: 100 } : p));
-		setTimeout(() => {
-			installProgresses.value = installProgresses.value.filter((p) => p.id !== id);
-		}, 280);
-	} else {
-		installProgresses.value = installProgresses.value.filter((p) => p.id !== id);
-	}
+	void ok;
+	installProgresses.value = installProgresses.value.filter((p) => p.id !== id);
 }
 
 function fetchAll() {
@@ -179,14 +163,9 @@ function InstallProgressBar() {
     ${items.map(
 			(
 				p,
-			) => html`<div key=${p.id} style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:.76rem;color:var(--muted)">
-        <span>Installing ${p.source}...</span>
-        <span>${p.percent}%</span>
-      </div>
-      <div style="height:8px;border-radius:9999px;background:var(--surface2);overflow:hidden">
-        <div style=${{ width: `${p.percent}%`, height: "100%", background: "var(--accent)", transition: "width .35s ease" }}></div>
-      </div>
+			) => html`<div key=${p.id} style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface);font-size:.78rem;color:var(--muted)">
+				<div><strong style="color:var(--text-strong)">Installing ${p.source}...</strong></div>
+				<div style="margin-top:3px">This may take a while (download + scan).</div>
     </div>`,
 		)}
   </div>`;
