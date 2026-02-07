@@ -40,7 +40,7 @@ function StepDot({ index, label, state }) {
 
 // ── Auth step ───────────────────────────────────────────────
 
-function AuthStep({ onNext }) {
+function AuthStep({ onNext, skippable }) {
 	var [password, setPassword] = useState("");
 	var [confirm, setConfirm] = useState("");
 	var [setupCode, setSetupCode] = useState("");
@@ -139,6 +139,7 @@ function AuthStep({ onNext }) {
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
+				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 			</div>
 		</form>
 	</div>`;
@@ -656,18 +657,20 @@ function FinishStep() {
 function OnboardingPage() {
 	var [step, setStep] = useState(-1); // -1 = checking
 	var [authNeeded, setAuthNeeded] = useState(false);
+	var [authSkippable, setAuthSkippable] = useState(false);
 	var [finished, setFinished] = useState(false);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
 	var sessionsPanelRef = useRef(null);
 
-	// Hide nav and header for standalone experience
+	// Hide nav, header, and banners for standalone experience
 	useEffect(() => {
 		var header = document.querySelector("header");
 		var nav = document.getElementById("navPanel");
 		var sessions = document.getElementById("sessionsPanel");
 		var burger = document.getElementById("burgerBtn");
 		var toggle = document.getElementById("sessionsToggle");
+		var authBanner = document.getElementById("authDisabledBanner");
 		headerRef.current = header;
 		navRef.current = nav;
 		sessionsPanelRef.current = sessions;
@@ -677,6 +680,7 @@ function OnboardingPage() {
 		if (sessions) sessions.style.display = "none";
 		if (burger) burger.style.display = "none";
 		if (toggle) toggle.style.display = "none";
+		if (authBanner) authBanner.style.display = "none";
 
 		return () => {
 			if (header) header.style.display = "";
@@ -684,6 +688,7 @@ function OnboardingPage() {
 			if (sessions) sessions.style.display = "";
 			if (burger) burger.style.display = "";
 			if (toggle) toggle.style.display = "";
+			// Don't restore authBanner — app.js will re-show it if needed
 		};
 	}, []);
 
@@ -692,8 +697,10 @@ function OnboardingPage() {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((auth) => {
-				if (auth?.setup_required && auth.setup_code_required) {
+				if (auth?.setup_required || (auth?.auth_disabled && !auth?.localhost_only)) {
+					// Show auth step: either first-run setup or remote with auth disabled
 					setAuthNeeded(true);
+					setAuthSkippable(!auth.setup_required);
 					setStep(0);
 				} else {
 					setAuthNeeded(false);
@@ -751,7 +758,7 @@ function OnboardingPage() {
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
-			${step === 0 && html`<${AuthStep} onNext=${goNext} />`}
+			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
 			${step === 1 && html`<${IdentityStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
 			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === 3 && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
