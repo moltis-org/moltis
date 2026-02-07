@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
       - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
         with:
           advanced-security: false
@@ -37,7 +38,7 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: arm64
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.os }}
     name: Build .deb (${{ matrix.arch }})
@@ -49,6 +50,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -110,7 +126,7 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.os }}
     name: Build .rpm (${{ matrix.arch }})
@@ -122,6 +138,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -188,7 +219,7 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.os }}
     name: Build .pkg.tar.zst (${{ matrix.arch }})
@@ -221,7 +252,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build .pkg.tar.zst
@@ -285,7 +320,7 @@ jobs:
             appimagetool_arch: x86_64
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
             appimagetool_arch: aarch64
 
     runs-on: ${{ matrix.os }}
@@ -316,7 +351,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build AppImage
@@ -405,6 +444,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync snap version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: |
+          sed -Ei "s/^version:[[:space:]]*'.*'/version: '${VERSION}'/" snap/snapcraft.yaml
+
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
@@ -450,7 +505,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.os }}
     name: Build binary (${{ matrix.target }})
@@ -480,7 +535,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package binary
@@ -526,7 +585,7 @@ jobs:
           - platform: linux/amd64
             os: ubuntu-latest
           - platform: linux/arm64
-            os: ubuntu-latest-arm
+            os: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.os }}
     name: Build Docker (${{ matrix.platform }})
@@ -707,7 +766,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX and SPDX)
         run: |
-          cargo sbom --output-format cyclonedx_json_1_4 > moltis-sbom.cdx.json
+          cargo sbom --output-format cyclone_dx_json_1_4 > moltis-sbom.cdx.json
           cargo sbom --output-format spdx_json_2_3 > moltis-sbom.spdx.json
 
       - name: Sign SBOMs with Sigstore and generate checksums
