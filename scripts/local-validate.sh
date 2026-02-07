@@ -94,21 +94,23 @@ Check out the PR head commit before running local validation.
 EOF
     exit 1
   fi
+else
+  SHA="$(git rev-parse HEAD)"
+fi
 
-  if ! git diff --quiet --ignore-submodules -- || \
-     ! git diff --cached --quiet --ignore-submodules -- || \
-     [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-    cat >&2 <<EOF
+# Reject dirty working trees in all modes. Validating with uncommitted changes
+# gives misleading results (local-only) or publishes statuses for the wrong
+# content (PR mode).
+if ! git diff --quiet --ignore-submodules -- || \
+   ! git diff --cached --quiet --ignore-submodules -- || \
+   [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  cat >&2 <<EOF
 Working tree is not clean.
 
 Commit or stash all local changes (including untracked files) before running
-local validation. This prevents publishing statuses for a commit while testing
-different local files.
+local validation.
 EOF
-    exit 1
-  fi
-else
-  SHA="$(git rev-parse HEAD)"
+  exit 1
 fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
@@ -329,6 +331,9 @@ if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2
   exit 1
 fi
+
+# Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
+run_check "local/lockfile" "cargo fetch --locked"
 
 # Keep lint/test sequential to maximize incremental compile reuse.
 # These do not wait on local/zizmor (advisory and non-blocking).

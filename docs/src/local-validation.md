@@ -29,6 +29,7 @@ The script runs these checks:
 - `local/fmt`
 - `local/biome`
 - `local/zizmor`
+- `local/lockfile` — verifies `Cargo.lock` is in sync (`cargo fetch --locked`)
 - `local/lint`
 - `local/test`
 
@@ -37,6 +38,8 @@ checks in the PR.
 
 ## Notes
 
+- The script requires a clean working tree (no uncommitted or untracked
+  changes). Commit or stash local changes before running.
 - On macOS without CUDA (`nvcc`), the script automatically falls back to
   non-CUDA lint/test defaults for local runs.
 - `zizmor` is installed automatically (Homebrew on macOS, apt on Linux) when
