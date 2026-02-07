@@ -85,6 +85,20 @@ impl BrowserManager {
             );
         }
 
+        // Log the action with execution mode for visibility
+        let mode = if self.config.sandbox {
+            "sandbox"
+        } else {
+            "host"
+        };
+        info!(
+            action = %request.action,
+            session_id = request.session_id.as_deref().unwrap_or("(new)"),
+            execution_mode = mode,
+            sandbox_image = %self.config.sandbox_image,
+            "executing browser action"
+        );
+
         let start = Instant::now();
         let timeout_duration = Duration::from_millis(request.timeout_ms);
 

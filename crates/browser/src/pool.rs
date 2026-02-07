@@ -265,6 +265,10 @@ impl BrowserPool {
         });
 
         info!(session_id, "sandboxed browser connected successfully");
+        debug!(
+            session_id,
+            "note: 'WS Invalid message' warnings are normal - Chrome sends CDP events the library doesn't recognize"
+        );
 
         Ok(BrowserInstance {
             browser,

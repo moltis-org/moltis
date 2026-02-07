@@ -1,5 +1,7 @@
 //! Browser action types and request/response structures.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 /// Browser action to perform.
@@ -74,6 +76,40 @@ pub enum BrowserAction {
 
 fn default_wait_timeout_ms() -> u64 {
     30000
+}
+
+impl fmt::Display for BrowserAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Navigate { url } => write!(f, "navigate({})", url),
+            Self::Screenshot { full_page, .. } => {
+                if *full_page {
+                    write!(f, "screenshot(full_page)")
+                } else {
+                    write!(f, "screenshot")
+                }
+            },
+            Self::Snapshot => write!(f, "snapshot"),
+            Self::Click { ref_ } => write!(f, "click(ref={})", ref_),
+            Self::Type { ref_, .. } => write!(f, "type(ref={})", ref_),
+            Self::Scroll { ref_, x, y } => match ref_ {
+                Some(r) => write!(f, "scroll(ref={}, x={}, y={})", r, x, y),
+                None => write!(f, "scroll(x={}, y={})", x, y),
+            },
+            Self::Evaluate { .. } => write!(f, "evaluate"),
+            Self::Wait { selector, ref_, .. } => match (selector, ref_) {
+                (Some(s), _) => write!(f, "wait(selector={})", s),
+                (_, Some(r)) => write!(f, "wait(ref={})", r),
+                _ => write!(f, "wait"),
+            },
+            Self::GetUrl => write!(f, "get_url"),
+            Self::GetTitle => write!(f, "get_title"),
+            Self::Back => write!(f, "back"),
+            Self::Forward => write!(f, "forward"),
+            Self::Refresh => write!(f, "refresh"),
+            Self::Close => write!(f, "close"),
+        }
+    }
 }
 
 /// Request to the browser service.
