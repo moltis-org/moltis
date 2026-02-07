@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-06
+
+### Changed
+
+- **CI builds**: Build Docker images natively per architecture instead of QEMU emulation, then merge into multi-arch manifest
+
 ## [0.1.9] - 2026-02-06
 
 ### Changed
