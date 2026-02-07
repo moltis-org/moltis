@@ -35,6 +35,9 @@ pub enum BrowserError {
     #[error("browser closed unexpectedly")]
     BrowserClosed,
 
+    #[error("connection closed: {0}")]
+    ConnectionClosed(String),
+
     #[error("CDP error: {0}")]
     Cdp(String),
 

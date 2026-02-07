@@ -15,7 +15,7 @@ use {
         },
     },
     tokio::time::{Duration, timeout},
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use crate::{
@@ -201,9 +201,37 @@ impl BrowserManager {
         #[cfg(feature = "metrics")]
         let nav_start = Instant::now();
 
-        page.goto(url)
-            .await
-            .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
+        // Try navigation, retry with fresh session if connection is dead
+        if let Err(e) = page.goto(url).await {
+            let err_str = e.to_string();
+            if err_str.contains("AlreadyClosed") || err_str.contains("ConnectionClosed") {
+                warn!(
+                    session_id = sid,
+                    "browser connection dead, closing session and retrying"
+                );
+                let _ = self.pool.close_session(&sid).await;
+                // Retry with a fresh session
+                let new_sid = self.pool.get_or_create(None).await?;
+                let new_page = self.pool.get_page(&new_sid).await?;
+                new_page
+                    .goto(url)
+                    .await
+                    .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
+                // Continue with the new session
+                let _ = new_page.wait_for_navigation().await;
+                let current_url = new_page.url().await.ok().flatten().unwrap_or_default();
+                info!(
+                    session_id = new_sid,
+                    url = current_url,
+                    "navigated to URL (after retry)"
+                );
+                return Ok((
+                    new_sid.clone(),
+                    BrowserResponse::success(new_sid, 0, self.config.sandbox).with_url(current_url),
+                ));
+            }
+            return Err(BrowserError::NavigationFailed(err_str));
+        }
 
         // Wait for network idle
         let _ = page.wait_for_navigation().await;
@@ -281,7 +309,25 @@ impl BrowserManager {
         let sid = self.pool.get_or_create(session_id).await?;
         let page = self.pool.get_page(&sid).await?;
 
-        let snapshot = extract_snapshot(&page).await?;
+        // Try snapshot, retry with fresh session if connection is dead
+        let snapshot = match extract_snapshot(&page).await {
+            Ok(s) => s,
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("AlreadyClosed") || err_str.contains("ConnectionClosed") {
+                    warn!(
+                        session_id = sid,
+                        "browser connection dead, closing session and retrying"
+                    );
+                    let _ = self.pool.close_session(&sid).await;
+                    // For snapshot we need an existing page, so return error
+                    return Err(BrowserError::ConnectionClosed(
+                        "Browser connection closed. Please navigate to a page first.".to_string(),
+                    ));
+                }
+                return Err(e);
+            },
+        };
 
         debug!(
             session_id = sid,

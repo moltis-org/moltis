@@ -47,6 +47,9 @@ impl BrowserPool {
     /// Get or create a browser instance for the given session ID.
     /// Returns the session ID for the browser instance.
     pub async fn get_or_create(&self, session_id: Option<&str>) -> Result<String, BrowserError> {
+        // Treat empty string as None (generate new session ID)
+        let session_id = session_id.filter(|s| !s.is_empty());
+
         // Check if we have an existing instance
         if let Some(sid) = session_id {
             let instances = self.instances.read().await;

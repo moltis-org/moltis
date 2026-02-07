@@ -1618,7 +1618,11 @@ async fn run_with_tools(
                     // Add execution mode for browser tool
                     if name == "browser" {
                         let sandboxed = state.services.browser.is_sandboxed();
-                        payload["executionMode"] = serde_json::json!(if sandboxed { "sandbox" } else { "host" });
+                        payload["executionMode"] = serde_json::json!(if sandboxed {
+                            "sandbox"
+                        } else {
+                            "host"
+                        });
                     }
                     payload
                 },
