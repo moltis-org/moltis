@@ -37,13 +37,10 @@ impl FsHookDiscoverer {
 
     /// Build the default search paths for hook discovery.
     pub fn default_paths(cwd: &Path) -> Vec<(PathBuf, HookSource)> {
-        let mut paths = vec![(cwd.join(".moltis/hooks"), HookSource::Project)];
-
-        if let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) {
-            paths.push((home.join(".moltis/hooks"), HookSource::User));
-        }
-
-        paths
+        vec![
+            (cwd.join(".moltis/hooks"), HookSource::Project),
+            (moltis_config::data_dir().join("hooks"), HookSource::User),
+        ]
     }
 }
 

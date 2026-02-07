@@ -84,6 +84,7 @@ const READ_METHODS: &[&str] = &[
     "memory.status",
     "memory.config.get",
     "memory.qmd.status",
+    "hooks.list",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -145,6 +146,10 @@ const WRITE_METHODS: &[&str] = &[
     "heartbeat.update",
     "heartbeat.run",
     "memory.config.update",
+    "hooks.enable",
+    "hooks.disable",
+    "hooks.save",
+    "hooks.reload",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -3133,7 +3138,198 @@ impl MethodRegistry {
                 })
             }),
         );
+
+        // ── Hooks methods ────────────────────────────────────────────────
+
+        // hooks.list — return discovered hooks with live stats.
+        self.register(
+            "hooks.list",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let hooks = ctx.state.discovered_hooks.read().await;
+                    let mut list = hooks.clone();
+
+                    // Enrich with live stats from the registry.
+                    if let Some(ref registry) = *ctx.state.hook_registry.read().await {
+                        for hook in &mut list {
+                            if let Some(stats) = registry.handler_stats(&hook.name) {
+                                let calls =
+                                    stats.call_count.load(std::sync::atomic::Ordering::Relaxed);
+                                let failures = stats
+                                    .failure_count
+                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                let total_us = stats
+                                    .total_latency_us
+                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                hook.call_count = calls;
+                                hook.failure_count = failures;
+                                hook.avg_latency_ms =
+                                    total_us.checked_div(calls).unwrap_or(0) / 1000;
+                            }
+                        }
+                    }
+
+                    Ok(serde_json::json!({ "hooks": list }))
+                })
+            }),
+        );
+
+        // hooks.enable — re-enable a previously disabled hook.
+        self.register(
+            "hooks.enable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let name =
+                        ctx.params
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing name")
+                            })?;
+
+                    ctx.state.disabled_hooks.write().await.remove(name);
+
+                    // Persist disabled hooks list.
+                    persist_disabled_hooks(&ctx.state).await;
+
+                    // Rebuild hooks.
+                    reload_hooks(&ctx.state).await;
+
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
+
+        // hooks.disable — disable a hook without removing its files.
+        self.register(
+            "hooks.disable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let name =
+                        ctx.params
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing name")
+                            })?;
+
+                    ctx.state
+                        .disabled_hooks
+                        .write()
+                        .await
+                        .insert(name.to_string());
+
+                    // Persist disabled hooks list.
+                    persist_disabled_hooks(&ctx.state).await;
+
+                    // Rebuild hooks.
+                    reload_hooks(&ctx.state).await;
+
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
+
+        // hooks.save — write HOOK.md content back to disk.
+        self.register(
+            "hooks.save",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let name =
+                        ctx.params
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing name")
+                            })?;
+                    let content = ctx
+                        .params
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            ErrorShape::new(error_codes::INVALID_REQUEST, "missing content")
+                        })?;
+
+                    // Find the hook's source path.
+                    let source_path = {
+                        let hooks = ctx.state.discovered_hooks.read().await;
+                        hooks
+                            .iter()
+                            .find(|h| h.name == name)
+                            .map(|h| h.source_path.clone())
+                    };
+
+                    let source_path = source_path.ok_or_else(|| {
+                        ErrorShape::new(error_codes::INVALID_REQUEST, "hook not found")
+                    })?;
+
+                    // Write the content to HOOK.md.
+                    let hook_md_path = std::path::PathBuf::from(&source_path).join("HOOK.md");
+                    std::fs::write(&hook_md_path, content).map_err(|e| {
+                        ErrorShape::new(
+                            error_codes::UNAVAILABLE,
+                            format!("failed to write HOOK.md: {e}"),
+                        )
+                    })?;
+
+                    // Reload hooks to pick up the changes.
+                    reload_hooks(&ctx.state).await;
+
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
+
+        // hooks.reload — re-run discovery and rebuild the registry.
+        self.register(
+            "hooks.reload",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    reload_hooks(&ctx.state).await;
+                    Ok(serde_json::json!({ "ok": true }))
+                })
+            }),
+        );
     }
+}
+
+/// Re-run hook discovery, rebuild the registry, and broadcast the update.
+async fn reload_hooks(state: &Arc<GatewayState>) {
+    let disabled = state.disabled_hooks.read().await.clone();
+    let session_store = state.services.session_store.as_ref();
+    let (new_registry, new_info) =
+        crate::server::discover_and_build_hooks(&disabled, session_store).await;
+
+    *state.hook_registry.write().await = new_registry;
+    *state.discovered_hooks.write().await = new_info.clone();
+
+    // Broadcast hooks.status event so connected UIs auto-refresh.
+    broadcast(
+        state,
+        "hooks.status",
+        serde_json::json!({ "hooks": new_info }),
+        BroadcastOpts::default(),
+    )
+    .await;
+}
+
+/// Persist the disabled hooks set to `data_dir/disabled_hooks.json`.
+async fn persist_disabled_hooks(state: &Arc<GatewayState>) {
+    let disabled = state.disabled_hooks.read().await;
+    let path = moltis_config::data_dir().join("disabled_hooks.json");
+    let json = serde_json::to_string_pretty(&*disabled).unwrap_or_default();
+    if let Err(e) = std::fs::write(&path, json) {
+        warn!("failed to persist disabled hooks: {e}");
+    }
+}
+
+/// Load the disabled hooks set from `data_dir/disabled_hooks.json`.
+pub(crate) fn load_disabled_hooks() -> std::collections::HashSet<String> {
+    let path = moltis_config::data_dir().join("disabled_hooks.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -3303,6 +3499,31 @@ mod tests {
     #[test]
     fn cron_write_methods_require_write() {
         for method in &["cron.add", "cron.update", "cron.remove", "cron.run"] {
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.write"])).is_none(),
+                "write scope should authorize {method}"
+            );
+            assert!(
+                authorize_method(method, "operator", &scopes(&["operator.read"])).is_some(),
+                "read-only scope should deny {method}"
+            );
+        }
+    }
+
+    #[test]
+    fn hooks_list_requires_read() {
+        assert!(authorize_method("hooks.list", "operator", &scopes(&["operator.read"])).is_none());
+        assert!(authorize_method("hooks.list", "operator", &scopes(&[])).is_some());
+    }
+
+    #[test]
+    fn hooks_write_methods_require_write() {
+        for method in &[
+            "hooks.enable",
+            "hooks.disable",
+            "hooks.save",
+            "hooks.reload",
+        ] {
             assert!(
                 authorize_method(method, "operator", &scopes(&["operator.write"])).is_none(),
                 "write scope should authorize {method}"

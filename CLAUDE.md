@@ -575,6 +575,15 @@ Moltis uses two directories, **never** the current working directory:
   Overridable via `--data-dir` or `MOLTIS_DATA_DIR`.
 
 **Rules:**
+- **Never use `directories::BaseDirs` or `directories::ProjectDirs` directly**
+  outside the `moltis-config` crate. The `home_dir()` helper in
+  `crates/config/src/loader.rs` is the single call site for
+  `directories::BaseDirs`. All other crates must use
+  `moltis_config::data_dir()` or `moltis_config::config_dir()` instead.
+  These functions respect overrides (`MOLTIS_DATA_DIR`, `MOLTIS_CONFIG_DIR`,
+  `--data-dir`, `--config-dir`) and keep path resolution DRY. If a crate
+  doesn't depend on `moltis-config` yet, add it rather than calling
+  `directories` directly.
 - **Never use `std::env::current_dir()`** to resolve paths for persistent
   storage (databases, memory files, config). Always use `data_dir()` or
   `config_dir()`. Writing to cwd leaks files into the user's repo.
