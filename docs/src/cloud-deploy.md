@@ -14,7 +14,8 @@ HTTP mode. The key settings are:
 | `--no-tls` or `MOLTIS_NO_TLS=true` | Disable TLS | Provider handles HTTPS |
 | `--bind 0.0.0.0` | Bind all interfaces | Required for container networking |
 | `--port <PORT>` | Listen port | Must match provider's expected internal port |
-| `MOLTIS_DATA_DIR=/data` | Data directory | Point to a persistent volume |
+| `MOLTIS_CONFIG_DIR=/data/config` | Config directory | Persist moltis.toml, credentials |
+| `MOLTIS_DATA_DIR=/data` | Data directory | Persist databases, sessions, memory |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
 ```admonish warning
@@ -111,6 +112,7 @@ or:
 3. Railway injects the `$PORT` variable automatically
 4. Set environment variables:
    - `MOLTIS_NO_TLS` = `true`
+   - `MOLTIS_CONFIG_DIR` = `/data/config`
    - `MOLTIS_DATA_DIR` = `/data`
    - `MOLTIS_PASSWORD` = your password
 
