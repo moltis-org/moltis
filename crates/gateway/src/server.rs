@@ -112,7 +112,7 @@ pub fn build_gateway_app(
     #[cfg(feature = "web-ui")]
     let router = {
         // Protected API routes — require auth when credential store is configured.
-        let mut protected = Router::new()
+        let protected = Router::new()
             .route("/api/bootstrap", get(api_bootstrap_handler))
             .route("/api/gon", get(api_gon_handler))
             .route("/api/skills", get(api_skills_handler))
@@ -149,25 +149,55 @@ pub fn build_gateway_app(
                 "/api/env/{id}",
                 axum::routing::delete(crate::env_routes::env_delete),
             )
-            .layer(axum::middleware::from_fn_with_state(
-                app_state.clone(),
-                crate::auth_middleware::require_auth,
-            ));
+            // Config editor routes
+            .route(
+                "/api/config",
+                get(crate::tools_routes::config_get).post(crate::tools_routes::config_save),
+            )
+            .route(
+                "/api/config/validate",
+                axum::routing::post(crate::tools_routes::config_validate),
+            )
+            .route(
+                "/api/config/template",
+                get(crate::tools_routes::config_template),
+            )
+            .route(
+                "/api/restart",
+                axum::routing::post(crate::tools_routes::restart),
+            );
+
+        // Add metrics API routes (protected).
+        #[cfg(feature = "metrics")]
+        let protected = protected
+            .route(
+                "/api/metrics",
+                get(crate::metrics_routes::api_metrics_handler),
+            )
+            .route(
+                "/api/metrics/summary",
+                get(crate::metrics_routes::api_metrics_summary_handler),
+            )
+            .route(
+                "/api/metrics/history",
+                get(crate::metrics_routes::api_metrics_history_handler),
+            );
+
+        let protected = protected.layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            crate::auth_middleware::require_auth,
+        ));
 
         // Mount tailscale routes (protected) when the feature is enabled.
         #[cfg(feature = "tailscale")]
-        {
-            protected = protected.nest(
-                "/api/tailscale",
-                crate::tailscale_routes::tailscale_router(),
-            );
-        }
+        let protected = protected.nest(
+            "/api/tailscale",
+            crate::tailscale_routes::tailscale_router(),
+        );
 
         // Mount push notification routes when the feature is enabled.
         #[cfg(feature = "push-notifications")]
-        {
-            protected = protected.nest("/api/push", crate::push_routes::push_router());
-        }
+        let protected = protected.nest("/api/push", crate::push_routes::push_router());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
