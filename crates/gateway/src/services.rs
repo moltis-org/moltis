@@ -555,6 +555,7 @@ impl SkillsService for NoopSkillsService {
                     "source": repo.source,
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
+                    "commit_sha": repo.commit_sha,
                     "format": format,
                     "skill_count": repo.skills.len(),
                     "enabled_count": enabled,
@@ -636,6 +637,7 @@ impl SkillsService for NoopSkillsService {
                     "source": repo.source,
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
+                    "commit_sha": repo.commit_sha,
                     "format": format,
                     "skills": skills,
                 })
@@ -931,6 +933,7 @@ impl PluginsService for NoopPluginsService {
                     "source": repo.source,
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
+                    "commit_sha": repo.commit_sha,
                     "format": format,
                     "skill_count": repo.skills.len(),
                     "enabled_count": enabled,
@@ -985,6 +988,7 @@ impl PluginsService for NoopPluginsService {
                     "source": repo.source,
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
+                    "commit_sha": repo.commit_sha,
                     "format": format,
                     "skills": skills,
                 })

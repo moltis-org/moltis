@@ -70,6 +70,7 @@ mod tests {
             source: "owner/repo".into(),
             repo_name: "repo".into(),
             installed_at_ms: 1234567890,
+            commit_sha: Some("abc123".into()),
             format: Default::default(),
             skills: vec![SkillState {
                 name: "my-skill".into(),
@@ -94,6 +95,7 @@ mod tests {
             source: "a/b".into(),
             repo_name: "b".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![
                 SkillState {
@@ -128,6 +130,7 @@ mod tests {
             source: "a/b".into(),
             repo_name: "b".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![SkillState {
                 name: "s1".into(),
@@ -149,6 +152,7 @@ mod tests {
             source: "a/b".into(),
             repo_name: "b".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![],
         });
@@ -156,6 +160,7 @@ mod tests {
             source: "c/d".into(),
             repo_name: "d".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![],
         });

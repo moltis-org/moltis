@@ -68,6 +68,8 @@ pub struct RepoEntry {
     pub repo_name: String,
     pub installed_at_ms: u64,
     #[serde(default)]
+    pub commit_sha: Option<String>,
+    #[serde(default)]
     pub format: PluginFormat,
     pub skills: Vec<SkillState>,
 }

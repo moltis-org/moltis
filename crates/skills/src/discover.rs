@@ -274,6 +274,7 @@ mod tests {
                 source: "owner/repo".into(),
                 repo_name: "repo".into(),
                 installed_at_ms: 0,
+                commit_sha: None,
                 format: crate::formats::PluginFormat::Skill,
                 skills: vec![
                     SkillState {
