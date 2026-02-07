@@ -4,7 +4,10 @@ use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_
 
 use tracing::{debug, trace, warn};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
+use crate::model::{
+    ChatMessage, CompletionResponse, ContentPart, LlmProvider, StreamEvent, ToolCall, Usage,
+    UserContent,
+};
 
 pub struct AnthropicProvider {
     api_key: secrecy::Secret<String>,
@@ -75,6 +78,96 @@ fn parse_tool_calls(content: &[serde_json::Value]) -> Vec<ToolCall> {
         .collect()
 }
 
+/// Convert `ChatMessage` list to Anthropic format.
+///
+/// Returns `(system_text, anthropic_messages)`. System messages are extracted
+/// (Anthropic takes them as a top-level `system` field). Tool messages become
+/// user messages with `tool_result` content blocks. Assistant messages with
+/// tool calls become `content` arrays with `tool_use` blocks.
+fn to_anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<serde_json::Value>) {
+    let mut system_text: Option<String> = None;
+    let mut out = Vec::new();
+
+    for msg in messages {
+        match msg {
+            ChatMessage::System { content } => {
+                system_text = Some(match system_text {
+                    Some(existing) => format!("{existing}\n\n{content}"),
+                    None => content.clone(),
+                });
+            },
+            ChatMessage::User { content } => match content {
+                UserContent::Text(text) => {
+                    out.push(serde_json::json!({"role": "user", "content": text}));
+                },
+                UserContent::Multimodal(parts) => {
+                    let blocks: Vec<serde_json::Value> = parts
+                        .iter()
+                        .map(|part| match part {
+                            ContentPart::Text(text) => {
+                                serde_json::json!({"type": "text", "text": text})
+                            },
+                            ContentPart::Image { media_type, data } => {
+                                serde_json::json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": data,
+                                    }
+                                })
+                            },
+                        })
+                        .collect();
+                    out.push(serde_json::json!({"role": "user", "content": blocks}));
+                },
+            },
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                if tool_calls.is_empty() {
+                    out.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": content.as_deref().unwrap_or(""),
+                    }));
+                } else {
+                    let mut blocks = Vec::new();
+                    if let Some(text) = content
+                        && !text.is_empty()
+                    {
+                        blocks.push(serde_json::json!({"type": "text", "text": text}));
+                    }
+                    for tc in tool_calls {
+                        blocks.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": tc.id,
+                            "name": tc.name,
+                            "input": tc.arguments,
+                        }));
+                    }
+                    out.push(serde_json::json!({"role": "assistant", "content": blocks}));
+                }
+            },
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                out.push(serde_json::json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": content,
+                    }]
+                }));
+            },
+        }
+    }
+
+    (system_text, out)
+}
+
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
@@ -99,64 +192,10 @@ impl LlmProvider for AnthropicProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        // Separate system message from conversation messages.
-        let (system_text, conv_messages): (Option<String>, Vec<&serde_json::Value>) = {
-            let mut sys = None;
-            let mut msgs = Vec::new();
-            for m in messages {
-                if m["role"].as_str() == Some("system") {
-                    sys = m["content"].as_str().map(|s| s.to_string());
-                } else {
-                    msgs.push(m);
-                }
-            }
-            (sys, msgs)
-        };
-
-        // Convert tool-result messages to Anthropic format.
-        let anthropic_messages: Vec<serde_json::Value> = conv_messages
-            .iter()
-            .map(|m| {
-                if m["role"].as_str() == Some("tool") {
-                    // Anthropic expects tool results as user messages with tool_result content blocks.
-                    serde_json::json!({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": m["tool_call_id"],
-                            "content": m["content"],
-                        }]
-                    })
-                } else if m["role"].as_str() == Some("assistant") && m.get("tool_calls").is_some() {
-                    // Convert assistant tool_calls to Anthropic content blocks.
-                    let mut content = Vec::new();
-                    if let Some(text) = m["content"].as_str()
-                        && !text.is_empty()
-                    {
-                        content.push(serde_json::json!({ "type": "text", "text": text }));
-                    }
-                    if let Some(tcs) = m["tool_calls"].as_array() {
-                        for tc in tcs {
-                            let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                            let args: serde_json::Value =
-                                serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                            content.push(serde_json::json!({
-                                "type": "tool_use",
-                                "id": tc["id"],
-                                "name": tc["function"]["name"],
-                                "input": args,
-                            }));
-                        }
-                    }
-                    serde_json::json!({ "role": "assistant", "content": content })
-                } else {
-                    (*m).clone()
-                }
-            })
-            .collect();
+        let (system_text, anthropic_messages) = to_anthropic_messages(messages);
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -231,7 +270,7 @@ impl LlmProvider for AnthropicProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -239,68 +278,11 @@ impl LlmProvider for AnthropicProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            // Separate system message from conversation messages.
-            let (system_text, conv_messages): (Option<String>, Vec<&serde_json::Value>) = {
-                let mut sys = None;
-                let mut msgs = Vec::new();
-                for m in &messages {
-                    if m["role"].as_str() == Some("system") {
-                        // Concatenate multiple system messages.
-                        let content = m["content"].as_str().unwrap_or("");
-                        sys = Some(match sys {
-                            Some(existing) => format!("{existing}\n\n{content}"),
-                            None => content.to_string(),
-                        });
-                    } else {
-                        msgs.push(m);
-                    }
-                }
-                (sys, msgs)
-            };
-
-            // Convert messages to Anthropic format (same as complete()).
-            let anthropic_messages: Vec<serde_json::Value> = conv_messages
-                .iter()
-                .map(|m| {
-                    if m["role"].as_str() == Some("tool") {
-                        serde_json::json!({
-                            "role": "user",
-                            "content": [{
-                                "type": "tool_result",
-                                "tool_use_id": m["tool_call_id"],
-                                "content": m["content"],
-                            }]
-                        })
-                    } else if m["role"].as_str() == Some("assistant") && m.get("tool_calls").is_some() {
-                        let mut content = Vec::new();
-                        if let Some(text) = m["content"].as_str() {
-                            if !text.is_empty() {
-                                content.push(serde_json::json!({ "type": "text", "text": text }));
-                            }
-                        }
-                        if let Some(tcs) = m["tool_calls"].as_array() {
-                            for tc in tcs {
-                                let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                                let args: serde_json::Value =
-                                    serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                                content.push(serde_json::json!({
-                                    "type": "tool_use",
-                                    "id": tc["id"],
-                                    "name": tc["function"]["name"],
-                                    "input": args,
-                                }));
-                            }
-                        }
-                        serde_json::json!({ "role": "assistant", "content": content })
-                    } else {
-                        (*m).clone()
-                    }
-                })
-                .collect();
+            let (system_text, anthropic_messages) = to_anthropic_messages(&messages);
 
             let mut body = serde_json::json!({
                 "model": self.model,

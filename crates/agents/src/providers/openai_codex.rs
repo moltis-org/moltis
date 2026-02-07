@@ -11,7 +11,9 @@ use {
 };
 
 use crate::{
-    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    model::{
+        ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
+    },
     providers::openai_compat::to_responses_api_tools,
 };
 
@@ -92,27 +94,51 @@ impl OpenAiCodexProvider {
         Ok(account_id.to_string())
     }
 
-    fn convert_messages(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    fn convert_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         messages
             .iter()
             .flat_map(|msg| {
-                let role = msg["role"].as_str().unwrap_or("user");
-                match role {
-                    "assistant" => {
-                        // Check if this assistant message has tool_calls
-                        if let Some(tool_calls) = msg["tool_calls"].as_array() {
-                            // Emit function_call items for each tool call
+                match msg {
+                    ChatMessage::System { .. } => {
+                        // System messages are extracted as instructions; skip here
+                        vec![]
+                    },
+                    ChatMessage::User { content } => {
+                        let text = match content {
+                            UserContent::Text(t) => t.clone(),
+                            UserContent::Multimodal(parts) => {
+                                // Flatten multimodal to text for the Codex API
+                                parts
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        crate::model::ContentPart::Text(t) => Some(t.as_str()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            },
+                        };
+                        vec![serde_json::json!({
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": text}]
+                        })]
+                    },
+                    ChatMessage::Assistant {
+                        content,
+                        tool_calls,
+                    } => {
+                        if !tool_calls.is_empty() {
                             let mut items: Vec<serde_json::Value> = vec![];
                             for tc in tool_calls {
                                 items.push(serde_json::json!({
                                     "type": "function_call",
-                                    "call_id": tc["id"],
-                                    "name": tc["function"]["name"],
-                                    "arguments": tc["function"]["arguments"],
+                                    "call_id": tc.id,
+                                    "name": tc.name,
+                                    "arguments": tc.arguments.to_string(),
                                 }));
                             }
                             // Also include text content if present
-                            if let Some(text) = msg["content"].as_str()
+                            if let Some(text) = content
                                 && !text.is_empty()
                             {
                                 items.insert(
@@ -126,34 +152,22 @@ impl OpenAiCodexProvider {
                             }
                             items
                         } else {
-                            let content = msg["content"].as_str().unwrap_or("");
+                            let text = content.as_deref().unwrap_or("");
                             vec![serde_json::json!({
                                 "type": "message",
                                 "role": "assistant",
-                                "content": [{"type": "output_text", "text": content}]
+                                "content": [{"type": "output_text", "text": text}]
                             })]
                         }
                     },
-                    "tool" => {
-                        // Convert tool result to function_call_output.
-                        // Content can be a string or array (multimodal).
-                        let output = if let Some(s) = msg["content"].as_str() {
-                            s.to_string()
-                        } else {
-                            // Array content (e.g., multimodal with images) - serialize as JSON
-                            msg["content"].to_string()
-                        };
+                    ChatMessage::Tool {
+                        tool_call_id,
+                        content,
+                    } => {
                         vec![serde_json::json!({
                             "type": "function_call_output",
-                            "call_id": msg["tool_call_id"],
-                            "output": output,
-                        })]
-                    },
-                    _ => {
-                        let content = msg["content"].as_str().unwrap_or("");
-                        vec![serde_json::json!({
-                            "role": "user",
-                            "content": [{"type": "input_text", "text": content}]
+                            "call_id": tool_call_id,
+                            "output": content,
                         })]
                     },
                 }
@@ -208,7 +222,7 @@ impl LlmProvider for OpenAiCodexProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let token = self.get_valid_token()?;
@@ -217,12 +231,14 @@ impl LlmProvider for OpenAiCodexProvider {
         // Extract system message as instructions; pass the rest as input
         let instructions = messages
             .iter()
-            .find(|m| m["role"].as_str() == Some("system"))
-            .and_then(|m| m["content"].as_str())
+            .find_map(|m| match m {
+                ChatMessage::System { content } => Some(content.as_str()),
+                _ => None,
+            })
             .unwrap_or("You are a helpful assistant.");
-        let non_system: Vec<serde_json::Value> = messages
+        let non_system: Vec<ChatMessage> = messages
             .iter()
-            .filter(|m| m["role"].as_str() != Some("system"))
+            .filter(|m| !matches!(m, ChatMessage::System { .. }))
             .cloned()
             .collect();
         let input = Self::convert_messages(&non_system);
@@ -373,7 +389,7 @@ impl LlmProvider for OpenAiCodexProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -381,7 +397,7 @@ impl LlmProvider for OpenAiCodexProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         info!(
@@ -407,13 +423,14 @@ impl LlmProvider for OpenAiCodexProvider {
 
             let instructions = messages
                 .iter()
-                .find(|m| m["role"].as_str() == Some("system"))
-                .and_then(|m| m["content"].as_str())
-                .unwrap_or("You are a helpful assistant.")
-                .to_string();
-            let non_system: Vec<serde_json::Value> = messages
+                .find_map(|m| match m {
+                    ChatMessage::System { content } => Some(content.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "You are a helpful assistant.".to_string());
+            let non_system: Vec<ChatMessage> = messages
                 .iter()
-                .filter(|m| m["role"].as_str() != Some("system"))
+                .filter(|m| !matches!(m, ChatMessage::System { .. }))
                 .cloned()
                 .collect();
             let input = Self::convert_messages(&non_system);
@@ -644,8 +661,8 @@ mod tests {
     #[test]
     fn convert_messages_user_and_assistant() {
         let messages = vec![
-            serde_json::json!({"role": "user", "content": "hello"}),
-            serde_json::json!({"role": "assistant", "content": "hi there"}),
+            ChatMessage::user("hello"),
+            ChatMessage::assistant("hi there"),
         ];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 2);
@@ -657,19 +674,12 @@ mod tests {
     #[test]
     fn convert_messages_tool_call_and_result() {
         let messages = vec![
-            serde_json::json!({
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "get_time", "arguments": "{}"}
-                }]
-            }),
-            serde_json::json!({
-                "role": "tool",
-                "tool_call_id": "call_1",
-                "content": "12:00"
-            }),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "get_time".to_string(),
+                arguments: serde_json::json!({}),
+            }]),
+            ChatMessage::tool("call_1", "12:00"),
         ];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 2);
@@ -689,11 +699,10 @@ mod tests {
     #[test]
     fn convert_messages_tool_result_with_string_content() {
         // Standard case: tool result content is a string
-        let messages = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_123",
-            "content": "Command executed successfully"
-        })];
+        let messages = vec![ChatMessage::tool(
+            "call_123",
+            "Command executed successfully",
+        )];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["type"], "function_call_output");
@@ -702,22 +711,19 @@ mod tests {
     }
 
     #[test]
-    fn convert_messages_tool_result_with_array_content() {
-        // Edge case: tool result content is an array (multimodal format)
-        // This can happen if content was accidentally left as an array
-        let messages = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_456",
-            "content": [
-                {"type": "text", "text": "Screenshot captured"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC123"}}
-            ]
-        })];
+    fn convert_messages_tool_result_with_serialized_array_content() {
+        // ChatMessage::Tool always has String content. If the caller serialized
+        // array content into a JSON string, it passes through unchanged.
+        let array_content = serde_json::json!([
+            {"type": "text", "text": "Screenshot captured"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC123"}}
+        ])
+        .to_string();
+        let messages = vec![ChatMessage::tool("call_456", &array_content)];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["type"], "function_call_output");
         assert_eq!(converted[0]["call_id"], "call_456");
-        // Array content should be serialized to JSON string
         let output = converted[0]["output"].as_str().unwrap();
         assert!(
             output.contains("Screenshot captured"),
@@ -730,34 +736,26 @@ mod tests {
     }
 
     #[test]
-    fn convert_messages_tool_result_with_null_content() {
-        // Edge case: tool result content is null
-        let messages = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_789",
-            "content": null
-        })];
+    fn convert_messages_tool_result_with_empty_content() {
+        // ChatMessage::Tool content is a String, so "null" equivalent is empty string
+        let messages = vec![ChatMessage::tool("call_789", "")];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["type"], "function_call_output");
         assert_eq!(converted[0]["call_id"], "call_789");
-        // Null content should be serialized as "null"
-        assert_eq!(converted[0]["output"], "null");
+        assert_eq!(converted[0]["output"], "");
     }
 
     #[test]
-    fn convert_messages_tool_result_with_object_content() {
-        // Edge case: tool result content is an object
-        let messages = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_abc",
-            "content": {"result": "success", "data": [1, 2, 3]}
-        })];
+    fn convert_messages_tool_result_with_json_object_content() {
+        // ChatMessage::Tool content is a String; caller serializes structured data
+        let object_content =
+            serde_json::json!({"result": "success", "data": [1, 2, 3]}).to_string();
+        let messages = vec![ChatMessage::tool("call_abc", &object_content)];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["type"], "function_call_output");
         assert_eq!(converted[0]["call_id"], "call_abc");
-        // Object content should be serialized to JSON string
         let output = converted[0]["output"].as_str().unwrap();
         assert!(output.contains("success"), "output should contain result");
         assert!(
@@ -776,11 +774,7 @@ mod tests {
         ];
 
         for (call_id, content) in test_cases {
-            let messages = vec![serde_json::json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": content
-            })];
+            let messages = vec![ChatMessage::tool(call_id, content)];
             let converted = OpenAiCodexProvider::convert_messages(&messages);
             assert_eq!(
                 converted[0]["call_id"], call_id,
@@ -791,12 +785,8 @@ mod tests {
 
     #[test]
     fn convert_messages_empty_array_content() {
-        // Edge case: tool result content is an empty array
-        let messages = vec![serde_json::json!({
-            "role": "tool",
-            "tool_call_id": "call_empty_arr",
-            "content": []
-        })];
+        // ChatMessage::Tool content is a String; caller serializes empty array as "[]"
+        let messages = vec![ChatMessage::tool("call_empty_arr", "[]")];
         let converted = OpenAiCodexProvider::convert_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["type"], "function_call_output");
@@ -804,27 +794,22 @@ mod tests {
     }
 
     #[test]
-    fn convert_messages_mixed_conversation_with_array_content() {
-        // Full conversation with various message types including array content
+    fn convert_messages_mixed_conversation_with_tool_content() {
+        // Full conversation with various message types
+        let tool_output = serde_json::json!([
+            {"type": "text", "text": "Screenshot taken"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,XYZ"}}
+        ])
+        .to_string();
         let messages = vec![
-            serde_json::json!({"role": "user", "content": "Take a screenshot"}),
-            serde_json::json!({
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": "call_screenshot",
-                    "type": "function",
-                    "function": {"name": "browser_screenshot", "arguments": "{}"}
-                }]
-            }),
-            serde_json::json!({
-                "role": "tool",
-                "tool_call_id": "call_screenshot",
-                "content": [
-                    {"type": "text", "text": "Screenshot taken"},
-                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,XYZ"}}
-                ]
-            }),
-            serde_json::json!({"role": "assistant", "content": "Here is the screenshot."}),
+            ChatMessage::user("Take a screenshot"),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "call_screenshot".to_string(),
+                name: "browser_screenshot".to_string(),
+                arguments: serde_json::json!({}),
+            }]),
+            ChatMessage::tool("call_screenshot", &tool_output),
+            ChatMessage::assistant("Here is the screenshot."),
         ];
 
         let converted = OpenAiCodexProvider::convert_messages(&messages);
@@ -840,7 +825,7 @@ mod tests {
         assert_eq!(converted[1]["type"], "function_call");
         assert_eq!(converted[1]["name"], "browser_screenshot");
 
-        // Tool result with array content
+        // Tool result with serialized array content
         assert_eq!(converted[2]["type"], "function_call_output");
         let output = converted[2]["output"].as_str().unwrap();
         assert!(output.contains("Screenshot taken"));

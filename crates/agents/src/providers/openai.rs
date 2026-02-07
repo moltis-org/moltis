@@ -9,7 +9,7 @@ use {
         SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
         process_openai_sse_line, to_openai_tools,
     },
-    crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage},
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
 };
 
 pub struct OpenAiProvider {
@@ -71,12 +71,14 @@ impl LlmProvider for OpenAiProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        let openai_messages: Vec<serde_json::Value> =
+            messages.iter().map(ChatMessage::to_openai_value).collect();
         let mut body = serde_json::json!({
             "model": self.model,
-            "messages": messages,
+            "messages": openai_messages,
         });
 
         if !tools.is_empty() {
@@ -133,7 +135,7 @@ impl LlmProvider for OpenAiProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -141,13 +143,15 @@ impl LlmProvider for OpenAiProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
+            let openai_messages: Vec<serde_json::Value> =
+                messages.iter().map(ChatMessage::to_openai_value).collect();
             let mut body = serde_json::json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
@@ -158,7 +162,7 @@ impl LlmProvider for OpenAiProvider {
 
             debug!(
                 model = %self.model,
-                messages_count = messages.len(),
+                messages_count = openai_messages.len(),
                 tools_count = tools.len(),
                 "openai stream_with_tools request"
             );
@@ -244,6 +248,8 @@ mod tests {
         tokio_stream::StreamExt,
     };
 
+    use crate::model::ChatMessage;
+
     use super::*;
 
     #[derive(Default, Clone)]
@@ -322,10 +328,7 @@ mod tests {
         let provider = test_provider(&base_url);
         let tools = sample_tools();
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            tools,
-        );
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], tools);
         while stream.next().await.is_some() {}
 
         let reqs = captured.lock().unwrap();
@@ -348,10 +351,7 @@ mod tests {
         let (base_url, captured) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            vec![],
-        );
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], vec![]);
         while stream.next().await.is_some() {}
 
         let reqs = captured.lock().unwrap();
@@ -384,10 +384,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
@@ -452,10 +450,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
@@ -496,10 +492,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut text_deltas = Vec::new();
         let mut tool_starts = Vec::new();

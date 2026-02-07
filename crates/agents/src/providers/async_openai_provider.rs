@@ -14,7 +14,7 @@ use {
     tokio_stream::Stream,
 };
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent};
 
 /// Provider backed by the `async-openai` crate.
 /// Works with OpenAI and any OpenAI-compatible API (Ollama, vLLM, etc.)
@@ -58,34 +58,61 @@ impl AsyncOpenAiProvider {
     }
 }
 
-fn build_messages(
-    messages: &[serde_json::Value],
-) -> anyhow::Result<Vec<ChatCompletionRequestMessage>> {
+fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletionRequestMessage>> {
     let mut out = Vec::new();
     for msg in messages {
-        let role = msg["role"].as_str().unwrap_or("user");
-        let content = msg["content"].as_str().unwrap_or("");
-        match role {
-            "system" => {
+        match msg {
+            ChatMessage::System { content } => {
                 out.push(
                     ChatCompletionRequestSystemMessageArgs::default()
-                        .content(content)
+                        .content(content.as_str())
                         .build()?
                         .into(),
                 );
             },
-            "assistant" => {
+            ChatMessage::Assistant { content, .. } => {
                 out.push(
                     ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(content)
+                        .content(content.as_deref().unwrap_or(""))
                         .build()?
                         .into(),
                 );
             },
-            _ => {
+            ChatMessage::User {
+                content: UserContent::Text(text),
+            } => {
                 out.push(
                     ChatCompletionRequestUserMessageArgs::default()
-                        .content(content)
+                        .content(text.as_str())
+                        .build()?
+                        .into(),
+                );
+            },
+            ChatMessage::User {
+                content: UserContent::Multimodal(parts),
+            } => {
+                // Flatten multimodal parts into a single text for async-openai.
+                let combined: String = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        crate::model::ContentPart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.push(
+                    ChatCompletionRequestUserMessageArgs::default()
+                        .content(combined)
+                        .build()?
+                        .into(),
+                );
+            },
+            ChatMessage::Tool { content, .. } => {
+                // async-openai doesn't have a dedicated tool result builder;
+                // send as a user message with the tool output.
+                out.push(
+                    ChatCompletionRequestUserMessageArgs::default()
+                        .content(content.as_str())
                         .build()?
                         .into(),
                 );
@@ -107,7 +134,7 @@ impl LlmProvider for AsyncOpenAiProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         _tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let oai_messages = build_messages(messages)?;
@@ -146,7 +173,7 @@ impl LlmProvider for AsyncOpenAiProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let oai_messages = match build_messages(&messages) {

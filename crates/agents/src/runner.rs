@@ -8,7 +8,7 @@ use {
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
     tool_registry::ToolRegistry,
 };
 
@@ -385,7 +385,7 @@ pub async fn run_agent_loop(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     run_agent_loop_with_context(
         provider,
@@ -408,7 +408,7 @@ pub async fn run_agent_loop_with_context(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
@@ -426,20 +426,14 @@ pub async fn run_agent_loop_with_context(
         "starting agent loop"
     );
 
-    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt,
-    })];
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt)];
 
     // Insert conversation history before the current user message.
     if let Some(hist) = history {
         messages.extend(hist);
     }
 
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": user_message,
-    }));
+    messages.push(ChatMessage::user(user_message));
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -471,7 +465,7 @@ pub async fn run_agent_loop_with_context(
             messages_count = messages.len(),
             "calling LLM"
         );
-        trace!(iteration = iterations, messages = %serde_json::to_string(&messages).unwrap_or_default(), "LLM request messages");
+        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -551,32 +545,15 @@ pub async fn run_agent_loop_with_context(
         }
 
         // Append assistant message with tool calls.
-        let tool_calls_json: Vec<serde_json::Value> = response
-            .tool_calls
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": tc.arguments.to_string(),
-                    }
-                })
-            })
-            .collect();
-
-        let mut assistant_msg = serde_json::json!({
-            "role": "assistant",
-            "tool_calls": tool_calls_json,
-        });
-        if let Some(ref text) = response.text {
-            assistant_msg["content"] = serde_json::Value::String(text.clone());
-            if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(text.clone()));
-            }
+        if let Some(ref text) = response.text
+            && let Some(cb) = on_event
+        {
+            cb(RunnerEvent::ThinkingText(text.clone()));
         }
-        messages.push(assistant_msg);
+        messages.push(ChatMessage::assistant_with_tools(
+            response.text.clone(),
+            response.tool_calls.clone(),
+        ));
 
         // Extract session key from tool_context for hook payloads.
         let session_key = tool_context
@@ -756,11 +733,7 @@ pub async fn run_agent_loop_with_context(
             );
             trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
 
-            messages.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result_str,
-            }));
+            messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
     }
 }
@@ -783,7 +756,7 @@ pub async fn run_agent_loop_streaming(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
@@ -801,20 +774,14 @@ pub async fn run_agent_loop_streaming(
         "starting streaming agent loop"
     );
 
-    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt,
-    })];
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt)];
 
     // Insert conversation history before the current user message.
     if let Some(hist) = history {
         messages.extend(hist);
     }
 
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": user_message,
-    }));
+    messages.push(ChatMessage::user(user_message));
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -856,7 +823,7 @@ pub async fn run_agent_loop_streaming(
             messages_count = messages.len(),
             "calling LLM (streaming)"
         );
-        trace!(iteration = iterations, messages = %serde_json::to_string(&messages).unwrap_or_default(), "LLM request messages");
+        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -992,31 +959,18 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Append assistant message with tool calls.
-        let tool_calls_json: Vec<serde_json::Value> = tool_calls
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": tc.arguments.to_string(),
-                    }
-                })
-            })
-            .collect();
-
-        let mut assistant_msg = serde_json::json!({
-            "role": "assistant",
-            "tool_calls": tool_calls_json,
-        });
-        if !accumulated_text.is_empty() {
-            assistant_msg["content"] = serde_json::Value::String(accumulated_text.clone());
+        let text_for_msg = if accumulated_text.is_empty() {
+            None
+        } else {
             if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(accumulated_text));
+                cb(RunnerEvent::ThinkingText(accumulated_text.clone()));
             }
-        }
-        messages.push(assistant_msg);
+            Some(accumulated_text)
+        };
+        messages.push(ChatMessage::assistant_with_tools(
+            text_for_msg,
+            tool_calls.clone(),
+        ));
 
         // Extract session key from tool_context for hook payloads.
         let session_key = tool_context
@@ -1190,11 +1144,7 @@ pub async fn run_agent_loop_streaming(
             );
             trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
 
-            messages.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result_str,
-            }));
+            messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
     }
 }
@@ -1203,7 +1153,9 @@ pub async fn run_agent_loop_streaming(
 mod tests {
     use {
         super::*,
-        crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+        crate::model::{
+            ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+        },
         async_trait::async_trait,
         std::pin::Pin,
         tokio_stream::Stream,
@@ -1261,7 +1213,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -1276,7 +1228,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1303,7 +1255,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1336,7 +1288,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1363,7 +1315,7 @@ mod tests {
 
         async fn complete(
             &self,
-            messages: &[serde_json::Value],
+            messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1378,8 +1330,16 @@ mod tests {
                 })
             } else {
                 // Verify tool result was fed back.
-                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
-                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 assert!(
                     tool_content.contains("hello"),
                     "tool result should contain 'hello', got: {tool_content}"
@@ -1397,7 +1357,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1524,7 +1484,7 @@ mod tests {
 
         async fn complete(
             &self,
-            messages: &[serde_json::Value],
+            messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1544,8 +1504,16 @@ mod tests {
                     },
                 })
             } else {
-                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
-                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 let parsed: serde_json::Value = serde_json::from_str(tool_content).unwrap();
                 let stdout = parsed["result"]["stdout"].as_str().unwrap_or("");
                 assert!(stdout.contains("hello"));
@@ -1563,7 +1531,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1738,7 +1706,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1767,7 +1735,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -2195,7 +2163,7 @@ mod tests {
 
         async fn complete(
             &self,
-            messages: &[serde_json::Value],
+            messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -2218,8 +2186,16 @@ mod tests {
             } else {
                 // Second call: verify tool result was sanitized (image stripped)
                 // because tool results don't support multimodal content
-                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
-                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
 
                 // Tool result should be sanitized (image data replaced with user-friendly message)
                 assert!(
@@ -2244,7 +2220,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -2498,7 +2474,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -2513,14 +2489,14 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             self.stream_with_tools(_messages, vec![])
         }
 
         fn stream_with_tools(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
             _tools: Vec<serde_json::Value>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             let count = self
@@ -2651,7 +2627,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -2666,14 +2642,14 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             self.stream_with_tools(_messages, vec![])
         }
 
         fn stream_with_tools(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
             _tools: Vec<serde_json::Value>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             let count = self

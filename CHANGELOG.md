@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mistral and other providers rejecting requests with HTTP 422**: Session metadata fields
+  (`created_at`, `model`, `provider`, `inputTokens`, `outputTokens`) were leaking into
+  provider API request bodies. Mistral's strict validation rejected the extra `created_at`
+  field. Replaced `Vec<serde_json::Value>` with a typed `ChatMessage` enum in the
+  `LlmProvider` trait — metadata can no longer leak because the type only contains
+  LLM-relevant fields (`role`, `content`, `tool_calls`). Conversion from persisted JSON
+  happens once at the gateway boundary via `values_to_chat_messages()`.
+
 ### Added
 
 - **Browser Sandbox Mode**: Run browser in isolated Docker containers for security

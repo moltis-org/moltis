@@ -19,7 +19,7 @@ use {
         SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
         process_openai_sse_line, to_openai_tools,
     },
-    crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage},
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -153,14 +153,16 @@ impl LlmProvider for KimiCodeProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let token = self.get_valid_token().await?;
 
+        let openai_messages: Vec<serde_json::Value> =
+            messages.iter().map(ChatMessage::to_openai_value).collect();
         let mut body = serde_json::json!({
             "model": self.model,
-            "messages": messages,
+            "messages": openai_messages,
         });
 
         if !tools.is_empty() {
@@ -215,7 +217,7 @@ impl LlmProvider for KimiCodeProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -223,7 +225,7 @@ impl LlmProvider for KimiCodeProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
@@ -235,9 +237,11 @@ impl LlmProvider for KimiCodeProvider {
                 }
             };
 
+            let openai_messages: Vec<serde_json::Value> =
+                messages.iter().map(ChatMessage::to_openai_value).collect();
             let mut body = serde_json::json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
@@ -248,7 +252,7 @@ impl LlmProvider for KimiCodeProvider {
 
             debug!(
                 model = %self.model,
-                messages_count = messages.len(),
+                messages_count = openai_messages.len(),
                 tools_count = tools.len(),
                 "kimi-code stream_with_tools request"
             );

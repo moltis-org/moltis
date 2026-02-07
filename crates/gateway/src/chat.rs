@@ -20,8 +20,8 @@ use moltis_config::MessageQueueMode;
 
 use {
     moltis_agents::{
-        AgentRunError,
-        model::StreamEvent,
+        AgentRunError, ChatMessage,
+        model::{StreamEvent, values_to_chat_messages},
         prompt::{build_system_prompt_minimal, build_system_prompt_with_session},
         providers::ProviderRegistry,
         runner::{RunnerEvent, run_agent_loop_streaming},
@@ -1243,9 +1243,10 @@ impl ChatService for LiveChatService {
         if let Some(ref mm) = self.state.memory_manager {
             let memory_dir = moltis_config::data_dir();
             if let Ok(provider) = self.resolve_provider(&session_key, &history).await {
+                let chat_history_for_memory = values_to_chat_messages(&history);
                 match moltis_agents::silent_turn::run_silent_memory_turn(
                     provider,
-                    &history,
+                    &chat_history_for_memory,
                     &memory_dir,
                 )
                 .await
@@ -1269,12 +1270,6 @@ impl ChatService for LiveChatService {
         }
 
         // Build a summary prompt from the conversation.
-        let mut summary_messages: Vec<serde_json::Value> = Vec::new();
-        summary_messages.push(serde_json::json!({
-            "role": "system",
-            "content": "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble."
-        }));
-
         let mut conversation_text = String::new();
         for msg in &history {
             let role = msg
@@ -1284,10 +1279,13 @@ impl ChatService for LiveChatService {
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             conversation_text.push_str(&format!("{role}: {content}\n\n"));
         }
-        summary_messages.push(serde_json::json!({
-            "role": "user",
-            "content": conversation_text,
-        }));
+
+        let summary_messages = vec![
+            ChatMessage::system(
+                "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
+            ),
+            ChatMessage::user(&conversation_text),
+        ];
 
         // Use the session's model if available, otherwise fall back to the model
         // from the last assistant message, then to the first registered provider.
@@ -1615,7 +1613,7 @@ async fn run_with_tools(
     tool_registry: &Arc<RwLock<ToolRegistry>>,
     text: &str,
     provider_name: &str,
-    history: &[serde_json::Value],
+    history_raw: &[serde_json::Value],
     session_key: &str,
     project_context: Option<&str>,
     session_context: Option<&str>,
@@ -1830,11 +1828,12 @@ async fn run_with_tools(
         });
     });
 
-    // Pass history (excluding the current user message, which run_agent_loop adds).
-    let hist = if history.is_empty() {
+    // Convert persisted JSON history to typed ChatMessages for the LLM provider.
+    let chat_history = values_to_chat_messages(history_raw);
+    let hist = if chat_history.is_empty() {
         None
     } else {
-        Some(history.to_vec())
+        Some(chat_history)
     };
 
     // Inject session key, sandbox mode, and accept-language into tool call params so tools can
@@ -1904,11 +1903,12 @@ async fn run_with_tools(
                     .await;
 
                     // Reload compacted history and retry.
-                    let compacted_history = store.read(session_key).await.unwrap_or_default();
-                    let retry_hist = if compacted_history.is_empty() {
+                    let compacted_history_raw = store.read(session_key).await.unwrap_or_default();
+                    let compacted_chat = values_to_chat_messages(&compacted_history_raw);
+                    let retry_hist = if compacted_chat.is_empty() {
                         None
                     } else {
-                        Some(compacted_history)
+                        Some(compacted_chat)
                     };
 
                     run_agent_loop_streaming(
@@ -2024,11 +2024,6 @@ async fn compact_session(
         return Err("nothing to compact".into());
     }
 
-    let mut summary_messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble."
-    })];
-
     let mut conversation_text = String::new();
     for msg in &history {
         let role = msg
@@ -2038,10 +2033,13 @@ async fn compact_session(
         let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
         conversation_text.push_str(&format!("{role}: {content}\n\n"));
     }
-    summary_messages.push(serde_json::json!({
-        "role": "user",
-        "content": conversation_text,
-    }));
+
+    let summary_messages = vec![
+        ChatMessage::system(
+            "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
+        ),
+        ChatMessage::user(&conversation_text),
+    ];
 
     let mut stream = provider.stream(summary_messages);
     let mut summary = String::new();
@@ -2083,40 +2081,29 @@ async fn run_streaming(
     provider: Arc<dyn moltis_agents::model::LlmProvider>,
     text: &str,
     provider_name: &str,
-    history: &[serde_json::Value],
+    history_raw: &[serde_json::Value],
     session_key: &str,
     project_context: Option<&str>,
     session_context: Option<&str>,
     user_message_index: usize,
     skills: &[moltis_skills::types::SkillMetadata],
 ) -> Option<(String, u32, u32)> {
-    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut messages: Vec<ChatMessage> = Vec::new();
     // Prepend session + project context as system messages.
     if let Some(ctx) = session_context {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": format!("## Current Session\n\n{ctx}"),
-        }));
+        messages.push(ChatMessage::system(format!("## Current Session\n\n{ctx}")));
     }
     if let Some(ctx) = project_context {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": ctx,
-        }));
+        messages.push(ChatMessage::system(ctx));
     }
     // Inject skills into the system prompt for streaming mode too.
     if !skills.is_empty() {
         let skills_block = moltis_skills::prompt_gen::generate_skills_prompt(skills);
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": skills_block,
-        }));
+        messages.push(ChatMessage::system(skills_block));
     }
-    messages.extend_from_slice(history);
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": text,
-    }));
+    // Convert persisted JSON history to typed ChatMessages for the LLM provider.
+    messages.extend(values_to_chat_messages(history_raw));
+    messages.push(ChatMessage::user(text));
 
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
