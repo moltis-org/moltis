@@ -107,6 +107,30 @@ documentation, and avoids stringly-typed field access. Reserve
   library-level errors that callers need to match on.
 - Propagate errors with `?`; avoid `.unwrap()` outside of tests.
 
+### Date, time, and crate reuse
+
+Prefer short, readable code that leverages existing workspace crates over
+hand-rolled arithmetic. For date/time specifically, use the **`time`** crate
+(already a workspace dependency) instead of manual epoch conversions,
+calendar math, or magic constants like `86400`:
+
+```rust
+// Good — concise, self-documenting
+time::Duration::days(30).unsigned_abs()
+time::OffsetDateTime::now_utc().date()
+
+// Bad — manual arithmetic, magic constants
+days * 86400
+days * 24 * 60 * 60
+```
+
+This principle applies broadly: if a crate in the workspace already
+provides a clear one-liner, use it rather than reimplementing the logic.
+
+The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
+whichever is already imported in the crate you're editing, but default to
+`time` for new code since it's lighter.
+
 ### General style
 
 - Prefer iterators and combinators (`.map()`, `.filter()`, `.collect()`)

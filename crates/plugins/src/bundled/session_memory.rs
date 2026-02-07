@@ -13,43 +13,10 @@ use {
     moltis_sessions::store::SessionStore,
 };
 
-/// Format current UTC date as YYYY-MM-DD from unix timestamp.
-fn unix_date_string() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Days since epoch → civil date (simplified Rata Die algorithm).
-    let days = (secs / 86400) as i64;
-    let y;
-    let m;
-    let d;
-    {
-        // Algorithm from https://howardhinnant.github.io/date_algorithms.html
-        let z = days + 719468;
-        let era = (if z >= 0 {
-            z
-        } else {
-            z - 146096
-        }) / 146097;
-        let doe = (z - era * 146097) as u32;
-        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-        let yr = yoe as i64 + era * 400;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        d = doy - (153 * mp + 2) / 5 + 1;
-        m = if mp < 10 {
-            mp + 3
-        } else {
-            mp - 9
-        };
-        y = if m <= 2 {
-            yr + 1
-        } else {
-            yr
-        };
-    }
-    format!("{y:04}-{m:02}-{d:02}")
+/// Format current UTC date as YYYY-MM-DD.
+fn utc_date_string() -> String {
+    let d = time::OffsetDateTime::now_utc().date();
+    format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
 }
 
 /// Saves session conversation log to `<workspace>/memory/session-<key>-<date>.md`
@@ -122,7 +89,7 @@ impl HookHandler for SessionMemoryHook {
         }
 
         // Generate a simple slug from the session key.
-        let date = unix_date_string();
+        let date = utc_date_string();
         let slug = session_key
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == '-')
