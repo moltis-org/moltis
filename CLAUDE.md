@@ -39,6 +39,11 @@ each crate's `Cargo.toml`. Never add a version directly in a crate's
 `Cargo.toml` — centralising versions in the workspace avoids duplicate
 versions in the lock file and makes upgrades easier.
 
+When adding or upgrading dependencies, prefer the **latest stable crates.io
+version** whenever possible (unless there is a concrete compatibility or MSRV
+constraint). Before adding any new crate, check crates.io first and pin the
+current latest stable release in `[workspace.dependencies]`.
+
 ```toml
 # Root Cargo.toml
 [workspace.dependencies]
