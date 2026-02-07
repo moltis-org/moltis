@@ -128,7 +128,7 @@ fn discover_plugins(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
 
     for repo in &manifest.repos {
         for skill_state in &repo.skills {
-            if !skill_state.enabled {
+            if !skill_state.enabled || !skill_state.trusted {
                 continue;
             }
             let skill_dir = install_dir.join(&skill_state.relative_path);
@@ -166,7 +166,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
 
     for repo in &manifest.repos {
         for skill_state in &repo.skills {
-            if !skill_state.enabled {
+            if !skill_state.enabled || !skill_state.trusted {
                 continue;
             }
             let skill_dir = install_dir.join(&skill_state.relative_path);
@@ -194,7 +194,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                     skills.push(meta);
                 },
                 Err(e) => {
-                    tracing::warn!(?skill_dir, %e, "failed to parse SKILL.md");
+                    tracing::debug!(?skill_dir, %e, "skipping non-conforming SKILL.md");
                 },
             }
         }
@@ -289,16 +289,19 @@ mod tests {
                 source: "owner/repo".into(),
                 repo_name: "repo".into(),
                 installed_at_ms: 0,
+                commit_sha: None,
                 format: crate::formats::PluginFormat::Skill,
                 skills: vec![
                     SkillState {
                         name: "a".into(),
                         relative_path: "repo/skills/a".into(),
+                        trusted: true,
                         enabled: true,
                     },
                     SkillState {
                         name: "b".into(),
                         relative_path: "repo/skills/b".into(),
+                        trusted: false,
                         enabled: false,
                     },
                 ],

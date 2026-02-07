@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,8 +18,42 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  local-validation:
+    name: ${{ matrix.label }}
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: fmt
+            context: local/fmt
+          - label: biome
+            context: local/biome
+          - label: zizmor
+            context: local/zizmor
+          - label: clippy
+            context: local/lint
+          - label: test
+            context: local/test
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Verify local status context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_CONTEXT: ${{ matrix.context }}
+        run: python3 scripts/check-local-status.py
+
   zizmor:
     name: Workflow Security
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,6 +68,7 @@ jobs:
 
   biome:
     name: Biome
+    if: ${{ github.event_name != 'pull_request' }}
     needs: zizmor
     runs-on: ubuntu-latest
     permissions:
@@ -46,6 +84,7 @@ jobs:
 
   fmt:
     name: Format
+    if: ${{ github.event_name != 'pull_request' }}
     needs: zizmor
     runs-on: ubuntu-latest
     permissions:
@@ -60,47 +99,44 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  clippy:
-    name: Clippy
-    needs: fmt
+  rust-ci:
+    name: Rust CI (clippy + test)
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: [fmt, biome]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    container:
+      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_CACHE_SIZE: "5G"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - name: Clean up corrupted cargo config
         run: rm -f ~/.cargo/config.toml
-      - name: Install build dependencies for llama.cpp
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libclang-dev pkg-config nvidia-cuda-toolkit nvidia-cuda-dev
+          apt-get update
+          apt-get install -y curl git cmake build-essential clang libclang-dev pkg-config ca-certificates
           nvcc --version
-      - name: Configure CUDA linker paths
-        run: |
-          sudo mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/include
-          if [ -f /usr/include/cuda.h ]; then
-            sudo ln -sf /usr/include/cuda.h /usr/local/cuda/include/cuda.h
-          fi
-          for lib in libcudart_static.a libcublas_static.a libcublasLt_static.a libculibos.a; do
-            if [ -f "/usr/lib/x86_64-linux-gnu/${lib}" ]; then
-              sudo ln -sf "/usr/lib/x86_64-linux-gnu/${lib}" "/usr/local/cuda/lib64/${lib}"
-            fi
-          done
-          echo "CUDA_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "CUDA_ROOT=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "CUDA_LIBRARY_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
           components: clippy
+      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        with:
+          shared-key: rust-ci-cuda-v1
+          cache-all-crates: true
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
-          # llama-cpp-sys-2's cmake build runs git commands that fail without a repo
-          # We need to fetch the crate first so the source exists
           cargo fetch --locked
           LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
           if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
@@ -112,45 +148,49 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      # Lint with all features enabled on Linux CI runners.
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-features -- -D warnings
+      - run: cargo test --all-features
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
 
-  build:
-    name: Build & Test
-    needs: [clippy, biome]
+  rust-full-targets:
+    name: Rust Full Targets (scheduled)
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    continue-on-error: true
+    needs: [fmt, biome]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    container:
+      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_CACHE_SIZE: "5G"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - name: Clean up corrupted cargo config
         run: rm -f ~/.cargo/config.toml
-      - name: Install build dependencies for llama.cpp
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libclang-dev pkg-config nvidia-cuda-toolkit nvidia-cuda-dev
+          apt-get update
+          apt-get install -y curl git cmake build-essential clang libclang-dev pkg-config ca-certificates
           nvcc --version
-      - name: Configure CUDA linker paths
-        run: |
-          sudo mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/include
-          if [ -f /usr/include/cuda.h ]; then
-            sudo ln -sf /usr/include/cuda.h /usr/local/cuda/include/cuda.h
-          fi
-          for lib in libcudart_static.a libcublas_static.a libcublasLt_static.a libculibos.a; do
-            if [ -f "/usr/lib/x86_64-linux-gnu/${lib}" ]; then
-              sudo ln -sf "/usr/lib/x86_64-linux-gnu/${lib}" "/usr/local/cuda/lib64/${lib}"
-            fi
-          done
-          echo "CUDA_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "CUDA_ROOT=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "CUDA_LIBRARY_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
+          components: clippy
+      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        with:
+          shared-key: rust-ci-cuda-v1
+          cache-all-crates: true
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
           cargo fetch --locked
@@ -164,6 +204,7 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      # Build and test with all features enabled on Linux CI runners.
-      - run: cargo build --all-features --all-targets
-      - run: cargo test --all-features
+      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats

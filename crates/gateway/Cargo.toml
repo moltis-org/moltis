@@ -14,9 +14,11 @@ base64             = { workspace = true }
 chrono             = { features = ["serde"], optional = true, workspace = true }
 dashmap            = { workspace = true }
 futures            = { workspace = true }
+gix                = { workspace = true }
 hostname           = { workspace = true }
 include_dir        = { optional = true, workspace = true }
 moltis-agents      = { workspace = true }
+moltis-browser     = { workspace = true }
 moltis-canvas      = { workspace = true }
 moltis-channels    = { workspace = true }
 moltis-common      = { workspace = true }

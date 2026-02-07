@@ -8,6 +8,7 @@
 
 pub mod approval;
 pub mod branch_session;
+pub mod browser;
 pub mod cron_tool;
 pub mod exec;
 pub mod image_cache;

@@ -6,6 +6,10 @@ use {
     tracing::{debug, warn},
 };
 
+// NOTE: This module intentionally shells out to `git` for worktree porcelain
+// operations (`worktree add/remove/list`, branch delete) because these flows are
+// not yet practical with stable in-process gitoxide APIs in this code path.
+
 const WORKTREE_DIR: &str = ".moltis-worktrees";
 
 /// Information about an active worktree.

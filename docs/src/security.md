@@ -15,6 +15,10 @@ This power requires multiple layers of protection:
 4. **Rate limiting** to prevent resource abuse
 5. **Scope-based access control** for API authorization
 
+For marketplace-style skill/plugin hardening (trust gating, provenance pinning,
+drift re-trust, dependency install guards, kill switch, audit log), see
+[Third-Party Skills Security](skills-security.md).
+
 ## Command Execution Approval
 
 By default, Moltis requires explicit user approval before executing potentially

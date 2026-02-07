@@ -27,6 +27,22 @@ pub enum ApprovalMode {
     Always,
 }
 
+impl ApprovalMode {
+    /// Parse approval mode from config value.
+    ///
+    /// Accepts canonical values plus legacy aliases:
+    /// - `on-miss` / `smart` -> `OnMiss`
+    /// - `off` / `never` -> `Off`
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "never" => Some(Self::Off),
+            "on-miss" | "on_miss" | "smart" => Some(Self::OnMiss),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
+}
+
 /// Security level for exec commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,6 +52,23 @@ pub enum SecurityLevel {
     #[default]
     Allowlist,
     Full,
+}
+
+impl SecurityLevel {
+    /// Parse security level from config value.
+    ///
+    /// Accepts canonical values plus schema aliases:
+    /// - `allowlist` -> `Allowlist`
+    /// - `permissive` / `full` -> `Full`
+    /// - `strict` / `deny` -> `Deny`
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "allowlist" => Some(Self::Allowlist),
+            "permissive" | "full" => Some(Self::Full),
+            "strict" | "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
 }
 
 /// Well-known safe binaries that don't need approval.
@@ -97,10 +130,6 @@ pub const SAFE_BINS: &[&str] = &[
     "which",
     "type",
     "command",
-    // Package manager query commands (read-only, user-space).
-    "brew",
-    "dpkg",
-    "rpm",
 ];
 
 /// Extract the first command/binary from a shell command string.
@@ -295,6 +324,31 @@ mod tests {
         assert!(matches_allowlist("cargo build", &list));
         assert!(matches_allowlist("cargo-clippy", &list));
         assert!(!matches_allowlist("rm -rf /", &list));
+    }
+
+    #[test]
+    fn test_parse_approval_mode_aliases() {
+        assert_eq!(ApprovalMode::parse("on-miss"), Some(ApprovalMode::OnMiss));
+        assert_eq!(ApprovalMode::parse("smart"), Some(ApprovalMode::OnMiss));
+        assert_eq!(ApprovalMode::parse("always"), Some(ApprovalMode::Always));
+        assert_eq!(ApprovalMode::parse("never"), Some(ApprovalMode::Off));
+        assert_eq!(ApprovalMode::parse("bogus"), None);
+    }
+
+    #[test]
+    fn test_parse_security_level_aliases() {
+        assert_eq!(
+            SecurityLevel::parse("allowlist"),
+            Some(SecurityLevel::Allowlist)
+        );
+        assert_eq!(
+            SecurityLevel::parse("permissive"),
+            Some(SecurityLevel::Full)
+        );
+        assert_eq!(SecurityLevel::parse("full"), Some(SecurityLevel::Full));
+        assert_eq!(SecurityLevel::parse("strict"), Some(SecurityLevel::Deny));
+        assert_eq!(SecurityLevel::parse("deny"), Some(SecurityLevel::Deny));
+        assert_eq!(SecurityLevel::parse("bogus"), None);
     }
 
     #[tokio::test]

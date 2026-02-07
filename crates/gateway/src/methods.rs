@@ -51,7 +51,9 @@ const READ_METHODS: &[&str] = &[
     "agent.identity.get",
     "skills.list",
     "skills.status",
+    "skills.security.status",
     "skills.repos.list",
+    "skills.security.scan",
     "voicewake.get",
     "sessions.list",
     "sessions.preview",
@@ -126,12 +128,15 @@ const WRITE_METHODS: &[&str] = &[
     "skills.install",
     "skills.remove",
     "skills.repos.remove",
+    "skills.emergency_disable",
+    "skills.skill.trust",
     "skills.skill.enable",
     "skills.skill.disable",
     "skills.install_dep",
     "plugins.install",
     "plugins.remove",
     "plugins.repos.remove",
+    "plugins.skill.trust",
     "plugins.skill.enable",
     "plugins.skill.disable",
     "mcp.add",
@@ -2125,12 +2130,62 @@ impl MethodRegistry {
             "skills.install",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
-                        .services
-                        .skills
-                        .install(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    let source = ctx
+                        .params
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let op_id = ctx
+                        .params
+                        .get("op_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(ctx.request_id.as_str())
+                        .to_string();
+
+                    broadcast(
+                        &ctx.state,
+                        "skills.install.progress",
+                        serde_json::json!({
+                            "phase": "start",
+                            "source": source,
+                            "op_id": op_id,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+
+                    match ctx.state.services.skills.install(ctx.params.clone()).await {
+                        Ok(payload) => {
+                            broadcast(
+                                &ctx.state,
+                                "skills.install.progress",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "source": source,
+                                    "op_id": op_id,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            Ok(payload)
+                        },
+                        Err(e) => {
+                            broadcast(
+                                &ctx.state,
+                                "skills.install.progress",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "source": source,
+                                    "op_id": op_id,
+                                    "error": e,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            Err(ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        },
+                    }
                 })
             }),
         );
@@ -2181,6 +2236,32 @@ impl MethodRegistry {
                         .services
                         .skills
                         .repos_remove(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "skills.emergency_disable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .skills
+                        .emergency_disable()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "skills.skill.trust",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .skills
+                        .skill_trust(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
@@ -2287,6 +2368,19 @@ impl MethodRegistry {
                         .services
                         .plugins
                         .repos_remove(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "plugins.skill.trust",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .plugins
+                        .skill_trust(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

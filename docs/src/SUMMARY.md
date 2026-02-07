@@ -9,6 +9,7 @@
 - [Quickstart](quickstart.md)
 - [Installation](installation.md)
 - [Configuration](configuration.md)
+- [Local Validation](local-validation.md)
 
 ---
 
@@ -20,6 +21,7 @@
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
+- [Browser Automation](browser-automation.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
 - [Skill Self-Extension](skill-tools.md)
@@ -30,6 +32,7 @@
 # Security
 
 - [Security Architecture](security.md)
+- [Third-Party Skills Security](skills-security.md)
 
 ---
 

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, skills as skills_metrics};
@@ -29,33 +29,24 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
     let target = install_dir.join(&dir_name);
 
     if target.exists() {
-        anyhow::bail!(
-            "repo directory already exists: {}. Remove it first with `skills remove`.",
-            target.display()
-        );
+        let manifest_path = ManifestStore::default_path()?;
+        let store = ManifestStore::new(manifest_path);
+        let manifest = store.load()?;
+        if manifest.find_repo(source).is_none() {
+            tokio::fs::remove_dir_all(&target).await?;
+        } else {
+            anyhow::bail!(
+                "repo directory already exists: {}. Remove it first with `skills remove`.",
+                target.display()
+            );
+        }
     }
 
     tokio::fs::create_dir_all(install_dir).await?;
 
-    // Try git clone first.
-    let git_url = format!("https://github.com/{owner}/{repo}");
-    let git_result = tokio::process::Command::new("git")
-        .args(["clone", "--depth=1", &git_url, &target.to_string_lossy()])
-        .output()
-        .await;
-
-    match git_result {
-        Ok(output) if output.status.success() => {
-            #[cfg(feature = "metrics")]
-            counter!("moltis_skills_git_clone_total").increment(1);
-            tracing::info!(%source, "installed skill repo via git clone");
-        },
-        _ => {
-            #[cfg(feature = "metrics")]
-            counter!("moltis_skills_git_clone_fallback_total").increment(1);
-            install_via_http(&owner, &repo, &target).await?;
-        },
-    }
+    #[cfg(feature = "metrics")]
+    counter!("moltis_skills_git_clone_fallback_total").increment(1);
+    let commit_sha = install_via_http(&owner, &repo, &target).await?;
 
     // Scan for SKILL.md files only.
     let (skills_meta, skill_states) = scan_repo_skills(&target, install_dir).await?;
@@ -82,6 +73,7 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
         source: format!("{owner}/{repo}"),
         repo_name: dir_name,
         installed_at_ms: now,
+        commit_sha,
         format: Default::default(),
         skills: skill_states,
     });
@@ -115,9 +107,14 @@ pub async fn remove_repo(source: &str, install_dir: &Path) -> anyhow::Result<()>
 }
 
 /// Install by fetching a tarball from GitHub's API.
-async fn install_via_http(owner: &str, repo: &str, target: &Path) -> anyhow::Result<()> {
+async fn install_via_http(
+    owner: &str,
+    repo: &str,
+    target: &Path,
+) -> anyhow::Result<Option<String>> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/tarball");
     let client = reqwest::Client::new();
+    let commit_sha = fetch_latest_commit_sha(&client, owner, repo).await;
     let resp = client
         .get(&url)
         .header("User-Agent", "moltis-skills")
@@ -132,20 +129,47 @@ async fn install_via_http(owner: &str, repo: &str, target: &Path) -> anyhow::Res
 
     tokio::fs::create_dir_all(target).await?;
     let target_owned = target.to_path_buf();
+    let owner_owned = owner.to_string();
+    let repo_owned = repo.to_string();
     tokio::task::spawn_blocking(move || {
+        let canonical_target = std::fs::canonicalize(&target_owned)?;
         let decoder = flate2::read::GzDecoder::new(&bytes[..]);
         let mut archive = tar::Archive::new(decoder);
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            let stripped: PathBuf = path.components().skip(1).collect();
-            if stripped.as_os_str().is_empty() {
+            if entry.header().entry_type().is_symlink()
+                || entry.header().entry_type().is_hard_link()
+            {
+                tracing::warn!(owner = %owner_owned, repo = %repo_owned, "skipping symlink/hardlink archive entry");
                 continue;
             }
+
+            let path = entry.path()?.into_owned();
+            let Some(stripped) = sanitize_archive_path(&path)? else {
+                continue;
+            };
+
             let dest = target_owned.join(&stripped);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
+                let canonical_parent = std::fs::canonicalize(parent)?;
+                if !canonical_parent.starts_with(&canonical_target) {
+                    anyhow::bail!("archive entry escaped install directory");
+                }
             }
+
+            if dest.exists() {
+                let meta = std::fs::symlink_metadata(&dest)?;
+                if meta.file_type().is_symlink() {
+                    anyhow::bail!("archive entry resolves to symlink destination");
+                }
+            }
+
+            if entry.header().entry_type().is_dir() {
+                std::fs::create_dir_all(&dest)?;
+                continue;
+            }
+
             entry.unpack(&dest)?;
         }
         Ok::<(), anyhow::Error>(())
@@ -153,7 +177,51 @@ async fn install_via_http(owner: &str, repo: &str, target: &Path) -> anyhow::Res
     .await??;
 
     tracing::info!(%owner, %repo, "installed skill repo via HTTP tarball");
-    Ok(())
+    Ok(commit_sha)
+}
+
+async fn fetch_latest_commit_sha(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/commits?per_page=1");
+    let response = client
+        .get(url)
+        .header("User-Agent", "moltis-skills")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let value: serde_json::Value = response.json().await.ok()?;
+    value
+        .as_array()?
+        .first()?
+        .get("sha")?
+        .as_str()
+        .filter(|sha| sha.len() == 40)
+        .map(ToOwned::to_owned)
+}
+
+fn sanitize_archive_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    let stripped: PathBuf = path.components().skip(1).collect();
+    if stripped.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    for component in stripped.components() {
+        match component {
+            Component::Normal(_) => {},
+            Component::CurDir => {},
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("archive contains unsafe path component: {}", path.display());
+            },
+        }
+    }
+
+    Ok(Some(stripped))
 }
 
 /// Recursively scan a cloned repo for SKILL.md files.
@@ -179,6 +247,7 @@ async fn scan_repo_skills(
         let state = SkillState {
             name: meta.name.clone(),
             relative_path: relative,
+            trusted: false,
             enabled: false,
         };
         return Ok((vec![meta], vec![state]));
@@ -204,7 +273,7 @@ async fn scan_repo_skills(
                 let content = match tokio::fs::read_to_string(&skill_md).await {
                     Ok(c) => c,
                     Err(e) => {
-                        tracing::warn!(?skill_md, %e, "failed to read SKILL.md");
+                        tracing::debug!(?skill_md, %e, "skipping unreadable SKILL.md");
                         continue;
                     },
                 };
@@ -219,12 +288,13 @@ async fn scan_repo_skills(
                         skill_states.push(SkillState {
                             name: meta.name.clone(),
                             relative_path: relative,
+                            trusted: false,
                             enabled: false,
                         });
                         skills_meta.push(meta);
                     },
                     Err(e) => {
-                        tracing::warn!(?skill_md, %e, "failed to parse SKILL.md");
+                        tracing::debug!(?skill_md, %e, "skipping non-conforming SKILL.md");
                     },
                 }
             } else {
@@ -296,6 +366,19 @@ mod tests {
         assert!(parse_source("too/many/parts").is_err());
         assert!(parse_source("/empty-owner").is_err());
         assert!(parse_source("empty-repo/").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_archive_path_rejects_parent_dir() {
+        let path = Path::new("repo-root/../../etc/passwd");
+        assert!(sanitize_archive_path(path).is_err());
+    }
+
+    #[test]
+    fn test_sanitize_archive_path_accepts_normal_path() {
+        let path = Path::new("repo-root/skills/demo/SKILL.md");
+        let sanitized = sanitize_archive_path(path).unwrap().unwrap();
+        assert_eq!(sanitized, PathBuf::from("skills/demo/SKILL.md"));
     }
 
     #[tokio::test]

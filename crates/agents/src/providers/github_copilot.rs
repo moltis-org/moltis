@@ -17,7 +17,13 @@ use {
     tracing::{debug, trace, warn},
 };
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
+use {
+    super::openai_compat::{
+        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
+        process_openai_sse_line, to_openai_tools,
+    },
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -208,45 +214,6 @@ pub const COPILOT_MODELS: &[(&str, &str)] = &[
     ("gemini-2.0-flash", "Gemini 2.0 Flash (Copilot)"),
 ];
 
-// ── Parse helpers (reuse OpenAI format) ──────────────────────────────────────
-
-fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["parameters"],
-                }
-            })
-        })
-        .collect()
-}
-
-fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
-    message["tool_calls"]
-        .as_array()
-        .map(|tcs| {
-            tcs.iter()
-                .filter_map(|tc| {
-                    let id = tc["id"].as_str()?.to_string();
-                    let name = tc["function"]["name"].as_str()?.to_string();
-                    let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                    Some(ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 // ── LlmProvider impl ────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -265,14 +232,16 @@ impl LlmProvider for GitHubCopilotProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let token = self.get_valid_copilot_token().await?;
 
+        let openai_messages: Vec<serde_json::Value> =
+            messages.iter().map(ChatMessage::to_openai_value).collect();
         let mut body = serde_json::json!({
             "model": self.model,
-            "messages": messages,
+            "messages": openai_messages,
         });
 
         if !tools.is_empty() {
@@ -328,7 +297,7 @@ impl LlmProvider for GitHubCopilotProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -336,7 +305,7 @@ impl LlmProvider for GitHubCopilotProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
@@ -348,9 +317,11 @@ impl LlmProvider for GitHubCopilotProvider {
                 }
             };
 
+            let openai_messages: Vec<serde_json::Value> =
+                messages.iter().map(ChatMessage::to_openai_value).collect();
             let mut body = serde_json::json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
@@ -361,7 +332,7 @@ impl LlmProvider for GitHubCopilotProvider {
 
             debug!(
                 model = %self.model,
-                messages_count = messages.len(),
+                messages_count = openai_messages.len(),
                 tools_count = tools.len(),
                 "github-copilot stream_with_tools request"
             );
@@ -395,9 +366,7 @@ impl LlmProvider for GitHubCopilotProvider {
 
             let mut byte_stream = resp.bytes_stream();
             let mut buf = String::new();
-            let mut input_tokens: u32 = 0;
-            let mut output_tokens: u32 = 0;
-            let mut started_tool_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut state = StreamingToolState::default();
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -421,50 +390,19 @@ impl LlmProvider for GitHubCopilotProvider {
                         continue;
                     };
 
-                    if data == "[DONE]" {
-                        yield StreamEvent::Done(Usage { input_tokens, output_tokens });
-                        return;
-                    }
-
-                    if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
-                            input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-                            output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
+                    match process_openai_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_stream(&state) {
+                                yield event;
+                            }
+                            return;
                         }
-
-                        let delta = &evt["choices"][0]["delta"];
-
-                        if let Some(text) = delta["content"].as_str() {
-                            if !text.is_empty() {
-                                yield StreamEvent::Delta(text.to_string());
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
                             }
                         }
-
-                        if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                            for tc in tool_calls {
-                                let index = tc["index"].as_u64().unwrap_or(0) as usize;
-                                if !started_tool_indices.contains(&index) {
-                                    if let Some(id) = tc["id"].as_str() {
-                                        let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-                                        started_tool_indices.insert(index);
-                                        yield StreamEvent::ToolCallStart { id: id.to_string(), name, index };
-                                    }
-                                }
-                                if let Some(args_delta) = tc["function"]["arguments"].as_str() {
-                                    if !args_delta.is_empty() {
-                                        yield StreamEvent::ToolCallArgumentsDelta { index, delta: args_delta.to_string() };
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some(finish) = evt["choices"][0]["finish_reason"].as_str() {
-                            if finish == "tool_calls" {
-                                for &idx in &started_tool_indices {
-                                    yield StreamEvent::ToolCallComplete { index: idx };
-                                }
-                            }
-                        }
+                        SseLineResult::Skip => {}
                     }
                 }
             }
@@ -634,74 +572,7 @@ mod tests {
         assert_eq!(ids.len(), COPILOT_MODELS.len());
     }
 
-    #[test]
-    fn to_openai_tools_converts_correctly() {
-        let tools = vec![serde_json::json!({
-            "name": "test_tool",
-            "description": "A test tool",
-            "parameters": {"type": "object"}
-        })];
-        let converted = to_openai_tools(&tools);
-        assert_eq!(converted.len(), 1);
-        assert_eq!(converted[0]["type"], "function");
-        assert_eq!(converted[0]["function"]["name"], "test_tool");
-    }
-
-    #[test]
-    fn to_openai_tools_empty_input() {
-        let converted = to_openai_tools(&[]);
-        assert!(converted.is_empty());
-    }
-
-    #[test]
-    fn parse_tool_calls_empty() {
-        let msg = serde_json::json!({"content": "hello"});
-        assert!(parse_tool_calls(&msg).is_empty());
-    }
-
-    #[test]
-    fn parse_tool_calls_with_calls() {
-        let msg = serde_json::json!({
-            "tool_calls": [{
-                "id": "call_1",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": "{\"city\":\"SF\"}"
-                }
-            }]
-        });
-        let calls = parse_tool_calls(&msg);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].id, "call_1");
-        assert_eq!(calls[0].name, "get_weather");
-        assert_eq!(calls[0].arguments["city"], "SF");
-    }
-
-    #[test]
-    fn parse_tool_calls_multiple() {
-        let msg = serde_json::json!({
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "function": {
-                        "name": "tool_a",
-                        "arguments": "{}"
-                    }
-                },
-                {
-                    "id": "call_2",
-                    "function": {
-                        "name": "tool_b",
-                        "arguments": "{\"x\":1}"
-                    }
-                }
-            ]
-        });
-        let calls = parse_tool_calls(&msg);
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].name, "tool_a");
-        assert_eq!(calls[1].name, "tool_b");
-    }
+    // Tests for to_openai_tools and parse_tool_calls are in openai_compat.rs
 
     #[test]
     fn provider_name_and_id() {

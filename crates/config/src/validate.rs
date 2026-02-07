@@ -173,9 +173,30 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let browser = || {
+        Struct(HashMap::from([
+            ("enabled", Leaf),
+            ("chrome_path", Leaf),
+            ("headless", Leaf),
+            ("viewport_width", Leaf),
+            ("viewport_height", Leaf),
+            ("device_scale_factor", Leaf),
+            ("max_instances", Leaf),
+            ("memory_limit_percent", Leaf),
+            ("idle_timeout_secs", Leaf),
+            ("navigation_timeout_ms", Leaf),
+            ("user_agent", Leaf),
+            ("chrome_args", Leaf),
+            ("sandbox", Leaf),
+            ("sandbox_image", Leaf),
+            ("allowed_domains", Leaf),
+        ]))
+    };
+
     let tools = || {
         Struct(HashMap::from([
             ("exec", exec()),
+            ("browser", browser()),
             (
                 "policy",
                 Struct(HashMap::from([

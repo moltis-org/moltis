@@ -49,6 +49,16 @@ impl SkillsManifest {
         }
         false
     }
+
+    pub fn set_skill_trusted(&mut self, source: &str, skill_name: &str, trusted: bool) -> bool {
+        if let Some(repo) = self.find_repo_mut(source)
+            && let Some(skill) = repo.skills.iter_mut().find(|s| s.name == skill_name)
+        {
+            skill.trusted = trusted;
+            return true;
+        }
+        false
+    }
 }
 
 /// A single cloned repository with its discovered skills.
@@ -57,6 +67,8 @@ pub struct RepoEntry {
     pub source: String,
     pub repo_name: String,
     pub installed_at_ms: u64,
+    #[serde(default)]
+    pub commit_sha: Option<String>,
     #[serde(default)]
     pub format: PluginFormat,
     pub skills: Vec<SkillState>,
@@ -67,7 +79,29 @@ pub struct RepoEntry {
 pub struct SkillState {
     pub name: String,
     pub relative_path: String,
+    #[serde(default = "default_trusted")]
+    pub trusted: bool,
     pub enabled: bool,
+}
+
+fn default_trusted() -> bool {
+    // Backward compatibility: manifests created before trust-gating should
+    // continue to work without immediately disabling all installed skills.
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_state_defaults_trusted_for_backward_compat() {
+        let parsed: SkillState = serde_json::from_str(
+            r#"{"name":"demo","relative_path":"repo/skills/demo","enabled":true}"#,
+        )
+        .unwrap();
+        assert!(parsed.trusted);
+    }
 }
 
 // ── Skill metadata ───────────────────────────────────────────────────────────

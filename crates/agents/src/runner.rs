@@ -8,7 +8,7 @@ use {
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
     tool_registry::ToolRegistry,
 };
 
@@ -174,13 +174,19 @@ fn strip_base64_blobs(input: &str) -> String {
         let after_tag = &rest[start + BASE64_TAG.len()..];
 
         if let Some(marker_pos) = after_tag.find(BASE64_MARKER) {
+            let mime_part = &after_tag[..marker_pos];
             let payload_start = marker_pos + BASE64_MARKER.len();
             let payload = &after_tag[payload_start..];
             let payload_len = payload.bytes().take_while(|b| is_base64_byte(*b)).count();
 
             if payload_len >= BLOB_MIN_LEN {
                 let total_uri_len = BASE64_TAG.len() + payload_start + payload_len;
-                write!(result, "[base64 data removed — {total_uri_len} bytes]").unwrap();
+                // Provide a descriptive message based on MIME type
+                if mime_part.starts_with("image/") {
+                    result.push_str("[screenshot captured and displayed in UI]");
+                } else {
+                    write!(result, "[{mime_part} data removed — {total_uri_len} bytes]").unwrap();
+                }
                 rest = &rest[start + total_uri_len..];
                 continue;
             }
@@ -247,6 +253,128 @@ pub fn sanitize_tool_result(input: &str, max_bytes: usize) -> String {
     result
 }
 
+// ── Multimodal tool result helpers ─────────────────────────────────────────
+
+/// Image extracted from a tool result for multimodal handling.
+#[derive(Debug)]
+pub struct ExtractedImage {
+    /// MIME type (e.g., "image/png", "image/jpeg")
+    pub media_type: String,
+    /// Base64-encoded image data
+    pub data: String,
+}
+
+/// Extract image data URIs from text, returning the images and remaining text.
+///
+/// Searches for patterns like `data:image/png;base64,AAAA...` and extracts them.
+/// Returns the list of images found and the text with images removed.
+fn extract_images_from_text_impl(input: &str) -> (Vec<ExtractedImage>, String) {
+    let mut images = Vec::new();
+    let mut remaining = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find(BASE64_TAG) {
+        remaining.push_str(&rest[..start]);
+        let after_tag = &rest[start + BASE64_TAG.len()..];
+
+        // Check for image MIME type
+        if let Some(marker_pos) = after_tag.find(BASE64_MARKER) {
+            let mime_part = &after_tag[..marker_pos];
+
+            // Only extract image/* MIME types
+            if let Some(image_subtype) = mime_part.strip_prefix("image/") {
+                let payload_start = marker_pos + BASE64_MARKER.len();
+                let payload = &after_tag[payload_start..];
+                let payload_len = payload.bytes().take_while(|b| is_base64_byte(*b)).count();
+
+                if payload_len >= BLOB_MIN_LEN {
+                    // Extract the image
+                    let media_type = format!("image/{image_subtype}");
+                    let data = payload[..payload_len].to_string();
+                    images.push(ExtractedImage { media_type, data });
+
+                    // Skip past the full data URI
+                    let total_uri_len = BASE64_TAG.len() + payload_start + payload_len;
+                    rest = &rest[start + total_uri_len..];
+                    continue;
+                }
+            }
+        }
+
+        // Not an extractable image, keep the tag and continue
+        remaining.push_str(BASE64_TAG);
+        rest = after_tag;
+    }
+    remaining.push_str(rest);
+
+    (images, remaining)
+}
+
+/// Test alias for extract_images_from_text_impl
+#[cfg(test)]
+fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
+    extract_images_from_text_impl(input)
+}
+
+/// Convert a tool result to multimodal content for vision-capable providers.
+///
+/// For providers with `supports_vision() == true`, this extracts images from
+/// the tool result and returns them as OpenAI-style content blocks:
+/// ```json
+/// [
+///   { "type": "text", "text": "..." },
+///   { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } }
+/// ]
+/// ```
+///
+/// For non-vision providers, returns a simple string with images stripped.
+///
+/// Note: Browser screenshots are pre-stripped by the browser tool to avoid
+/// the LLM outputting the raw base64 in its response (the UI already displays
+/// screenshots via WebSocket events).
+pub fn tool_result_to_content(
+    result: &str,
+    max_bytes: usize,
+    supports_vision: bool,
+) -> serde_json::Value {
+    if !supports_vision {
+        // Non-vision provider: strip images and return string
+        return serde_json::Value::String(sanitize_tool_result(result, max_bytes));
+    }
+
+    // Vision provider: extract images and create multimodal content
+    let (images, text) = extract_images_from_text_impl(result);
+
+    if images.is_empty() {
+        // No images found, just sanitize and return string
+        return serde_json::Value::String(sanitize_tool_result(result, max_bytes));
+    }
+
+    // Build multimodal content array
+    let mut content_blocks = Vec::new();
+
+    // Sanitize remaining text (strips any remaining hex blobs, truncates if needed)
+    let sanitized_text = sanitize_tool_result(&text, max_bytes);
+    if !sanitized_text.trim().is_empty() {
+        content_blocks.push(serde_json::json!({
+            "type": "text",
+            "text": sanitized_text
+        }));
+    }
+
+    // Add image blocks
+    for image in images {
+        // Reconstruct data URI for OpenAI format
+        let data_uri = format!("data:{};base64,{}", image.media_type, image.data);
+        content_blocks.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": data_uri }
+        }));
+    }
+
+    serde_json::json!(content_blocks)
+}
+
 /// Run the agent loop: send messages to the LLM, execute tool calls, repeat.
 ///
 /// If `history` is provided, those messages are inserted between the system
@@ -257,7 +385,7 @@ pub async fn run_agent_loop(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     run_agent_loop_with_context(
         provider,
@@ -280,7 +408,7 @@ pub async fn run_agent_loop_with_context(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
@@ -298,20 +426,14 @@ pub async fn run_agent_loop_with_context(
         "starting agent loop"
     );
 
-    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt,
-    })];
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt)];
 
     // Insert conversation history before the current user message.
     if let Some(hist) = history {
         messages.extend(hist);
     }
 
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": user_message,
-    }));
+    messages.push(ChatMessage::user(user_message));
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -343,7 +465,7 @@ pub async fn run_agent_loop_with_context(
             messages_count = messages.len(),
             "calling LLM"
         );
-        trace!(iteration = iterations, messages = %serde_json::to_string(&messages).unwrap_or_default(), "LLM request messages");
+        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -423,32 +545,15 @@ pub async fn run_agent_loop_with_context(
         }
 
         // Append assistant message with tool calls.
-        let tool_calls_json: Vec<serde_json::Value> = response
-            .tool_calls
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": tc.arguments.to_string(),
-                    }
-                })
-            })
-            .collect();
-
-        let mut assistant_msg = serde_json::json!({
-            "role": "assistant",
-            "tool_calls": tool_calls_json,
-        });
-        if let Some(ref text) = response.text {
-            assistant_msg["content"] = serde_json::Value::String(text.clone());
-            if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(text.clone()));
-            }
+        if let Some(ref text) = response.text
+            && let Some(cb) = on_event
+        {
+            cb(RunnerEvent::ThinkingText(text.clone()));
         }
-        messages.push(assistant_msg);
+        messages.push(ChatMessage::assistant_with_tools(
+            response.text.clone(),
+            response.tool_calls.clone(),
+        ));
 
         // Extract session key from tool_context for hook payloads.
         let session_key = tool_context
@@ -525,19 +630,37 @@ pub async fn run_agent_loop_with_context(
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
-                                // Dispatch AfterToolCall hook on success.
+                                // Check if the result indicates a logical failure
+                                // (e.g., BrowserResponse with success: false)
+                                let has_error = val.get("error").is_some()
+                                    || val.get("success") == Some(&serde_json::json!(false));
+                                let error_msg = if has_error {
+                                    val.get("error")
+                                        .and_then(|e| e.as_str())
+                                        .map(String::from)
+                                } else {
+                                    None
+                                };
+
+                                // Dispatch AfterToolCall hook.
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
                                         tool_name: tc_name.clone(),
-                                        success: true,
+                                        success: !has_error,
                                         result: Some(val.clone()),
                                     };
                                     if let Err(e) = hooks.dispatch(&payload).await {
                                         warn!(tool = %tc_name, error = %e, "AfterToolCall hook dispatch failed");
                                     }
                                 }
-                                (true, serde_json::json!({ "result": val }), None)
+
+                                if has_error {
+                                    // Tool executed but returned an error in the result
+                                    (false, serde_json::json!({ "result": val }), error_msg)
+                                } else {
+                                    (true, serde_json::json!({ "result": val }), None)
+                                }
                             },
                             Err(e) => {
                                 let err_str = e.to_string();
@@ -598,6 +721,9 @@ pub async fn run_agent_loop_with_context(
                 });
             }
 
+            // Always sanitize tool results as strings - most LLM APIs don't support
+            // multimodal content in tool results. Images are stripped but the UI
+            // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
             debug!(
                 tool = %tc.name,
@@ -607,11 +733,7 @@ pub async fn run_agent_loop_with_context(
             );
             trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
 
-            messages.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result_str,
-            }));
+            messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
     }
 }
@@ -634,7 +756,7 @@ pub async fn run_agent_loop_streaming(
     system_prompt: &str,
     user_message: &str,
     on_event: Option<&OnEvent>,
-    history: Option<Vec<serde_json::Value>>,
+    history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
@@ -652,20 +774,14 @@ pub async fn run_agent_loop_streaming(
         "starting streaming agent loop"
     );
 
-    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt,
-    })];
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(system_prompt)];
 
     // Insert conversation history before the current user message.
     if let Some(hist) = history {
         messages.extend(hist);
     }
 
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": user_message,
-    }));
+    messages.push(ChatMessage::user(user_message));
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -673,6 +789,13 @@ pub async fn run_agent_loop_streaming(
     } else {
         vec![]
     };
+
+    info!(
+        native_tools,
+        schemas_for_api_count = schemas_for_api.len(),
+        tool_schemas_count = tool_schemas.len(),
+        "schemas_for_api prepared for streaming"
+    );
 
     let mut iterations = 0;
     let mut total_tool_calls = 0;
@@ -700,7 +823,7 @@ pub async fn run_agent_loop_streaming(
             messages_count = messages.len(),
             "calling LLM (streaming)"
         );
-        trace!(iteration = iterations, messages = %serde_json::to_string(&messages).unwrap_or_default(), "LLM request messages");
+        trace!(iteration = iterations, messages = ?messages, "LLM request messages");
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -836,31 +959,18 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Append assistant message with tool calls.
-        let tool_calls_json: Vec<serde_json::Value> = tool_calls
-            .iter()
-            .map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": tc.arguments.to_string(),
-                    }
-                })
-            })
-            .collect();
-
-        let mut assistant_msg = serde_json::json!({
-            "role": "assistant",
-            "tool_calls": tool_calls_json,
-        });
-        if !accumulated_text.is_empty() {
-            assistant_msg["content"] = serde_json::Value::String(accumulated_text.clone());
+        let text_for_msg = if accumulated_text.is_empty() {
+            None
+        } else {
             if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(accumulated_text));
+                cb(RunnerEvent::ThinkingText(accumulated_text.clone()));
             }
-        }
-        messages.push(assistant_msg);
+            Some(accumulated_text)
+        };
+        messages.push(ChatMessage::assistant_with_tools(
+            text_for_msg,
+            tool_calls.clone(),
+        ));
 
         // Extract session key from tool_context for hook payloads.
         let session_key = tool_context
@@ -934,18 +1044,35 @@ pub async fn run_agent_loop_streaming(
                     if let Some(tool) = tool {
                         match tool.execute(args).await {
                             Ok(val) => {
+                                // Check if the result indicates a logical failure
+                                // (e.g., BrowserResponse with success: false)
+                                let has_error = val.get("error").is_some()
+                                    || val.get("success") == Some(&serde_json::json!(false));
+                                let error_msg = if has_error {
+                                    val.get("error")
+                                        .and_then(|e| e.as_str())
+                                        .map(String::from)
+                                } else {
+                                    None
+                                };
+
                                 if let Some(ref hooks) = hook_registry {
                                     let payload = HookPayload::AfterToolCall {
                                         session_key: session_key.clone(),
                                         tool_name: tc_name.clone(),
-                                        success: true,
+                                        success: !has_error,
                                         result: Some(val.clone()),
                                     };
                                     if let Err(e) = hooks.dispatch(&payload).await {
                                         warn!(tool = %tc_name, error = %e, "AfterToolCall hook dispatch failed");
                                     }
                                 }
-                                (true, serde_json::json!({ "result": val }), None)
+
+                                if has_error {
+                                    (false, serde_json::json!({ "result": val }), error_msg)
+                                } else {
+                                    (true, serde_json::json!({ "result": val }), None)
+                                }
                             }
                             Err(e) => {
                                 let err_str = e.to_string();
@@ -1005,6 +1132,9 @@ pub async fn run_agent_loop_streaming(
                 });
             }
 
+            // Always sanitize tool results as strings - most LLM APIs don't support
+            // multimodal content in tool results. Images are stripped but the UI
+            // still receives them via ToolCallEnd event.
             let tool_result_str = sanitize_tool_result(&result.to_string(), max_tool_result_bytes);
             debug!(
                 tool = %tc.name,
@@ -1014,11 +1144,7 @@ pub async fn run_agent_loop_streaming(
             );
             trace!(tool = %tc.name, content = %tool_result_str, "tool result message content");
 
-            messages.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": tool_result_str,
-            }));
+            messages.push(ChatMessage::tool(&tc.id, &tool_result_str));
         }
     }
 }
@@ -1027,7 +1153,9 @@ pub async fn run_agent_loop_streaming(
 mod tests {
     use {
         super::*,
-        crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+        crate::model::{
+            ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+        },
         async_trait::async_trait,
         std::pin::Pin,
         tokio_stream::Stream,
@@ -1085,7 +1213,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -1100,7 +1228,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1127,7 +1255,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1160,7 +1288,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1187,7 +1315,7 @@ mod tests {
 
         async fn complete(
             &self,
-            messages: &[serde_json::Value],
+            messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1202,8 +1330,16 @@ mod tests {
                 })
             } else {
                 // Verify tool result was fed back.
-                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
-                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 assert!(
                     tool_content.contains("hello"),
                     "tool result should contain 'hello', got: {tool_content}"
@@ -1221,7 +1357,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1348,7 +1484,7 @@ mod tests {
 
         async fn complete(
             &self,
-            messages: &[serde_json::Value],
+            messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1368,8 +1504,16 @@ mod tests {
                     },
                 })
             } else {
-                let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
-                let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
                 let parsed: serde_json::Value = serde_json::from_str(tool_content).unwrap();
                 let stdout = parsed["result"]["stdout"].as_str().unwrap_or("");
                 assert!(stdout.contains("hello"));
@@ -1387,7 +1531,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1562,7 +1706,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -1591,7 +1735,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -1832,7 +1976,8 @@ mod tests {
         let input = format!("before data:image/png;base64,{payload} after");
         let result = sanitize_tool_result(&input, 50_000);
         assert!(!result.contains(&payload));
-        assert!(result.contains("[base64 data removed"));
+        // Image data URIs get a user-friendly message
+        assert!(result.contains("[screenshot captured and displayed in UI]"));
         assert!(result.contains("before"));
         assert!(result.contains("after"));
     }
@@ -1864,6 +2009,442 @@ mod tests {
         assert!(result.contains(hex));
     }
 
+    // ── extract_images_from_text tests ───────────────────────────────
+
+    #[test]
+    fn test_extract_images_basic() {
+        let payload = "A".repeat(300);
+        let input = format!("before data:image/png;base64,{payload} after");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/png");
+        assert_eq!(images[0].data, payload);
+        assert!(remaining.contains("before"));
+        assert!(remaining.contains("after"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    #[test]
+    fn test_extract_images_jpeg() {
+        let payload = "B".repeat(300);
+        let input = format!("data:image/jpeg;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/jpeg");
+        assert_eq!(images[0].data, payload);
+        assert!(remaining.trim().is_empty());
+    }
+
+    #[test]
+    fn test_extract_images_multiple() {
+        let payload1 = "A".repeat(300);
+        let payload2 = "B".repeat(300);
+        let input = format!(
+            "first data:image/png;base64,{payload1} middle data:image/jpeg;base64,{payload2} end"
+        );
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].media_type, "image/png");
+        assert_eq!(images[1].media_type, "image/jpeg");
+        assert!(remaining.contains("first"));
+        assert!(remaining.contains("middle"));
+        assert!(remaining.contains("end"));
+    }
+
+    #[test]
+    fn test_extract_images_ignores_non_image() {
+        let payload = "A".repeat(300);
+        let input = format!("data:text/plain;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert!(images.is_empty());
+        // Non-image data URIs are kept as-is
+        assert!(remaining.contains("data:text/plain"));
+    }
+
+    #[test]
+    fn test_extract_images_ignores_short_payload() {
+        let payload = "QUFB"; // Short base64
+        let input = format!("data:image/png;base64,{payload}");
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert!(images.is_empty());
+        assert!(remaining.contains(payload));
+    }
+
+    // ── tool_result_to_content tests ─────────────────────────────────
+
+    #[test]
+    fn test_tool_result_to_content_no_vision() {
+        let payload = "A".repeat(300);
+        let input = format!(r#"{{"screenshot": "data:image/png;base64,{payload}"}}"#);
+        let result = tool_result_to_content(&input, 50_000, false);
+
+        // Should strip the image for non-vision providers with user-friendly message
+        assert!(result.is_string());
+        let s = result.as_str().unwrap();
+        assert!(s.contains("[screenshot captured and displayed in UI]"));
+        assert!(!s.contains(&payload));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_with_vision() {
+        let payload = "A".repeat(300);
+        let input = format!(r#"Result: data:image/png;base64,{payload} done"#);
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        // Should return array with text and image blocks
+        assert!(result.is_array());
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // Check text block
+        assert_eq!(arr[0]["type"], "text");
+        assert!(arr[0]["text"].as_str().unwrap().contains("Result:"));
+        assert!(arr[0]["text"].as_str().unwrap().contains("done"));
+
+        // Check image block
+        assert_eq!(arr[1]["type"], "image_url");
+        let url = arr[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+        assert!(url.contains(&payload));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_vision_no_images() {
+        let input = r#"{"result": "success", "message": "done"}"#;
+        let result = tool_result_to_content(input, 50_000, true);
+
+        // No images, should return plain string
+        assert!(result.is_string());
+        assert!(result.as_str().unwrap().contains("success"));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_vision_only_image() {
+        let payload = "A".repeat(300);
+        let input = format!("data:image/png;base64,{payload}");
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        // Only image, no text - should return array with just image
+        assert!(result.is_array());
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "image_url");
+    }
+
+    // ── Vision Provider Integration Tests ─────────────────────────────
+
+    /// Mock provider that supports vision.
+    struct VisionEnabledProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for VisionEnabledProvider {
+        fn name(&self) -> &str {
+            "mock-vision"
+        }
+
+        fn id(&self) -> &str {
+            "gpt-4o" // Vision-capable model
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        fn supports_vision(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                // First call: request a tool that returns an image
+                Ok(CompletionResponse {
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "call_screenshot".into(),
+                        name: "screenshot_tool".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                })
+            } else {
+                // Second call: verify tool result was sanitized (image stripped)
+                // because tool results don't support multimodal content
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+
+                // Tool result should be sanitized (image data replaced with user-friendly message)
+                assert!(
+                    tool_content.contains("[screenshot captured and displayed in UI]"),
+                    "tool result should have image stripped: {tool_content}"
+                );
+                assert!(
+                    !tool_content.contains("AAAA"),
+                    "tool result should not contain raw base64: {tool_content}"
+                );
+
+                Ok(CompletionResponse {
+                    text: Some("Screenshot processed successfully".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 20,
+                        output_tokens: 10,
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    /// Tool that returns a result with an embedded screenshot
+    struct ScreenshotTool;
+
+    #[async_trait]
+    impl crate::tool_registry::AgentTool for ScreenshotTool {
+        fn name(&self) -> &str {
+            "screenshot_tool"
+        }
+
+        fn description(&self) -> &str {
+            "Takes a screenshot and returns it as base64"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+
+        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+            // Return a result with a base64 image data URI
+            let fake_image_data = "A".repeat(500); // Long enough to be detected
+            Ok(serde_json::json!({
+                "success": true,
+                "screenshot": format!("data:image/png;base64,{fake_image_data}"),
+                "message": "Screenshot captured"
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vision_provider_tool_result_sanitized() {
+        // Even for vision-capable providers, tool results are sanitized
+        // because most LLM APIs don't support multimodal content in tool results
+        let provider = Arc::new(VisionEnabledProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(ScreenshotTool));
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Take a screenshot",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "Screenshot processed successfully");
+        assert_eq!(result.tool_calls_made, 1);
+    }
+
+    #[tokio::test]
+    async fn test_tool_call_end_event_contains_raw_result() {
+        // Verify that ToolCallEnd events contain the raw (unsanitized) result
+        // so the UI can display images even though they're stripped from LLM context
+        let provider = Arc::new(VisionEnabledProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(ScreenshotTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            "Take a screenshot",
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.tool_calls_made, 1);
+
+        // Find the ToolCallEnd event
+        let evts = events.lock().unwrap();
+        let tool_end = evts
+            .iter()
+            .find(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }));
+
+        if let Some(RunnerEvent::ToolCallEnd {
+            success,
+            result: Some(result_json),
+            ..
+        }) = tool_end
+        {
+            assert!(success);
+            // The raw result should contain the screenshot data
+            let result_str = result_json.to_string();
+            assert!(
+                result_str.contains("screenshot"),
+                "result should contain screenshot field"
+            );
+            // Note: the result contains the base64 data because it's raw
+            assert!(
+                result_str.contains("data:image/png;base64,"),
+                "result should contain image data URI"
+            );
+        } else {
+            panic!("expected ToolCallEnd event with success and result");
+        }
+    }
+
+    // ── Extract Images Edge Cases ─────────────────────────────────────
+
+    #[test]
+    fn test_extract_images_webp() {
+        let payload = "B".repeat(300);
+        let input = format!("data:image/webp;base64,{payload}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/webp");
+    }
+
+    #[test]
+    fn test_extract_images_gif() {
+        let payload = "C".repeat(300);
+        let input = format!("data:image/gif;base64,{payload}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/gif");
+    }
+
+    #[test]
+    fn test_extract_images_with_special_base64_chars() {
+        // Base64 can contain +, /, and = characters
+        let payload = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/==";
+        let padded = format!("{}{}", payload, "A".repeat(200));
+        let input = format!("data:image/png;base64,{padded}");
+        let (images, _remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(images[0].data.contains("+"));
+        assert!(images[0].data.contains("/"));
+    }
+
+    #[test]
+    fn test_extract_images_preserves_surrounding_text() {
+        let payload = "A".repeat(300);
+        let input = format!(
+            "Before the image\n\ndata:image/png;base64,{payload}\n\nAfter the image with special chars: <>&"
+        );
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(remaining.contains("Before the image"));
+        assert!(remaining.contains("After the image with special chars: <>&"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    #[test]
+    fn test_extract_images_in_json_context() {
+        // Images often appear in JSON tool results
+        let payload = "A".repeat(300);
+        let input =
+            format!(r#"{{"screenshot": "data:image/png;base64,{payload}", "success": true}}"#);
+        let (images, remaining) = extract_images_from_text(&input);
+
+        assert_eq!(images.len(), 1);
+        assert!(remaining.contains("screenshot"));
+        assert!(remaining.contains("success"));
+        assert!(!remaining.contains(&payload));
+    }
+
+    // ── Tool Result Content Format Tests ──────────────────────────────
+
+    #[test]
+    fn test_tool_result_to_content_openai_format() {
+        // Verify the OpenAI multimodal format is correct
+        let payload = "A".repeat(300);
+        let input = format!("Text: data:image/png;base64,{payload}");
+        let result = tool_result_to_content(&input, 50_000, true);
+
+        let arr = result.as_array().unwrap();
+        // Check text block format
+        assert_eq!(arr[0]["type"], "text");
+        assert!(arr[0]["text"].is_string());
+
+        // Check image block format matches OpenAI spec
+        assert_eq!(arr[1]["type"], "image_url");
+        assert!(arr[1]["image_url"].is_object());
+        assert!(arr[1]["image_url"]["url"].is_string());
+        let url = arr[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn test_tool_result_to_content_truncation() {
+        // Test that truncation works correctly with vision enabled
+        let payload = "A".repeat(300);
+        let long_text = "X".repeat(10_000);
+        let input = format!("{long_text} data:image/png;base64,{payload}");
+
+        // With small max_bytes, text should be truncated but image preserved
+        let result = tool_result_to_content(&input, 500, true);
+
+        let arr = result.as_array().unwrap();
+        // Text should be truncated
+        let text = arr[0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("[truncated"),
+            "text should be truncated: {text}"
+        );
+
+        // Image should still be present
+        assert_eq!(arr[1]["type"], "image_url");
+    }
+
     // ── Streaming tool-call index mapping tests ─────────────────────
 
     /// Mock streaming provider that emits text + a tool call at a non-zero
@@ -1893,7 +2474,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -1908,14 +2489,14 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             self.stream_with_tools(_messages, vec![])
         }
 
         fn stream_with_tools(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
             _tools: Vec<serde_json::Value>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             let count = self
@@ -2046,7 +2627,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -2061,14 +2642,14 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             self.stream_with_tools(_messages, vec![])
         }
 
         fn stream_with_tools(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
             _tools: Vec<serde_json::Value>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             let count = self

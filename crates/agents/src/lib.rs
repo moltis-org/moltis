@@ -5,10 +5,14 @@
 
 pub mod auth_profiles;
 pub mod model;
+pub mod multimodal;
 pub mod prompt;
 pub mod providers;
 pub mod runner;
-pub use runner::AgentRunError;
+pub use {
+    model::{ChatMessage, ContentPart, UserContent},
+    runner::AgentRunError,
+};
 pub mod provider_chain;
 pub mod silent_turn;
 pub mod skills;
