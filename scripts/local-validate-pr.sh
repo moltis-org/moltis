@@ -45,59 +45,70 @@ handle_interrupt() {
 
 trap handle_interrupt INT TERM
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI is required" >&2
-  exit 1
-fi
+# Detect local-only mode: no PR argument and no current PR on this branch.
+LOCAL_ONLY=0
+PR_NUMBER="${1:-}"
 
-if [[ -z "${GH_TOKEN:-}" ]]; then
-  if GH_TOKEN="$(gh auth token 2>/dev/null)"; then
-    export GH_TOKEN
+if [[ -z "$PR_NUMBER" ]]; then
+  if command -v gh >/dev/null 2>&1 && PR_NUMBER="$(gh pr view --json number -q .number 2>/dev/null)"; then
+    : # found a PR for the current branch
   else
-    echo "GH_TOKEN is required (repo:status or equivalent access)" >&2
-    echo "Tip: run 'gh auth login' or export GH_TOKEN with proper scopes." >&2
-    exit 1
+    LOCAL_ONLY=1
   fi
 fi
 
-PR_NUMBER="${1:-}"
-if [[ -z "$PR_NUMBER" ]]; then
-  PR_NUMBER="$(gh pr view --json number -q .number)"
-fi
+if [[ "$LOCAL_ONLY" -eq 0 ]]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "gh CLI is required for PR mode" >&2
+    exit 1
+  fi
 
-BASE_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-SHA="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRefOid -q .headRefOid)"
-HEAD_OWNER="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepositoryOwner -q .headRepositoryOwner.login)"
-HEAD_REPO_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepository -q .headRepository.name)"
+  if [[ -z "${GH_TOKEN:-}" ]]; then
+    if GH_TOKEN="$(gh auth token 2>/dev/null)"; then
+      export GH_TOKEN
+    else
+      echo "GH_TOKEN is required (repo:status or equivalent access)" >&2
+      echo "Tip: run 'gh auth login' or export GH_TOKEN with proper scopes." >&2
+      exit 1
+    fi
+  fi
 
-if [[ -n "$HEAD_OWNER" && -n "$HEAD_REPO_NAME" ]]; then
-REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
-else
-  REPO="$BASE_REPO"
-fi
+  BASE_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+  SHA="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRefOid -q .headRefOid)"
+  HEAD_OWNER="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepositoryOwner -q .headRepositoryOwner.login)"
+  HEAD_REPO_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepository -q .headRepository.name)"
 
-if [[ "$(git rev-parse HEAD)" != "$SHA" ]]; then
-  cat >&2 <<EOF
+  if [[ -n "$HEAD_OWNER" && -n "$HEAD_REPO_NAME" ]]; then
+    REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
+  else
+    REPO="$BASE_REPO"
+  fi
+
+  if [[ "$(git rev-parse HEAD)" != "$SHA" ]]; then
+    cat >&2 <<EOF
 Current checkout does not match PR head commit.
   local HEAD: $(git rev-parse --short HEAD)
   PR head:    ${SHA:0:7}
 
 Check out the PR head commit before running local validation.
 EOF
-  exit 1
-fi
+    exit 1
+  fi
 
-if ! git diff --quiet --ignore-submodules -- || \
-   ! git diff --cached --quiet --ignore-submodules -- || \
-   [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-  cat >&2 <<EOF
+  if ! git diff --quiet --ignore-submodules -- || \
+     ! git diff --cached --quiet --ignore-submodules -- || \
+     [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    cat >&2 <<EOF
 Working tree is not clean.
 
 Commit or stash all local changes (including untracked files) before running
 local validation. This prevents publishing statuses for a commit while testing
 different local files.
 EOF
-  exit 1
+    exit 1
+  fi
+else
+  SHA="$(git rev-parse HEAD)"
 fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
@@ -163,6 +174,11 @@ set_status() {
   local state="$1"
   local context="$2"
   local description="$3"
+
+  if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+    return 0
+  fi
+
   if ! gh api "repos/$REPO/statuses/$SHA" \
     -f state="$state" \
     -f context="$context" \
@@ -276,15 +292,19 @@ report_async_result() {
   return 1
 }
 
-echo "Validating PR #$PR_NUMBER ($SHA) in $BASE_REPO"
-echo "Publishing commit statuses to: $REPO"
-
-PR_CHECKS_URL="https://github.com/$BASE_REPO/pull/$PR_NUMBER/checks"
-RUN_URL="$(gh api "repos/$BASE_REPO/actions/runs?head_sha=$SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].html_url // empty' 2>/dev/null || true)"
-if [[ -n "$RUN_URL" ]]; then
-  echo "Current CI workflow: $RUN_URL"
+if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+  echo "Local-only validation (${SHA:0:7}) — no statuses will be published"
 else
-  echo "Current CI checks: $PR_CHECKS_URL"
+  echo "Validating PR #$PR_NUMBER ($SHA) in $BASE_REPO"
+  echo "Publishing commit statuses to: $REPO"
+
+  PR_CHECKS_URL="https://github.com/$BASE_REPO/pull/$PR_NUMBER/checks"
+  RUN_URL="$(gh api "repos/$BASE_REPO/actions/runs?head_sha=$SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].html_url // empty' 2>/dev/null || true)"
+  if [[ -n "$RUN_URL" ]]; then
+    echo "Current CI workflow: $RUN_URL"
+  else
+    echo "Current CI checks: $PR_CHECKS_URL"
+  fi
 fi
 
 # macOS local builds can leave stale cmake output dirs where configure was skipped
@@ -322,4 +342,8 @@ else
   report_async_result "local/zizmor" "$zizmor_pid" || true
 fi
 
-echo "All local validation statuses published successfully."
+if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+  echo "All local checks passed."
+else
+  echo "All local validation statuses published successfully."
+fi
