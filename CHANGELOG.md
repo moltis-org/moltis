@@ -54,8 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One-click cloud deploy**: Deploy configs for Fly.io (`fly.toml`), DigitalOcean
   (`.do/deploy.template.yaml`), Render (`render.yaml`), and Railway (`railway.json`)
   with deploy buttons in the README
-- **Dedicated Docker CI workflow**: Docker image builds extracted into a standalone
-  workflow with native per-arch builds and multi-arch manifest merge
 
 - **Config Check Command**: `moltis config check` validates the configuration file, detects unknown/misspelled fields with Levenshtein-based suggestions, warns about security misconfigurations, and checks file references
 
