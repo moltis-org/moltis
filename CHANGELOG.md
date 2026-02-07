@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Contributor docs: local PR validation**: Added documentation for the `./scripts/local-validate-pr.sh <PR_ID>` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)
