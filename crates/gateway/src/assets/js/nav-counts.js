@@ -10,7 +10,6 @@ var ids = {
 	projects: "navCountProjects",
 	providers: "navCountProviders",
 	channels: "navCountChannels",
-	plugins: "navCountPlugins",
 	skills: "navCountSkills",
 	mcp: "navCountMcp",
 	crons: "navCountCrons",
