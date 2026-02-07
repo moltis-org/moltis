@@ -109,7 +109,7 @@ fn is_expired(path: &Path, days: u64) -> bool {
     let age = SystemTime::now()
         .duration_since(modified)
         .unwrap_or_default();
-    if age.as_secs() > days * 86400 {
+    if age > time::Duration::days(days as i64).unsigned_abs() {
         return true;
     }
     // Regenerate if the cert predates the moltis.localhost SAN migration.

@@ -20,6 +20,12 @@ var building = signal(false);
 var buildStatus = signal("");
 var buildWarning = signal("");
 var pruning = signal(false);
+var SANDBOX_DISABLED_HINT =
+	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
+
+function sandboxRuntimeAvailable() {
+	return (sandboxInfo.value?.backend || "none") !== "none";
+}
 
 function fetchImages() {
 	loading.value = true;
@@ -218,6 +224,7 @@ function SandboxBanner() {
 function DefaultImageSelector() {
 	var info = sandboxInfo.value;
 	var current = defaultImage.value || info?.default_image || "";
+	var sandboxAvailable = sandboxRuntimeAvailable();
 
 	function onSave() {
 		var val = defaultImage.value.trim();
@@ -252,7 +259,8 @@ function DefaultImageSelector() {
         onInput=${(e) => {
 					defaultImage.value = e.target.value;
 				}} />
-      <button class="provider-btn" onClick=${onSave} disabled=${savingDefault.value}>
+      <button class="provider-btn" onClick=${onSave} disabled=${savingDefault.value || !sandboxAvailable}
+			title=${sandboxAvailable ? null : SANDBOX_DISABLED_HINT}>
         ${savingDefault.value ? "Saving\u2026" : "Save"}
       </button>
     </div>
@@ -264,6 +272,7 @@ function DefaultImageSelector() {
 
 function ImageRow(props) {
 	var img = props.image;
+	var sandboxAvailable = props.sandboxAvailable;
 	return html`<div class="provider-item" style="margin-bottom:4px;">
     <div style="flex:1;min-width:0;">
       <div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${img.tag}</div>
@@ -272,7 +281,8 @@ function ImageRow(props) {
         <span>${img.created}</span>
       </div>
     </div>
-    <button class="session-action-btn session-delete" title="Delete image"
+    <button class="session-action-btn session-delete" title=${sandboxAvailable ? "Delete image" : SANDBOX_DISABLED_HINT}
+		disabled=${!sandboxAvailable}
       onClick=${() => deleteImage(img.tag)}>x</button>
   </div>`;
 }
@@ -284,10 +294,15 @@ function ImagesPage() {
 
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+      ${
+				!sandboxRuntimeAvailable() &&
+				html`<div class="alert-warning-text"><span class="alert-label-warn">Warning:</span> ${" "}${SANDBOX_DISABLED_HINT}</div>`
+			}
       <div class="flex items-center gap-3">
         <h2 class="text-lg font-medium text-[var(--text-strong)]">Images</h2>
         <button class="text-xs text-[var(--muted)] border border-[var(--border)] px-2.5 py-1 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
-          onClick=${pruneAll} disabled=${pruning.value}>
+			  onClick=${pruneAll} disabled=${pruning.value || !sandboxRuntimeAvailable()}
+			  title=${sandboxRuntimeAvailable() ? "Prune all" : SANDBOX_DISABLED_HINT}>
           ${pruning.value ? "Pruning\u2026" : "Prune all"}
         </button>
       </div>
@@ -304,7 +319,7 @@ function ImagesPage() {
       <div class="max-w-form">
         ${loading.value && html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`}
         ${!loading.value && images.value.length === 0 && html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No cached images.</div>`}
-        ${images.value.map((img) => html`<${ImageRow} key=${img.tag} image=${img} />`)}
+        ${images.value.map((img) => html`<${ImageRow} key=${img.tag} image=${img} sandboxAvailable=${sandboxRuntimeAvailable()} />`)}
       </div>
 
       <!-- Build custom image -->
@@ -337,7 +352,8 @@ function ImagesPage() {
 						}}></textarea>
         </div>
         <button class="provider-btn" onClick=${buildImage}
-          disabled=${building.value || !buildName.value.trim() || !buildPackages.value.trim()}>
+			  disabled=${building.value || !buildName.value.trim() || !buildPackages.value.trim() || !sandboxRuntimeAvailable()}
+			  title=${sandboxRuntimeAvailable() ? "Build" : SANDBOX_DISABLED_HINT}>
           ${building.value ? "Building\u2026" : "Build"}
         </button>
         ${

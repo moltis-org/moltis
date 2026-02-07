@@ -1,5 +1,5 @@
 name: moltis
-version: '0.1.0'
+version: '0.2.0'
 summary: Personal AI gateway inspired by OpenClaw
 description: |
   Moltis is a personal AI gateway inspired by OpenClaw. One binary, multiple LLM providers.
@@ -27,3 +27,7 @@ parts:
     build-packages:
       - pkg-config
       - libssl-dev
+      - cmake
+      - build-essential
+      - libclang-dev
+      - git

@@ -40,6 +40,10 @@ struct Cli {
     /// Custom data directory (overrides default data dir).
     #[arg(long, global = true, env = "MOLTIS_DATA_DIR")]
     data_dir: Option<std::path::PathBuf>,
+    /// Disable TLS (for cloud deployments where the provider handles TLS).
+    #[cfg(feature = "tls")]
+    #[arg(long, global = true, env = "MOLTIS_NO_TLS")]
+    no_tls: bool,
     /// Tailscale mode: off, serve, or funnel.
     #[cfg(feature = "tailscale")]
     #[arg(long, global = true, env = "MOLTIS_TAILSCALE")]
@@ -299,6 +303,11 @@ async fn main() -> anyhow::Result<()> {
             let bind = cli.bind.unwrap_or(config.server.bind);
             let port = cli.port.unwrap_or(config.server.port);
 
+            #[cfg(feature = "tls")]
+            let no_tls = cli.no_tls;
+            #[cfg(not(feature = "tls"))]
+            let no_tls = false;
+
             #[cfg(feature = "tailscale")]
             let tailscale_opts = cli
                 .tailscale
@@ -312,6 +321,7 @@ async fn main() -> anyhow::Result<()> {
             moltis_gateway::server::start_gateway(
                 &bind,
                 port,
+                no_tls,
                 log_buffer,
                 cli.config_dir,
                 cli.data_dir,
