@@ -63,9 +63,78 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  local-validation-gate:
+    name: Local Validation Gate
+    needs: [fmt, biome]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    outputs:
+      needs_ci: ${{ steps.gate.outputs.needs_ci }}
+      missing_contexts: ${{ steps.gate.outputs.missing_contexts }}
+    steps:
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          event_name = os.environ["EVENT_NAME"]
+          out_path = os.environ["GITHUB_OUTPUT"]
+          contexts = ["local/fmt", "local/lint", "local/test"]
+
+          if event_name != "pull_request":
+              with open(out_path, "a", encoding="utf-8") as out:
+                  out.write("needs_ci=true\n")
+                  out.write("missing_contexts=not-pull-request\n")
+              raise SystemExit(0)
+
+          repo = os.environ["REPO"]
+          sha = os.environ["PR_HEAD_SHA"]
+          token = os.environ["GH_TOKEN"]
+          url = f"https://api.github.com/repos/{repo}/commits/{sha}/status"
+
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(req) as resp:
+              payload = json.loads(resp.read().decode("utf-8"))
+
+          latest = {}
+          for status in payload.get("statuses", []):
+              ctx = status.get("context")
+              if ctx in contexts and ctx not in latest:
+                  latest[ctx] = status.get("state", "")
+
+          missing = [ctx for ctx in contexts if latest.get(ctx) != "success"]
+          needs_ci = "true" if missing else "false"
+          missing_str = ",".join(missing) if missing else "none"
+
+          with open(out_path, "a", encoding="utf-8") as out:
+              out.write(f"needs_ci={needs_ci}\n")
+              out.write(f"missing_contexts={missing_str}\n")
+          PY
+      - name: Gate decision
+        run: |
+          echo "needs_ci=${{ steps.gate.outputs.needs_ci }}"
+          echo "missing_contexts=${{ steps.gate.outputs.missing_contexts }}"
+
   rust-ci:
     name: Rust CI (clippy + test)
-    needs: [fmt, biome]
+    needs: [fmt, biome, local-validation-gate]
+    if: ${{ needs.local-validation-gate.outputs.needs_ci == 'true' }}
     runs-on: ${{ github.event_name == 'pull_request' && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       contents: read
