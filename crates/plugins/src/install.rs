@@ -14,16 +14,12 @@ use crate::formats::{PluginFormat, detect_format, scan_with_adapter};
 
 /// Get the default plugin installation directory.
 pub fn default_plugins_dir() -> anyhow::Result<PathBuf> {
-    let home = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
-    Ok(home.home_dir().join(".moltis/installed-plugins"))
+    Ok(moltis_config::data_dir().join("installed-plugins"))
 }
 
 /// Default plugins manifest path: `~/.moltis/plugins-manifest.json`.
 pub fn default_manifest_path() -> anyhow::Result<PathBuf> {
-    let home = directories::BaseDirs::new()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
-    Ok(home.home_dir().join(".moltis/plugins-manifest.json"))
+    Ok(moltis_config::data_dir().join("plugins-manifest.json"))
 }
 
 /// Install a plugin repo from GitHub into the target directory.

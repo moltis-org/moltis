@@ -6,11 +6,11 @@ version.workspace = true
 [dependencies]
 anyhow          = { workspace = true }
 async-trait     = { workspace = true }
-directories     = { workspace = true }
 flate2          = { workspace = true }
 moltis-agents   = { workspace = true }
 moltis-channels = { workspace = true }
 moltis-common   = { workspace = true }
+moltis-config   = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
 moltis-sessions = { workspace = true }
 moltis-skills   = { workspace = true }

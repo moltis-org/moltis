@@ -6,8 +6,8 @@ version.workspace = true
 [dependencies]
 anyhow                = { workspace = true }
 async-trait           = { workspace = true }
-directories           = { workspace = true }
 flate2                = { workspace = true }
+moltis-config         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 notify-debouncer-full = { optional = true, workspace = true }
 reqwest               = { workspace = true }

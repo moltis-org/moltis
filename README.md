@@ -94,7 +94,8 @@ What you get out of the box:
 - **Hook system** — lifecycle hooks with priority ordering, parallel dispatch
   for read-only events, circuit breaker, dry-run mode, HOOK.md-based discovery,
   eligibility checks, bundled hooks (boot-md, session-memory, command-logger),
-  and CLI management (`moltis hooks list/info`)
+  CLI management (`moltis hooks list/info`), and web UI for editing, enabling/disabling,
+  and reloading hooks at runtime
 - **Web browsing** — web search (Brave, Perplexity) and URL fetching with
   readability extraction and SSRF protection
 - **Scheduled tasks** — cron-based task execution

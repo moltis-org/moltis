@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
+  - View all discovered hooks with eligibility status, source, and events
+  - Enable/disable hooks without removing files (persisted across restarts)
+  - Edit HOOK.md content in a monospace textarea and save back to disk
+  - Reload hooks at runtime to pick up changes without restarting
+  - Live stats (call count, failures, avg latency) from the hook registry
+  - WebSocket-driven auto-refresh via `hooks.status` event
+  - RPC methods: `hooks.list`, `hooks.enable`, `hooks.disable`, `hooks.save`, `hooks.reload`
 - **Deploy platform detection**: New `MOLTIS_DEPLOY_PLATFORM` env var hides local-only providers (local-llm, Ollama) on cloud deployments. Pre-configured in Fly.io, DigitalOcean, and Render deploy templates.
 - **Telegram OTP self-approval**: Non-allowlisted DM users receive a 6-digit verification code instead of being silently ignored. Correct code entry auto-approves the user to the allowlist. Includes flood protection (non-code messages silently ignored), lockout after 3 failed attempts (configurable cooldown), and 5-minute code expiry. OTP codes visible in web UI Senders tab. Controlled by `otp_self_approval` (default: true) and `otp_cooldown_secs` (default: 300) config fields.
 
@@ -76,7 +84,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One-click cloud deploy**: Deploy configs for Fly.io (`fly.toml`), DigitalOcean
   (`.do/deploy.template.yaml`), Render (`render.yaml`), and Railway (`railway.json`)
   with deploy buttons in the README
-
 - **Config Check Command**: `moltis config check` validates the configuration file, detects unknown/misspelled fields with Levenshtein-based suggestions, warns about security misconfigurations, and checks file references
 
 - **Memory Usage Indicator**: Display process RSS and system free memory in the header bar, updated every 30 seconds via the tick WebSocket broadcast
