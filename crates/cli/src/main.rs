@@ -173,8 +173,13 @@ enum SkillAction {
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
-    let filter =
+    // Start with user-specified or default log level
+    let base_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+
+    // Suppress noisy "WS Invalid message" warnings from chromiumoxide.
+    // These are normal - Chrome sends CDP events the library doesn't recognize.
+    let filter = base_filter.add_directive("chromiumoxide::handler=error".parse().unwrap());
 
     let registry = tracing_subscriber::registry().with(filter);
 
