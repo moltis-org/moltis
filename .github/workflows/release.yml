@@ -803,14 +803,28 @@ jobs:
       - build-snap
       - build-homebrew-binaries
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && secrets.HOMEBREW_TAP_TOKEN != ''
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     name: Update Homebrew tap
     permissions:
       contents: read
 
     steps:
+      - name: Check Homebrew tap token
+        id: token_check
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping Homebrew tap update"
+          else
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download release assets and compute SHAs
+        if: steps.token_check.outputs.has_token == 'true'
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -830,6 +844,7 @@ jobs:
           done
 
       - name: Checkout homebrew-tap
+        if: steps.token_check.outputs.has_token == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: moltis-org/homebrew-tap
@@ -837,6 +852,7 @@ jobs:
           persist-credentials: true
 
       - name: Update formula
+        if: steps.token_check.outputs.has_token == 'true'
         run: |
           cat > Formula/moltis.rb <<RUBY
           class Moltis < Formula
@@ -876,6 +892,7 @@ jobs:
           RUBY
 
       - name: Commit and push
+        if: steps.token_check.outputs.has_token == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
