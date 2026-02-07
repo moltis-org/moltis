@@ -9,6 +9,7 @@
 - [Quickstart](quickstart.md)
 - [Installation](installation.md)
 - [Configuration](configuration.md)
+- [Local PR Validation](local-validation.md)
 
 ---
 
@@ -21,6 +22,7 @@
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
+- [Browser Automation](browser-automation.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
 - [Skill Self-Extension](skill-tools.md)

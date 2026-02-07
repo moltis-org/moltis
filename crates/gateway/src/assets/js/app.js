@@ -10,6 +10,7 @@ import { renderProjectSelect } from "./projects.js";
 import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage } from "./router.js";
+import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { fetchSessions, refreshActiveSession, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
 import { initTheme, injectMarkdownStyles } from "./theme.js";
@@ -213,6 +214,10 @@ function fetchBootstrap() {
 				renderSessionProjectSelect();
 			}
 			S.setSandboxInfo(boot.sandbox || null);
+			// Re-apply sandbox UI now that we know the backend status.
+			// This fixes the race where the chat page renders before bootstrap completes.
+			updateSandboxUI(S.sessionSandboxEnabled);
+			updateSandboxImageUI(S.sessionSandboxImage);
 			if (boot.counts) updateNavCounts(boot.counts);
 		})
 		.catch(() => {

@@ -64,6 +64,13 @@ pub struct TailscaleOpts {
     pub reset_on_exit: bool,
 }
 
+fn should_prebuild_sandbox_image(
+    mode: &moltis_tools::sandbox::SandboxMode,
+    packages: &[String],
+) -> bool {
+    !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
+}
+
 // ── Shared app state ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -75,6 +82,105 @@ pub struct AppState {
 }
 
 // ── Server startup ───────────────────────────────────────────────────────────
+
+/// Build the protected API routes (shared between both build_gateway_app versions).
+#[cfg(feature = "web-ui")]
+fn build_protected_api_routes() -> Router<AppState> {
+    let protected = Router::new()
+        .route("/api/bootstrap", get(api_bootstrap_handler))
+        .route("/api/gon", get(api_gon_handler))
+        .route("/api/skills", get(api_skills_handler))
+        .route("/api/skills/search", get(api_skills_search_handler))
+        .route("/api/mcp", get(api_mcp_handler))
+        .route("/api/hooks", get(api_hooks_handler))
+        .route("/api/plugins", get(api_plugins_handler))
+        .route("/api/plugins/search", get(api_plugins_search_handler))
+        .route(
+            "/api/images/cached",
+            get(api_cached_images_handler).delete(api_prune_cached_images_handler),
+        )
+        .route(
+            "/api/images/cached/{tag}",
+            axum::routing::delete(api_delete_cached_image_handler),
+        )
+        .route(
+            "/api/images/build",
+            axum::routing::post(api_build_image_handler),
+        )
+        .route(
+            "/api/images/check-packages",
+            axum::routing::post(api_check_packages_handler),
+        )
+        .route(
+            "/api/images/default",
+            get(api_get_default_image_handler).put(api_set_default_image_handler),
+        )
+        .route(
+            "/api/env",
+            get(crate::env_routes::env_list).post(crate::env_routes::env_set),
+        )
+        .route(
+            "/api/env/{id}",
+            axum::routing::delete(crate::env_routes::env_delete),
+        )
+        // Config editor routes (sensitive - requires auth)
+        .route(
+            "/api/config",
+            get(crate::tools_routes::config_get).post(crate::tools_routes::config_save),
+        )
+        .route(
+            "/api/config/validate",
+            axum::routing::post(crate::tools_routes::config_validate),
+        )
+        .route(
+            "/api/config/template",
+            get(crate::tools_routes::config_template),
+        )
+        .route(
+            "/api/restart",
+            axum::routing::post(crate::tools_routes::restart),
+        );
+
+    // Add metrics API routes (protected).
+    #[cfg(feature = "metrics")]
+    let protected = protected
+        .route(
+            "/api/metrics",
+            get(crate::metrics_routes::api_metrics_handler),
+        )
+        .route(
+            "/api/metrics/summary",
+            get(crate::metrics_routes::api_metrics_summary_handler),
+        )
+        .route(
+            "/api/metrics/history",
+            get(crate::metrics_routes::api_metrics_history_handler),
+        );
+
+    protected
+}
+
+/// Apply auth middleware and feature-specific routes to protected API routes.
+#[cfg(feature = "web-ui")]
+fn finalize_protected_routes(protected: Router<AppState>, app_state: AppState) -> Router<AppState> {
+    let protected = protected.layer(axum::middleware::from_fn_with_state(
+        app_state,
+        crate::auth_middleware::require_auth,
+    ));
+
+    // Mount tailscale routes (protected) when the feature is enabled.
+    #[cfg(feature = "tailscale")]
+    let protected = protected.nest(
+        "/api/tailscale",
+        crate::tailscale_routes::tailscale_router(),
+    );
+
+    // Mount push notification routes when the feature is enabled.
+    #[cfg(feature = "push-notifications")]
+    let protected = protected.nest("/api/push", crate::push_routes::push_router());
+
+    protected
+}
 
 /// Build the gateway router (shared between production startup and tests).
 #[cfg(feature = "push-notifications")]
@@ -105,72 +211,17 @@ pub fn build_gateway_app(
     let app_state = AppState {
         gateway: state,
         methods,
-        #[cfg(feature = "push-notifications")]
         push_service,
     };
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let mut protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/hooks", get(api_hooks_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            )
-            .layer(axum::middleware::from_fn_with_state(
-                app_state.clone(),
-                crate::auth_middleware::require_auth,
-            ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        {
-            protected = protected.nest(
-                "/api/tailscale",
-                crate::tailscale_routes::tailscale_router(),
-            );
-        }
-
-        // Mount push notification routes when the feature is enabled.
-        #[cfg(feature = "push-notifications")]
-        {
-            protected = protected.nest("/api/push", crate::push_routes::push_router());
-        }
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -220,75 +271,12 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/hooks", get(api_hooks_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            );
-
-        // Add metrics API routes (protected).
-        #[cfg(feature = "metrics")]
-        let protected = protected
-            .route(
-                "/api/metrics",
-                get(crate::metrics_routes::api_metrics_handler),
-            )
-            .route(
-                "/api/metrics/summary",
-                get(crate::metrics_routes::api_metrics_summary_handler),
-            )
-            .route(
-                "/api/metrics/history",
-                get(crate::metrics_routes::api_metrics_history_handler),
-            );
-
-        let protected = protected.layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            crate::auth_middleware::require_auth,
-        ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        let protected = protected.nest(
-            "/api/tailscale",
-            crate::tailscale_routes::tailscale_router(),
-        );
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -357,6 +345,11 @@ pub async fn start_gateway(
     }
 
     services.exec_approval = Arc::new(LiveExecApprovalService::new(Arc::clone(&approval_manager)));
+
+    // Wire browser service if enabled.
+    if let Some(browser_svc) = crate::services::RealBrowserService::from_config(&config) {
+        services.browser = Arc::new(browser_svc);
+    }
 
     // Wire live onboarding service.
     let onboarding_config_path = moltis_config::find_or_default_config_path();
@@ -736,7 +729,7 @@ pub async fn start_gateway(
             .clone()
             .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
 
-        if !packages.is_empty() {
+        if should_prebuild_sandbox_image(router.mode(), &packages) {
             let deferred_for_build = Arc::clone(&deferred_state);
             tokio::spawn(async move {
                 // Broadcast build start event.
@@ -805,6 +798,77 @@ pub async fn start_gateway(
                 }
             });
         }
+    }
+
+    // Pre-pull browser container image if browser is enabled and sandbox mode is available.
+    // Browser sandbox mode follows session sandbox mode, so we pre-pull if sandboxing is available.
+    // Don't pre-pull if sandbox is disabled (mode = Off).
+    if config.tools.browser.enabled
+        && !matches!(
+            sandbox_router.config().mode,
+            moltis_tools::sandbox::SandboxMode::Off
+        )
+    {
+        let sandbox_image = config.tools.browser.sandbox_image.clone();
+        let deferred_for_browser = Arc::clone(&deferred_state);
+        tokio::spawn(async move {
+            // Broadcast pull start event.
+            if let Some(state) = deferred_for_browser.get() {
+                crate::broadcast::broadcast(
+                    state,
+                    "browser.image.pull",
+                    serde_json::json!({
+                        "phase": "start",
+                        "image": sandbox_image,
+                    }),
+                    crate::broadcast::BroadcastOpts {
+                        drop_if_slow: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            }
+
+            match moltis_browser::container::ensure_image(&sandbox_image) {
+                Ok(()) => {
+                    info!(image = %sandbox_image, "browser container image ready");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "done",
+                                "image": sandbox_image,
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(image = %sandbox_image, error = %e, "browser container image pull failed");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "error",
+                                "image": sandbox_image,
+                                "error": e.to_string(),
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+            }
+        });
     }
 
     // Load any persisted sandbox overrides from session metadata.
@@ -1348,6 +1412,9 @@ pub async fn start_gateway(
         {
             tool_registry.register(Box::new(t));
         }
+        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
+            tool_registry.register(Box::new(t));
+        }
 
         // Register memory tools if the memory system is available.
         if let Some(ref mm) = memory_manager {
@@ -1457,6 +1524,11 @@ pub async fn start_gateway(
             .set_tool_registry(Arc::clone(&shared_tool_registry))
             .await;
         crate::mcp_service::sync_mcp_tools(live_mcp.manager(), &shared_tool_registry).await;
+
+        // Log registered tools for debugging.
+        let schemas = shared_tool_registry.read().await.list_schemas();
+        let tool_names: Vec<&str> = schemas.iter().filter_map(|s| s["name"].as_str()).collect();
+        info!(tools = ?tool_names, "agent tools registered");
     }
 
     // Spawn skill file watcher for hot-reload.
@@ -2555,6 +2627,52 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 #[cfg(feature = "web-ui")]
 async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
     Json(build_gon_data(&state.gateway).await)
+}
+
+#[cfg(feature = "web-ui")]
+async fn oauth_callback_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(code) = params.get("code") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing authorization code.</p>".to_string()),
+        )
+            .into_response();
+    };
+    let Some(oauth_state) = params.get("state") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing OAuth state.</p>".to_string()),
+        )
+            .into_response();
+    };
+
+    match state
+        .gateway
+        .services
+        .provider_setup
+        .oauth_complete(serde_json::json!({
+            "code": code,
+            "state": oauth_state,
+        }))
+        .await
+    {
+        Ok(_) => Html(
+            "<h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script>"
+                .to_string(),
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth callback completion failed");
+            (
+                StatusCode::BAD_REQUEST,
+                Html("<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>".to_string()),
+            )
+                .into_response()
+        },
+    }
 }
 
 #[cfg(feature = "web-ui")]
@@ -3717,6 +3835,27 @@ mod tests {
         assert!(is_same_origin(
             "https://app.moltis.localhost:8080",
             "localhost:8080"
+        ));
+    }
+
+    #[test]
+    fn prebuild_runs_only_when_mode_enabled_and_packages_present() {
+        let packages = vec!["curl".to_string()];
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &packages
+        ));
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::NonMain,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::Off,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &[]
         ));
     }
 

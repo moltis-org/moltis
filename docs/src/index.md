@@ -1,5 +1,9 @@
 # Moltis
 
+```admonish warning title="Alpha software: use with care"
+Running an AI assistant on your own machine or server is still new territory. Treat Moltis as alpha software: run it in isolated environments, review enabled tools/providers, keep secrets scoped and rotated, and avoid exposing it publicly without strong authentication and network controls.
+```
+
 <div style="text-align: center; margin: 2em 0;">
 <strong style="font-size: 1.2em;">A personal AI gateway written in Rust.<br>One binary, no runtime, no npm.</strong>
 </div>

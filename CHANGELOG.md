@@ -27,6 +27,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mistral AI Voxtral (cloud-based, 13 languages)
   - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
+- **Browser Sandbox Mode**: Run browser in isolated Docker containers for security
+  - Automatic container lifecycle management
+  - Uses `browserless/chrome` image by default (configurable via `sandbox_image`)
+  - Container readiness detection via HTTP endpoint probing
+  - Browser sandbox mode automatically follows the session's sandbox mode
+    (no separate `browser.sandbox` config - sandboxed sessions use sandboxed browser)
+
+- **Memory-Based Browser Pool Limits**: Browser instances now limited by system memory
+  - `max_instances = 0` (default) allows unlimited instances, limited only by memory
+  - `memory_limit_percent = 90` blocks new instances when system memory exceeds threshold
+  - Idle browsers cleaned up automatically before blocking
+  - Set `max_instances > 0` for hard limit if preferred
+
+- **Automatic Browser Session Tracking**: Browser tool automatically reuses sessions
+  - Session ID is tracked internally and injected when LLM doesn't provide one
+  - Prevents pool exhaustion from LLMs forgetting to pass session_id
+  - Session cleared on explicit "close" action
+
+- **HiDPI Screenshot Support**: Screenshots scale correctly on Retina displays
+  - `device_scale_factor` config (default: 2.0) for high-DPI rendering
+  - Screenshot display in UI scales according to device pixel ratio
+  - Viewport increased to 2560×1440 for sharper captures
+
+- **Enhanced Screenshot Lightbox**:
+  - Scrollable container for viewing long/tall screenshots
+  - Download button at top of lightbox
+  - Visible ✕ close button instead of text hint
+  - Proper scaling for HiDPI displays
+
+- **Telegram Screenshot Support**: Browser screenshots sent to Telegram channels
+  - Automatic retry as document when image dimensions exceed Telegram limits
+  - Error messages sent to channel when screenshot delivery fails
+  - Handles `PHOTO_INVALID_DIMENSIONS` and `PHOTO_SAVE_FILE_INVALID` errors
+
+- **Telegram Tool Status Notifications**: See what's happening during long operations
+  - Tool execution messages sent to Telegram (e.g., "🌐 Navigating to...",
+    "💻 Running: `git status`", "📸 Taking screenshot...")
+  - Messages sent silently (no notification sound) to avoid spam
+  - Typing indicator automatically re-sent after status messages
+  - Supports browser, exec, web_fetch, web_search, and memory tools
+
+- **Log Target Display**: Logs now include the crate/module path for easier debugging
+  - Example: `INFO moltis_gateway::chat: tool execution succeeded tool=browser`
+
+- **Contributor docs: local PR validation**: Added documentation for the `./scripts/local-validate-pr.sh <PR_ID>` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
+
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)
@@ -40,12 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Documentation safety notice**: Added an upfront alpha-software warning on the docs landing page, emphasizing careful deployment, isolation, and strong auth/network controls for self-hosted AI assistants.
 - **Release packaging**: Derive release artifact versions from the Git tag (`vX.Y.Z`) in CI, and sync package metadata during release jobs to prevent filename/version drift.
 - **Versioning**: Bump workspace and snap baseline version to `0.2.0`.
 - **Onboarding auth flow**: Route first-run setup directly into `/onboarding` and remove the separate `/setup` web UI page.
 
 ### Fixed
 
+- **OAuth callback on hosted deployments**: OpenAI Codex OAuth now uses the web app origin callback (`/auth/callback`) in the UI flow instead of hardcoded localhost loopback, allowing DigitalOcean/Fly/Render deployments to complete OAuth successfully.
+- **Sandbox startup on hosted Docker environments**: Skip sandbox image pre-build when sandbox mode is off, and require Docker daemon accessibility (not just Docker CLI presence) before selecting the Docker sandbox backend.
 - **Homebrew release automation**: Run the tap update in the release workflow after all package/image jobs complete so formula publishing does not race missing tarball assets.
 - **Docker runtime**: Install `libgomp1` in the runtime image to satisfy OpenMP-linked binaries and prevent startup failures with `libgomp.so.1` missing.
 - **Release CI validation**: Add a Docker smoke test step (`moltis --help`) after image build/push so missing runtime libraries fail in CI before release.
@@ -54,6 +103,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sandbox UX on unsupported hosts**: Disable sandbox controls in chat/images when no runtime backend is detected, with a tooltip explaining cloud deploy limitations.
 - **Telegram OTP code echoed to LLM**: After OTP self-approval, the verification code message was re-processed as a regular chat message because `sender_approve` restarted the bot polling loop (resetting the Telegram update offset). Sender approve/deny now hot-update the in-memory config without restarting the bot.
 - **Empty allowlist bypassed access control**: When `dm_policy = Allowlist` and all entries were removed, the empty list was treated as "allow everyone" instead of "deny everyone". An explicit Allowlist policy with an empty list now correctly denies all access.
+- **Browser sandbox timeout**: Sandboxed browsers now use the configured
+  `navigation_timeout_ms` (default 30s) instead of a shorter internal timeout.
+  Previously, sandboxed browser connections could time out prematurely.
+- **Tall screenshot lightbox**: Full-page screenshots now display at proper size
+  with vertical scrolling instead of being scaled down to fit the viewport.
+- **Telegram typing indicator for long responses**: Channel replies now wait for outbound delivery tasks to finish before chat completion returns, so periodic `typing...` updates continue until the Telegram message is actually sent.
 
 ## [0.1.10] - 2026-02-06
 
@@ -134,6 +189,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Safari/iOS PWA Detection**: Show "Add to Dock" instructions when push notifications
   require PWA installation (Safari doesn't support push in browser mode)
 
+- **Browser Screenshot Thumbnails**: Screenshots from the browser tool now display as
+  clickable thumbnails in the chat UI
+  - Click to view fullscreen in a lightbox overlay
+  - Press Escape or click anywhere to close
+  - Thumbnails are 200×150px max with hover effects
+
+- **Improved Browser Detection**: Better cross-platform browser detection
+  - Checks macOS app bundles before PATH (avoids broken Homebrew chromium wrapper)
+  - Supports Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc
+  - Shows platform-specific installation instructions when no browser found
+  - Custom path via `chrome_path` config or `CHROME` environment variable
+
+- **Vision Support for Screenshots**: Vision-capable models can now interpret
+  browser screenshots instead of having them stripped from context
+  - Screenshots sent as multimodal image content blocks for GPT-4o, Claude, Gemini
+  - Non-vision models continue to receive `[base64 data removed]` placeholder
+  - `supports_vision()` trait method added to `LlmProvider` for capability detection
+
 - **Session state store**: per-session key-value persistence scoped by
   namespace, backed by SQLite (`session_state` tool).
 - **Session branching**: `branch_session` tool forks a conversation at any
@@ -156,7 +229,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logic.
 - Documentation pages for session state, session branching, skill
   self-extension, and the tool registry architecture.
-
 ### Changed
 
 - Memory settings UI enhanced with backend comparison and feature explanations
@@ -195,6 +267,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing space in Safari install instructions ("usingFile" → "using File")
 - **WebSocket origin validation** now treats `.localhost` subdomains
   (e.g. `moltis.localhost`) as loopback equivalents per RFC 6761.
+- **Browser tool schema enforcement**: Added `strict: true` and `additionalProperties: false`
+  to OpenAI-compatible tool schemas, improving model compliance with required fields
+- **Browser tool defaults**: When model sends URL without action, defaults to `navigate`
+  instead of erroring
+- **Chat message ordering**: Fixed interleaving of text and tool cards when streaming;
+  messages now appear in correct chronological order
+- **Tool passthrough in ProviderChain**: Fixed tools not being passed to fallback
+  providers when using provider chains
 - Fork/branch icon in session sidebar now renders cleanly at 16px (replaced
   complex git-branch SVG with simple trunk+branch path).
 - Deleting a forked session now navigates to the parent session instead of
@@ -228,5 +308,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added voice.md with TTS/STT provider documentation and setup guides
 - Added mobile-pwa.md with PWA installation and push notification documentation
 - Updated CLAUDE.md with cargo feature policy (features enabled by default)
+- Updated browser-automation.md with browser detection, screenshot display, and
+  model error handling sections
 - Rewrote session-branching.md with accurate fork details, UI methods, RPC
   API, inheritance table, and deletion behavior.

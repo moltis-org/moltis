@@ -241,6 +241,7 @@ function MissingDepsSection(props) {
 }
 
 // ── Skill detail panel ───────────────────────────────────────
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI component with multiple states
 function SkillDetail(props) {
 	var d = props.detail;
 	var onClose = props.onClose;

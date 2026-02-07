@@ -210,13 +210,19 @@ pub(crate) fn config_with_saved_keys(
     #[cfg(feature = "local-llm")]
     {
         if let Some(local_config) = crate::local_llm_setup::LocalLlmConfig::load() {
-            // Only merge if there's no model already configured in moltis.toml
+            // Collect all configured model IDs for multi-model support
+            config.local_models = local_config
+                .models
+                .iter()
+                .map(|m| m.model_id.clone())
+                .collect();
+
+            // Also set the first model as the default for backward compatibility
             let entry = config.providers.entry("local".into()).or_default();
-            if entry.model.is_none() {
-                // Use the first configured model from the multi-model config
-                if let Some(first_model) = local_config.models.first() {
-                    entry.model = Some(first_model.model_id.clone());
-                }
+            if entry.model.is_none()
+                && let Some(first_model) = local_config.models.first()
+            {
+                entry.model = Some(first_model.model_id.clone());
             }
         }
     }
@@ -392,9 +398,17 @@ pub struct LiveProviderSetupService {
     config: ProvidersConfig,
     token_store: TokenStore,
     key_store: KeyStore,
+    pending_oauth: Arc<RwLock<HashMap<String, PendingOAuthFlow>>>,
     /// When set, local-only providers (local-llm, ollama) are hidden from
     /// the available list because they cannot run on cloud VMs.
     deploy_platform: Option<String>,
+}
+
+#[derive(Clone)]
+struct PendingOAuthFlow {
+    provider_name: String,
+    oauth_config: moltis_oauth::OAuthConfig,
+    verifier: String,
 }
 
 impl LiveProviderSetupService {
@@ -408,6 +422,7 @@ impl LiveProviderSetupService {
             config,
             token_store: TokenStore::new(),
             key_store: KeyStore::new(),
+            pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
         }
     }
@@ -600,7 +615,14 @@ impl ProviderSetupService for LiveProviderSetupService {
             .ok_or_else(|| "missing 'provider' parameter".to_string())?
             .to_string();
 
-        let oauth_config = load_oauth_config(&provider_name)
+        let redirect_uri = params
+            .get("redirectUri")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
+
+        let mut oauth_config = load_oauth_config(&provider_name)
             .ok_or_else(|| format!("no OAuth config for provider: {provider_name}"))?;
 
         if oauth_config.device_flow {
@@ -609,13 +631,36 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .await;
         }
 
+        let use_server_callback = redirect_uri.is_some();
+        if let Some(uri) = redirect_uri {
+            oauth_config.redirect_uri = uri;
+        }
+
         let port = callback_port(&oauth_config);
+        let oauth_config_for_pending = oauth_config.clone();
         let flow = OAuthFlow::new(oauth_config);
         let auth_req = flow.start();
 
         let auth_url = auth_req.url.clone();
         let verifier = auth_req.pkce.verifier.clone();
         let expected_state = auth_req.state.clone();
+
+        // Browser/server callback mode: callback lands on this gateway instance,
+        // then `/auth/callback` completes the exchange with `oauth_complete`.
+        if use_server_callback {
+            let pending = PendingOAuthFlow {
+                provider_name,
+                oauth_config: oauth_config_for_pending,
+                verifier,
+            };
+            self.pending_oauth
+                .write()
+                .await
+                .insert(expected_state, pending);
+            return Ok(serde_json::json!({
+                "authUrl": auth_url,
+            }));
+        }
 
         // Spawn background task to wait for the callback and exchange the code
         let token_store = self.token_store.clone();
@@ -664,6 +709,51 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         Ok(serde_json::json!({
             "authUrl": auth_url,
+        }))
+    }
+
+    async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let code = params
+            .get("code")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'code' parameter".to_string())?
+            .to_string();
+        let state = params
+            .get("state")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'state' parameter".to_string())?
+            .to_string();
+
+        let pending = self
+            .pending_oauth
+            .write()
+            .await
+            .remove(&state)
+            .ok_or_else(|| "unknown or expired OAuth state".to_string())?;
+
+        let flow = OAuthFlow::new(pending.oauth_config);
+        let tokens = flow
+            .exchange(&code, &pending.verifier)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        self.token_store
+            .save(&pending.provider_name, &tokens)
+            .map_err(|e| e.to_string())?;
+
+        let effective = self.effective_config();
+        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let mut reg = self.registry.write().await;
+        *reg = new_registry;
+
+        info!(
+            provider = %pending.provider_name,
+            "OAuth callback complete, rebuilt provider registry"
+        );
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "provider": pending.provider_name,
         }))
     }
 
@@ -1104,6 +1194,34 @@ mod tests {
             .oauth_start(serde_json::json!({"provider": "nonexistent"}))
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_start_uses_redirect_uri_override() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let redirect_uri = "https://example.com/auth/callback";
+
+        let result = svc
+            .oauth_start(serde_json::json!({
+                "provider": "openai-codex",
+                "redirectUri": redirect_uri,
+            }))
+            .await
+            .expect("oauth start should succeed");
+        let auth_url = result
+            .get("authUrl")
+            .and_then(|v| v.as_str())
+            .expect("missing authUrl");
+        let parsed = reqwest::Url::parse(auth_url).expect("authUrl should be a valid URL");
+        let redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned());
+
+        assert_eq!(redirect.as_deref(), Some(redirect_uri));
     }
 
     #[tokio::test]

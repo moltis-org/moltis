@@ -474,6 +474,12 @@ impl GatewayState {
         queue.remove(session_key).unwrap_or_default()
     }
 
+    /// Get a copy of pending reply targets without removing them.
+    pub async fn peek_channel_replies(&self, session_key: &str) -> Vec<ChannelReplyTarget> {
+        let queue = self.channel_reply_queue.read().await;
+        queue.get(session_key).cloned().unwrap_or_default()
+    }
+
     /// Record a run error (for send_sync to retrieve).
     pub async fn set_run_error(&self, run_id: &str, error: String) {
         self.run_errors

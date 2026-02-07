@@ -70,7 +70,7 @@ impl SessionService for LiveSessionService {
                 {
                     self.metadata
                         .get_active_session(
-                            &target.channel_type,
+                            target.channel_type.as_str(),
                             &target.account_id,
                             &target.chat_id,
                         )

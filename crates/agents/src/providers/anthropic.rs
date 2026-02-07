@@ -93,6 +93,10 @@ impl LlmProvider for AnthropicProvider {
         super::context_window_for_model(&self.model)
     }
 
+    fn supports_vision(&self) -> bool {
+        super::supports_vision_for_model(&self.model)
+    }
+
     async fn complete(
         &self,
         messages: &[serde_json::Value],

@@ -240,7 +240,16 @@ impl LiveChatService {
         // assume tools are present (conservative — enables tool mode).
         self.tool_registry
             .try_read()
-            .map(|r| !r.list_schemas().is_empty())
+            .map(|r| {
+                let schemas = r.list_schemas();
+                let has = !schemas.is_empty();
+                tracing::debug!(
+                    tool_count = schemas.len(),
+                    has_tools = has,
+                    "has_tools_sync check"
+                );
+                has
+            })
             .unwrap_or(true)
     }
 
@@ -317,7 +326,14 @@ impl ChatService for LiveChatService {
             .get("stream_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let stream_only = explicit_stream_only || !self.has_tools_sync();
+        let has_tools = self.has_tools_sync();
+        let stream_only = explicit_stream_only || !has_tools;
+        tracing::debug!(
+            explicit_stream_only,
+            has_tools,
+            stream_only,
+            "send() mode decision"
+        );
 
         // Resolve session key: explicit override (used by cron callbacks) or connection-scoped lookup.
         let session_key = match params.get("_session_key").and_then(|v| v.as_str()) {
@@ -371,6 +387,23 @@ impl ChatService for LiveChatService {
                 primary
             }
         };
+
+        // Check if this is a local model that needs downloading.
+        // Only do this check for local-llm providers.
+        #[cfg(feature = "local-llm")]
+        if provider.name() == "local-llm" {
+            let model_to_check = model_id.unwrap_or(provider.id());
+            tracing::info!(
+                provider_name = provider.name(),
+                model_to_check,
+                "checking local model cache"
+            );
+            if let Err(e) =
+                crate::local_llm_setup::ensure_local_model_cached(model_to_check, &self.state).await
+            {
+                return Err(format!("Failed to prepare local model: {}", e));
+            }
+        }
 
         // Resolve project context for this connection's active project.
         let project_context = {
@@ -509,7 +542,11 @@ impl ChatService for LiveChatService {
             // Only echo to channel if this is the active session for this chat.
             let is_active = self
                 .session_metadata
-                .get_active_session(&target.channel_type, &target.account_id, &target.chat_id)
+                .get_active_session(
+                    target.channel_type.as_str(),
+                    &target.account_id,
+                    &target.chat_id,
+                )
                 .await
                 .map(|k| k == session_key)
                 .unwrap_or(true);
@@ -1549,6 +1586,13 @@ async fn run_with_tools(
         )
     };
 
+    // Determine if this session is sandboxed (for browser tool execution mode)
+    let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
+        router.is_sandboxed(session_key).await
+    } else {
+        false
+    };
+
     // Broadcast tool events to the UI as they happen.
     let state_for_events = Arc::clone(state);
     let run_id_for_events = run_id.to_string();
@@ -1573,14 +1617,40 @@ async fn run_with_tools(
                     id,
                     name,
                     arguments,
-                } => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "tool_call_start",
-                    "toolCallId": id,
-                    "toolName": name,
-                    "arguments": arguments,
-                }),
+                } => {
+                    // Send tool status to channels (Telegram, etc.)
+                    let state_clone = Arc::clone(&state);
+                    let sk_clone = sk.clone();
+                    let name_clone = name.clone();
+                    let args_clone = arguments.clone();
+                    tokio::spawn(async move {
+                        send_tool_status_to_channels(
+                            &state_clone,
+                            &sk_clone,
+                            &name_clone,
+                            &args_clone,
+                        )
+                        .await;
+                    });
+
+                    let mut payload = serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "tool_call_start",
+                        "toolCallId": id,
+                        "toolName": name,
+                        "arguments": arguments,
+                    });
+                    // Add execution mode for browser tool (follows session sandbox mode)
+                    if name == "browser" {
+                        payload["executionMode"] = serde_json::json!(if session_is_sandboxed {
+                            "sandbox"
+                        } else {
+                            "host"
+                        });
+                    }
+                    payload
+                },
                 RunnerEvent::ToolCallEnd {
                     id,
                     name,
@@ -1599,6 +1669,14 @@ async fn run_with_tools(
                     if let Some(err) = error {
                         payload["error"] = serde_json::json!(parse_chat_error(err, None));
                     }
+                    // Check for screenshot to send to channel (Telegram, etc.)
+                    let screenshot_to_send = result
+                        .as_ref()
+                        .and_then(|r| r.get("screenshot"))
+                        .and_then(|s| s.as_str())
+                        .filter(|s| s.starts_with("data:image/"))
+                        .map(String::from);
+
                     if let Some(res) = result {
                         // Cap output sent to the UI to avoid huge WS frames.
                         let mut capped = res.clone();
@@ -1616,6 +1694,17 @@ async fn run_with_tools(
                         }
                         payload["result"] = capped;
                     }
+
+                    // Send screenshot to channel targets (Telegram) if present
+                    if let Some(screenshot_data) = screenshot_to_send {
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        tokio::spawn(async move {
+                            send_screenshot_to_channels(&state_clone, &sk_clone, &screenshot_data)
+                                .await;
+                        });
+                    }
+
                     payload
                 },
                 RunnerEvent::ThinkingText(text) => serde_json::json!({
@@ -1672,9 +1761,13 @@ async fn run_with_tools(
         Some(history.to_vec())
     };
 
-    // Inject session key and accept-language into tool call params so tools can
+    // Inject session key, sandbox mode, and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    let mut tool_context = serde_json::json!({ "_session_key": session_key });
+    // The browser tool uses _sandbox to determine whether to run in a container.
+    let mut tool_context = serde_json::json!({
+        "_session_key": session_key,
+        "_sandbox": session_is_sandboxed,
+    });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
     }
@@ -2104,13 +2197,22 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
         Some(o) => o,
         None => return,
     };
+    deliver_channel_replies_to_targets(outbound, targets, text).await;
+}
+
+async fn deliver_channel_replies_to_targets(
+    outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
+    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    text: &str,
+) {
     let text = text.to_string();
+    let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let text = text.clone();
-        tokio::spawn(async move {
-            match target.channel_type.as_str() {
-                "telegram" => {
+        tasks.push(tokio::spawn(async move {
+            match target.channel_type {
+                moltis_channels::ChannelType::Telegram => {
                     if let Err(e) = outbound
                         .send_text(&target.account_id, &target.chat_id, &text)
                         .await
@@ -2122,17 +2224,298 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
                         );
                     }
                 },
-                other => {
-                    warn!(channel_type = other, "unsupported channel type for reply");
-                },
+            }
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel reply task join failed");
+        }
+    }
+}
+
+/// Send a tool execution status to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn send_tool_status_to_channels(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) {
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.services.channel_outbound_arc() {
+        Some(o) => o,
+        None => return,
+    };
+
+    // Format a concise tool execution message
+    let message = format_tool_status_message(tool_name, arguments);
+
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let message = message.clone();
+        tokio::spawn(async move {
+            // Send as a silent message to avoid notification spam
+            if let Err(e) = outbound
+                .send_text_silent(&target.account_id, &target.chat_id, &message)
+                .await
+            {
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send tool status to channel: {e}"
+                );
+            } else {
+                // Re-send typing indicator after status message
+                // (sending a message clears the typing indicator in Telegram)
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "sent tool status, re-sending typing indicator"
+                );
+                if let Err(e) = outbound
+                    .send_typing(&target.account_id, &target.chat_id)
+                    .await
+                {
+                    debug!(
+                        account_id = target.account_id,
+                        chat_id = target.chat_id,
+                        "failed to re-send typing after tool status: {e}"
+                    );
+                }
             }
         });
     }
 }
 
+/// Format a human-readable tool execution message.
+fn format_tool_status_message(tool_name: &str, arguments: &serde_json::Value) -> String {
+    match tool_name {
+        "browser" => {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let url = arguments.get("url").and_then(|v| v.as_str());
+            let ref_ = arguments.get("ref_").and_then(|v| v.as_u64());
+
+            match action {
+                "navigate" => {
+                    if let Some(u) = url {
+                        format!("🌐 Navigating to {}", truncate_url(u))
+                    } else {
+                        "🌐 Navigating...".to_string()
+                    }
+                },
+                "screenshot" => "📸 Taking screenshot...".to_string(),
+                "snapshot" => "📋 Getting page snapshot...".to_string(),
+                "click" => {
+                    if let Some(r) = ref_ {
+                        format!("👆 Clicking element #{}", r)
+                    } else {
+                        "👆 Clicking...".to_string()
+                    }
+                },
+                "type" => "⌨️ Typing...".to_string(),
+                "scroll" => "📜 Scrolling...".to_string(),
+                "evaluate" => "⚡ Running JavaScript...".to_string(),
+                "wait" => "⏳ Waiting for element...".to_string(),
+                "close" => "🚪 Closing browser...".to_string(),
+                _ => format!("🌐 Browser: {}", action),
+            }
+        },
+        "exec" => {
+            let command = arguments.get("command").and_then(|v| v.as_str());
+            if let Some(cmd) = command {
+                // Show first ~50 chars of command
+                let display_cmd = if cmd.len() > 50 {
+                    format!("{}...", &cmd[..50])
+                } else {
+                    cmd.to_string()
+                };
+                format!("💻 Running: `{}`", display_cmd)
+            } else {
+                "💻 Executing command...".to_string()
+            }
+        },
+        "web_fetch" => {
+            let url = arguments.get("url").and_then(|v| v.as_str());
+            if let Some(u) = url {
+                format!("🔗 Fetching {}", truncate_url(u))
+            } else {
+                "🔗 Fetching URL...".to_string()
+            }
+        },
+        "web_search" => {
+            let query = arguments.get("query").and_then(|v| v.as_str());
+            if let Some(q) = query {
+                let display_q = if q.len() > 40 {
+                    format!("{}...", &q[..40])
+                } else {
+                    q.to_string()
+                };
+                format!("🔍 Searching: {}", display_q)
+            } else {
+                "🔍 Searching...".to_string()
+            }
+        },
+        "memory_search" => "🧠 Searching memory...".to_string(),
+        "memory_store" => "🧠 Storing to memory...".to_string(),
+        _ => format!("🔧 {}", tool_name),
+    }
+}
+
+/// Truncate a URL for display (show domain + short path).
+fn truncate_url(url: &str) -> String {
+    // Try to extract domain from URL
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+
+    // Take first 50 chars max
+    if without_scheme.len() > 50 {
+        format!("{}...", &without_scheme[..50])
+    } else {
+        without_scheme.to_string()
+    }
+}
+
+/// Send a screenshot to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn send_screenshot_to_channels(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    screenshot_data: &str,
+) {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.services.channel_outbound_arc() {
+        Some(o) => o,
+        None => return,
+    };
+
+    let payload = ReplyPayload {
+        text: String::new(), // No caption, just the image
+        media: Some(MediaAttachment {
+            url: screenshot_data.to_string(),
+            mime_type: "image/png".to_string(),
+        }),
+        reply_to_id: None,
+        silent: false,
+    };
+
+    let mut tasks = Vec::with_capacity(targets.len());
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let payload = payload.clone();
+        tasks.push(tokio::spawn(async move {
+            match target.channel_type {
+                moltis_channels::ChannelType::Telegram => {
+                    if let Err(e) = outbound
+                        .send_media(&target.account_id, &target.chat_id, &payload)
+                        .await
+                    {
+                        warn!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "failed to send screenshot to channel: {e}"
+                        );
+                        // Notify the user of the error
+                        let error_msg = format!("⚠️ Failed to send screenshot: {e}");
+                        let _ = outbound
+                            .send_text(&target.account_id, &target.chat_id, &error_msg)
+                            .await;
+                    } else {
+                        debug!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "sent screenshot to telegram"
+                        );
+                    }
+                },
+            }
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel reply task join failed");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        anyhow::Result,
+        moltis_common::types::ReplyPayload,
+        std::{
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+            time::{Duration, Instant},
+        },
+    };
+
+    struct MockChannelOutbound {
+        calls: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl moltis_channels::plugin::ChannelOutbound for MockChannelOutbound {
+        async fn send_text(&self, _account_id: &str, _to: &str, _text: &str) -> Result<()> {
+            tokio::time::sleep(self.delay).await;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn deliver_channel_replies_waits_for_outbound_sends() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> =
+            Arc::new(MockChannelOutbound {
+                calls: Arc::clone(&calls),
+                delay: Duration::from_millis(50),
+            });
+        let targets = vec![moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+        }];
+
+        let start = Instant::now();
+        deliver_channel_replies_to_targets(outbound, targets, "hello").await;
+
+        assert!(
+            start.elapsed() >= Duration::from_millis(45),
+            "delivery should wait for outbound send completion"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     /// Build a bare session_locks map for testing the semaphore logic
     /// without constructing a full LiveChatService.

@@ -13,7 +13,7 @@ permissions: {}
 jobs:
   update-formula:
     name: Update Homebrew tap
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:

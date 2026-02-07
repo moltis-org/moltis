@@ -1167,6 +1167,41 @@ impl BrowserService for NoopBrowserService {
     }
 }
 
+/// Real browser service using BrowserManager.
+pub struct RealBrowserService {
+    manager: moltis_browser::BrowserManager,
+}
+
+impl RealBrowserService {
+    pub fn new(config: &moltis_config::schema::BrowserConfig) -> Self {
+        let browser_config = moltis_browser::BrowserConfig::from(config);
+        Self {
+            manager: moltis_browser::BrowserManager::new(browser_config),
+        }
+    }
+
+    pub fn from_config(config: &moltis_config::schema::MoltisConfig) -> Option<Self> {
+        if !config.tools.browser.enabled {
+            return None;
+        }
+        // Check if Chrome/Chromium is available and warn if not
+        moltis_browser::detect::check_and_warn(config.tools.browser.chrome_path.as_deref());
+        Some(Self::new(&config.tools.browser))
+    }
+}
+
+#[async_trait]
+impl BrowserService for RealBrowserService {
+    async fn request(&self, params: Value) -> ServiceResult {
+        let request: moltis_browser::BrowserRequest =
+            serde_json::from_value(params).map_err(|e| format!("invalid request: {e}"))?;
+
+        let response = self.manager.handle_request(request).await;
+
+        serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))
+    }
+}
+
 // ── Usage ───────────────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -1409,6 +1444,7 @@ pub trait ProviderSetupService: Send + Sync {
     async fn available(&self) -> ServiceResult;
     async fn save_key(&self, params: Value) -> ServiceResult;
     async fn oauth_start(&self, params: Value) -> ServiceResult;
+    async fn oauth_complete(&self, params: Value) -> ServiceResult;
     async fn oauth_status(&self, params: Value) -> ServiceResult;
     async fn remove_key(&self, params: Value) -> ServiceResult;
 }
@@ -1480,6 +1516,10 @@ impl ProviderSetupService for NoopProviderSetupService {
     }
 
     async fn oauth_start(&self, _p: Value) -> ServiceResult {
+        Err("provider setup not configured".into())
+    }
+
+    async fn oauth_complete(&self, _p: Value) -> ServiceResult {
         Err("provider setup not configured".into())
     }
 
