@@ -292,9 +292,31 @@ impl BrowserManager {
         #[cfg(feature = "metrics")]
         moltis_metrics::counter!(moltis_metrics::browser::SCREENSHOTS_TOTAL).increment(1);
 
-        debug!(
+        // Calculate approximate dimensions from PNG data (width/height are in bytes 16-23)
+        let (width, height) = if screenshot.len() > 24 {
+            let w = u32::from_be_bytes([
+                screenshot[16],
+                screenshot[17],
+                screenshot[18],
+                screenshot[19],
+            ]);
+            let h = u32::from_be_bytes([
+                screenshot[20],
+                screenshot[21],
+                screenshot[22],
+                screenshot[23],
+            ]);
+            (w, h)
+        } else {
+            (0, 0)
+        };
+
+        info!(
             session_id = sid,
             bytes = screenshot.len(),
+            width,
+            height,
+            full_page,
             "took screenshot"
         );
 

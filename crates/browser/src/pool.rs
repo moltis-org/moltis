@@ -7,7 +7,10 @@ use std::{
 };
 
 use {
-    chromiumoxide::{Browser, BrowserConfig as CdpBrowserConfig, Page},
+    chromiumoxide::{
+        Browser, BrowserConfig as CdpBrowserConfig, Page,
+        cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams,
+    },
     futures::StreamExt,
     tokio::sync::{Mutex, RwLock},
     tracing::{debug, info, warn},
@@ -117,6 +120,7 @@ impl BrowserPool {
 
         // Get or create the main page
         if let Some(page) = inst.pages.get("main") {
+            debug!(session_id, "reusing existing page");
             return Ok(page.clone());
         }
 
@@ -126,6 +130,28 @@ impl BrowserPool {
             .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::LaunchFailed(e.to_string()))?;
+
+        // Explicitly set viewport on page to ensure it matches config
+        // (browser-level viewport may not always be applied to new pages)
+        let viewport_cmd = SetDeviceMetricsOverrideParams::builder()
+            .width(self.config.viewport_width)
+            .height(self.config.viewport_height)
+            .device_scale_factor(self.config.device_scale_factor)
+            .mobile(false)
+            .build()
+            .expect("valid viewport params");
+
+        if let Err(e) = page.execute(viewport_cmd).await {
+            warn!(session_id, error = %e, "failed to set page viewport");
+        }
+
+        info!(
+            session_id,
+            viewport_width = self.config.viewport_width,
+            viewport_height = self.config.viewport_height,
+            device_scale_factor = self.config.device_scale_factor,
+            "created new page with viewport"
+        );
 
         inst.pages.insert("main".to_string(), page.clone());
         Ok(page)
@@ -300,6 +326,15 @@ impl BrowserPool {
         if !self.config.headless {
             builder = builder.with_head();
         }
+
+        info!(
+            session_id,
+            viewport_width = self.config.viewport_width,
+            viewport_height = self.config.viewport_height,
+            device_scale_factor = self.config.device_scale_factor,
+            headless = self.config.headless,
+            "configuring browser viewport"
+        );
 
         builder = builder
             .viewport(chromiumoxide::handler::viewport::Viewport {
