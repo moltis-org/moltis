@@ -63,7 +63,7 @@ jobs:
   clippy:
     name: Clippy
     needs: fmt
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -118,7 +118,7 @@ jobs:
   build:
     name: Build & Test
     needs: [clippy, biome]
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
