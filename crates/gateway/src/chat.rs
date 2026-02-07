@@ -60,44 +60,10 @@ fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
     effective.merge_with(&configured)
 }
 
-fn normalize_skill_allowed_pattern(pattern: &str) -> String {
-    let trimmed = pattern.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    // OpenClaw-style tool declarations may look like `Bash(git:*)`.
-    let base = trimmed.split('(').next().unwrap_or(trimmed).trim();
-    let lower = base.to_ascii_lowercase();
-    match lower.as_str() {
-        "bash" => "exec".to_string(),
-        "webfetch" => "web_fetch".to_string(),
-        "websearch" => "web_search".to_string(),
-        _ => lower,
-    }
-}
-
-fn matches_pattern(pattern: &str, tool_name: &str) -> bool {
-    if pattern.is_empty() {
-        return false;
-    }
-
-    let candidate = tool_name.to_ascii_lowercase();
-    if pattern == "*" {
-        return true;
-    }
-
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        return candidate.starts_with(prefix);
-    }
-
-    pattern == candidate
-}
-
 fn apply_runtime_tool_filters(
     base: &ToolRegistry,
     config: &moltis_config::MoltisConfig,
-    skills: &[moltis_skills::types::SkillMetadata],
+    _skills: &[moltis_skills::types::SkillMetadata],
     mcp_disabled: bool,
 ) -> ToolRegistry {
     let base_registry = if mcp_disabled {
@@ -107,23 +73,12 @@ fn apply_runtime_tool_filters(
     };
 
     let policy = effective_tool_policy(config);
-    let policy_filtered = base_registry.clone_allowed_by(|name| policy.is_allowed(name));
-
-    // Collect skill-declared allowed tools as a union across active skills.
-    let mut skill_patterns: Vec<String> = skills
-        .iter()
-        .flat_map(|s| s.allowed_tools.iter())
-        .map(|s| normalize_skill_allowed_pattern(s))
-        .filter(|s| !s.is_empty())
-        .collect();
-    skill_patterns.sort();
-    skill_patterns.dedup();
-
-    if skill_patterns.is_empty() {
-        return policy_filtered;
-    }
-
-    policy_filtered.clone_allowed_by(|name| skill_patterns.iter().any(|p| matches_pattern(p, name)))
+    // NOTE: Do not globally restrict tools by discovered skill `allowed_tools`.
+    // Skills are always discovered for prompt injection; applying those lists at
+    // runtime can unintentionally remove unrelated tools (for example, leaving
+    // only `web_fetch` and preventing `create_skill` from being called).
+    // Tool availability here is controlled by configured runtime policy.
+    base_registry.clone_allowed_by(|name| policy.is_allowed(name))
 }
 
 // ── Disabled Models Store ────────────────────────────────────────────────────
@@ -641,8 +596,7 @@ impl ChatService for LiveChatService {
         }
 
         // Discover enabled skills/plugins for prompt injection.
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths(&cwd);
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
         let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
         let discovered_skills = match discoverer.discover().await {
             Ok(s) => s,
@@ -1327,8 +1281,7 @@ impl ChatService for LiveChatService {
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(ref mm) = self.state.memory_manager {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let memory_dir = cwd.join("memory");
+            let memory_dir = moltis_config::data_dir().join("memory");
             if let Err(e) = tokio::fs::create_dir_all(&memory_dir).await {
                 warn!(error = %e, "compact: failed to create memory dir");
             } else {
@@ -1553,8 +1506,7 @@ impl ChatService for LiveChatService {
 
         // Discover enabled skills/plugins (only if provider supports tools)
         let skills_list: Vec<serde_json::Value> = if supports_tools {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths(&cwd);
+            let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
             let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
             match discoverer.discover().await {
                 Ok(s) => s
@@ -1626,6 +1578,33 @@ async fn run_with_tools(
 ) -> Option<(String, u32, u32)> {
     // Load identity and user profile from config so the LLM knows who it is.
     let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity() {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
+        }
+    }
+    let mut user = config.user.clone();
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    let soul_text = moltis_config::load_soul();
+    let agents_text = moltis_config::load_agents_md();
+    let tools_text = moltis_config::load_tools_md();
 
     let native_tools = provider.supports_tools();
 
@@ -1647,16 +1626,22 @@ async fn run_with_tools(
             project_context,
             session_context,
             skills,
-            Some(&config.identity),
-            Some(&config.user),
+            Some(&identity),
+            Some(&user),
+            soul_text.as_deref(),
+            agents_text.as_deref(),
+            tools_text.as_deref(),
         )
     } else {
         // Minimal prompt without tools for local LLMs
         build_system_prompt_minimal(
             project_context,
             session_context,
-            Some(&config.identity),
-            Some(&config.user),
+            Some(&identity),
+            Some(&user),
+            soul_text.as_deref(),
+            agents_text.as_deref(),
+            tools_text.as_deref(),
         )
     };
 
@@ -2831,13 +2816,6 @@ mod tests {
     }
 
     #[test]
-    fn skill_allowed_pattern_normalization_maps_openclaw_names() {
-        assert_eq!(normalize_skill_allowed_pattern("Bash(git:*)"), "exec");
-        assert_eq!(normalize_skill_allowed_pattern("WebFetch"), "web_fetch");
-        assert_eq!(normalize_skill_allowed_pattern("  exec  "), "exec");
-    }
-
-    #[test]
     fn effective_tool_policy_profile_and_config_merge() {
         let mut cfg = moltis_config::MoltisConfig::default();
         cfg.tools.policy.profile = Some("full".into());
@@ -2849,7 +2827,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_filters_apply_policy_and_skill_allowed_tools() {
+    fn runtime_filters_apply_policy_without_skill_tool_restrictions() {
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(DummyTool {
             name: "exec".to_string(),
@@ -2858,11 +2836,14 @@ mod tests {
             name: "web_fetch".to_string(),
         }));
         registry.register(Box::new(DummyTool {
+            name: "create_skill".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
             name: "session_state".to_string(),
         }));
 
         let mut cfg = moltis_config::MoltisConfig::default();
-        cfg.tools.policy.allow = vec!["exec".into(), "web_fetch".into()];
+        cfg.tools.policy.allow = vec!["exec".into(), "web_fetch".into(), "create_skill".into()];
 
         let skills = vec![moltis_skills::types::SkillMetadata {
             name: "my-skill".into(),
@@ -2879,7 +2860,39 @@ mod tests {
 
         let filtered = apply_runtime_tool_filters(&registry, &cfg, &skills, false);
         assert!(filtered.get("exec").is_some());
-        assert!(filtered.get("web_fetch").is_none());
+        assert!(filtered.get("web_fetch").is_some());
+        assert!(filtered.get("create_skill").is_some());
         assert!(filtered.get("session_state").is_none());
+    }
+
+    #[test]
+    fn runtime_filters_do_not_hide_create_skill_when_skill_allows_only_web_fetch() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "create_skill".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "web_fetch".to_string(),
+        }));
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["create_skill".into(), "web_fetch".into()];
+
+        let skills = vec![moltis_skills::types::SkillMetadata {
+            name: "weather".into(),
+            description: "weather checker".into(),
+            license: None,
+            compatibility: None,
+            allowed_tools: vec!["WebFetch".into()],
+            homepage: None,
+            dockerfile: None,
+            requires: Default::default(),
+            path: std::path::PathBuf::new(),
+            source: None,
+        }];
+
+        let filtered = apply_runtime_tool_filters(&registry, &cfg, &skills, false);
+        assert!(filtered.get("create_skill").is_some());
+        assert!(filtered.get("web_fetch").is_some());
     }
 }

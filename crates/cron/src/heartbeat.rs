@@ -40,6 +40,25 @@ pub enum StripMode {
     Trim,
 }
 
+/// Source of the effective heartbeat prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeartbeatPromptSource {
+    Config,
+    HeartbeatMd,
+    Default,
+}
+
+impl HeartbeatPromptSource {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Config => "config",
+            Self::HeartbeatMd => "heartbeat_md",
+            Self::Default => "default",
+        }
+    }
+}
+
 /// Strip `HEARTBEAT_OK` from `text`, handling common LLM formatting wrappers
 /// like `**HEARTBEAT_OK**` and `<b>HEARTBEAT_OK</b>`.
 ///
@@ -139,12 +158,27 @@ pub fn is_within_active_hours(start: &str, end: &str, timezone: &str) -> bool {
     }
 }
 
-/// Resolve the heartbeat prompt: use custom if provided, otherwise default.
-pub fn resolve_heartbeat_prompt(custom: Option<&str>) -> String {
-    match custom {
-        Some(p) if !p.trim().is_empty() => p.to_string(),
-        _ => DEFAULT_PROMPT.to_string(),
+/// Resolve the heartbeat prompt with precedence:
+///
+/// 1. Explicit config prompt (`custom`)
+/// 2. `HEARTBEAT.md` content (`heartbeat_md`)
+/// 3. Built-in default prompt
+pub fn resolve_heartbeat_prompt(
+    custom: Option<&str>,
+    heartbeat_md: Option<&str>,
+) -> (String, HeartbeatPromptSource) {
+    if let Some(p) = custom.map(str::trim)
+        && !p.is_empty()
+    {
+        return (p.to_string(), HeartbeatPromptSource::Config);
     }
+    if let Some(md) = heartbeat_md.map(str::trim)
+        && !md.is_empty()
+        && !is_heartbeat_content_empty(md)
+    {
+        return (md.to_string(), HeartbeatPromptSource::HeartbeatMd);
+    }
+    (DEFAULT_PROMPT.to_string(), HeartbeatPromptSource::Default)
 }
 
 /// Parse a human-friendly interval string like "30m", "1h", "90s" into milliseconds.
@@ -307,20 +341,45 @@ mod tests {
 
     #[test]
     fn default_prompt_when_none() {
-        let p = resolve_heartbeat_prompt(None);
+        let (p, source) = resolve_heartbeat_prompt(None, None);
         assert_eq!(p, DEFAULT_PROMPT);
+        assert_eq!(source, HeartbeatPromptSource::Default);
     }
 
     #[test]
     fn default_prompt_when_empty() {
-        let p = resolve_heartbeat_prompt(Some("  "));
+        let (p, source) = resolve_heartbeat_prompt(Some("  "), None);
         assert_eq!(p, DEFAULT_PROMPT);
+        assert_eq!(source, HeartbeatPromptSource::Default);
     }
 
     #[test]
     fn custom_prompt() {
-        let p = resolve_heartbeat_prompt(Some("Check my inbox"));
+        let (p, source) = resolve_heartbeat_prompt(Some("Check my inbox"), None);
         assert_eq!(p, "Check my inbox");
+        assert_eq!(source, HeartbeatPromptSource::Config);
+    }
+
+    #[test]
+    fn heartbeat_md_used_when_config_missing() {
+        let (p, source) = resolve_heartbeat_prompt(None, Some("# Heartbeat\n- Check inbox"));
+        assert_eq!(p, "# Heartbeat\n- Check inbox");
+        assert_eq!(source, HeartbeatPromptSource::HeartbeatMd);
+    }
+
+    #[test]
+    fn config_overrides_heartbeat_md() {
+        let (p, source) =
+            resolve_heartbeat_prompt(Some("Use config prompt"), Some("# Heartbeat\n- Check"));
+        assert_eq!(p, "Use config prompt");
+        assert_eq!(source, HeartbeatPromptSource::Config);
+    }
+
+    #[test]
+    fn prompt_source_as_str_values() {
+        assert_eq!(HeartbeatPromptSource::Config.as_str(), "config");
+        assert_eq!(HeartbeatPromptSource::HeartbeatMd.as_str(), "heartbeat_md");
+        assert_eq!(HeartbeatPromptSource::Default.as_str(), "default");
     }
 
     // ── parse_interval_ms ────────────────────────────────────────────────

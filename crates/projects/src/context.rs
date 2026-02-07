@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use {anyhow::Result, tracing::debug};
+use {anyhow::Result, tracing::info};
 
 use crate::types::ContextFile;
 
@@ -32,7 +32,7 @@ pub fn load_context_files(project_dir: &Path) -> Result<Vec<ContextFile>> {
                 && let Ok(content) = fs::read_to_string(&file_path)
                 && !content.trim().is_empty()
             {
-                debug!(path = %file_path.display(), "loaded context file");
+                info!(path = %file_path.display(), "loaded context file");
                 layer.push(ContextFile {
                     path: file_path,
                     content,
@@ -62,7 +62,7 @@ pub fn load_context_files(project_dir: &Path) -> Result<Vec<ContextFile>> {
             if let Ok(content) = fs::read_to_string(&path)
                 && !content.trim().is_empty()
             {
-                debug!(path = %path.display(), "loaded rule file");
+                info!(path = %path.display(), "loaded rule file");
                 files.push(ContextFile { path, content });
             }
         }

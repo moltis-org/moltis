@@ -242,6 +242,31 @@ Moltis includes several built-in hooks:
 
 Reads `BOOT.md` from the workspace on `GatewayStart` and injects it into the agent context.
 
+`BOOT.md` is intended for short, explicit startup tasks (health checks, reminders,
+"send one startup message", etc.). If the file is missing or empty, nothing is injected.
+
+## Workspace Context Files
+
+Moltis supports several workspace markdown files in `data_dir`.
+
+### TOOLS.md
+
+`TOOLS.md` is loaded as a workspace context file in the system prompt.
+
+Best use is to combine:
+
+- **Local notes**: environment-specific facts (hosts, device names, channel aliases)
+- **Policy constraints**: "prefer read-only tools first", "never run X on startup", etc.
+
+If `TOOLS.md` is empty or missing, it is not injected.
+
+### AGENTS.md (workspace)
+
+Moltis also supports a workspace-level `AGENTS.md` in `data_dir`.
+
+This is separate from project `AGENTS.md`/`CLAUDE.md` discovery. Use workspace
+`AGENTS.md` for global instructions that should apply across projects in this workspace.
+
 ### session-memory
 
 Saves session context when you use the `/new` command, preserving important information for future sessions.
