@@ -240,13 +240,41 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 let account_id = reply_to.account_id.clone();
                 let chat_id = reply_to.chat_id.clone();
                 tokio::spawn(async move {
+                    debug!(
+                        account_id = account_id,
+                        chat_id = chat_id,
+                        "starting typing indicator loop"
+                    );
                     loop {
                         if let Err(e) = outbound.send_typing(&account_id, &chat_id).await {
-                            debug!("typing indicator failed: {e}");
+                            debug!(
+                                account_id = account_id,
+                                chat_id = chat_id,
+                                "typing indicator failed: {e}"
+                            );
+                        } else {
+                            debug!(
+                                account_id = account_id,
+                                chat_id = chat_id,
+                                "typing indicator sent"
+                            );
                         }
                         tokio::select! {
-                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {},
-                            _ = &mut done_rx => break,
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {
+                                debug!(
+                                    account_id = account_id,
+                                    chat_id = chat_id,
+                                    "typing loop: 4s elapsed, sending again"
+                                );
+                            },
+                            _ = &mut done_rx => {
+                                debug!(
+                                    account_id = account_id,
+                                    chat_id = chat_id,
+                                    "typing loop: chat completed, stopping"
+                                );
+                                break;
+                            },
                         }
                     }
                 });

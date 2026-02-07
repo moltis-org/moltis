@@ -2255,6 +2255,24 @@ async fn send_tool_status_to_channels(
                     chat_id = target.chat_id,
                     "failed to send tool status to channel: {e}"
                 );
+            } else {
+                // Re-send typing indicator after status message
+                // (sending a message clears the typing indicator in Telegram)
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "sent tool status, re-sending typing indicator"
+                );
+                if let Err(e) = outbound
+                    .send_typing(&target.account_id, &target.chat_id)
+                    .await
+                {
+                    debug!(
+                        account_id = target.account_id,
+                        chat_id = target.chat_id,
+                        "failed to re-send typing after tool status: {e}"
+                    );
+                }
             }
         });
     }
