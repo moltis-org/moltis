@@ -225,25 +225,15 @@ impl BrowserManager {
             let _ = self.highlight_element(&page, ref_).await;
         }
 
-        let screenshot = if full_page {
-            page.save_screenshot(
+        let screenshot = page
+            .screenshot(
                 chromiumoxide::page::ScreenshotParams::builder()
                     .format(CaptureScreenshotFormat::Png)
-                    .full_page(true)
-                    .build(),
-                "screenshot.png",
-            )
-            .await
-            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?
-        } else {
-            page.screenshot(
-                chromiumoxide::page::ScreenshotParams::builder()
-                    .format(CaptureScreenshotFormat::Png)
+                    .full_page(full_page)
                     .build(),
             )
             .await
-            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?
-        };
+            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?;
 
         // Remove highlight after screenshot
         if highlight_ref.is_some() {
