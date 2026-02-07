@@ -126,25 +126,54 @@ function appendToolResult(toolCard, result) {
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
 	}
-	// Browser screenshot support - display as thumbnail with lightbox
+	// Browser screenshot support - display as thumbnail with lightbox and download
 	if (result.screenshot) {
 		var imgContainer = document.createElement("div");
 		imgContainer.className = "screenshot-container";
 		var img = document.createElement("img");
 		// Handle both raw base64 and data URI formats
-		img.src = result.screenshot.startsWith("data:") ? result.screenshot : `data:image/png;base64,${result.screenshot}`;
+		var imgSrc = result.screenshot.startsWith("data:")
+			? result.screenshot
+			: `data:image/png;base64,${result.screenshot}`;
+		img.src = imgSrc;
 		img.className = "screenshot-thumbnail";
 		img.alt = "Browser screenshot";
 		img.title = "Click to view full size";
+
+		// Helper to trigger download
+		var downloadScreenshot = (e) => {
+			e.stopPropagation();
+			var link = document.createElement("a");
+			link.href = imgSrc;
+			link.download = `screenshot-${Date.now()}.png`;
+			link.click();
+		};
+
 		img.onclick = () => {
 			// Create fullscreen lightbox overlay
 			var overlay = document.createElement("div");
 			overlay.className = "screenshot-lightbox";
+
+			// Container for image and controls
+			var lightboxContent = document.createElement("div");
+			lightboxContent.className = "screenshot-lightbox-content";
+
 			var fullImg = document.createElement("img");
 			fullImg.src = img.src;
 			fullImg.className = "screenshot-lightbox-img";
-			overlay.appendChild(fullImg);
-			// Close on click anywhere
+			fullImg.onclick = (e) => e.stopPropagation(); // Don't close when clicking image
+
+			// Download button in lightbox
+			var downloadBtn = document.createElement("button");
+			downloadBtn.className = "screenshot-download-btn";
+			downloadBtn.innerHTML = "⬇ Download";
+			downloadBtn.onclick = downloadScreenshot;
+
+			lightboxContent.appendChild(fullImg);
+			lightboxContent.appendChild(downloadBtn);
+			overlay.appendChild(lightboxContent);
+
+			// Close on click outside image
 			overlay.onclick = () => overlay.remove();
 			// Close on Escape key
 			var closeOnEscape = (e) => {
@@ -156,7 +185,16 @@ function appendToolResult(toolCard, result) {
 			document.addEventListener("keydown", closeOnEscape);
 			document.body.appendChild(overlay);
 		};
+
+		// Download button next to thumbnail
+		var thumbDownloadBtn = document.createElement("button");
+		thumbDownloadBtn.className = "screenshot-download-btn-small";
+		thumbDownloadBtn.innerHTML = "⬇";
+		thumbDownloadBtn.title = "Download screenshot";
+		thumbDownloadBtn.onclick = downloadScreenshot;
+
 		imgContainer.appendChild(img);
+		imgContainer.appendChild(thumbDownloadBtn);
 		toolCard.appendChild(imgContainer);
 	}
 }

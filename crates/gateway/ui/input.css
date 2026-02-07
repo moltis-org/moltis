@@ -354,6 +354,7 @@
   /* Browser screenshot thumbnail */
   .screenshot-container {
     margin-top: 8px;
+    position: relative;
   }
   .screenshot-thumbnail {
     max-width: 200px;
@@ -385,6 +386,56 @@
     object-fit: contain;
     border-radius: var(--radius-md);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+  .screenshot-lightbox-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  /* Download button in lightbox */
+  .screenshot-download-btn {
+    background: var(--accent-dim);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .screenshot-download-btn:hover {
+    background: var(--accent);
+  }
+  /* Small download button next to thumbnail */
+  .screenshot-download-btn-small {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 24px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .screenshot-container:hover .screenshot-download-btn-small {
+    opacity: 1;
+  }
+  .screenshot-download-btn-small:hover {
+    background: var(--accent-dim);
+    color: white;
+    border-color: var(--accent-dim);
   }
   .msg code {
     background: var(--surface2);
