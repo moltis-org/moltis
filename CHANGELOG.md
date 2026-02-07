@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log Target Display**: Logs now include the crate/module path for easier debugging
   - Example: `INFO moltis_gateway::chat: tool execution succeeded tool=browser`
 
-- **Contributor docs: local PR validation**: Added documentation for the `./scripts/local-validate-pr.sh <PR_ID>` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
+- **Contributor docs: local validation**: Added documentation for the `./scripts/local-validate.sh` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)

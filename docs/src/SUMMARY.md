@@ -9,7 +9,7 @@
 - [Quickstart](quickstart.md)
 - [Installation](installation.md)
 - [Configuration](configuration.md)
-- [Local PR Validation](local-validation.md)
+- [Local Validation](local-validation.md)
 
 ---
 

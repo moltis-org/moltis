@@ -1,23 +1,30 @@
-# Local PR Validation
+# Local Validation
 
-Moltis uses a local-first pull request flow: contributors run validation checks
-on their own machine and publish the results to GitHub commit statuses.
+Moltis provides a local validation script that runs the same checks as CI
+(format, lint, test) on your machine.
 
 ## Why this exists
 
-- Faster feedback for Rust-heavy branches (no long runner queues for every PR push)
+- Faster feedback for Rust-heavy branches (no long runner queues for every push)
 - Better parity with a developer's local environment while iterating
 - Clear visibility in the PR UI (`fmt`, `biome`, `zizmor`, `clippy`, `test`)
 
-## Run local validation for a PR
+## Run local validation
 
-Use the PR number:
+Run all checks on your current checkout:
 
 ```bash
-./scripts/local-validate-pr.sh 63
+./scripts/local-validate.sh
 ```
 
-The script publishes status checks for the current PR head commit:
+When working on a pull request, pass the PR number to also publish commit
+statuses to GitHub:
+
+```bash
+./scripts/local-validate.sh 63
+```
+
+The script runs these checks:
 
 - `local/fmt`
 - `local/biome`
@@ -25,7 +32,8 @@ The script publishes status checks for the current PR head commit:
 - `local/lint`
 - `local/test`
 
-The PR workflow verifies these contexts and surfaces them as checks in the PR.
+In PR mode, the PR workflow verifies these contexts and surfaces them as
+checks in the PR.
 
 ## Notes
 
