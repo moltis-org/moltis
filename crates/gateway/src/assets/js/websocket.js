@@ -73,6 +73,12 @@ function toolCallSummary(name, args) {
 			return `web_fetch ${args.url || ""}`.trim();
 		case "web_search":
 			return `web_search "${args.query || ""}"`;
+		case "browser": {
+			// Format: browser action (mode) url
+			var action = args.action || "browser";
+			var url = args.url ? ` ${args.url}` : "";
+			return `browser ${action}${url}`.trim();
+		}
 		default:
 			return name || "tool";
 	}
@@ -118,6 +124,20 @@ function appendToolResult(toolCard, result) {
 		codeEl.className = "exec-exit";
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
+	}
+	// Browser result - show URL and sandbox mode
+	if (result.url !== undefined || result.sandboxed !== undefined) {
+		var browserInfo = document.createElement("div");
+		browserInfo.className = "exec-output browser-info";
+		var parts = [];
+		if (result.url) parts.push(result.url);
+		if (result.sandboxed !== undefined) {
+			parts.push(result.sandboxed ? "(sandbox)" : "(host)");
+		}
+		if (parts.length > 0) {
+			browserInfo.textContent = parts.join(" ");
+			toolCard.appendChild(browserInfo);
+		}
 	}
 	// Browser screenshot support - display as thumbnail with lightbox
 	if (result.screenshot) {
