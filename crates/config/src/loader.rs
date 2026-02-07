@@ -197,6 +197,11 @@ pub fn soul_path() -> PathBuf {
     data_dir().join("SOUL.md")
 }
 
+/// Path to the workspace AGENTS markdown.
+pub fn agents_path() -> PathBuf {
+    data_dir().join("AGENTS.md")
+}
+
 /// Path to the workspace identity file.
 pub fn identity_path() -> PathBuf {
     data_dir().join("IDENTITY.md")
@@ -210,11 +215,6 @@ pub fn user_path() -> PathBuf {
 /// Path to workspace tool-guidance markdown.
 pub fn tools_path() -> PathBuf {
     data_dir().join("TOOLS.md")
-}
-
-/// Path to workspace bootstrap markdown.
-pub fn bootstrap_path() -> PathBuf {
-    data_dir().join("BOOTSTRAP.md")
 }
 
 /// Path to workspace heartbeat markdown.
@@ -264,14 +264,14 @@ pub fn load_soul() -> Option<String> {
     }
 }
 
+/// Load AGENTS.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_agents_md() -> Option<String> {
+    load_workspace_markdown(agents_path())
+}
+
 /// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_tools_md() -> Option<String> {
     load_workspace_markdown(tools_path())
-}
-
-/// Load BOOTSTRAP.md from the workspace root (`data_dir`) if present and non-empty.
-pub fn load_bootstrap_md() -> Option<String> {
-    load_workspace_markdown(bootstrap_path())
 }
 
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
@@ -461,11 +461,25 @@ fn yaml_scalar(value: &str) -> String {
 
 fn load_workspace_markdown(path: PathBuf) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
-    let trimmed = content.trim();
+    let trimmed = strip_leading_html_comments(&content).trim();
     if trimmed.is_empty() {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn strip_leading_html_comments(content: &str) -> &str {
+    let mut rest = content;
+    loop {
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with("<!--") {
+            return trimmed;
+        }
+        let Some(end) = trimmed.find("-->") else {
+            return "";
+        };
+        rest = &trimmed[end + 3..];
     }
 }
 
@@ -923,13 +937,20 @@ mod tests {
     }
 
     #[test]
-    fn load_bootstrap_md_reads_trimmed_content() {
+    fn load_agents_md_reads_trimmed_content() {
         let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
         set_data_dir(dir.path().to_path_buf());
 
-        std::fs::write(dir.path().join("BOOTSTRAP.md"), "\nBootstrap now\n").unwrap();
-        assert_eq!(load_bootstrap_md().as_deref(), Some("Bootstrap now"));
+        std::fs::write(
+            dir.path().join("AGENTS.md"),
+            "\nLocal workspace instructions\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_agents_md().as_deref(),
+            Some("Local workspace instructions")
+        );
 
         clear_data_dir();
     }
@@ -942,6 +963,37 @@ mod tests {
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "\n# Heartbeat\n- ping\n").unwrap();
         assert_eq!(load_heartbeat_md().as_deref(), Some("# Heartbeat\n- ping"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn workspace_markdown_ignores_leading_html_comments() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(
+            dir.path().join("TOOLS.md"),
+            "<!-- comment -->\n\nUse read-only tools first.",
+        )
+        .unwrap();
+        assert_eq!(
+            load_tools_md().as_deref(),
+            Some("Use read-only tools first.")
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn workspace_markdown_comment_only_is_treated_as_empty() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("HEARTBEAT.md"), "<!-- guidance -->").unwrap();
+        assert_eq!(load_heartbeat_md(), None);
 
         clear_data_dir();
     }

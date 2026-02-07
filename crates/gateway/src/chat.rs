@@ -1648,6 +1648,7 @@ async fn run_with_tools(
         }
     }
     let soul_text = moltis_config::load_soul();
+    let agents_text = moltis_config::load_agents_md();
     let tools_text = moltis_config::load_tools_md();
 
     let native_tools = provider.supports_tools();
@@ -1673,6 +1674,7 @@ async fn run_with_tools(
             Some(&identity),
             Some(&user),
             soul_text.as_deref(),
+            agents_text.as_deref(),
             tools_text.as_deref(),
         )
     } else {
@@ -1683,6 +1685,7 @@ async fn run_with_tools(
             Some(&identity),
             Some(&user),
             soul_text.as_deref(),
+            agents_text.as_deref(),
             tools_text.as_deref(),
         )
     };

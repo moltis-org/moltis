@@ -146,6 +146,8 @@ The agent's identity fields (name, emoji, creature, vibe) are stored in `IDENTIT
 YAML frontmatter at the workspace root (`data_dir`).
 User profile fields are stored in `USER.md` YAML frontmatter at the same location.
 The personality text is stored separately in `SOUL.md` at the workspace root (`data_dir`).
+Tool guidance is stored in `TOOLS.md` at the workspace root (`data_dir`) and is injected
+as workspace context in the system prompt.
 Modifying identity requires the `operator.write` scope, not just `operator.read`.
 
 This prevents prompt injection attacks from subtly modifying the agent's

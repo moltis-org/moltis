@@ -86,9 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Soul storage**: Move agent personality text out of `moltis.toml` into workspace `SOUL.md`; identity APIs/UI still edit soul, but now persist it as a markdown file.
 - **Identity storage**: Persist agent identity fields (`name`, `emoji`, `creature`, `vibe`) to workspace `IDENTITY.md` using YAML frontmatter; settings UI continues to edit these fields through the same RPC/API.
 - **User profile storage**: Persist user profile fields (`name`, `timezone`) to workspace `USER.md` using YAML frontmatter; onboarding/settings continue to use the same API/UI while reading/writing the markdown file.
-- **Workspace markdown support**: Add `TOOLS.md` prompt injection and `BOOTSTRAP.md` startup injection support from workspace root (`data_dir`), with built-in boot hook support for combining `BOOTSTRAP.md` + `BOOT.md`.
+- **Workspace markdown support**: Add `TOOLS.md` prompt injection from workspace root (`data_dir`), and keep startup injection sourced from `BOOT.md`.
 - **Heartbeat prompt precedence**: Support workspace `HEARTBEAT.md` as heartbeat prompt source with precedence `heartbeat.prompt` (config override) → `HEARTBEAT.md` → built-in default; log when config prompt overrides `HEARTBEAT.md`.
 - **Heartbeat UX**: Expose effective heartbeat prompt source (`config`, `HEARTBEAT.md`, or default) via `heartbeat.status` and display it in the Heartbeat settings UI.
+- **BOOT.md onboarding aid**: Seed a default workspace `BOOT.md` with in-file guidance describing startup injection behavior and recommended usage.
+- **Workspace context parity**: Treat workspace `TOOLS.md` as general context (not only policy) and add workspace `AGENTS.md` injection support from `data_dir`.
 - **Exec approval policy wiring**: Gateway now initializes exec approval mode/security level/allowlist from `moltis.toml` (`tools.exec.*`) instead of always using hardcoded defaults.
 - **Runtime tool enforcement**: Chat runs now apply configured tool policy (`tools.policy`) and skill `allowed_tools` constraints when selecting callable tools.
 - **Skill trust lifecycle**: Installed marketplace skills/plugins now track a `trusted` state and must be trusted before they can be enabled; the skills UI now surfaces untrusted status and supports trust-before-enable.

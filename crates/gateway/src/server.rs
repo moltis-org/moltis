@@ -1056,6 +1056,7 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
+    seed_default_workspace_markdown_files();
     seed_example_skill();
     seed_example_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
@@ -3551,7 +3552,7 @@ fn builtin_hook_metadata() -> Vec<(
     vec![
         (
             "boot-md",
-            "Reads BOOTSTRAP.md and BOOT.md from the workspace on startup and injects their content as the initial user message to the agent.",
+            "Reads BOOT.md from the workspace on startup and injects its content as the initial user message to the agent.",
             vec![HookEvent::GatewayStart],
             "crates/plugins/src/bundled/boot_md.rs",
         ),
@@ -3605,6 +3606,24 @@ fn seed_example_skill() {
     }
     if let Err(e) = std::fs::write(&skill_md, EXAMPLE_SKILL_MD) {
         tracing::debug!("could not write template SKILL.md: {e}");
+    }
+}
+
+/// Seed default workspace markdown files in workspace root on first run.
+fn seed_default_workspace_markdown_files() {
+    let data_dir = moltis_config::data_dir();
+    seed_file_if_missing(data_dir.join("BOOT.md"), DEFAULT_BOOT_MD);
+    seed_file_if_missing(data_dir.join("AGENTS.md"), DEFAULT_WORKSPACE_AGENTS_MD);
+    seed_file_if_missing(data_dir.join("TOOLS.md"), DEFAULT_TOOLS_MD);
+    seed_file_if_missing(data_dir.join("HEARTBEAT.md"), DEFAULT_HEARTBEAT_MD);
+}
+
+fn seed_file_if_missing(path: std::path::PathBuf, content: &str) {
+    if path.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::write(&path, content) {
+        tracing::debug!(path = %path.display(), "could not write default markdown file: {e}");
     }
 }
 
@@ -3715,6 +3734,56 @@ Use this as a starting point for your own skills.
 - Avoid broad permissions unless required
 - Document required tools and expected inputs
 "#;
+
+/// Default BOOT.md content seeded into workspace root.
+const DEFAULT_BOOT_MD: &str = r#"<!--
+BOOT.md is optional startup context.
+
+How Moltis uses this file:
+- Read on every GatewayStart by the built-in boot-md hook.
+- Missing/empty/comment-only file = no startup injection.
+- Non-empty content = injected as startup user message context.
+
+Recommended usage:
+- Keep it short and explicit.
+- Use for startup checks/reminders, not onboarding identity setup.
+-->"#;
+
+/// Default workspace AGENTS.md content seeded into workspace root.
+const DEFAULT_WORKSPACE_AGENTS_MD: &str = r#"<!--
+Workspace AGENTS.md contains global instructions for this workspace.
+
+How Moltis uses this file:
+- Loaded from data_dir/AGENTS.md when present.
+- Injected as workspace context in the system prompt.
+- Separate from project AGENTS.md/CLAUDE.md discovery.
+
+Use this for cross-project rules that should apply everywhere in this workspace.
+-->"#;
+
+/// Default TOOLS.md content seeded into workspace root.
+const DEFAULT_TOOLS_MD: &str = r#"<!--
+TOOLS.md contains workspace-specific tool notes and constraints.
+
+How Moltis uses this file:
+- Loaded from data_dir/TOOLS.md when present.
+- Injected as workspace context in the system prompt.
+
+Use this for local setup details (hosts, aliases, device names) and
+tool behavior constraints (safe defaults, forbidden actions, etc.).
+-->"#;
+
+/// Default HEARTBEAT.md content seeded into workspace root.
+const DEFAULT_HEARTBEAT_MD: &str = r#"<!--
+HEARTBEAT.md is an optional heartbeat prompt source.
+
+Prompt precedence:
+1) heartbeat.prompt from config
+2) HEARTBEAT.md
+3) built-in default prompt
+
+If this file is missing/empty/comment-only, Moltis falls back per precedence.
+-->"#;
 
 /// Discover hooks from the filesystem, check eligibility, and build a
 /// [`HookRegistry`] plus a `Vec<DiscoveredHookInfo>` for the web UI.

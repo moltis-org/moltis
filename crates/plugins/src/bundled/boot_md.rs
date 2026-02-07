@@ -1,5 +1,5 @@
-//! `boot-md` hook: reads `BOOTSTRAP.md` / `BOOT.md` from the workspace on
-//! `GatewayStart` and feeds them as startup user message content.
+//! `boot-md` hook: reads `BOOT.md` from the workspace on `GatewayStart` and
+//! feeds it as startup user message content.
 
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use {
 
 use moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload};
 
-/// Reads workspace startup markdown files and injects their content on startup.
+/// Reads workspace BOOT.md and injects its content on startup.
 pub struct BootMdHook {
     workspace_dir: PathBuf,
 }
@@ -37,20 +37,7 @@ impl HookHandler for BootMdHook {
     }
 
     async fn handle(&self, _event: HookEvent, _payload: &HookPayload) -> Result<HookAction> {
-        let bootstrap_path = self.workspace_dir.join("BOOTSTRAP.md");
         let boot_path = self.workspace_dir.join("BOOT.md");
-
-        let bootstrap = read_non_empty_markdown(&bootstrap_path).await?;
-        if let Some(content) = &bootstrap {
-            info!(
-                path = %bootstrap_path.display(),
-                len = content.len(),
-                "loaded BOOTSTRAP.md for startup injection"
-            );
-        } else {
-            debug!(path = %bootstrap_path.display(), "no BOOTSTRAP.md found, skipping");
-        }
-
         let boot = read_non_empty_markdown(&boot_path).await?;
         if let Some(content) = &boot {
             info!(
@@ -62,17 +49,9 @@ impl HookHandler for BootMdHook {
             debug!(path = %boot_path.display(), "no BOOT.md found, skipping");
         }
 
-        let mut startup_parts = Vec::new();
-        if let Some(content) = bootstrap {
-            startup_parts.push(content);
-        }
-        if let Some(content) = boot {
-            startup_parts.push(content);
-        }
-        if startup_parts.is_empty() {
+        let Some(startup_message) = boot else {
             return Ok(HookAction::Continue);
-        }
-        let startup_message = startup_parts.join("\n\n");
+        };
 
         // Return the content as a ModifyPayload so the gateway can inject it.
         Ok(HookAction::ModifyPayload(serde_json::json!({
@@ -86,11 +65,25 @@ async fn read_non_empty_markdown(path: &std::path::Path) -> Result<Option<String
         return Ok(None);
     }
     let content = tokio::fs::read_to_string(path).await?;
-    let trimmed = content.trim();
+    let trimmed = strip_leading_html_comments(&content).trim();
     if trimmed.is_empty() {
         Ok(None)
     } else {
         Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn strip_leading_html_comments(content: &str) -> &str {
+    let mut rest = content;
+    loop {
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with("<!--") {
+            return trimmed;
+        }
+        let Some(end) = trimmed.find("-->") else {
+            return "";
+        };
+        rest = &trimmed[end + 3..];
     }
 }
 
@@ -150,10 +143,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn boot_md_reads_bootstrap_and_boot() {
+    async fn boot_md_comment_only_file_continues() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("BOOTSTRAP.md"), "Bootstrap instructions").unwrap();
-        std::fs::write(tmp.path().join("BOOT.md"), "Boot message").unwrap();
+        std::fs::write(tmp.path().join("BOOT.md"), "<!-- startup notes -->").unwrap();
 
         let hook = BootMdHook::new(tmp.path().to_path_buf());
         let payload = HookPayload::GatewayStart {
@@ -163,11 +155,6 @@ mod tests {
             .handle(HookEvent::GatewayStart, &payload)
             .await
             .unwrap();
-        match result {
-            HookAction::ModifyPayload(v) => {
-                assert_eq!(v["boot_message"], "Bootstrap instructions\n\nBoot message");
-            },
-            _ => panic!("expected ModifyPayload"),
-        }
+        assert!(matches!(result, HookAction::Continue));
     }
 }

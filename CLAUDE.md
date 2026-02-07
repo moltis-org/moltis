@@ -630,10 +630,9 @@ Moltis uses two directories, **never** the current working directory:
   storage (databases, memory files, config). Always use `data_dir()` or
   `config_dir()`. Writing to cwd leaks files into the user's repo.
 - **Workspace root is `data_dir()`**. Any workspace-scoped markdown files
-  (for example `BOOTSTRAP.md`, `BOOT.md`, `HEARTBEAT.md`, `TOOLS.md`,
-  `IDENTITY.md`, `USER.md`, `SOUL.md`, `MEMORY.md`, `memory/*.md`,
-  `.moltis/*`) must be resolved relative to `moltis_config::data_dir()`,
-  never cwd.
+  (for example `BOOT.md`, `HEARTBEAT.md`, `TOOLS.md`, `IDENTITY.md`,
+  `USER.md`, `SOUL.md`, `MEMORY.md`, `memory/*.md`, `.moltis/*`) must be
+  resolved relative to `moltis_config::data_dir()`, never cwd.
 - When a function needs a storage path, pass `data_dir` explicitly or call
   `moltis_config::data_dir()`. Don't assume the process was started from a
   specific directory.
@@ -777,7 +776,11 @@ tests locally. When pushing code to an open pull request, pass the PR number
 **PR description quality:** Every pull request must include a clear, reviewer-friendly
 description with at least these sections:
 - `## Summary` (what changed and why)
-- `## Validation` (exact commands run, e.g. fmt/lint/tests)
+- `## Validation` using checkboxes (not plain bullets), split into:
+  - `### Completed` — checked items for commands that passed
+  - `### Remaining` — unchecked items for follow-up work (or a single checked
+    `- [x] None` if nothing remains)
+  Include exact commands (fmt/lint/tests) in the checkbox items.
 - `## Manual QA` (UI/manual checks performed, or explicitly say `None`)
 
 Do not leave PR bodies as a raw commit dump. Keep them concise and actionable.
