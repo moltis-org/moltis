@@ -321,8 +321,8 @@ readability = true                # Use readability extraction for HTML (cleaner
 [tools.browser]
 enabled = true                    # Enable browser tool
 headless = true                   # Run without visible window (true = background)
-viewport_width = 1280             # Default viewport width in pixels
-viewport_height = 720             # Default viewport height in pixels
+viewport_width = 1920             # Default viewport width in pixels
+viewport_height = 1080            # Default viewport height in pixels
 max_instances = 3                 # Maximum concurrent browser instances
 idle_timeout_secs = 300           # Close idle browsers after this many seconds (5 min)
 navigation_timeout_ms = 30000     # Page load timeout in milliseconds (30 sec)
