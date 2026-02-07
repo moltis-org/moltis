@@ -367,6 +367,7 @@ function SkillDetail(props) {
       </div>
     </div>
     <${SkillMetadata} detail=${d} />
+    ${d.drifted && html`<div style="margin:0 0 8px;font-size:.75rem;color:var(--warning, #c77d00)">Source changed since last trust; review updates before enabling again.</div>`}
     ${d.description && html`<p style="margin:0 0 8px;font-size:.82rem;color:var(--text)">${d.description}</p>`}
     <${MissingDepsSection} detail=${d} onReload=${props.onReload} />
     ${d.compatibility && html`<div style="margin-bottom:8px;font-size:.75rem;color:var(--muted);font-style:italic">${d.compatibility}</div>`}
@@ -445,6 +446,7 @@ function RepoCard(props) {
 				}}
            style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${repo.source}</a>
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
+				${repo.drifted && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
       </div>
       <button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${removeRepo}>Remove</button>
     </div>
@@ -473,6 +475,7 @@ function RepoCard(props) {
                 <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
                   ${skill.enabled && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--accent);color:#fff;font-weight:500">enabled</span>`}
                   ${skill.trusted === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`}
+                  ${skill.drifted && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
                   ${skill.eligible === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--error, #e55);color:#fff;font-weight:500">blocked</span>`}
                 </div>
               </div>`,

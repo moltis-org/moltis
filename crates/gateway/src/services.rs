@@ -3,7 +3,10 @@
 //! allowing the gateway to run standalone before domain crates are wired in.
 
 use {
-    async_trait::async_trait, moltis_channels::ChannelOutbound, serde_json::Value, std::sync::Arc,
+    async_trait::async_trait,
+    moltis_channels::ChannelOutbound,
+    serde_json::Value,
+    std::{collections::HashSet, path::Path, sync::Arc},
 };
 
 /// Error type returned by service methods.
@@ -531,13 +534,17 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn repos_list(&self) -> ServiceResult {
+        let install_dir =
+            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
         let manifest_path =
             moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
-
-        let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repos: Vec<_> = manifest
             .repos
@@ -556,6 +563,7 @@ impl SkillsService for NoopSkillsService {
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
                     "commit_sha": repo.commit_sha,
+                    "drifted": drifted_sources.contains(&repo.source),
                     "format": format,
                     "skill_count": repo.skills.len(),
                     "enabled_count": enabled,
@@ -569,13 +577,17 @@ impl SkillsService for NoopSkillsService {
     async fn repos_list_full(&self) -> ServiceResult {
         use moltis_skills::requirements::check_requirements;
 
+        let install_dir =
+            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
         let manifest_path =
             moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
-
-        let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repos: Vec<_> = manifest
             .repos
@@ -621,6 +633,7 @@ impl SkillsService for NoopSkillsService {
                             "relative_path": s.relative_path,
                             "trusted": s.trusted,
                             "enabled": s.enabled,
+                            "drifted": drifted_sources.contains(&repo.source),
                             "eligible": elig.as_ref().map(|e| e.eligible).unwrap_or(true),
                             "missing_bins": elig.as_ref().map(|e| e.missing_bins.clone()).unwrap_or_default(),
                         })
@@ -638,6 +651,7 @@ impl SkillsService for NoopSkillsService {
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
                     "commit_sha": repo.commit_sha,
+                    "drifted": drifted_sources.contains(&repo.source),
                     "format": format,
                     "skills": skills,
                 })
@@ -703,7 +717,12 @@ impl SkillsService for NoopSkillsService {
         let manifest_path =
             moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repo = manifest
             .repos
@@ -768,6 +787,7 @@ impl SkillsService for NoopSkillsService {
             "install_options": elig.install_options,
             "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
+            "drifted": drifted_sources.contains(source),
             "source_url": source_url,
             "body": content.body,
             "body_html": markdown_to_html(&content.body),
@@ -912,13 +932,17 @@ impl PluginsService for NoopPluginsService {
     }
 
     async fn repos_list(&self) -> ServiceResult {
+        let install_dir =
+            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
         let manifest_path =
             moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
-
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repos: Vec<_> = manifest
             .repos
@@ -934,6 +958,7 @@ impl PluginsService for NoopPluginsService {
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
                     "commit_sha": repo.commit_sha,
+                    "drifted": drifted_sources.contains(&repo.source),
                     "format": format,
                     "skill_count": repo.skills.len(),
                     "enabled_count": enabled,
@@ -945,13 +970,17 @@ impl PluginsService for NoopPluginsService {
     }
 
     async fn repos_list_full(&self) -> ServiceResult {
+        let install_dir =
+            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
         let manifest_path =
             moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
-
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repos: Vec<_> = manifest
             .repos
@@ -978,6 +1007,7 @@ impl PluginsService for NoopPluginsService {
                             "relative_path": s.relative_path,
                             "trusted": s.trusted,
                             "enabled": s.enabled,
+                            "drifted": drifted_sources.contains(&repo.source),
                             "eligible": true,
                             "missing_bins": [],
                         })
@@ -989,6 +1019,7 @@ impl PluginsService for NoopPluginsService {
                     "repo_name": repo.repo_name,
                     "installed_at_ms": repo.installed_at_ms,
                     "commit_sha": repo.commit_sha,
+                    "drifted": drifted_sources.contains(&repo.source),
                     "format": format,
                     "skills": skills,
                 })
@@ -1036,7 +1067,12 @@ impl PluginsService for NoopPluginsService {
         let manifest_path =
             moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let (drift_changed, drifted_sources) =
+            detect_and_mark_repo_drift(&mut manifest, &install_dir);
+        if drift_changed {
+            store.save(&manifest).map_err(|e| e.to_string())?;
+        }
 
         let repo = manifest
             .repos
@@ -1088,12 +1124,58 @@ impl PluginsService for NoopPluginsService {
             "install_options": empty,
             "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
+            "drifted": drifted_sources.contains(source),
             "source_url": source_url,
             "body": entry.body,
             "body_html": markdown_to_html(&entry.body),
             "source": source,
         }))
     }
+}
+
+fn local_repo_head_sha(repo_dir: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (sha.len() == 40).then_some(sha)
+}
+
+fn detect_and_mark_repo_drift(
+    manifest: &mut moltis_skills::types::SkillsManifest,
+    install_dir: &Path,
+) -> (bool, HashSet<String>) {
+    let mut changed = false;
+    let mut drifted = HashSet::new();
+
+    for repo in &mut manifest.repos {
+        let Some(expected_sha) = repo.commit_sha.clone() else {
+            continue;
+        };
+
+        let repo_dir = install_dir.join(&repo.repo_name);
+        let Some(current_sha) = local_repo_head_sha(&repo_dir) else {
+            continue;
+        };
+
+        if current_sha != expected_sha {
+            drifted.insert(repo.source.clone());
+            repo.commit_sha = Some(current_sha);
+            for skill in &mut repo.skills {
+                skill.trusted = false;
+                skill.enabled = false;
+            }
+            changed = true;
+        }
+    }
+
+    (changed, drifted)
 }
 
 fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
@@ -1111,7 +1193,19 @@ fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(|e| e.to_string())?;
 
+    let install_dir = moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
+    let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
+    if drift_changed {
+        store.save(&manifest).map_err(|e| e.to_string())?;
+    }
+
     if enabled {
+        if drifted_sources.contains(source) {
+            return Err(format!(
+                "skill '{skill_name}' source changed since it was last trusted. Review and run plugins.skill.trust before enabling"
+            ));
+        }
+
         let trusted = manifest
             .find_repo(source)
             .and_then(|r| r.skills.iter().find(|s| s.name == skill_name))
@@ -1250,7 +1344,19 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(|e| e.to_string())?;
 
+    let install_dir = moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+    let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
+    if drift_changed {
+        store.save(&manifest).map_err(|e| e.to_string())?;
+    }
+
     if enabled {
+        if drifted_sources.contains(source) {
+            return Err(format!(
+                "skill '{skill_name}' source changed since it was last trusted. Review and run skills.skill.trust before enabling"
+            ));
+        }
+
         let trusted = manifest
             .find_repo(source)
             .and_then(|r| r.skills.iter().find(|s| s.name == skill_name))
