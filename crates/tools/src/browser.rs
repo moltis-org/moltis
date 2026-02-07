@@ -49,6 +49,8 @@ impl AgentTool for BrowserTool {
 
     fn description(&self) -> &str {
         "Control a real browser to interact with web pages.\n\n\
+         USE THIS TOOL when the user says 'browse', 'browser', 'open in browser', \
+         or needs interaction (clicking, forms, screenshots, JavaScript-heavy pages).\n\n\
          REQUIRED: You MUST specify an 'action' parameter. Example:\n\
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
          Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
@@ -56,8 +58,7 @@ impl AgentTool for BrowserTool {
          1. {\"action\": \"navigate\", \"url\": \"...\"} - go to URL, returns session_id\n\
          2. {\"action\": \"snapshot\", \"session_id\": \"...\"} - get interactive elements\n\
          3. {\"action\": \"click\", \"session_id\": \"...\", \"ref_\": N} - click element\n\
-         4. {\"action\": \"screenshot\", \"session_id\": \"...\"} - capture the view\n\n\
-         For simple page content retrieval, prefer `web_fetch` as it's faster."
+         4. {\"action\": \"screenshot\", \"session_id\": \"...\"} - capture the view"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
