@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-02-06
+
+### Fixed
+
+- **CI security**: Use GitHub-hosted runners for PRs to prevent untrusted code from running on self-hosted infrastructure
+- **CI security**: Add `persist-credentials: false` to docs workflow checkout (fixes zizmor artipacked warning)
+
 ## [0.1.4] - 2026-02-06
 
 ### Added
