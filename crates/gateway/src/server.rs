@@ -25,7 +25,11 @@ use {moltis_channels::ChannelPlugin, moltis_protocol::TICK_INTERVAL_MS};
 
 use moltis_agents::providers::ProviderRegistry;
 
-use moltis_tools::{approval::ApprovalManager, exec::EnvVarProvider, image_cache::ImageBuilder};
+use moltis_tools::{
+    approval::{ApprovalManager, ApprovalMode, SecurityLevel},
+    exec::EnvVarProvider,
+    image_cache::ImageBuilder,
+};
 
 use {
     moltis_projects::ProjectStore,
@@ -69,6 +73,90 @@ fn should_prebuild_sandbox_image(
     packages: &[String],
 ) -> bool {
     !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
+}
+
+async fn ollama_has_model(base_url: &str, model: &str) -> bool {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let response = match reqwest::Client::new().get(url).send().await {
+        Ok(resp) => resp,
+        Err(_) => return false,
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let value: serde_json::Value = match response.json().await {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    value
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|models| {
+            models.iter().any(|m| {
+                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+                name == model || name.starts_with(&format!("{model}:"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+async fn ensure_ollama_model(base_url: &str, model: &str) {
+    if ollama_has_model(base_url, model).await {
+        return;
+    }
+
+    warn!(
+        model = %model,
+        base_url = %base_url,
+        "memory: missing Ollama embedding model, attempting auto-pull"
+    );
+
+    let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
+    let pull = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({ "name": model, "stream": false }))
+        .send()
+        .await;
+
+    match pull {
+        Ok(resp) if resp.status().is_success() => {
+            info!(model = %model, "memory: Ollama model pull complete");
+        },
+        Ok(resp) => {
+            warn!(
+                model = %model,
+                status = %resp.status(),
+                "memory: Ollama model pull failed"
+            );
+        },
+        Err(e) => {
+            warn!(model = %model, error = %e, "memory: Ollama model pull request failed");
+        },
+    }
+}
+
+fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
+    let mut manager = ApprovalManager::default();
+
+    manager.mode = ApprovalMode::parse(&config.tools.exec.approval_mode).unwrap_or_else(|| {
+        warn!(
+            value = %config.tools.exec.approval_mode,
+            "invalid tools.exec.approval_mode; falling back to 'on-miss'"
+        );
+        ApprovalMode::OnMiss
+    });
+
+    manager.security_level = SecurityLevel::parse(&config.tools.exec.security_level)
+        .unwrap_or_else(|| {
+            warn!(
+                value = %config.tools.exec.security_level,
+                "invalid tools.exec.security_level; falling back to 'allowlist'"
+            );
+            SecurityLevel::Allowlist
+        });
+
+    manager.allowlist = config.tools.exec.allowlist.clone();
+    manager
 }
 
 // ── Shared app state ─────────────────────────────────────────────────────────
@@ -334,8 +422,8 @@ pub async fn start_gateway(
     ));
     let provider_summary = registry.read().await.provider_summary();
 
-    // Create shared approval manager.
-    let approval_manager = Arc::new(ApprovalManager::default());
+    // Create shared approval manager from config.
+    let approval_manager = Arc::new(approval_manager_from_config(&config));
 
     let mut services = GatewayServices::noop();
 
@@ -968,6 +1056,7 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
+    seed_example_skill();
     seed_example_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
     let (hook_registry, discovered_hooks_info) =
@@ -1039,6 +1128,10 @@ pub async fn start_gateway(
                             "ollama" => "http://localhost:11434".into(),
                             _ => "https://api.openai.com".into(),
                         });
+                    if provider_name == "ollama" {
+                        let model = mem_cfg.model.as_deref().unwrap_or("nomic-embed-text");
+                        ensure_ollama_model(&base_url, model).await;
+                    }
                     let api_key = mem_cfg
                         .api_key
                         .as_ref()
@@ -1069,6 +1162,7 @@ pub async fn start_gateway(
                 .await
                 .is_ok();
             if ollama_ok {
+                ensure_ollama_model("http://localhost:11434", "nomic-embed-text").await;
                 let e =
                     moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(String::new())
                         .with_base_url("http://localhost:11434".into())
@@ -1149,19 +1243,29 @@ pub async fn start_gateway(
                 } else {
                     // Scan the data directory for memory files written by the
                     // silent memory turn (MEMORY.md, memory/*.md).
-                    let data_memory_root = data_dir.clone();
+                    let data_memory_file = data_dir.join("MEMORY.md");
+                    let data_memory_file_lower = data_dir.join("memory.md");
                     let data_memory_sub = data_dir.join("memory");
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
-                        memory_dirs: vec![data_memory_root, data_memory_sub],
+                        memory_dirs: vec![
+                            data_memory_file,
+                            data_memory_file_lower,
+                            data_memory_sub,
+                        ],
                         ..Default::default()
                     };
 
                     let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
                         memory_pool,
                     ));
-                    let watch_dirs = config.memory_dirs.clone();
+                    let watch_dirs: Vec<_> = config
+                        .memory_dirs
+                        .iter()
+                        .filter(|p| p.is_dir())
+                        .cloned()
+                        .collect();
                     let manager = Arc::new(if let Some(embedder) = embedder {
                         moltis_memory::manager::MemoryManager::new(config, store, embedder)
                     } else {
@@ -2420,27 +2524,21 @@ fn collect_mem_snapshot() -> MemSnapshot {
 }
 
 /// Detect the current git branch, returning `None` for `main`/`master` or
-/// when not inside a git repository. The result is cached in a `OnceLock` so
-/// the `git` subprocess runs at most once per process.
+/// when not inside a git repository. The result is cached in a `OnceLock`.
 #[cfg(feature = "web-ui")]
 fn detect_git_branch() -> Option<String> {
     static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     BRANCH
         .get_or_init(|| {
-            let output = std::process::Command::new("git")
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .output()
-                .ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let raw = String::from_utf8(output.stdout).ok()?;
-            parse_git_branch(&raw)
+            let repo = gix::discover(".").ok()?;
+            let head = repo.head().ok()?;
+            let branch = head.referent_name()?.shorten().to_string();
+            parse_git_branch(&branch)
         })
         .clone()
 }
 
-/// Parse the raw output of `git rev-parse --abbrev-ref HEAD`, returning
+/// Parse a branch name, returning
 /// `None` for default branches (`main`/`master`) or empty/blank output.
 #[cfg(feature = "web-ui")]
 fn parse_git_branch(raw: &str) -> Option<String> {
@@ -3400,15 +3498,31 @@ async fn service_worker_handler() -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Response {
     match read_asset(path) {
-        Some(body) => (
-            StatusCode::OK,
-            [
-                ("content-type", mime_for_path(path)),
-                ("cache-control", cache_control),
-            ],
-            body,
-        )
-            .into_response(),
+        Some(body) => {
+            let mut response = (
+                StatusCode::OK,
+                [
+                    ("content-type", mime_for_path(path)),
+                    ("cache-control", cache_control),
+                    ("x-content-type-options", "nosniff"),
+                ],
+                body,
+            )
+                .into_response();
+
+            // Harden SVG delivery against script execution when user-controlled
+            // SVGs are ever introduced. Static first-party SVGs continue to render.
+            if path.rsplit('.').next().unwrap_or("") == "svg" {
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static(
+                        "default-src 'none'; img-src 'self' data:; style-src 'none'; script-src 'none'; object-src 'none'; frame-ancestors 'none'",
+                    ),
+                );
+            }
+
+            response
+        },
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }
@@ -3462,6 +3576,25 @@ fn seed_example_hook() {
     }
     if let Err(e) = std::fs::write(&hook_md, EXAMPLE_HOOK_MD) {
         tracing::debug!("could not write example HOOK.md: {e}");
+    }
+}
+
+/// Seed a starter personal skill into `~/.moltis/skills/template-skill/`.
+///
+/// This is a safe template to help users author their own SKILL.md. Existing
+/// user content is never overwritten.
+fn seed_example_skill() {
+    let skill_dir = moltis_config::data_dir().join("skills/template-skill");
+    let skill_md = skill_dir.join("SKILL.md");
+    if skill_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+        tracing::debug!("could not create template skill dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&skill_md, EXAMPLE_SKILL_MD) {
+        tracing::debug!("could not write template SKILL.md: {e}");
     }
 }
 
@@ -3548,6 +3681,29 @@ os = ["darwin", "linux"]    # skip on other OSes
 bins = ["jq"]               # required binaries in PATH
 env = ["MY_API_KEY"]        # required environment variables
 ```
+"#;
+
+/// Content for the starter example personal skill.
+const EXAMPLE_SKILL_MD: &str = r#"---
+name: template-skill
+description: Starter skill template (safe to copy and edit)
+---
+
+# Template Skill
+
+Use this as a starting point for your own skills.
+
+## How to use
+
+1. Copy this folder to a new skill name (or edit in place)
+2. Update `name` and `description` in frontmatter
+3. Replace this body with clear, specific instructions
+
+## Tips
+
+- Keep instructions explicit and task-focused
+- Avoid broad permissions unless required
+- Document required tools and expected inputs
 "#;
 
 /// Discover hooks from the filesystem, check eligibility, and build a
@@ -3705,7 +3861,111 @@ pub(crate) async fn discover_and_build_hooks(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::collections::HashSet};
+
+    #[test]
+    fn approval_manager_uses_config_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "always".into();
+        cfg.tools.exec.security_level = "strict".into();
+        cfg.tools.exec.allowlist = vec!["git*".into()];
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::Always);
+        assert_eq!(manager.security_level, SecurityLevel::Deny);
+        assert_eq!(manager.allowlist, vec!["git*".to_string()]);
+    }
+
+    #[test]
+    fn approval_manager_falls_back_for_invalid_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "bogus".into();
+        cfg.tools.exec.security_level = "bogus".into();
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::OnMiss);
+        assert_eq!(manager.security_level, SecurityLevel::Allowlist);
+    }
+
+    #[tokio::test]
+    async fn discover_hooks_registers_builtin_handlers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        let (registry, info) =
+            discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
+        let registry = registry.expect("expected hook registry to be created");
+        let handler_names = registry.handler_names();
+
+        assert!(handler_names.iter().any(|n| n == "boot-md"));
+        assert!(handler_names.iter().any(|n| n == "command-logger"));
+        assert!(handler_names.iter().any(|n| n == "session-memory"));
+
+        assert!(
+            info.iter()
+                .any(|h| h.name == "boot-md" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "command-logger" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "session-memory" && h.source == "builtin")
+        );
+    }
+
+    #[tokio::test]
+    async fn command_hook_dispatch_saves_session_memory_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "user", "content": "Hello from smoke test"}),
+            )
+            .await
+            .unwrap();
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "assistant", "content": "Hi there"}),
+            )
+            .await
+            .unwrap();
+
+        let mut registry = moltis_common::hooks::HookRegistry::new();
+        registry.register(Arc::new(
+            moltis_plugins::bundled::session_memory::SessionMemoryHook::new(
+                tmp.path().to_path_buf(),
+                Arc::clone(&session_store),
+            ),
+        ));
+
+        let payload = moltis_common::hooks::HookPayload::Command {
+            session_key: "smoke-session".into(),
+            action: "new".into(),
+            sender_id: None,
+        };
+        let result = registry.dispatch(&payload).await.unwrap();
+        assert!(matches!(result, moltis_common::hooks::HookAction::Continue));
+
+        let memory_dir = tmp.path().join("memory");
+        assert!(memory_dir.is_dir());
+
+        let files: Vec<_> = std::fs::read_dir(&memory_dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        assert!(content.contains("smoke-session"));
+        assert!(content.contains("Hello from smoke test"));
+        assert!(content.contains("Hi there"));
+    }
 
     #[tokio::test]
     async fn websocket_header_auth_accepts_valid_session_cookie() {
@@ -3814,6 +4074,32 @@ mod tests {
         // One has port, other doesn't — different origins.
         assert!(!is_same_origin("http://localhost:8080", "localhost"));
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn asset_serving_sets_nosniff_header() {
+        let response = serve_asset("style.css", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let nosniff = response
+            .headers()
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(nosniff, Some("nosniff"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn svg_assets_get_restrictive_csp_header() {
+        let response = serve_asset("icons/icon-base.svg", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(csp.contains("script-src 'none'"));
+        assert!(csp.contains("object-src 'none'"));
     }
 
     #[test]

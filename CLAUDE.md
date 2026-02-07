@@ -156,6 +156,19 @@ days * 24 * 60 * 60
 This principle applies broadly: if a crate in the workspace already
 provides a clear one-liner, use it rather than reimplementing the logic.
 
+### Prefer crates over subprocesses
+
+Avoid shelling out to external CLIs from Rust when a mature crate exists.
+
+- Prefer in-process crates over `std::process::Command` / `tokio::process::Command`
+  for core functionality (e.g. git metadata via `gix`/gitoxide).
+- Consider a crate "good enough" when it is actively maintained, broadly used,
+  and supports the required operation directly (not by wrapping the same CLI).
+- Use subprocesses only for operations that are not yet practical in crates
+  (for example porcelain-only workflows like certain `git worktree` commands).
+- When a subprocess exception is necessary, keep the call narrowly scoped,
+  validate inputs, and document why the crate path was not used.
+
 The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
 whichever is already imported in the crate you're editing, but default to
 `time` for new code since it's lighter.
@@ -752,9 +765,9 @@ and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
 
-**PR local validation:** When pushing code to an open pull request, run
-`./scripts/local-validate-pr.sh <PR_ID>` (for example `./scripts/local-validate-pr.sh 63`)
-to publish local verification statuses before/after pushing.
+**Local validation:** Run `./scripts/local-validate.sh` to check fmt, lint, and
+tests locally. When pushing code to an open pull request, pass the PR number
+(e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
 
 ## Code Quality Checklist
 

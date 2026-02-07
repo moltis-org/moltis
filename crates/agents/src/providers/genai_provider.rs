@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use {async_trait::async_trait, futures::StreamExt, tokio_stream::Stream};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent};
 
 /// Provider backed by the `genai` crate (supports Anthropic, OpenAI, Gemini,
 /// Groq, Ollama, xAI, DeepSeek, Cohere, and more via a single client).
@@ -39,17 +39,27 @@ fn genai_usage_to_usage(u: &genai::chat::Usage) -> Usage {
     }
 }
 
-fn build_genai_messages(messages: &[serde_json::Value]) -> Vec<genai::chat::ChatMessage> {
+fn build_genai_messages(messages: &[ChatMessage]) -> Vec<genai::chat::ChatMessage> {
     messages
         .iter()
-        .map(|msg| {
-            let role = msg["role"].as_str().unwrap_or("user");
-            let content = msg["content"].as_str().unwrap_or("");
-            match role {
-                "system" => genai::chat::ChatMessage::system(content),
-                "assistant" => genai::chat::ChatMessage::assistant(content),
-                _ => genai::chat::ChatMessage::user(content),
-            }
+        .filter_map(|msg| match msg {
+            ChatMessage::System { content } => Some(genai::chat::ChatMessage::system(content)),
+            ChatMessage::Assistant { content, .. } => Some(genai::chat::ChatMessage::assistant(
+                content.as_deref().unwrap_or(""),
+            )),
+            ChatMessage::User {
+                content: UserContent::Text(text),
+            } => Some(genai::chat::ChatMessage::user(text)),
+            ChatMessage::User {
+                content: UserContent::Multimodal(_),
+            } => {
+                // genai doesn't support multimodal content; send empty string.
+                Some(genai::chat::ChatMessage::user(""))
+            },
+            ChatMessage::Tool { .. } => {
+                // genai doesn't have a tool message type; skip.
+                None
+            },
         })
         .collect()
 }
@@ -66,7 +76,7 @@ impl LlmProvider for GenaiProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         _tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let chat_req = genai::chat::ChatRequest::new(build_genai_messages(messages));
@@ -88,7 +98,7 @@ impl LlmProvider for GenaiProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             use genai::chat::ChatStreamEvent;

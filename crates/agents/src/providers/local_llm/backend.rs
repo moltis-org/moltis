@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use {anyhow::Result, async_trait::async_trait, tokio_stream::Stream};
 
-use crate::model::{CompletionResponse, StreamEvent};
+use crate::model::{ChatMessage, CompletionResponse, StreamEvent};
 
 use super::LocalLlmConfig;
 
@@ -58,12 +58,12 @@ pub trait LocalBackend: Send + Sync {
     fn context_window(&self) -> u32;
 
     /// Run completion (non-streaming).
-    async fn complete(&self, messages: &[serde_json::Value]) -> Result<CompletionResponse>;
+    async fn complete(&self, messages: &[ChatMessage]) -> Result<CompletionResponse>;
 
     /// Run streaming completion.
     fn stream<'a>(
         &'a self,
-        messages: &'a [serde_json::Value],
+        messages: &'a [ChatMessage],
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>>;
 }
 
@@ -231,7 +231,7 @@ pub mod gguf {
         tracing::{debug, info, warn},
     };
 
-    use crate::model::{CompletionResponse, StreamEvent, Usage};
+    use crate::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
 
     use {
         super::{BackendType, LocalBackend, LocalLlmConfig},
@@ -428,7 +428,7 @@ pub mod gguf {
             self.context_size
         }
 
-        async fn complete(&self, messages: &[serde_json::Value]) -> Result<CompletionResponse> {
+        async fn complete(&self, messages: &[ChatMessage]) -> Result<CompletionResponse> {
             let prompt = format_messages(messages, self.chat_template());
             let max_tokens = 4096u32;
 
@@ -465,7 +465,7 @@ pub mod gguf {
 
         fn stream<'a>(
             &'a self,
-            messages: &'a [serde_json::Value],
+            messages: &'a [ChatMessage],
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
             let prompt = format_messages(messages, self.chat_template());
             let max_tokens = 4096u32;
@@ -633,7 +633,7 @@ pub mod mlx {
         tracing::{info, warn},
     };
 
-    use crate::model::{CompletionResponse, StreamEvent, Usage};
+    use crate::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
 
     use {
         super::{BackendType, LocalBackend, LocalLlmConfig},
@@ -861,7 +861,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
             self.context_size
         }
 
-        async fn complete(&self, messages: &[serde_json::Value]) -> Result<CompletionResponse> {
+        async fn complete(&self, messages: &[ChatMessage]) -> Result<CompletionResponse> {
             let prompt = format_messages(messages, self.chat_template());
             let (text, input_tokens, output_tokens) = self.generate(&prompt, 4096).await?;
 
@@ -877,7 +877,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
 
         fn stream<'a>(
             &'a self,
-            messages: &'a [serde_json::Value],
+            messages: &'a [ChatMessage],
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + 'a>> {
             let prompt = format_messages(messages, self.chat_template());
             let model_path = self.model_path.to_string_lossy().to_string();

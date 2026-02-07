@@ -30,7 +30,7 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{gauge, histogram, labels, llm as llm_metrics};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage};
 
 use {
     chat_templates::{ChatTemplateHint, format_messages},
@@ -374,7 +374,7 @@ impl LlmProvider for LocalGgufProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let prompt = format_messages(messages, self.chat_template());
@@ -415,7 +415,7 @@ impl LlmProvider for LocalGgufProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         let prompt = format_messages(&messages, self.chat_template());
         let max_tokens = 4096u32;
@@ -687,7 +687,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
@@ -698,7 +698,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             if let Err(e) = self.ensure_loaded().await {

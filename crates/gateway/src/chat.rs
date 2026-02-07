@@ -20,8 +20,8 @@ use moltis_config::MessageQueueMode;
 
 use {
     moltis_agents::{
-        AgentRunError,
-        model::StreamEvent,
+        AgentRunError, ChatMessage,
+        model::{StreamEvent, values_to_chat_messages},
         prompt::{build_system_prompt_minimal, build_system_prompt_with_session},
         providers::ProviderRegistry,
         runner::{RunnerEvent, run_agent_loop_streaming},
@@ -29,6 +29,7 @@ use {
     },
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
     moltis_skills::discover::SkillDiscoverer,
+    moltis_tools::policy::{ToolPolicy, profile_tools},
 };
 
 use crate::{
@@ -43,6 +44,86 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
+    let mut effective = ToolPolicy::default();
+    if let Some(profile) = config.tools.policy.profile.as_deref()
+        && !profile.is_empty()
+    {
+        effective = effective.merge_with(&profile_tools(profile));
+    }
+    let configured = ToolPolicy {
+        allow: config.tools.policy.allow.clone(),
+        deny: config.tools.policy.deny.clone(),
+    };
+    effective.merge_with(&configured)
+}
+
+fn normalize_skill_allowed_pattern(pattern: &str) -> String {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // OpenClaw-style tool declarations may look like `Bash(git:*)`.
+    let base = trimmed.split('(').next().unwrap_or(trimmed).trim();
+    let lower = base.to_ascii_lowercase();
+    match lower.as_str() {
+        "bash" => "exec".to_string(),
+        "webfetch" => "web_fetch".to_string(),
+        "websearch" => "web_search".to_string(),
+        _ => lower,
+    }
+}
+
+fn matches_pattern(pattern: &str, tool_name: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+
+    let candidate = tool_name.to_ascii_lowercase();
+    if pattern == "*" {
+        return true;
+    }
+
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return candidate.starts_with(prefix);
+    }
+
+    pattern == candidate
+}
+
+fn apply_runtime_tool_filters(
+    base: &ToolRegistry,
+    config: &moltis_config::MoltisConfig,
+    skills: &[moltis_skills::types::SkillMetadata],
+    mcp_disabled: bool,
+) -> ToolRegistry {
+    let base_registry = if mcp_disabled {
+        base.clone_without_mcp()
+    } else {
+        base.clone_without(&[])
+    };
+
+    let policy = effective_tool_policy(config);
+    let policy_filtered = base_registry.clone_allowed_by(|name| policy.is_allowed(name));
+
+    // Collect skill-declared allowed tools as a union across active skills.
+    let mut skill_patterns: Vec<String> = skills
+        .iter()
+        .flat_map(|s| s.allowed_tools.iter())
+        .map(|s| normalize_skill_allowed_pattern(s))
+        .filter(|s| !s.is_empty())
+        .collect();
+    skill_patterns.sort();
+    skill_patterns.dedup();
+
+    if skill_patterns.is_empty() {
+        return policy_filtered;
+    }
+
+    policy_filtered.clone_allowed_by(|name| skill_patterns.iter().any(|p| matches_pattern(p, name)))
 }
 
 // ── Disabled Models Store ────────────────────────────────────────────────────
@@ -1162,9 +1243,10 @@ impl ChatService for LiveChatService {
         if let Some(ref mm) = self.state.memory_manager {
             let memory_dir = moltis_config::data_dir();
             if let Ok(provider) = self.resolve_provider(&session_key, &history).await {
+                let chat_history_for_memory = values_to_chat_messages(&history);
                 match moltis_agents::silent_turn::run_silent_memory_turn(
                     provider,
-                    &history,
+                    &chat_history_for_memory,
                     &memory_dir,
                 )
                 .await
@@ -1188,12 +1270,6 @@ impl ChatService for LiveChatService {
         }
 
         // Build a summary prompt from the conversation.
-        let mut summary_messages: Vec<serde_json::Value> = Vec::new();
-        summary_messages.push(serde_json::json!({
-            "role": "system",
-            "content": "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble."
-        }));
-
         let mut conversation_text = String::new();
         for msg in &history {
             let role = msg
@@ -1203,10 +1279,13 @@ impl ChatService for LiveChatService {
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             conversation_text.push_str(&format!("{role}: {content}\n\n"));
         }
-        summary_messages.push(serde_json::json!({
-            "role": "user",
-            "content": conversation_text,
-        }));
+
+        let summary_messages = vec![
+            ChatMessage::system(
+                "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
+            ),
+            ChatMessage::user(&conversation_text),
+        ];
 
         // Use the session's model if available, otherwise fall back to the model
         // from the last assistant message, then to the first registered provider.
@@ -1390,15 +1469,11 @@ impl ChatService for LiveChatService {
             .as_ref()
             .and_then(|e| e.mcp_disabled)
             .unwrap_or(false);
+        let config = moltis_config::discover_and_load();
         let tools: Vec<serde_json::Value> = if supports_tools {
             let registry_guard = self.tool_registry.read().await;
-            let filtered;
-            let effective_registry: &ToolRegistry = if mcp_disabled {
-                filtered = registry_guard.clone_without_mcp();
-                &filtered
-            } else {
-                &registry_guard
-            };
+            let effective_registry =
+                apply_runtime_tool_filters(&registry_guard, &config, &[], mcp_disabled);
             effective_registry
                 .list_schemas()
                 .iter()
@@ -1538,7 +1613,7 @@ async fn run_with_tools(
     tool_registry: &Arc<RwLock<ToolRegistry>>,
     text: &str,
     provider_name: &str,
-    history: &[serde_json::Value],
+    history_raw: &[serde_json::Value],
     session_key: &str,
     project_context: Option<&str>,
     session_context: Option<&str>,
@@ -1554,28 +1629,27 @@ async fn run_with_tools(
 
     let native_tools = provider.supports_tools();
 
+    let filtered_registry = {
+        let registry_guard = tool_registry.read().await;
+        if native_tools {
+            apply_runtime_tool_filters(&registry_guard, &config, skills, mcp_disabled)
+        } else {
+            registry_guard.clone_without(&[])
+        }
+    };
+
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        let registry_guard = tool_registry.read().await;
-        let owned_filtered;
-        let tools_for_prompt: &ToolRegistry = if mcp_disabled {
-            owned_filtered = registry_guard.clone_without_mcp();
-            &owned_filtered
-        } else {
-            &registry_guard
-        };
-        let prompt = build_system_prompt_with_session(
-            tools_for_prompt,
+        build_system_prompt_with_session(
+            &filtered_registry,
             native_tools,
             project_context,
             session_context,
             skills,
             Some(&config.identity),
             Some(&config.user),
-        );
-        drop(registry_guard);
-        prompt
+        )
     } else {
         // Minimal prompt without tools for local LLMs
         build_system_prompt_minimal(
@@ -1754,11 +1828,12 @@ async fn run_with_tools(
         });
     });
 
-    // Pass history (excluding the current user message, which run_agent_loop adds).
-    let hist = if history.is_empty() {
+    // Convert persisted JSON history to typed ChatMessages for the LLM provider.
+    let chat_history = values_to_chat_messages(history_raw);
+    let hist = if chat_history.is_empty() {
         None
     } else {
-        Some(history.to_vec())
+        Some(chat_history)
     };
 
     // Inject session key, sandbox mode, and accept-language into tool call params so tools can
@@ -1773,17 +1848,9 @@ async fn run_with_tools(
     }
 
     let provider_ref = provider.clone();
-    let registry_guard = tool_registry.read().await;
-    let owned_filtered_loop;
-    let tools_for_loop: &ToolRegistry = if mcp_disabled {
-        owned_filtered_loop = registry_guard.clone_without_mcp();
-        &owned_filtered_loop
-    } else {
-        &registry_guard
-    };
     let first_result = run_agent_loop_streaming(
         provider,
-        tools_for_loop,
+        &filtered_registry,
         &system_prompt,
         text,
         Some(&on_event),
@@ -1836,16 +1903,17 @@ async fn run_with_tools(
                     .await;
 
                     // Reload compacted history and retry.
-                    let compacted_history = store.read(session_key).await.unwrap_or_default();
-                    let retry_hist = if compacted_history.is_empty() {
+                    let compacted_history_raw = store.read(session_key).await.unwrap_or_default();
+                    let compacted_chat = values_to_chat_messages(&compacted_history_raw);
+                    let retry_hist = if compacted_chat.is_empty() {
                         None
                     } else {
-                        Some(compacted_history)
+                        Some(compacted_chat)
                     };
 
                     run_agent_loop_streaming(
                         provider_ref.clone(),
-                        tools_for_loop,
+                        &filtered_registry,
                         &system_prompt,
                         text,
                         Some(&on_event),
@@ -1956,11 +2024,6 @@ async fn compact_session(
         return Err("nothing to compact".into());
     }
 
-    let mut summary_messages: Vec<serde_json::Value> = vec![serde_json::json!({
-        "role": "system",
-        "content": "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble."
-    })];
-
     let mut conversation_text = String::new();
     for msg in &history {
         let role = msg
@@ -1970,10 +2033,13 @@ async fn compact_session(
         let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
         conversation_text.push_str(&format!("{role}: {content}\n\n"));
     }
-    summary_messages.push(serde_json::json!({
-        "role": "user",
-        "content": conversation_text,
-    }));
+
+    let summary_messages = vec![
+        ChatMessage::system(
+            "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
+        ),
+        ChatMessage::user(&conversation_text),
+    ];
 
     let mut stream = provider.stream(summary_messages);
     let mut summary = String::new();
@@ -2015,40 +2081,29 @@ async fn run_streaming(
     provider: Arc<dyn moltis_agents::model::LlmProvider>,
     text: &str,
     provider_name: &str,
-    history: &[serde_json::Value],
+    history_raw: &[serde_json::Value],
     session_key: &str,
     project_context: Option<&str>,
     session_context: Option<&str>,
     user_message_index: usize,
     skills: &[moltis_skills::types::SkillMetadata],
 ) -> Option<(String, u32, u32)> {
-    let mut messages: Vec<serde_json::Value> = Vec::new();
+    let mut messages: Vec<ChatMessage> = Vec::new();
     // Prepend session + project context as system messages.
     if let Some(ctx) = session_context {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": format!("## Current Session\n\n{ctx}"),
-        }));
+        messages.push(ChatMessage::system(format!("## Current Session\n\n{ctx}")));
     }
     if let Some(ctx) = project_context {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": ctx,
-        }));
+        messages.push(ChatMessage::system(ctx));
     }
     // Inject skills into the system prompt for streaming mode too.
     if !skills.is_empty() {
         let skills_block = moltis_skills::prompt_gen::generate_skills_prompt(skills);
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": skills_block,
-        }));
+        messages.push(ChatMessage::system(skills_block));
     }
-    messages.extend_from_slice(history);
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": text,
-    }));
+    // Convert persisted JSON history to typed ChatMessages for the LLM provider.
+    messages.extend(values_to_chat_messages(history_raw));
+    messages.push(ChatMessage::user(text));
 
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
@@ -2460,6 +2515,7 @@ mod tests {
     use {
         super::*,
         anyhow::Result,
+        moltis_agents::tool_registry::AgentTool,
         moltis_common::types::ReplyPayload,
         std::{
             sync::{
@@ -2469,6 +2525,29 @@ mod tests {
             time::{Duration, Instant},
         },
     };
+
+    struct DummyTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl AgentTool for DummyTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "test"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
 
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
@@ -2749,5 +2828,58 @@ mod tests {
 
         let collect: Wrapper = toml::from_str(r#"mode = "collect""#).unwrap();
         assert_eq!(collect.mode, MessageQueueMode::Collect);
+    }
+
+    #[test]
+    fn skill_allowed_pattern_normalization_maps_openclaw_names() {
+        assert_eq!(normalize_skill_allowed_pattern("Bash(git:*)"), "exec");
+        assert_eq!(normalize_skill_allowed_pattern("WebFetch"), "web_fetch");
+        assert_eq!(normalize_skill_allowed_pattern("  exec  "), "exec");
+    }
+
+    #[test]
+    fn effective_tool_policy_profile_and_config_merge() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.profile = Some("full".into());
+        cfg.tools.policy.deny = vec!["exec".into()];
+
+        let policy = effective_tool_policy(&cfg);
+        assert!(!policy.is_allowed("exec"));
+        assert!(policy.is_allowed("web_fetch"));
+    }
+
+    #[test]
+    fn runtime_filters_apply_policy_and_skill_allowed_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "web_fetch".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "session_state".to_string(),
+        }));
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["exec".into(), "web_fetch".into()];
+
+        let skills = vec![moltis_skills::types::SkillMetadata {
+            name: "my-skill".into(),
+            description: "test".into(),
+            license: None,
+            compatibility: None,
+            allowed_tools: vec!["Bash(git:*)".into()],
+            homepage: None,
+            dockerfile: None,
+            requires: Default::default(),
+            path: std::path::PathBuf::new(),
+            source: None,
+        }];
+
+        let filtered = apply_runtime_tool_filters(&registry, &cfg, &skills, false);
+        assert!(filtered.get("exec").is_some());
+        assert!(filtered.get("web_fetch").is_none());
+        assert!(filtered.get("session_state").is_none());
     }
 }

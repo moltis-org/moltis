@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mistral and other providers rejecting requests with HTTP 422**: Session metadata fields
+  (`created_at`, `model`, `provider`, `inputTokens`, `outputTokens`) were leaking into
+  provider API request bodies. Mistral's strict validation rejected the extra `created_at`
+  field. Replaced `Vec<serde_json::Value>` with a typed `ChatMessage` enum in the
+  `LlmProvider` trait — metadata can no longer leak because the type only contains
+  LLM-relevant fields (`role`, `content`, `tool_calls`). Conversion from persisted JSON
+  happens once at the gateway boundary via `values_to_chat_messages()`.
+
 ### Added
 
 - **Voice Provider Management UI**: Configure TTS and STT providers from Settings > Voice
@@ -71,8 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log Target Display**: Logs now include the crate/module path for easier debugging
   - Example: `INFO moltis_gateway::chat: tool execution succeeded tool=browser`
 
-- **Contributor docs: local PR validation**: Added documentation for the `./scripts/local-validate-pr.sh <PR_ID>` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
-
+- **Contributor docs: local validation**: Added documentation for the `./scripts/local-validate.sh` workflow, including published local status contexts, platform behavior, and CI fallback expectations.
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)
@@ -90,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release packaging**: Derive release artifact versions from the Git tag (`vX.Y.Z`) in CI, and sync package metadata during release jobs to prevent filename/version drift.
 - **Versioning**: Bump workspace and snap baseline version to `0.2.0`.
 - **Onboarding auth flow**: Route first-run setup directly into `/onboarding` and remove the separate `/setup` web UI page.
+- **Exec approval policy wiring**: Gateway now initializes exec approval mode/security level/allowlist from `moltis.toml` (`tools.exec.*`) instead of always using hardcoded defaults.
+- **Runtime tool enforcement**: Chat runs now apply configured tool policy (`tools.policy`) and skill `allowed_tools` constraints when selecting callable tools.
+- **Skill trust lifecycle**: Installed marketplace skills/plugins now track a `trusted` state and must be trusted before they can be enabled; the skills UI now surfaces untrusted status and supports trust-before-enable.
+- **Git metadata via gitoxide**: Gateway now resolves branch names, repo HEAD SHAs, and commit timestamps using `gix` (gitoxide) instead of shelling out to `git` for those read-only operations.
 
 ### Fixed
 
@@ -109,6 +122,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tall screenshot lightbox**: Full-page screenshots now display at proper size
   with vertical scrolling instead of being scaled down to fit the viewport.
 - **Telegram typing indicator for long responses**: Channel replies now wait for outbound delivery tasks to finish before chat completion returns, so periodic `typing...` updates continue until the Telegram message is actually sent.
+- **Skills dependency install safety**: `skills.install_dep` now requires explicit user confirmation and blocks host installs when sandbox mode is disabled (unless explicitly overridden in the RPC call).
+
+### Security
+
+- **Asset response hardening**: Static assets now set `X-Content-Type-Options: nosniff`, and SVG responses include a restrictive `Content-Security-Policy` (`script-src 'none'`, `object-src 'none'`) to reduce stored-XSS risk if user-controlled SVGs are ever introduced.
+- **Archive extraction hardening**: Skills/plugin tarball installs now reject unsafe archive paths (`..`, absolute/path-prefix escapes) and reject symlink/hardlink archive entries to prevent path traversal and link-based escapes.
+- **Install provenance**: Installed skill/plugin repo manifests now persist a pinned `commit_sha` (resolved from clone or API fallback) for future trust drift detection.
+- **Re-trust on source drift**: If an installed git-backed repo's HEAD commit changes from the pinned `commit_sha`, the gateway now marks its skills untrusted+disabled and requires trust again before re-enabling; the UI surfaces this as `source changed`.
+- **Security audit trail**: Skill/plugin install, remove, trust, enable/disable, dependency install, and source-drift events are now appended to `~/.moltis/logs/security-audit.jsonl` for incident review.
+- **Emergency kill switch**: Added `skills.emergency_disable` to immediately disable all installed third-party skills and plugins; exposed in the Skills UI as a one-click emergency action.
+- **Risky dependency install blocking**: `skills.install_dep` now blocks suspicious install command patterns by default (e.g. piped shell payloads, base64 decode chains, quarantine bypass) unless explicitly overridden with `allow_risky_install=true`.
+- **Provenance visibility**: Skills UI now displays pinned install commit SHA in repo and detail views to make source provenance easier to verify.
+- **Recent-commit risk warnings**: Skill/plugin detail views now include commit links and commit-age indicators, with a prominent warning banner when the pinned commit is very recent.
+- **Installer subprocess reduction**: Skills/plugins install paths now avoid `git` subprocess clone attempts and use GitHub tarball installs with pinned commit metadata.
+- **Install resilience for rapid multi-repo installs**: Skills/plugins install now auto-clean stale on-disk directories that are missing from manifest state, and tar extraction skips link entries instead of failing the whole install.
+- **Orphaned repo visibility**: Skills/plugins repo listing now surfaces manifest-missing directories found on disk as `orphaned` entries and allows removing them from the UI.
+- **Protected seed skills**: Discovered template skills (`template-skill` / `template`) are now marked protected and cannot be deleted from the web UI.
+- **License review links**: Skill/plugin license badges now link directly to repository license files when detectable (e.g. `LICENSE.txt`, `LICENSE.md`, `LICENSE`).
+- **Example skill seeding**: Gateway now seeds `~/.moltis/skills/template-skill/SKILL.md` on startup when missing, so users always have a starter personal skill template.
+- **Memory indexing scope tightened**: Memory sync now indexes only `MEMORY.md` / `memory.md` and `memory/` content by default (instead of scanning the entire data root), reducing irrelevant indexing noise from installed skills/plugins.
+- **Ollama embedding bootstrap**: When using Ollama for memory embeddings, gateway now auto-attempts to pull missing embedding models (default `nomic-embed-text`) via Ollama HTTP API.
+
+### Documentation
+
+- Added `docs/src/skills-security.md` with third-party skills/plugin hardening guidance (trust lifecycle, provenance pinning, source-drift re-trust, risky install guards, emergency disable, and security audit logging).
 
 ## [0.1.10] - 2026-02-06
 
