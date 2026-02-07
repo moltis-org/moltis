@@ -28,6 +28,7 @@ pub async fn handle_connection(
     methods: Arc<MethodRegistry>,
     remote_addr: SocketAddr,
     accept_language: Option<String>,
+    header_authenticated: bool,
 ) {
     let conn_id = uuid::Uuid::new_v4().to_string();
     let remote_ip = remote_addr.ip().to_string();
@@ -95,7 +96,7 @@ pub async fn handle_connection(
 
     // Try credential-store auth first (API key, password hash), then fall
     // back to legacy env-var auth.
-    let mut authenticated = is_loopback;
+    let mut authenticated = is_loopback || header_authenticated;
     // Scopes from API key verification (if any).
     let mut api_key_scopes: Option<Vec<String>> = None;
 

@@ -1,0 +1,37 @@
+app            = "moltis"
+primary_region = "iad"
+
+[build]
+image = "ghcr.io/moltis-org/moltis:latest"
+
+[env]
+MOLTIS_CONFIG_DIR      = "/data/config"
+MOLTIS_DATA_DIR        = "/data"
+MOLTIS_DEPLOY_PLATFORM = "flyio"
+MOLTIS_NO_TLS          = "true"
+
+[http_service]
+auto_start_machines  = true
+auto_stop_machines   = "stop"
+force_https          = true
+internal_port        = 8080
+min_machines_running = 0
+
+[http_service.concurrency]
+hard_limit = 250
+soft_limit = 200
+type       = "connections"
+
+[[http_service.checks]]
+grace_period = "10s"
+interval     = "30s"
+method       = "GET"
+path         = "/health"
+timeout      = "5s"
+
+[mounts]
+destination = "/data"
+source      = "moltis_data"
+
+[processes]
+app = "--bind 0.0.0.0 --port 8080 --no-tls"

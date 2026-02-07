@@ -6,7 +6,7 @@ use secrecy::ExposeSecret;
 use std::path::PathBuf;
 
 #[cfg(feature = "web-ui")]
-use axum::response::Html;
+use axum::response::{Html, Redirect};
 use {
     axum::{
         Router,
@@ -320,6 +320,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 pub async fn start_gateway(
     bind: &str,
     port: u16,
+    no_tls: bool,
     log_buffer: Option<crate::logs::LogBuffer>,
     config_dir: Option<std::path::PathBuf>,
     data_dir: Option<std::path::PathBuf>,
@@ -336,10 +337,18 @@ pub async fn start_gateway(
     // Resolve auth from environment (MOLTIS_TOKEN / MOLTIS_PASSWORD).
     let token = std::env::var("MOLTIS_TOKEN").ok();
     let password = std::env::var("MOLTIS_PASSWORD").ok();
+
+    // Cloud deploy platform — hides local-only providers (local-llm, ollama).
+    let deploy_platform = std::env::var("MOLTIS_DEPLOY_PLATFORM").ok();
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
-    let config = moltis_config::discover_and_load();
+    let mut config = moltis_config::discover_and_load();
+
+    // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
+    if no_tls {
+        config.tls.enabled = false;
+    }
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
@@ -380,6 +389,7 @@ pub async fn start_gateway(
     services.provider_setup = Arc::new(LiveProviderSetupService::new(
         Arc::clone(&registry),
         config.providers.clone(),
+        deploy_platform.clone(),
     ));
 
     // Wire live local-llm service when the feature is enabled.
@@ -1393,6 +1403,7 @@ pub async fn start_gateway(
         hook_registry.clone(),
         memory_manager.clone(),
         port,
+        deploy_platform.clone(),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
@@ -2285,10 +2296,69 @@ async fn ws_upgrade_handler(
         .get(axum::http::header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
+    let header_authenticated = websocket_header_authenticated(
+        &headers,
+        state.gateway.credential_store.as_ref(),
+        state.gateway.localhost_only,
+    )
+    .await;
     ws.on_upgrade(move |socket| {
-        handle_connection(socket, state.gateway, state.methods, addr, accept_language)
+        handle_connection(
+            socket,
+            state.gateway,
+            state.methods,
+            addr,
+            accept_language,
+            header_authenticated,
+        )
     })
     .into_response()
+}
+
+async fn websocket_header_authenticated(
+    headers: &axum::http::HeaderMap,
+    credential_store: Option<&Arc<crate::auth::CredentialStore>>,
+    localhost_only: bool,
+) -> bool {
+    let Some(store) = credential_store else {
+        return false;
+    };
+
+    if store.is_auth_disabled() {
+        return true;
+    }
+
+    if localhost_only && !store.has_password().await.unwrap_or(true) {
+        return true;
+    }
+
+    if let Some(token) = extract_ws_session_token(headers)
+        && store.validate_session(token).await.unwrap_or(false)
+    {
+        return true;
+    }
+
+    if let Some(api_key) = extract_ws_bearer_api_key(headers)
+        && store.verify_api_key(api_key).await.ok().flatten().is_some()
+    {
+        return true;
+    }
+
+    false
+}
+
+fn extract_ws_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())?;
+    crate::auth_middleware::parse_cookie(cookie_header, crate::auth_middleware::SESSION_COOKIE)
+}
+
+fn extract_ws_bearer_api_key(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
 }
 
 /// Check whether a WebSocket `Origin` header matches the request `Host`.
@@ -2368,6 +2438,9 @@ struct GonData {
     git_branch: Option<String>,
     /// Memory stats snapshot (process RSS + system available/total).
     mem: MemSnapshot,
+    /// Cloud deploy platform (e.g. "flyio"), `None` when running locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deploy_platform: Option<String>,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -2500,6 +2573,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_runs,
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
+        deploy_platform: gw.deploy_platform.clone(),
     }
 }
 
@@ -2614,10 +2688,20 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[cfg(feature = "web-ui")]
-async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> impl IntoResponse {
+async fn spa_fallback(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+) -> impl IntoResponse {
     let path = uri.path();
     if path.starts_with("/assets/") || path.contains('.') {
         return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+
+    if let Some((setup_required, authenticated)) = auth_status_from_request(&state, &headers).await
+        && should_redirect_to_onboarding(path, setup_required, authenticated)
+    {
+        return Redirect::to("/onboarding").into_response();
     }
 
     let raw = read_asset("index.html")
@@ -2645,9 +2729,68 @@ async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> im
     // Inject gon data into <head> so it's available before any module scripts run.
     // An inline <script> in the <body> (right after the title elements) reads
     // window.__MOLTIS__.identity to set emoji/name before the first paint.
-    let body = body.replace("</head>", &format!("{gon_script}\n</head>"));
+    let mut head_injections = vec![gon_script];
+    if path == "/onboarding" {
+        head_injections.push(
+            "<style>
+body.onboarding-init header,
+body.onboarding-init #branchBanner,
+body.onboarding-init #authDisabledBanner,
+body.onboarding-init #navOverlay,
+body.onboarding-init #sessionsOverlay,
+body.onboarding-init #navPanel,
+body.onboarding-init #sessionsPanel,
+body.onboarding-init #burgerBtn,
+body.onboarding-init #sessionsToggle {
+  display: none !important;
+}
+body.onboarding-init #pageContent {
+  min-height: 100vh;
+}
+</style>"
+                .to_owned(),
+        );
+    }
+    let mut body = body.replace(
+        "</head>",
+        &format!("{}\n</head>", head_injections.join("\n")),
+    );
+    if path == "/onboarding" {
+        body = body.replacen("<body>", "<body class=\"onboarding-init\">", 1);
+    }
 
     ([("cache-control", "no-cache, no-store")], Html(body)).into_response()
+}
+
+#[cfg(feature = "web-ui")]
+async fn auth_status_from_request(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Option<(bool, bool)> {
+    let store = state.gateway.credential_store.as_ref()?;
+
+    let auth_disabled = store.is_auth_disabled();
+    let localhost_only = state.gateway.localhost_only;
+    let has_password = store.has_password().await.unwrap_or(false);
+    let auth_bypassed = auth_disabled || (localhost_only && !has_password);
+
+    let authenticated = if auth_bypassed {
+        true
+    } else if let Some(token) = extract_ws_session_token(headers) {
+        store.validate_session(token).await.unwrap_or(false)
+    } else if let Some(api_key) = extract_ws_bearer_api_key(headers) {
+        store.verify_api_key(api_key).await.ok().flatten().is_some()
+    } else {
+        false
+    };
+
+    let setup_required = !auth_bypassed && !store.is_setup_complete();
+    Some((setup_required, authenticated))
+}
+
+#[cfg(feature = "web-ui")]
+fn should_redirect_to_onboarding(path: &str, setup_required: bool, authenticated: bool) -> bool {
+    setup_required && !authenticated && path != "/onboarding"
 }
 
 #[cfg(feature = "web-ui")]
@@ -3278,6 +3421,68 @@ fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Respo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_header_auth_accepts_valid_session_cookie() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let token = store.create_session().await.unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        let cookie = format!("{}={token}", crate::auth_middleware::SESSION_COOKIE);
+        headers.insert(axum::http::header::COOKIE, cookie.parse().unwrap());
+
+        assert!(websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[tokio::test]
+    async fn websocket_header_auth_accepts_valid_bearer_api_key() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let (_id, raw_key) = store.create_api_key("ws", None).await.unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        let auth_value = format!("Bearer {raw_key}");
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            auth_value.parse().unwrap(),
+        );
+
+        assert!(websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[tokio::test]
+    async fn websocket_header_auth_rejects_missing_credentials_when_setup_complete() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let headers = axum::http::HeaderMap::new();
+
+        assert!(!websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[test]
+    fn onboarding_redirect_only_when_setup_required_and_unauthenticated() {
+        assert!(should_redirect_to_onboarding("/", true, false));
+        assert!(should_redirect_to_onboarding("/chats", true, false));
+        assert!(!should_redirect_to_onboarding("/onboarding", true, false));
+        assert!(!should_redirect_to_onboarding("/", true, true));
+        assert!(!should_redirect_to_onboarding("/", false, false));
+    }
 
     #[test]
     fn same_origin_exact_match() {
