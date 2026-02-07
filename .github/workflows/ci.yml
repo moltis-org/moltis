@@ -31,6 +31,8 @@ jobs:
         include:
           - label: fmt
             context: local/fmt
+          - label: biome
+            context: local/biome
           - label: clippy
             context: local/lint
           - label: test

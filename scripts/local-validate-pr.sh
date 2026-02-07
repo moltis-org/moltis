@@ -34,6 +34,7 @@ else
 fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
+biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci crates/gateway/src/assets/js/}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
 
@@ -105,6 +106,7 @@ echo "Publishing commit statuses to: $REPO"
 repair_stale_llama_build_dirs
 
 run_check "local/fmt" "$fmt_cmd"
+run_check "local/biome" "$biome_cmd"
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
 
