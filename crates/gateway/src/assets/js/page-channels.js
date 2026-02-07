@@ -10,7 +10,7 @@ import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
 import { connected, models as modelsSig } from "./signals.js";
 import * as S from "./state.js";
-import { ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
+import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./ui.js";
 
 var channels = signal([]);
 
@@ -137,7 +137,10 @@ function SendersTab() {
 		sendRpc(rpc, {
 			account_id: sendersAccount.value,
 			identifier: identifier,
-		}).then(() => loadSenders());
+		}).then(() => {
+			loadSenders();
+			loadChannels();
+		});
 	}
 
 	return html`<div>
@@ -171,7 +174,13 @@ function SendersTab() {
             <td class="senders-td">${s.message_count}</td>
             <td class="senders-td" style="color:var(--muted);font-size:12px;">${lastSeenMs ? html`<time data-epoch-ms="${lastSeenMs}">${new Date(lastSeenMs).toISOString()}</time>` : "\u2014"}</td>
             <td class="senders-td">
-              <span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? "Allowed" : "Denied"}</span>
+              ${
+								s.otp_pending
+									? html`<span class="provider-item-badge cursor-pointer select-none" style="background:var(--warning-bg, #fef3c7);color:var(--warning-text, #92400e);" onClick=${() => {
+											navigator.clipboard.writeText(s.otp_pending.code).then(() => showToast("OTP code copied"));
+										}}>OTP: <code class="text-xs">${s.otp_pending.code}</code></span>`
+									: html`<span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? "Allowed" : "Denied"}</span>`
+							}
             </td>
             <td class="senders-td">
               ${
@@ -396,7 +405,14 @@ function ChannelsPage() {
 		if (connected.value) loadChannels();
 
 		var unsub = onEvent("channel", (p) => {
-			if (p.kind === "inbound_message" && activeTab.value === "senders" && sendersAccount.value === p.account_id) {
+			if (p.kind === "otp_resolved") {
+				loadChannels();
+			}
+			if (
+				activeTab.value === "senders" &&
+				sendersAccount.value === p.account_id &&
+				(p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")
+			) {
 				loadSenders();
 			}
 		});
