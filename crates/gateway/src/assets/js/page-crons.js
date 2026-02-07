@@ -311,7 +311,7 @@ function HeartbeatSection() {
       <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Prompt</h3>
       <label class="block text-xs text-[var(--muted)] mb-1">Custom Prompt (optional)</label>
       <textarea data-hb="prompt" class="provider-key-input textarea-sm" placeholder="Leave blank to use default heartbeat prompt">${cfg.prompt || ""}</textarea>
-      <p class="text-xs text-[var(--muted)] mt-2">Leave this empty to use <code>HEARTBEAT.md</code> in your workspace root (falls back to built-in default if missing).</p>
+      <p class="text-xs text-[var(--muted)] mt-2">Leave this empty to use <code>HEARTBEAT.md</code> in your workspace root. If that file exists but is empty/comments-only, heartbeat LLM runs are skipped to save tokens.</p>
       <p class="text-xs text-[var(--muted)] mt-1">Effective prompt source: <span class="text-[var(--text)]">${promptSourceText}</span></p>
       <div class="grid gap-4 mt-3" style="grid-template-columns:1fr;">
         <div>

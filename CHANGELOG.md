@@ -91,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Heartbeat UX**: Expose effective heartbeat prompt source (`config`, `HEARTBEAT.md`, or default) via `heartbeat.status` and display it in the Heartbeat settings UI.
 - **BOOT.md onboarding aid**: Seed a default workspace `BOOT.md` with in-file guidance describing startup injection behavior and recommended usage.
 - **Workspace context parity**: Treat workspace `TOOLS.md` as general context (not only policy) and add workspace `AGENTS.md` injection support from `data_dir`.
+- **Heartbeat token guard**: Skip heartbeat LLM turns when `HEARTBEAT.md` exists but is empty/comment-only and there is no explicit `heartbeat.prompt` override, reducing unnecessary token consumption.
 - **Exec approval policy wiring**: Gateway now initializes exec approval mode/security level/allowlist from `moltis.toml` (`tools.exec.*`) instead of always using hardcoded defaults.
 - **Runtime tool enforcement**: Chat runs now apply configured tool policy (`tools.policy`) and skill `allowed_tools` constraints when selecting callable tools.
 - **Skill trust lifecycle**: Installed marketplace skills/plugins now track a `trusted` state and must be trusted before they can be enabled; the skills UI now surfaces untrusted status and supports trust-before-enable.

@@ -690,6 +690,36 @@ pub async fn start_gateway(
             let state = st
                 .get()
                 .ok_or_else(|| anyhow::anyhow!("gateway not ready"))?;
+
+            // OpenClaw-style cost guard: if HEARTBEAT.md exists but is effectively
+            // empty (comments/blank scaffold) and there's no explicit
+            // heartbeat.prompt override, skip the LLM turn entirely.
+            let is_heartbeat_turn = matches!(
+                &req.session_target,
+                moltis_cron::types::SessionTarget::Named(name) if name == "heartbeat"
+            );
+            if is_heartbeat_turn {
+                let hb_cfg = state.heartbeat_config.read().await.clone();
+                let has_prompt_override = hb_cfg
+                    .prompt
+                    .as_deref()
+                    .is_some_and(|p| !p.trim().is_empty());
+                let heartbeat_path = moltis_config::heartbeat_path();
+                let heartbeat_file_exists = heartbeat_path.exists();
+                let heartbeat_md = moltis_config::load_heartbeat_md();
+                if heartbeat_file_exists && heartbeat_md.is_none() && !has_prompt_override {
+                    tracing::info!(
+                        path = %heartbeat_path.display(),
+                        "skipping heartbeat LLM turn: HEARTBEAT.md is empty"
+                    );
+                    return Ok(moltis_cron::service::AgentTurnResult {
+                        output: moltis_cron::heartbeat::HEARTBEAT_OK.to_string(),
+                        input_tokens: None,
+                        output_tokens: None,
+                    });
+                }
+            }
+
             let chat = state.chat().await;
             let session_key = match &req.session_target {
                 moltis_cron::types::SessionTarget::Named(name) => {
@@ -3782,7 +3812,9 @@ Prompt precedence:
 2) HEARTBEAT.md
 3) built-in default prompt
 
-If this file is missing/empty/comment-only, Moltis falls back per precedence.
+Cost guard:
+- If HEARTBEAT.md exists but is empty/comment-only and there is no explicit
+  heartbeat.prompt override, Moltis skips heartbeat LLM turns to avoid token use.
 -->"#;
 
 /// Discover hooks from the filesystem, check eligibility, and build a
