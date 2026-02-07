@@ -125,6 +125,16 @@
   <a href="/settings/security" class="auth-disabled-setup">Set up authentication</a>
 </div>
 
+<!-- Update available banner (shown when a newer GitHub release exists) -->
+<div id="updateBanner" class="info-banner" style="display:none">
+  <span>
+    An update is available
+    <strong id="updateLatestVersion"></strong>
+  </span>
+  <a id="updateReleaseLink" href="https://github.com/moltis-org/moltis/releases/latest" target="_blank" rel="noopener noreferrer" class="auth-disabled-setup">View release</a>
+  <button id="updateDismissBtn" type="button" class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer">Dismiss</button>
+</div>
+
 <!-- PWA Install Banner (shown on mobile when not installed) -->
 <div id="installBanner" class="hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--surface)] border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg flex-col gap-3 md:hidden">
   <div class="flex items-start gap-3">
