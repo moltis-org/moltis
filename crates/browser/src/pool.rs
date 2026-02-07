@@ -355,8 +355,8 @@ impl BrowserPool {
 /// Generate a random session ID.
 fn generate_session_id() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let id: u64 = rng.r#gen();
+    let mut rng = rand::rng();
+    let id: u64 = rng.random();
     format!("browser-{:016x}", id)
 }
 
