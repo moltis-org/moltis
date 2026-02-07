@@ -163,9 +163,7 @@ impl AgentTool for BrowserTool {
                 _ => false,
             };
 
-            if needs_session
-                && let Some(saved_sid) = self.get_saved_session().await
-            {
+            if needs_session && let Some(saved_sid) = self.get_saved_session().await {
                 debug!(
                     session_id = %saved_sid,
                     "injecting saved session_id (LLM didn't provide one)"
