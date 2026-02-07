@@ -1,3 +1,8 @@
+---
+description: "Git workflow standards: proper commit messages, pre-commit checks, and git worktree usage for independent feature work"
+alwaysApply: true
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -510,6 +515,29 @@ Rules:
   followed by a write in the same function, scope the read guard in a block
   `{ let guard = lock.read().await; ... }` to avoid deadlocks.
 
+### Forbidden Content
+
+NEVER commit any of the following:
+- Passwords or credentials
+- `.env` files with real values
+- Any personally identifiable information
+
+### Allowed Content
+
+These are acceptable:
+- Placeholder values (e.g., `"your-api-key-here"`, empty strings `""`)
+- Code that references environment variables or config files (but not the values)
+- Documentation explaining how to configure credentials
+
+### If Secrets Are Accidentally Committed
+
+If you accidentally commit secrets:
+1. **DO NOT PUSH** - stop immediately
+2. Use `git reset HEAD~1` to undo the commit
+3. Remove the secret from the file
+4. Re-commit without the secret
+5. If already pushed, the secret is compromised - rotate it immediately
+
 ## Data and Config Directories
 
 Moltis uses two directories, **never** the current working directory:
@@ -571,7 +599,6 @@ for full documentation.
 
 ### Async all the way down
 
-Never use `block_on`, `std::thread::scope` + `rt.block_on`, or any blocking
 call inside an async context (tokio runtime). This causes a panic:
 "Cannot start a runtime from within a runtime". All token exchanges,
 HTTP calls, and I/O in provider methods (`complete`, `stream`) must be `async`
@@ -620,7 +647,22 @@ with a date.
 
 ## Git Workflow
 
-Follow conventional commit format: `feat|fix|refactor|docs|test|chore(scope): description`
+Follow conventional commit format:
+- **Type**: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+- **Scope**: Optional, indicates the area affected
+- **Description**: Clear, imperative mood description (e.g., "add feature" not "added feature")
+- **Body**: Optional, detailed explanation (separated by blank line)
+- **Footer**: Optional, references to issues
+
+Example:
+```
+feat(websocket): add reconnection logic
+
+Implement exponential backoff retry mechanism for WebSocket connections
+to handle network interruptions gracefully.
+
+Fixes #123
+```
 
 **No Co-Authored-By trailers.** Never add `Co-Authored-By` lines (e.g.
 `Co-Authored-By: Claude ...`) to commit messages or documentation. Commits
@@ -634,17 +676,33 @@ always create a new version tag (e.g. `v0.1.7` instead of re-tagging `v0.1.6`).
 Moving or deleting published tags breaks downstream caches, package managers,
 and anyone who already pulled that version. Always move forward.
 
+**Release version discipline.** Before creating a release tag, make sure
+`[workspace.package].version` in the root `Cargo.toml` is already bumped to the
+exact release version (without the `v` prefix). Example: tag `v0.2.0` requires
+`version = "0.2.0"` in `Cargo.toml`.
+
+The Build Packages workflow derives artifact versions from the tag when running
+on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
+packaging metadata consistency, and future non-tag runs.
+
 **Merging main into your branch:** When merging `main` into your current branch
 and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
 
+## Code Quality Checklist
+
 **You MUST run all checks before every commit and fix any issues they report:**
-1. `cargo +nightly fmt --all` — format all Rust code (CI runs `cargo fmt --all -- --check`)
-2. `cargo +nightly clippy --all-targets --all-features -- -D warnings` — run linter (must pass with zero warnings)
-3. `cargo test --all-features` — run all tests
-4. `biome check --write` (when JS files were modified; CI runs `biome ci`)
-5. `taplo fmt` (when TOML files were modified)
+
+- [ ] **No secrets or private tokens are included** (CRITICAL)
+- [ ] `taplo fmt` (when TOML files were modified)
+- [ ] `biome check --write` (when JS files were modified; CI runs `biome ci`)
+- [ ] Code is formatted (`just format-check` passes)
+- [ ] Code passes clippy linting (`just lint` passes)
+- [ ] All tests pass (`cargo test`)
+- [ ] Commit message follows conventional commit format
+- [ ] Changes are logically grouped in the commit
+- [ ] No debug code or temporary files are included
 
 ## Documentation
 
