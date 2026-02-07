@@ -76,6 +76,105 @@ pub struct AppState {
 
 // ── Server startup ───────────────────────────────────────────────────────────
 
+/// Build the protected API routes (shared between both build_gateway_app versions).
+#[cfg(feature = "web-ui")]
+fn build_protected_api_routes() -> Router<AppState> {
+    let protected = Router::new()
+        .route("/api/bootstrap", get(api_bootstrap_handler))
+        .route("/api/gon", get(api_gon_handler))
+        .route("/api/skills", get(api_skills_handler))
+        .route("/api/skills/search", get(api_skills_search_handler))
+        .route("/api/mcp", get(api_mcp_handler))
+        .route("/api/hooks", get(api_hooks_handler))
+        .route("/api/plugins", get(api_plugins_handler))
+        .route("/api/plugins/search", get(api_plugins_search_handler))
+        .route(
+            "/api/images/cached",
+            get(api_cached_images_handler).delete(api_prune_cached_images_handler),
+        )
+        .route(
+            "/api/images/cached/{tag}",
+            axum::routing::delete(api_delete_cached_image_handler),
+        )
+        .route(
+            "/api/images/build",
+            axum::routing::post(api_build_image_handler),
+        )
+        .route(
+            "/api/images/check-packages",
+            axum::routing::post(api_check_packages_handler),
+        )
+        .route(
+            "/api/images/default",
+            get(api_get_default_image_handler).put(api_set_default_image_handler),
+        )
+        .route(
+            "/api/env",
+            get(crate::env_routes::env_list).post(crate::env_routes::env_set),
+        )
+        .route(
+            "/api/env/{id}",
+            axum::routing::delete(crate::env_routes::env_delete),
+        )
+        // Config editor routes (sensitive - requires auth)
+        .route(
+            "/api/config",
+            get(crate::tools_routes::config_get).post(crate::tools_routes::config_save),
+        )
+        .route(
+            "/api/config/validate",
+            axum::routing::post(crate::tools_routes::config_validate),
+        )
+        .route(
+            "/api/config/template",
+            get(crate::tools_routes::config_template),
+        )
+        .route(
+            "/api/restart",
+            axum::routing::post(crate::tools_routes::restart),
+        );
+
+    // Add metrics API routes (protected).
+    #[cfg(feature = "metrics")]
+    let protected = protected
+        .route(
+            "/api/metrics",
+            get(crate::metrics_routes::api_metrics_handler),
+        )
+        .route(
+            "/api/metrics/summary",
+            get(crate::metrics_routes::api_metrics_summary_handler),
+        )
+        .route(
+            "/api/metrics/history",
+            get(crate::metrics_routes::api_metrics_history_handler),
+        );
+
+    protected
+}
+
+/// Apply auth middleware and feature-specific routes to protected API routes.
+#[cfg(feature = "web-ui")]
+fn finalize_protected_routes(protected: Router<AppState>, app_state: AppState) -> Router<AppState> {
+    let protected = protected.layer(axum::middleware::from_fn_with_state(
+        app_state,
+        crate::auth_middleware::require_auth,
+    ));
+
+    // Mount tailscale routes (protected) when the feature is enabled.
+    #[cfg(feature = "tailscale")]
+    let protected = protected.nest(
+        "/api/tailscale",
+        crate::tailscale_routes::tailscale_router(),
+    );
+
+    // Mount push notification routes when the feature is enabled.
+    #[cfg(feature = "push-notifications")]
+    let protected = protected.nest("/api/push", crate::push_routes::push_router());
+
+    protected
+}
+
 /// Build the gateway router (shared between production startup and tests).
 #[cfg(feature = "push-notifications")]
 pub fn build_gateway_app(
@@ -105,99 +204,13 @@ pub fn build_gateway_app(
     let app_state = AppState {
         gateway: state,
         methods,
-        #[cfg(feature = "push-notifications")]
         push_service,
     };
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/hooks", get(api_hooks_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            )
-            // Config editor routes
-            .route(
-                "/api/config",
-                get(crate::tools_routes::config_get).post(crate::tools_routes::config_save),
-            )
-            .route(
-                "/api/config/validate",
-                axum::routing::post(crate::tools_routes::config_validate),
-            )
-            .route(
-                "/api/config/template",
-                get(crate::tools_routes::config_template),
-            )
-            .route(
-                "/api/restart",
-                axum::routing::post(crate::tools_routes::restart),
-            );
-
-        // Add metrics API routes (protected).
-        #[cfg(feature = "metrics")]
-        let protected = protected
-            .route(
-                "/api/metrics",
-                get(crate::metrics_routes::api_metrics_handler),
-            )
-            .route(
-                "/api/metrics/summary",
-                get(crate::metrics_routes::api_metrics_summary_handler),
-            )
-            .route(
-                "/api/metrics/history",
-                get(crate::metrics_routes::api_metrics_history_handler),
-            );
-
-        let protected = protected.layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            crate::auth_middleware::require_auth,
-        ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        let protected = protected.nest(
-            "/api/tailscale",
-            crate::tailscale_routes::tailscale_router(),
-        );
-
-        // Mount push notification routes when the feature is enabled.
-        #[cfg(feature = "push-notifications")]
-        let protected = protected.nest("/api/push", crate::push_routes::push_router());
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
@@ -250,90 +263,8 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/hooks", get(api_hooks_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            )
-            // Config editor routes
-            .route(
-                "/api/config",
-                get(crate::tools_routes::config_get)
-                    .post(crate::tools_routes::config_save),
-            )
-            .route(
-                "/api/config/validate",
-                axum::routing::post(crate::tools_routes::config_validate),
-            )
-            .route(
-                "/api/config/template",
-                get(crate::tools_routes::config_template),
-            )
-            .route(
-                "/api/restart",
-                axum::routing::post(crate::tools_routes::restart),
-            );
-
-        // Add metrics API routes (protected).
-        #[cfg(feature = "metrics")]
-        let protected = protected
-            .route(
-                "/api/metrics",
-                get(crate::metrics_routes::api_metrics_handler),
-            )
-            .route(
-                "/api/metrics/summary",
-                get(crate::metrics_routes::api_metrics_summary_handler),
-            )
-            .route(
-                "/api/metrics/history",
-                get(crate::metrics_routes::api_metrics_history_handler),
-            );
-
-        let protected = protected.layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            crate::auth_middleware::require_auth,
-        ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        let protected = protected.nest(
-            "/api/tailscale",
-            crate::tailscale_routes::tailscale_router(),
-        );
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
