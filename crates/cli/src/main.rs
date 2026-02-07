@@ -197,7 +197,7 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
         registry
             .with(
                 fmt::layer()
-                    .with_target(false)
+                    .with_target(true)
                     .with_thread_ids(false)
                     .with_ansi(true),
             )
