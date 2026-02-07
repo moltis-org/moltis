@@ -19,7 +19,7 @@ env:
 
 jobs:
   local-validation:
-    name: Local Validation / ${{ matrix.label }}
+    name: ${{ matrix.label }}
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
