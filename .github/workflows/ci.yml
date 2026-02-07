@@ -96,8 +96,8 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      # Build with default features (local-llm included) - excludes CUDA/Metal which need GPU toolkits
-      - run: cargo clippy --all-targets -- -D warnings
+      # Lint with all features enabled on Linux CI runners.
+      - run: cargo clippy --all-features --all-targets -- -D warnings
 
   build:
     name: Build & Test
@@ -132,6 +132,6 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      # Build with default features (local-llm included) - excludes CUDA/Metal which need GPU toolkits
-      - run: cargo build --all-targets
-      - run: cargo test
+      # Build and test with all features enabled on Linux CI runners.
+      - run: cargo build --all-features --all-targets
+      - run: cargo test --all-features
