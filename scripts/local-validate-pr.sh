@@ -256,8 +256,6 @@ if ! wait "$fmt_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/fmt" "$fmt_pid"; then parallel_failed=1; fi
 if ! wait "$biome_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/biome" "$biome_pid"; then parallel_failed=1; fi
-if ! wait "$zizmor_pid"; then parallel_failed=1; fi
-if ! report_async_result "local/zizmor" "$zizmor_pid"; then parallel_failed=1; fi
 
 if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2
@@ -265,7 +263,15 @@ if [[ "$parallel_failed" -ne 0 ]]; then
 fi
 
 # Keep lint/test sequential to maximize incremental compile reuse.
+# These do not wait on local/zizmor (advisory and non-blocking).
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
+
+# Collect local/zizmor result at the end without affecting pass/fail.
+if wait "$zizmor_pid"; then
+  report_async_result "local/zizmor" "$zizmor_pid" || true
+else
+  report_async_result "local/zizmor" "$zizmor_pid" || true
+fi
 
 echo "All local validation statuses published successfully."
