@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Error messages sent to channel when screenshot delivery fails
   - Handles `PHOTO_INVALID_DIMENSIONS` and `PHOTO_SAVE_FILE_INVALID` errors
 
+- **Telegram Tool Status Notifications**: See what's happening during long operations
+  - Tool execution messages sent to Telegram (e.g., "🌐 Navigating to...",
+    "💻 Running: `git status`", "📸 Taking screenshot...")
+  - Messages sent silently (no notification sound) to avoid spam
+  - Typing indicator automatically re-sent after status messages
+  - Supports browser, exec, web_fetch, web_search, and memory tools
+
+- **Log Target Display**: Logs now include the crate/module path for easier debugging
+  - Example: `INFO moltis_gateway::chat: tool execution succeeded tool=browser`
+
 - **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
   - View all discovered hooks with eligibility status, source, and events
   - Enable/disable hooks without removing files (persisted across restarts)
@@ -70,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sandbox UX on unsupported hosts**: Disable sandbox controls in chat/images when no runtime backend is detected, with a tooltip explaining cloud deploy limitations.
 - **Telegram OTP code echoed to LLM**: After OTP self-approval, the verification code message was re-processed as a regular chat message because `sender_approve` restarted the bot polling loop (resetting the Telegram update offset). Sender approve/deny now hot-update the in-memory config without restarting the bot.
 - **Empty allowlist bypassed access control**: When `dm_policy = Allowlist` and all entries were removed, the empty list was treated as "allow everyone" instead of "deny everyone". An explicit Allowlist policy with an empty list now correctly denies all access.
+- **Browser sandbox timeout**: Sandboxed browsers now use the configured
+  `navigation_timeout_ms` (default 30s) instead of a shorter internal timeout.
+  Previously, sandboxed browser connections could time out prematurely.
+- **Tall screenshot lightbox**: Full-page screenshots now display at proper size
+  with vertical scrolling instead of being scaled down to fit the viewport.
 
 ## [0.1.10] - 2026-02-06
 
