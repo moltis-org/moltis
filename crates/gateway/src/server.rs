@@ -3859,7 +3859,7 @@ pub(crate) async fn discover_and_build_hooks(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::collections::HashSet};
 
     #[test]
     fn approval_manager_uses_config_values() {
@@ -3883,6 +3883,86 @@ mod tests {
         let manager = approval_manager_from_config(&cfg);
         assert_eq!(manager.mode, ApprovalMode::OnMiss);
         assert_eq!(manager.security_level, SecurityLevel::Allowlist);
+    }
+
+    #[tokio::test]
+    async fn discover_hooks_registers_builtin_handlers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        let (registry, info) =
+            discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
+        let registry = registry.expect("expected hook registry to be created");
+        let handler_names = registry.handler_names();
+
+        assert!(handler_names.iter().any(|n| n == "boot-md"));
+        assert!(handler_names.iter().any(|n| n == "command-logger"));
+        assert!(handler_names.iter().any(|n| n == "session-memory"));
+
+        assert!(
+            info.iter()
+                .any(|h| h.name == "boot-md" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "command-logger" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "session-memory" && h.source == "builtin")
+        );
+    }
+
+    #[tokio::test]
+    async fn command_hook_dispatch_saves_session_memory_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "user", "content": "Hello from smoke test"}),
+            )
+            .await
+            .unwrap();
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "assistant", "content": "Hi there"}),
+            )
+            .await
+            .unwrap();
+
+        let mut registry = moltis_common::hooks::HookRegistry::new();
+        registry.register(Arc::new(
+            moltis_plugins::bundled::session_memory::SessionMemoryHook::new(
+                tmp.path().to_path_buf(),
+                Arc::clone(&session_store),
+            ),
+        ));
+
+        let payload = moltis_common::hooks::HookPayload::Command {
+            session_key: "smoke-session".into(),
+            action: "new".into(),
+            sender_id: None,
+        };
+        let result = registry.dispatch(&payload).await.unwrap();
+        assert!(matches!(result, moltis_common::hooks::HookAction::Continue));
+
+        let memory_dir = tmp.path().join("memory");
+        assert!(memory_dir.is_dir());
+
+        let files: Vec<_> = std::fs::read_dir(&memory_dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        assert!(content.contains("smoke-session"));
+        assert!(content.contains("Hello from smoke test"));
+        assert!(content.contains("Hi there"));
     }
 
     #[tokio::test]
