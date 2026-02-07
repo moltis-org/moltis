@@ -76,7 +76,7 @@ function AuthStep({ onNext, skippable }) {
 			}
 		}
 		if (codeRequired && setupCode.trim().length === 0) {
-			setError("Enter the setup code shown in the terminal.");
+			setError("Enter the setup code shown in the process log (stdout).");
 			return;
 		}
 		setSaving(true);
@@ -132,6 +132,7 @@ function AuthStep({ onNext, skippable }) {
 				<input type="text" class="provider-key-input w-full" inputmode="numeric" pattern="[0-9]*"
 					value=${setupCode} onInput=${(e) => setSetupCode(e.target.value)}
 					placeholder="6-digit code from terminal" />
+				<div class="text-xs text-[var(--muted)] mt-1">Hint: find this code in the moltis process log (stdout).</div>
 			</div>`
 			}
 			${error && html`<p class="text-xs text-[var(--error)]">${error}</p>`}

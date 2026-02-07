@@ -28,7 +28,6 @@ import "./page-mcp.js";
 import "./page-metrics.js";
 import "./page-settings.js";
 import "./page-images.js";
-import "./page-setup.js";
 import "./page-onboarding.js";
 import { setHasPasskeys } from "./page-login.js";
 
@@ -96,7 +95,9 @@ fetch("/api/auth/status")
 			return;
 		}
 		if (auth.setup_required) {
-			mount("/setup");
+			mount("/onboarding");
+			connect();
+			initInstallBanner();
 			return;
 		}
 		setHasPasskeys(auth.has_passkeys);
