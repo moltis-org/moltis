@@ -78,8 +78,8 @@ function applyMemory(mem) {
 	if (!mem) return;
 	var el = document.getElementById("memoryInfo");
 	if (!el) return;
-	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0 });
-	el.textContent = `Process: ${fmt(mem.process)} \u00b7 System: ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0, space: false });
+	el.textContent = `${fmt(mem.process)} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
 }
 
 applyMemory(gon.get("mem"));
