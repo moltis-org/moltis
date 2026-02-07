@@ -17,8 +17,16 @@ if [[ -z "$PR_NUMBER" ]]; then
   PR_NUMBER="$(gh pr view --json number -q .number)"
 fi
 
-REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-SHA="$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid)"
+BASE_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+SHA="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRefOid -q .headRefOid)"
+HEAD_OWNER="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepositoryOwner -q .headRepositoryOwner.login)"
+HEAD_REPO_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepository -q .headRepository.name)"
+
+if [[ -n "$HEAD_OWNER" && -n "$HEAD_REPO_NAME" ]]; then
+  REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
+else
+  REPO="$BASE_REPO"
+fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
@@ -28,11 +36,21 @@ set_status() {
   local state="$1"
   local context="$2"
   local description="$3"
-  gh api "repos/$REPO/statuses/$SHA" \
+  if ! gh api "repos/$REPO/statuses/$SHA" \
     -f state="$state" \
     -f context="$context" \
     -f description="$description" \
-    -f target_url="https://github.com/$REPO/pull/$PR_NUMBER" >/dev/null
+    -f target_url="https://github.com/$BASE_REPO/pull/$PR_NUMBER" >/dev/null; then
+    cat >&2 <<EOF
+Failed to publish status '$context' to $REPO@$SHA.
+Check that your token can write commit statuses for that repository.
+
+Expected token access:
+- classic PAT: repo:status (or repo)
+- fine-grained PAT: Commit statuses (Read and write)
+EOF
+    return 1
+  fi
 }
 
 run_check() {
@@ -48,7 +66,8 @@ run_check() {
   fi
 }
 
-echo "Validating PR #$PR_NUMBER ($SHA) in $REPO"
+echo "Validating PR #$PR_NUMBER ($SHA) in $BASE_REPO"
+echo "Publishing commit statuses to: $REPO"
 
 run_check "local/fmt" "$fmt_cmd"
 run_check "local/lint" "$lint_cmd"
