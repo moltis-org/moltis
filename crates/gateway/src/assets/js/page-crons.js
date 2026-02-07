@@ -213,7 +213,6 @@ function HeartbeatSection() {
 	var cfg = heartbeatConfig.value;
 	var saving = heartbeatSaving.value;
 	var promptSource = heartbeatStatus.value?.promptSource || "default";
-	var skipLlmWhenEmpty = heartbeatStatus.value?.skipLlmWhenEmpty === true;
 	// Get heartbeat job from cronJobs (loaded from gon) for immediate availability on page load.
 	// Falls back to heartbeatStatus for updates after RPC calls.
 	var job = cronJobs.value.find((j) => j.name === "__heartbeat__") || heartbeatStatus.value?.job;
@@ -283,17 +282,10 @@ function HeartbeatSection() {
       <button class="provider-btn provider-btn-secondary" onClick=${onRunNow} disabled=${running}>
         ${running ? "Running\u2026" : "Run Now"}
       </button>
-    </div>
-    <p class="text-sm text-[var(--muted)] mb-4">Periodic AI check-in that monitors your environment and reports status.</p>
-    ${
-			skipLlmWhenEmpty &&
-			html`<div class="info-bar" style="margin-top:0;margin-bottom:12px;">
-      <span class="info-field"><span class="status-dot connected"></span><span class="info-label">Token Saver:</span></span>
-      <span class="info-value">HEARTBEAT.md is empty/comments-only, so scheduled heartbeat runs skip model calls until you add tasks or set a custom prompt.</span>
-    </div>`
-		}
+	</div>
+	<p class="text-sm text-[var(--muted)] mb-4">Periodic AI check-in that monitors your environment and reports status.</p>
 
-    <${HeartbeatJobStatus} job=${job} />
+	<${HeartbeatJobStatus} job=${job} />
 
     <!-- Schedule -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
