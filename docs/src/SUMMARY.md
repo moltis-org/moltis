@@ -36,6 +36,7 @@
 # Deployment
 
 - [Docker](docker.md)
+- [Cloud Deploy](cloud-deploy.md)
 
 ---
 
