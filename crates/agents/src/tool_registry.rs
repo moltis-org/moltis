@@ -106,6 +106,11 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// List registered tool names.
+    pub fn list_names(&self) -> Vec<String> {
+        self.tools.keys().cloned().collect()
+    }
+
     /// Clone the registry, excluding tools whose names start with `prefix`.
     pub fn clone_without_prefix(&self, prefix: &str) -> ToolRegistry {
         let tools = self
@@ -144,6 +149,25 @@ impl ToolRegistry {
             .tools
             .iter()
             .filter(|(name, _)| !exclude.contains(&name.as_str()))
+            .map(|(name, entry)| {
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
+            })
+            .collect();
+        ToolRegistry { tools }
+    }
+
+    /// Clone the registry keeping only tools that match `predicate`.
+    pub fn clone_allowed_by<F>(&self, mut predicate: F) -> ToolRegistry
+    where
+        F: FnMut(&str) -> bool,
+    {
+        let tools = self
+            .tools
+            .iter()
+            .filter(|(name, _)| predicate(name))
             .map(|(name, entry)| {
                 (name.clone(), ToolEntry {
                     tool: Arc::clone(&entry.tool),
@@ -298,5 +322,39 @@ mod tests {
             .expect("mcp tool should exist");
         assert_eq!(mcp["source"], "mcp");
         assert_eq!(mcp["mcpServer"], "github");
+    }
+
+    #[test]
+    fn test_list_names() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "web_fetch".to_string(),
+        }));
+
+        let mut names = registry.list_names();
+        names.sort();
+        assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn test_clone_allowed_by() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "web_fetch".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "session_state".to_string(),
+        }));
+
+        let filtered = registry.clone_allowed_by(|name| name.starts_with("web") || name == "exec");
+        let mut names = filtered.list_names();
+        names.sort();
+        assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
     }
 }

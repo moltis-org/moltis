@@ -25,7 +25,11 @@ use {moltis_channels::ChannelPlugin, moltis_protocol::TICK_INTERVAL_MS};
 
 use moltis_agents::providers::ProviderRegistry;
 
-use moltis_tools::{approval::ApprovalManager, exec::EnvVarProvider, image_cache::ImageBuilder};
+use moltis_tools::{
+    approval::{ApprovalManager, ApprovalMode, SecurityLevel},
+    exec::EnvVarProvider,
+    image_cache::ImageBuilder,
+};
 
 use {
     moltis_projects::ProjectStore,
@@ -69,6 +73,30 @@ fn should_prebuild_sandbox_image(
     packages: &[String],
 ) -> bool {
     !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
+}
+
+fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
+    let mut manager = ApprovalManager::default();
+
+    manager.mode = ApprovalMode::parse(&config.tools.exec.approval_mode).unwrap_or_else(|| {
+        warn!(
+            value = %config.tools.exec.approval_mode,
+            "invalid tools.exec.approval_mode; falling back to 'on-miss'"
+        );
+        ApprovalMode::OnMiss
+    });
+
+    manager.security_level = SecurityLevel::parse(&config.tools.exec.security_level)
+        .unwrap_or_else(|| {
+            warn!(
+                value = %config.tools.exec.security_level,
+                "invalid tools.exec.security_level; falling back to 'allowlist'"
+            );
+            SecurityLevel::Allowlist
+        });
+
+    manager.allowlist = config.tools.exec.allowlist.clone();
+    manager
 }
 
 // ── Shared app state ─────────────────────────────────────────────────────────
@@ -355,8 +383,8 @@ pub async fn start_gateway(
     ));
     let provider_summary = registry.read().await.provider_summary();
 
-    // Create shared approval manager.
-    let approval_manager = Arc::new(ApprovalManager::default());
+    // Create shared approval manager from config.
+    let approval_manager = Arc::new(approval_manager_from_config(&config));
 
     let mut services = GatewayServices::noop();
 
@@ -3335,15 +3363,31 @@ async fn service_worker_handler() -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Response {
     match read_asset(path) {
-        Some(body) => (
-            StatusCode::OK,
-            [
-                ("content-type", mime_for_path(path)),
-                ("cache-control", cache_control),
-            ],
-            body,
-        )
-            .into_response(),
+        Some(body) => {
+            let mut response = (
+                StatusCode::OK,
+                [
+                    ("content-type", mime_for_path(path)),
+                    ("cache-control", cache_control),
+                    ("x-content-type-options", "nosniff"),
+                ],
+                body,
+            )
+                .into_response();
+
+            // Harden SVG delivery against script execution when user-controlled
+            // SVGs are ever introduced. Static first-party SVGs continue to render.
+            if path.rsplit('.').next().unwrap_or("") == "svg" {
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static(
+                        "default-src 'none'; img-src 'self' data:; style-src 'none'; script-src 'none'; object-src 'none'; frame-ancestors 'none'",
+                    ),
+                );
+            }
+
+            response
+        },
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }
@@ -3642,6 +3686,30 @@ pub(crate) async fn discover_and_build_hooks(
 mod tests {
     use super::*;
 
+    #[test]
+    fn approval_manager_uses_config_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "always".into();
+        cfg.tools.exec.security_level = "strict".into();
+        cfg.tools.exec.allowlist = vec!["git*".into()];
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::Always);
+        assert_eq!(manager.security_level, SecurityLevel::Deny);
+        assert_eq!(manager.allowlist, vec!["git*".to_string()]);
+    }
+
+    #[test]
+    fn approval_manager_falls_back_for_invalid_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "bogus".into();
+        cfg.tools.exec.security_level = "bogus".into();
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::OnMiss);
+        assert_eq!(manager.security_level, SecurityLevel::Allowlist);
+    }
+
     #[tokio::test]
     async fn websocket_header_auth_accepts_valid_session_cookie() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -3749,6 +3817,32 @@ mod tests {
         // One has port, other doesn't — different origins.
         assert!(!is_same_origin("http://localhost:8080", "localhost"));
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn asset_serving_sets_nosniff_header() {
+        let response = serve_asset("style.css", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let nosniff = response
+            .headers()
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(nosniff, Some("nosniff"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn svg_assets_get_restrictive_csp_header() {
+        let response = serve_asset("icons/icon-base.svg", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(csp.contains("script-src 'none'"));
+        assert!(csp.contains("object-src 'none'"));
     }
 
     #[test]

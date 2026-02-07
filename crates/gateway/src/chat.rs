@@ -29,6 +29,7 @@ use {
     },
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
     moltis_skills::discover::SkillDiscoverer,
+    moltis_tools::policy::{ToolPolicy, profile_tools},
 };
 
 use crate::{
@@ -43,6 +44,86 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
+    let mut effective = ToolPolicy::default();
+    if let Some(profile) = config.tools.policy.profile.as_deref()
+        && !profile.is_empty()
+    {
+        effective = effective.merge_with(&profile_tools(profile));
+    }
+    let configured = ToolPolicy {
+        allow: config.tools.policy.allow.clone(),
+        deny: config.tools.policy.deny.clone(),
+    };
+    effective.merge_with(&configured)
+}
+
+fn normalize_skill_allowed_pattern(pattern: &str) -> String {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // OpenClaw-style tool declarations may look like `Bash(git:*)`.
+    let base = trimmed.split('(').next().unwrap_or(trimmed).trim();
+    let lower = base.to_ascii_lowercase();
+    match lower.as_str() {
+        "bash" => "exec".to_string(),
+        "webfetch" => "web_fetch".to_string(),
+        "websearch" => "web_search".to_string(),
+        _ => lower,
+    }
+}
+
+fn matches_pattern(pattern: &str, tool_name: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+
+    let candidate = tool_name.to_ascii_lowercase();
+    if pattern == "*" {
+        return true;
+    }
+
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return candidate.starts_with(prefix);
+    }
+
+    pattern == candidate
+}
+
+fn apply_runtime_tool_filters(
+    base: &ToolRegistry,
+    config: &moltis_config::MoltisConfig,
+    skills: &[moltis_skills::types::SkillMetadata],
+    mcp_disabled: bool,
+) -> ToolRegistry {
+    let base_registry = if mcp_disabled {
+        base.clone_without_mcp()
+    } else {
+        base.clone_without(&[])
+    };
+
+    let policy = effective_tool_policy(config);
+    let policy_filtered = base_registry.clone_allowed_by(|name| policy.is_allowed(name));
+
+    // Collect skill-declared allowed tools as a union across active skills.
+    let mut skill_patterns: Vec<String> = skills
+        .iter()
+        .flat_map(|s| s.allowed_tools.iter())
+        .map(|s| normalize_skill_allowed_pattern(s))
+        .filter(|s| !s.is_empty())
+        .collect();
+    skill_patterns.sort();
+    skill_patterns.dedup();
+
+    if skill_patterns.is_empty() {
+        return policy_filtered;
+    }
+
+    policy_filtered.clone_allowed_by(|name| skill_patterns.iter().any(|p| matches_pattern(p, name)))
 }
 
 // ── Disabled Models Store ────────────────────────────────────────────────────
@@ -1353,15 +1434,11 @@ impl ChatService for LiveChatService {
             .as_ref()
             .and_then(|e| e.mcp_disabled)
             .unwrap_or(false);
+        let config = moltis_config::discover_and_load();
         let tools: Vec<serde_json::Value> = if supports_tools {
             let registry_guard = self.tool_registry.read().await;
-            let filtered;
-            let effective_registry: &ToolRegistry = if mcp_disabled {
-                filtered = registry_guard.clone_without_mcp();
-                &filtered
-            } else {
-                &registry_guard
-            };
+            let effective_registry =
+                apply_runtime_tool_filters(&registry_guard, &config, &[], mcp_disabled);
             effective_registry
                 .list_schemas()
                 .iter()
@@ -1517,19 +1594,20 @@ async fn run_with_tools(
 
     let native_tools = provider.supports_tools();
 
+    let filtered_registry = {
+        let registry_guard = tool_registry.read().await;
+        if native_tools {
+            apply_runtime_tool_filters(&registry_guard, &config, skills, mcp_disabled)
+        } else {
+            registry_guard.clone_without(&[])
+        }
+    };
+
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        let registry_guard = tool_registry.read().await;
-        let owned_filtered;
-        let tools_for_prompt: &ToolRegistry = if mcp_disabled {
-            owned_filtered = registry_guard.clone_without_mcp();
-            &owned_filtered
-        } else {
-            &registry_guard
-        };
         let prompt = build_system_prompt_with_session(
-            tools_for_prompt,
+            &filtered_registry,
             native_tools,
             project_context,
             session_context,
@@ -1537,7 +1615,6 @@ async fn run_with_tools(
             Some(&config.identity),
             Some(&config.user),
         );
-        drop(registry_guard);
         prompt
     } else {
         // Minimal prompt without tools for local LLMs
@@ -1680,17 +1757,9 @@ async fn run_with_tools(
     }
 
     let provider_ref = provider.clone();
-    let registry_guard = tool_registry.read().await;
-    let owned_filtered_loop;
-    let tools_for_loop: &ToolRegistry = if mcp_disabled {
-        owned_filtered_loop = registry_guard.clone_without_mcp();
-        &owned_filtered_loop
-    } else {
-        &registry_guard
-    };
     let first_result = run_agent_loop_streaming(
         provider,
-        tools_for_loop,
+        &filtered_registry,
         &system_prompt,
         text,
         Some(&on_event),
@@ -1752,7 +1821,7 @@ async fn run_with_tools(
 
                     run_agent_loop_streaming(
                         provider_ref.clone(),
-                        tools_for_loop,
+                        &filtered_registry,
                         &system_prompt,
                         text,
                         Some(&on_event),
@@ -2150,6 +2219,7 @@ mod tests {
     use {
         super::*,
         anyhow::Result,
+        moltis_agents::tool_registry::AgentTool,
         moltis_common::types::ReplyPayload,
         std::{
             sync::{
@@ -2159,6 +2229,29 @@ mod tests {
             time::{Duration, Instant},
         },
     };
+
+    struct DummyTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl AgentTool for DummyTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "test"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
 
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
@@ -2457,5 +2550,58 @@ mod tests {
 
         let collect: Wrapper = toml::from_str(r#"mode = "collect""#).unwrap();
         assert_eq!(collect.mode, MessageQueueMode::Collect);
+    }
+
+    #[test]
+    fn skill_allowed_pattern_normalization_maps_openclaw_names() {
+        assert_eq!(normalize_skill_allowed_pattern("Bash(git:*)"), "exec");
+        assert_eq!(normalize_skill_allowed_pattern("WebFetch"), "web_fetch");
+        assert_eq!(normalize_skill_allowed_pattern("  exec  "), "exec");
+    }
+
+    #[test]
+    fn effective_tool_policy_profile_and_config_merge() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.profile = Some("full".into());
+        cfg.tools.policy.deny = vec!["exec".into()];
+
+        let policy = effective_tool_policy(&cfg);
+        assert!(!policy.is_allowed("exec"));
+        assert!(policy.is_allowed("web_fetch"));
+    }
+
+    #[test]
+    fn runtime_filters_apply_policy_and_skill_allowed_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "web_fetch".to_string(),
+        }));
+        registry.register(Box::new(DummyTool {
+            name: "session_state".to_string(),
+        }));
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["exec".into(), "web_fetch".into()];
+
+        let skills = vec![moltis_skills::types::SkillMetadata {
+            name: "my-skill".into(),
+            description: "test".into(),
+            license: None,
+            compatibility: None,
+            allowed_tools: vec!["Bash(git:*)".into()],
+            homepage: None,
+            dockerfile: None,
+            requires: Default::default(),
+            path: std::path::PathBuf::new(),
+            source: None,
+        }];
+
+        let filtered = apply_runtime_tool_filters(&registry, &cfg, &skills, false);
+        assert!(filtered.get("exec").is_some());
+        assert!(filtered.get("web_fetch").is_none());
+        assert!(filtered.get("session_state").is_none());
     }
 }

@@ -766,9 +766,14 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn install_dep(&self, params: Value) -> ServiceResult {
-        use moltis_skills::{
-            discover::{FsSkillDiscoverer, SkillDiscoverer},
-            requirements::{check_requirements, run_install},
+        use {
+            moltis_skills::{
+                discover::{FsSkillDiscoverer, SkillDiscoverer},
+                requirements::{check_requirements, install_command_preview, run_install},
+            },
+            moltis_tools::approval::{
+                ApprovalAction, ApprovalManager, ApprovalMode, SecurityLevel,
+            },
         };
 
         let skill_name = params
@@ -776,6 +781,14 @@ impl SkillsService for NoopSkillsService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'skill' parameter".to_string())?;
         let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let confirm = params
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let allow_host_install = params
+            .get("allow_host_install")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Discover the skill to get its requirements
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -793,6 +806,39 @@ impl SkillsService for NoopSkillsService {
             .install_options
             .get(index)
             .ok_or_else(|| format!("install option index {index} out of range"))?;
+
+        let command_preview = install_command_preview(spec).map_err(|e| e.to_string())?;
+        if !confirm {
+            return Err(format!(
+                "dependency install requires explicit confirmation. Re-run with confirm=true after reviewing command: {command_preview}"
+            ));
+        }
+
+        let config = moltis_config::discover_and_load();
+        if config.tools.exec.sandbox.mode == "off" && !allow_host_install {
+            return Err(
+                "dependency install blocked because sandbox mode is off. Enable sandbox or re-run with allow_host_install=true and confirm=true"
+                    .to_string(),
+            );
+        }
+
+        let mut approval = ApprovalManager::default();
+        approval.mode =
+            ApprovalMode::parse(&config.tools.exec.approval_mode).unwrap_or(ApprovalMode::OnMiss);
+        approval.security_level = SecurityLevel::parse(&config.tools.exec.security_level)
+            .unwrap_or(SecurityLevel::Allowlist);
+        approval.allowlist = config.tools.exec.allowlist;
+
+        match approval
+            .check_command(&command_preview)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            ApprovalAction::Proceed => {},
+            // skills.install_dep is an interactive RPC invoked by the user in the UI;
+            // `confirm=true` is treated as the explicit approval for this action.
+            ApprovalAction::NeedsApproval => {},
+        }
 
         let result = run_install(spec).await.map_err(|e| e.to_string())?;
 

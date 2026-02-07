@@ -229,7 +229,12 @@ function MissingDepsSection(props) {
     ${(d.install_options || []).map(
 			(opt, idx) =>
 				html`<button onClick=${() => {
-					sendRpc("skills.install_dep", { skill: d.name, index: idx }).then((r) => {
+					var preview = opt?.label || `Install via ${opt?.kind || "package manager"}`;
+					var confirmed = window.confirm(
+						`Install dependency for ${d.name}?\n\n${preview}\n\nOnly continue if you trust this skill and its source.`,
+					);
+					if (!confirmed) return;
+					sendRpc("skills.install_dep", { skill: d.name, index: idx, confirm: true }).then((r) => {
 						if (r?.ok) {
 							showToast(`Installed dependency for ${d.name}`, "success");
 							props.onReload?.();
