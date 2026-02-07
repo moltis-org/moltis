@@ -17,7 +17,7 @@ env:
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -32,7 +32,7 @@ jobs:
   biome:
     name: Biome
     needs: zizmor
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -47,7 +47,7 @@ jobs:
   fmt:
     name: Format
     needs: zizmor
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
