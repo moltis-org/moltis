@@ -291,18 +291,9 @@ mod tests {
             path: std::path::PathBuf::from("/skills/commit"),
             source: None,
         }];
-        let prompt =
-            build_system_prompt_with_session(
-                &tools,
-                true,
-                None,
-                None,
-                &skills,
-                None,
-                None,
-                None,
-                None,
-            );
+        let prompt = build_system_prompt_with_session(
+            &tools, true, None, None, &skills, None, None, None, None,
+        );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
     }

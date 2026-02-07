@@ -2025,7 +2025,9 @@ pub async fn start_gateway(
             tracing::info!("loaded heartbeat prompt from HEARTBEAT.md");
         }
         if hb.prompt.as_deref().is_some_and(|p| !p.trim().is_empty())
-            && heartbeat_md.as_deref().is_some_and(|p| !p.trim().is_empty())
+            && heartbeat_md
+                .as_deref()
+                .is_some_and(|p| !p.trim().is_empty())
             && prompt_source == HeartbeatPromptSource::Config
         {
             tracing::warn!(

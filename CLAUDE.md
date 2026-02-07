@@ -735,8 +735,8 @@ integrate them together so nothing is lost.
 - [ ] **No secrets or private tokens are included** (CRITICAL)
 - [ ] `taplo fmt` (when TOML files were modified)
 - [ ] `biome check --write` (when JS files were modified; CI runs `biome ci`)
-- [ ] Code is formatted (`just format-check` passes)
-- [ ] Code passes clippy linting (`just lint` passes)
+- [ ] Code is formatted (`cargo +nightly fmt --all` / `just format-check` passes)
+- [ ] Code passes clippy linting (`cargo +nightly clippy --workspace --all-targets --all-features` / `just lint` passes)
 - [ ] All tests pass (`cargo test`)
 - [ ] Commit message follows conventional commit format
 - [ ] Changes are logically grouped in the commit
