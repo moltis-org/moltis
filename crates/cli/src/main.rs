@@ -1,4 +1,5 @@
 mod auth_commands;
+mod browser_commands;
 mod config_commands;
 mod db_commands;
 mod hooks_commands;
@@ -112,6 +113,11 @@ enum Commands {
     Sandbox {
         #[command(subcommand)]
         action: sandbox_commands::SandboxAction,
+    },
+    /// Browser configuration management.
+    Browser {
+        #[command(subcommand)]
+        action: browser_commands::BrowserAction,
     },
     /// Database management (reset, clear, migrate).
     Db {
@@ -338,6 +344,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
+        Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
