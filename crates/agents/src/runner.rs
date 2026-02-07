@@ -174,13 +174,19 @@ fn strip_base64_blobs(input: &str) -> String {
         let after_tag = &rest[start + BASE64_TAG.len()..];
 
         if let Some(marker_pos) = after_tag.find(BASE64_MARKER) {
+            let mime_part = &after_tag[..marker_pos];
             let payload_start = marker_pos + BASE64_MARKER.len();
             let payload = &after_tag[payload_start..];
             let payload_len = payload.bytes().take_while(|b| is_base64_byte(*b)).count();
 
             if payload_len >= BLOB_MIN_LEN {
                 let total_uri_len = BASE64_TAG.len() + payload_start + payload_len;
-                write!(result, "[base64 data removed — {total_uri_len} bytes]").unwrap();
+                // Provide a descriptive message based on MIME type
+                if mime_part.starts_with("image/") {
+                    result.push_str("[screenshot captured and displayed in UI]");
+                } else {
+                    write!(result, "[{mime_part} data removed — {total_uri_len} bytes]").unwrap();
+                }
                 rest = &rest[start + total_uri_len..];
                 continue;
             }
@@ -262,7 +268,7 @@ pub struct ExtractedImage {
 ///
 /// Searches for patterns like `data:image/png;base64,AAAA...` and extracts them.
 /// Returns the list of images found and the text with images removed.
-fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
+fn extract_images_from_text_impl(input: &str) -> (Vec<ExtractedImage>, String) {
     let mut images = Vec::new();
     let mut remaining = String::with_capacity(input.len());
     let mut rest = input;
@@ -304,6 +310,12 @@ fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
     (images, remaining)
 }
 
+/// Test alias for extract_images_from_text_impl
+#[cfg(test)]
+fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
+    extract_images_from_text_impl(input)
+}
+
 /// Convert a tool result to multimodal content for vision-capable providers.
 ///
 /// For providers with `supports_vision() == true`, this extracts images from
@@ -316,6 +328,10 @@ fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
 /// ```
 ///
 /// For non-vision providers, returns a simple string with images stripped.
+///
+/// Note: Browser screenshots are pre-stripped by the browser tool to avoid
+/// the LLM outputting the raw base64 in its response (the UI already displays
+/// screenshots via WebSocket events).
 pub fn tool_result_to_content(
     result: &str,
     max_bytes: usize,
@@ -327,7 +343,7 @@ pub fn tool_result_to_content(
     }
 
     // Vision provider: extract images and create multimodal content
-    let (images, text) = extract_images_from_text(result);
+    let (images, text) = extract_images_from_text_impl(result);
 
     if images.is_empty() {
         // No images found, just sanitize and return string
@@ -1992,7 +2008,8 @@ mod tests {
         let input = format!("before data:image/png;base64,{payload} after");
         let result = sanitize_tool_result(&input, 50_000);
         assert!(!result.contains(&payload));
-        assert!(result.contains("[base64 data removed"));
+        // Image data URIs get a user-friendly message
+        assert!(result.contains("[screenshot captured and displayed in UI]"));
         assert!(result.contains("before"));
         assert!(result.contains("after"));
     }
@@ -2098,10 +2115,10 @@ mod tests {
         let input = format!(r#"{{"screenshot": "data:image/png;base64,{payload}"}}"#);
         let result = tool_result_to_content(&input, 50_000, false);
 
-        // Should strip the image for non-vision providers
+        // Should strip the image for non-vision providers with user-friendly message
         assert!(result.is_string());
         let s = result.as_str().unwrap();
-        assert!(s.contains("[base64 data removed"));
+        assert!(s.contains("[screenshot captured and displayed in UI]"));
         assert!(!s.contains(&payload));
     }
 
@@ -2204,9 +2221,9 @@ mod tests {
                 let tool_msg = messages.iter().find(|m| m["role"].as_str() == Some("tool"));
                 let tool_content = tool_msg.and_then(|m| m["content"].as_str()).unwrap_or("");
 
-                // Tool result should be sanitized (image data removed)
+                // Tool result should be sanitized (image data replaced with user-friendly message)
                 assert!(
-                    tool_content.contains("[base64 data removed"),
+                    tool_content.contains("[screenshot captured and displayed in UI]"),
                     "tool result should have image stripped: {tool_content}"
                 );
                 assert!(

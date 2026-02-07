@@ -265,6 +265,11 @@ impl BrowserPool {
             while let Some(event) = handler.next().await {
                 debug!(session_id = session_id_clone, ?event, "browser event");
             }
+            // Handler exits when connection closes - this is normal for idle sessions
+            debug!(
+                session_id = session_id_clone,
+                "sandboxed browser event handler exited (connection closed)"
+            );
         });
 
         info!(session_id, "sandboxed browser connected successfully");

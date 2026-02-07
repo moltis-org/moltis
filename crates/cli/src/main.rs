@@ -177,9 +177,11 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     let base_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
 
-    // Suppress noisy "WS Invalid message" warnings from chromiumoxide.
-    // These are normal - Chrome sends CDP events the library doesn't recognize.
-    let filter = base_filter.add_directive("chromiumoxide::handler=error".parse().unwrap());
+    // Suppress noisy chromiumoxide logs:
+    // - "WS Invalid message" warnings (Chrome sends CDP events the library doesn't recognize)
+    // - "WS Connection error" errors (normal when idle connections are closed)
+    // These are expected browser sandbox behavior, not actionable errors.
+    let filter = base_filter.add_directive("chromiumoxide=off".parse().unwrap());
 
     let registry = tracing_subscriber::registry().with(filter);
 
