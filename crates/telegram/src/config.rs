@@ -54,6 +54,12 @@ pub struct TelegramAccountConfig {
     /// resolves the provider from the model ID at runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+
+    /// Enable OTP self-approval for non-allowlisted DM users (default: true).
+    pub otp_self_approval: bool,
+
+    /// Cooldown in seconds after 3 failed OTP attempts (default: 300).
+    pub otp_cooldown_secs: u64,
 }
 
 impl std::fmt::Debug for TelegramAccountConfig {
@@ -86,6 +92,8 @@ impl Default for TelegramAccountConfig {
             edit_throttle_ms: 300,
             model: None,
             model_provider: None,
+            otp_self_approval: true,
+            otp_cooldown_secs: 300,
         }
     }
 }

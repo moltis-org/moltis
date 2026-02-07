@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -190,6 +190,35 @@ pub struct PendingInvoke {
     pub created_at: Instant,
 }
 
+// ── Discovered hook info ─────────────────────────────────────────────────────
+
+/// Metadata about a discovered hook, exposed to the web UI.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiscoveredHookInfo {
+    pub name: String,
+    pub description: String,
+    pub emoji: Option<String>,
+    pub events: Vec<String>,
+    pub command: Option<String>,
+    pub timeout: u64,
+    pub priority: i32,
+    /// `"project"` or `"user"`.
+    pub source: String,
+    pub source_path: String,
+    pub eligible: bool,
+    pub missing_os: bool,
+    pub missing_bins: Vec<String>,
+    pub missing_env: Vec<String>,
+    pub enabled: bool,
+    /// Raw HOOK.md content (frontmatter + body).
+    pub body: String,
+    /// Server-rendered HTML of the markdown body (after frontmatter).
+    pub body_html: String,
+    pub call_count: u64,
+    pub failure_count: u64,
+    pub avg_latency_ms: u64,
+}
+
 // ── Gateway state ────────────────────────────────────────────────────────────
 
 /// Shared gateway runtime state, wrapped in Arc for use across async tasks.
@@ -235,7 +264,11 @@ pub struct GatewayState {
     /// back to the originating channel.
     pub channel_reply_queue: RwLock<HashMap<String, Vec<ChannelReplyTarget>>>,
     /// Hook registry for dispatching lifecycle events.
-    pub hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
+    pub hook_registry: RwLock<Option<Arc<moltis_common::hooks::HookRegistry>>>,
+    /// Discovered hook metadata for the web UI.
+    pub discovered_hooks: RwLock<Vec<DiscoveredHookInfo>>,
+    /// Hook names that have been manually disabled via the UI.
+    pub disabled_hooks: RwLock<HashSet<String>>,
     /// Memory manager for long-term memory search (None if no embedding provider).
     pub memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
     /// One-time setup code displayed at startup, required during initial setup.
@@ -245,6 +278,9 @@ pub struct GatewayState {
     pub localhost_only: bool,
     /// Whether TLS is active on the gateway listener.
     pub tls_active: bool,
+    /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
+    /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
+    pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
@@ -281,6 +317,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            None,
             #[cfg(feature = "metrics")]
             None,
             #[cfg(feature = "metrics")]
@@ -306,6 +343,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            None,
             #[cfg(feature = "metrics")]
             None,
             #[cfg(feature = "metrics")]
@@ -326,6 +364,7 @@ impl GatewayState {
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
         port: u16,
+        deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
     ) -> Arc<Self> {
@@ -353,11 +392,14 @@ impl GatewayState {
             active_projects: RwLock::new(HashMap::new()),
             sandbox_router,
             channel_reply_queue: RwLock::new(HashMap::new()),
-            hook_registry,
+            hook_registry: RwLock::new(hook_registry),
+            discovered_hooks: RwLock::new(Vec::new()),
+            disabled_hooks: RwLock::new(HashSet::new()),
             memory_manager,
             setup_code: RwLock::new(None),
             localhost_only,
             tls_active,
+            deploy_platform,
             port,
             heartbeat_config: RwLock::new(moltis_config::schema::HeartbeatConfig::default()),
             run_errors: RwLock::new(HashMap::new()),

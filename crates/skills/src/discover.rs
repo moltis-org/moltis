@@ -28,15 +28,13 @@ impl FsSkillDiscoverer {
 
     /// Build the default search paths for skill discovery.
     pub fn default_paths(cwd: &Path) -> Vec<(PathBuf, SkillSource)> {
-        let mut paths = vec![(cwd.join(".moltis/skills"), SkillSource::Project)];
-
-        if let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) {
-            paths.push((home.join(".moltis/skills"), SkillSource::Personal));
-            paths.push((home.join(".moltis/installed-skills"), SkillSource::Registry));
-            paths.push((home.join(".moltis/installed-plugins"), SkillSource::Plugin));
-        }
-
-        paths
+        let data = moltis_config::data_dir();
+        vec![
+            (cwd.join(".moltis/skills"), SkillSource::Project),
+            (data.join("skills"), SkillSource::Personal),
+            (data.join("installed-skills"), SkillSource::Registry),
+            (data.join("installed-plugins"), SkillSource::Plugin),
+        ]
     }
 }
 
@@ -109,11 +107,7 @@ fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillM
 /// Plugin skills don't have SKILL.md — they are normalized by format adapters.
 /// This returns lightweight metadata from the manifest for prompt injection.
 fn discover_plugins(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
-    let home = match directories::BaseDirs::new() {
-        Some(d) => d.home_dir().to_path_buf(),
-        None => return,
-    };
-    let manifest_path = home.join(".moltis/plugins-manifest.json");
+    let manifest_path = moltis_config::data_dir().join("plugins-manifest.json");
     let store = ManifestStore::new(manifest_path);
     let manifest = match store.load() {
         Ok(m) => m,

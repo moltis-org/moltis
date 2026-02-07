@@ -27,6 +27,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mistral AI Voxtral (cloud-based, 13 languages)
   - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
+- **Hooks Web UI**: New `/hooks` page to manage lifecycle hooks from the browser
+  - View all discovered hooks with eligibility status, source, and events
+  - Enable/disable hooks without removing files (persisted across restarts)
+  - Edit HOOK.md content in a monospace textarea and save back to disk
+  - Reload hooks at runtime to pick up changes without restarting
+  - Live stats (call count, failures, avg latency) from the hook registry
+  - WebSocket-driven auto-refresh via `hooks.status` event
+  - RPC methods: `hooks.list`, `hooks.enable`, `hooks.disable`, `hooks.save`, `hooks.reload`
+- **Deploy platform detection**: New `MOLTIS_DEPLOY_PLATFORM` env var hides local-only providers (local-llm, Ollama) on cloud deployments. Pre-configured in Fly.io, DigitalOcean, and Render deploy templates.
+- **Telegram OTP self-approval**: Non-allowlisted DM users receive a 6-digit verification code instead of being silently ignored. Correct code entry auto-approves the user to the allowlist. Includes flood protection (non-code messages silently ignored), lockout after 3 failed attempts (configurable cooldown), and 5-minute code expiry. OTP codes visible in web UI Senders tab. Controlled by `otp_self_approval` (default: true) and `otp_cooldown_secs` (default: 300) config fields.
+
+### Changed
+
+- **Release packaging**: Derive release artifact versions from the Git tag (`vX.Y.Z`) in CI, and sync package metadata during release jobs to prevent filename/version drift.
+- **Versioning**: Bump workspace and snap baseline version to `0.2.0`.
+- **Onboarding auth flow**: Route first-run setup directly into `/onboarding` and remove the separate `/setup` web UI page.
+
+### Fixed
+
+- **Homebrew release automation**: Run the tap update in the release workflow after all package/image jobs complete so formula publishing does not race missing tarball assets.
+- **Docker runtime**: Install `libgomp1` in the runtime image to satisfy OpenMP-linked binaries and prevent startup failures with `libgomp.so.1` missing.
+- **Release CI validation**: Add a Docker smoke test step (`moltis --help`) after image build/push so missing runtime libraries fail in CI before release.
+- **Web onboarding clarity**: Add setup-code guidance that points users to the process log (stdout).
+- **WebSocket auth (remote deployments)**: Accept existing session/API-key auth from WebSocket upgrade headers so browser connections don't immediately close after `connect` on hosted setups.
+- **Sandbox UX on unsupported hosts**: Disable sandbox controls in chat/images when no runtime backend is detected, with a tooltip explaining cloud deploy limitations.
+- **Telegram OTP code echoed to LLM**: After OTP self-approval, the verification code message was re-processed as a regular chat message because `sender_approve` restarted the bot polling loop (resetting the Telegram update offset). Sender approve/deny now hot-update the in-memory config without restarting the bot.
+- **Empty allowlist bypassed access control**: When `dm_policy = Allowlist` and all entries were removed, the empty list was treated as "allow everyone" instead of "deny everyone". An explicit Allowlist policy with an empty list now correctly denies all access.
+
+## [0.1.10] - 2026-02-06
+
+### Changed
+
+- **CI builds**: Build Docker images natively per architecture instead of QEMU emulation, then merge into multi-arch manifest
+
+## [0.1.9] - 2026-02-06
+
+### Changed
+
+- **CI builds**: Migrate all release build jobs from self-hosted to GitHub-hosted runners for full parallelism (`ubuntu-latest`, `ubuntu-latest-arm`, `macos-latest`), remove all cross-compilation toolchain steps
+
+## [0.1.8] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Fix corrupted cargo config on all self-hosted runner jobs, fix macOS runner label, add llama-cpp build deps to Docker and Snap builds
+
+## [0.1.7] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Use project-local `.cargo/config.toml` for cross-compilation instead of appending to global config (fixes duplicate key errors on self-hosted runners)
+
+## [0.1.6] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Use macOS GitHub-hosted runners for apple-darwin binary builds instead of cross-compiling from Linux
+- **CI performance**: Run lightweight lint jobs (zizmor, biome, fmt) on GitHub-hosted runners to free up self-hosted runners
+
+## [0.1.5] - 2026-02-06
+
+### Fixed
+
+- **CI security**: Use GitHub-hosted runners for PRs to prevent untrusted code from running on self-hosted infrastructure
+- **CI security**: Add `persist-credentials: false` to docs workflow checkout (fixes zizmor artipacked warning)
+
+## [0.1.4] - 2026-02-06
+
+### Added
+
+- **`--no-tls` CLI flag**: `--no-tls` flag and `MOLTIS_NO_TLS` environment variable to disable
+  TLS for cloud deployments where the provider handles TLS termination
+- **One-click cloud deploy**: Deploy configs for Fly.io (`fly.toml`), DigitalOcean
+  (`.do/deploy.template.yaml`), Render (`render.yaml`), and Railway (`railway.json`)
+  with deploy buttons in the README
+- **Config Check Command**: `moltis config check` validates the configuration file, detects unknown/misspelled fields with Levenshtein-based suggestions, warns about security misconfigurations, and checks file references
+
 - **Memory Usage Indicator**: Display process RSS and system free memory in the header bar, updated every 30 seconds via the tick WebSocket broadcast
 
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking

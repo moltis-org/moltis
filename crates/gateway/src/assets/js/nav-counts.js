@@ -14,6 +14,7 @@ var ids = {
 	skills: "navCountSkills",
 	mcp: "navCountMcp",
 	crons: "navCountCrons",
+	hooks: "navCountHooks",
 	images: "navCountImages",
 };
 

@@ -25,10 +25,11 @@ import "./page-logs.js";
 import "./page-plugins.js";
 import "./page-skills.js";
 import "./page-mcp.js";
+import "./page-hooks.js";
 import "./page-metrics.js";
 import "./page-settings.js";
 import "./page-images.js";
-import "./page-setup.js";
+import "./page-onboarding.js";
 import { setHasPasskeys } from "./page-login.js";
 
 // Import side-effect modules
@@ -77,8 +78,8 @@ function applyMemory(mem) {
 	if (!mem) return;
 	var el = document.getElementById("memoryInfo");
 	if (!el) return;
-	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0 });
-	el.textContent = `Process: ${fmt(mem.process)} \u00b7 System: ${fmt(mem.available)} free / ${fmt(mem.total)}`;
+	var fmt = (b) => prettyBytes(b, { maximumFractionDigits: 0, space: false });
+	el.textContent = `${fmt(mem.process)} \u00b7 ${fmt(mem.available)} free / ${fmt(mem.total)}`;
 }
 
 applyMemory(gon.get("mem"));
@@ -95,7 +96,9 @@ fetch("/api/auth/status")
 			return;
 		}
 		if (auth.setup_required) {
-			mount("/setup");
+			mount("/onboarding");
+			connect();
+			initInstallBanner();
 			return;
 		}
 		setHasPasskeys(auth.has_passkeys);
@@ -115,11 +118,6 @@ fetch("/api/auth/status")
 
 function showAuthDisabledBanner() {
 	var el = document.getElementById("authDisabledBanner");
-	if (el) el.style.display = "";
-}
-
-function showOnboardingBanner() {
-	var el = document.getElementById("onboardingBanner");
 	if (el) el.style.display = "";
 }
 
@@ -200,11 +198,8 @@ function fetchBootstrap() {
 		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Bootstrap requires handling many conditional paths
 		.then((boot) => {
 			if (boot.onboarded === false) {
-				showOnboardingBanner();
-				if (location.pathname === "/" || location.pathname === "/chats") {
-					navigate("/settings");
-					return;
-				}
+				navigate("/onboarding");
+				return;
 			}
 			if (boot.channels) S.setCachedChannels(boot.channels.channels || boot.channels || []);
 			if (boot.sessions) {

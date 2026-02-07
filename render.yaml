@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: moltis
+    runtime: image
+    image:
+      url: ghcr.io/moltis-org/moltis:latest
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: moltis-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: MOLTIS_NO_TLS
+        value: "true"
+      - key: MOLTIS_CONFIG_DIR
+        value: /data/config
+      - key: MOLTIS_DATA_DIR
+        value: /data
+      - key: MOLTIS_DEPLOY_PLATFORM
+        value: render
+    dockerCommand: moltis --bind 0.0.0.0 --port 10000 --no-tls

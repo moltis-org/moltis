@@ -17,7 +17,7 @@ env:
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -32,7 +32,7 @@ jobs:
   biome:
     name: Biome
     needs: zizmor
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -47,7 +47,7 @@ jobs:
   fmt:
     name: Format
     needs: zizmor
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -63,13 +63,15 @@ jobs:
   clippy:
     name: Clippy
     needs: fmt
-    runs-on: self-hosted
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies for llama.cpp
         run: |
           sudo apt-get update
@@ -100,13 +102,15 @@ jobs:
   build:
     name: Build & Test
     needs: [clippy, biome]
-    runs-on: self-hosted
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies for llama.cpp
         run: |
           sudo apt-get update

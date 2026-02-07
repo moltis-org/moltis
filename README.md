@@ -9,8 +9,9 @@
 [![CI](https://github.com/moltis-org/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/moltis-org/moltis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
+[![Discord](https://img.shields.io/discord/1469505370169933837?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/t873en2E)
 
-[Features](#features) • [Installation](#installation) • [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Hooks](#hooks)
+[Features](#features) • [Installation](#installation) • [Quickstart](#quickstart) • [Cloud Deployment](#cloud-deployment) • [How It Works](#how-it-works) • [Hooks](#hooks) • [Discord](https://discord.gg/t873en2E)
 
 </div>
 
@@ -93,7 +94,8 @@ What you get out of the box:
 - **Hook system** — lifecycle hooks with priority ordering, parallel dispatch
   for read-only events, circuit breaker, dry-run mode, HOOK.md-based discovery,
   eligibility checks, bundled hooks (boot-md, session-memory, command-logger),
-  and CLI management (`moltis hooks list/info`)
+  CLI management (`moltis hooks list/info`), and web UI for editing, enabling/disabling,
+  and reloading hooks at runtime
 - **Web browsing** — web search (Brave, Perplexity) and URL fetching with
   readability extraction and SSRF protection
 - **Voice support** — Text-to-speech (TTS) and speech-to-text (STT) with
@@ -118,6 +120,9 @@ What you get out of the box:
   Hijacking (CSWSH)
 - **Onboarding wizard** — guided setup for agent identity (name, emoji,
   creature, vibe, soul) and user profile
+- **Config validation** — `moltis config check` validates the configuration
+  file, detects unknown/misspelled fields with suggestions, and reports
+  security warnings
 - **Default config on first run** — writes a complete `moltis.toml` with all
   defaults so you can edit packages and settings without recompiling
 - **Random port per installation** — each fresh install picks a unique available
@@ -126,6 +131,8 @@ What you get out of the box:
   needed
 - **Configurable directories** — `--config-dir` / `--data-dir` CLI flags and
   `MOLTIS_CONFIG_DIR` / `MOLTIS_DATA_DIR` environment variables
+- **Cloud deployment** — one-click deploy configs for Fly.io, DigitalOcean,
+  Render, and Railway with `--no-tls` flag for cloud TLS termination
 - **Tailscale integration** — expose the gateway over your tailnet via Tailscale
   Serve (private HTTPS) or Funnel (public HTTPS), with status monitoring and
   mode switching from the web UI (optional `tailscale` feature flag)
@@ -202,6 +209,27 @@ Open `http://localhost:13131` in your browser and complete the setup.
 - **Persistence** — Mount volumes to preserve data across container restarts:
   - `/home/moltis/.config/moltis` — configuration (moltis.toml, mcp-servers.json)
   - `/home/moltis/.moltis` — data (databases, sessions, memory)
+
+## Cloud Deployment
+
+Deploy the pre-built Docker image to your favorite cloud provider:
+
+| Provider | Deploy |
+|----------|--------|
+| DigitalOcean | [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main) |
+| Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/moltis-org/moltis) |
+| Railway | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?repo=moltis-org/moltis) |
+
+**Fly.io** (CLI):
+
+```bash
+fly launch --image ghcr.io/moltis-org/moltis:latest
+fly secrets set MOLTIS_PASSWORD="your-password"
+```
+
+All cloud configs use `--no-tls` because the provider handles TLS termination.
+See [Cloud Deploy docs](https://docs.moltis.org/cloud-deploy.html) for
+per-provider setup details, persistent storage notes, and authentication.
 
 ## How It Works
 

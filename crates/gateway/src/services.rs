@@ -11,7 +11,7 @@ pub type ServiceError = String;
 pub type ServiceResult<T = Value> = Result<T, ServiceError>;
 
 /// Convert markdown to sanitized HTML using pulldown-cmark.
-fn markdown_to_html(md: &str) -> String {
+pub(crate) fn markdown_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);

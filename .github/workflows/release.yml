@@ -15,13 +15,14 @@ permissions: {}
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
       - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
         with:
           advanced-security: false
@@ -34,10 +35,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: arm64
+            os: ubuntu-24.04-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .deb (${{ matrix.arch }})
     permissions:
       contents: write
@@ -47,6 +50,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -59,14 +77,6 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
-
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
         env:
@@ -113,10 +123,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-24.04-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .rpm (${{ matrix.arch }})
     permissions:
       contents: write
@@ -126,6 +138,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -139,14 +166,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -154,14 +173,8 @@ jobs:
 
       - name: Strip binary
         env:
-          MATRIX_ARCH: ${{ matrix.arch }}
           BUILD_TARGET: ${{ matrix.target }}
-        run: |
-          if [ "$MATRIX_ARCH" = "x86_64" ]; then
-            strip "target/$BUILD_TARGET/release/moltis"
-          else
-            aarch64-linux-gnu-strip "target/$BUILD_TARGET/release/moltis"
-          fi
+        run: strip "target/$BUILD_TARGET/release/moltis"
 
       - name: Build .rpm package
         env:
@@ -203,10 +216,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-24.04-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
       contents: write
@@ -229,13 +244,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -244,7 +252,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build .pkg.tar.zst
@@ -304,10 +316,14 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
+            appimagetool_arch: x86_64
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-24.04-arm
+            appimagetool_arch: aarch64
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build AppImage (${{ matrix.arch }})
     permissions:
       contents: write
@@ -327,14 +343,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -343,7 +351,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build AppImage
@@ -351,9 +363,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_TARGET: ${{ matrix.target }}
           MATRIX_ARCH: ${{ matrix.arch }}
+          APPIMAGETOOL_ARCH: ${{ matrix.appimagetool_arch }}
         run: |
-          # Download appimagetool for the host (always x86_64 runner)
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          # Download appimagetool matching the runner architecture
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGETOOL_ARCH}.AppImage" -O appimagetool
           chmod +x appimagetool
 
           # Build AppDir structure
@@ -420,7 +433,7 @@ jobs:
 
   build-snap:
     needs: zizmor
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     name: Build Snap
     permissions:
       contents: write
@@ -430,6 +443,22 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync snap version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: |
+          sed -Ei "s/^version:[[:space:]]*'.*'/version: '${VERSION}'/" snap/snapcraft.yaml
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
@@ -470,11 +499,15 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
+            os: macos-latest
           - target: aarch64-apple-darwin
+            os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build binary (${{ matrix.target }})
     permissions:
       contents: write
@@ -494,14 +527,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -510,7 +535,11 @@ jobs:
       - name: Determine package version
         id: version
         run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package binary
@@ -550,8 +579,16 @@ jobs:
 
   build-docker:
     needs: zizmor
-    runs-on: ubuntu-latest
-    name: Build Docker (multi-arch)
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.os }}
+    name: Build Docker (${{ matrix.platform }})
     permissions:
       contents: read
       packages: write
@@ -559,15 +596,81 @@ jobs:
       attestations: write # Required for provenance attestations
 
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      # Each matrix leg overwrites, but merge job reads digests from artifacts
+      image: ghcr.io/${{ github.repository }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=ghcr.io/${{ github.repository }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Smoke test Docker image startup
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm "ghcr.io/${{ github.repository }}@${DIGEST}" --help > /dev/null
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          digest="${DIGEST#sha256:}"
+          touch "/tmp/digests/${digest}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docker-digests-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-docker:
+    needs: build-docker
+    runs-on: ubuntu-latest
+    name: Merge Docker manifest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Required for Sigstore keyless signing
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: /tmp/digests
+          pattern: docker-digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
@@ -588,33 +691,41 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
 
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Enable SBOM and provenance attestations
-          sbom: true
-          provenance: mode=max
+      - name: Create multi-arch manifest and push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+
+      - name: Inspect manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          tag=$(echo "$TAGS" | head -1)
+          docker buildx imagetools inspect "$tag"
+
+      - name: Get manifest digest
+        id: manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          tag=$(echo "$TAGS" | head -1)
+          digest=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Sign container image with cosign (keyless)
         if: github.event_name != 'pull_request'
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.manifest.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          # Sign each tag with cosign using keyless signing (Sigstore)
           images=""
           for tag in ${TAGS}; do
             images+="${tag}@${DIGEST} "
@@ -624,7 +735,7 @@ jobs:
       - name: Verify container signature
         if: github.event_name != 'pull_request'
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.manifest.outputs.digest }}
         run: |
           cosign verify \
             --certificate-identity-regexp="https://github.com/${{ github.repository }}/*" \
@@ -640,7 +751,7 @@ jobs:
       - build-appimage
       - build-snap
       - build-homebrew-binaries
-      - build-docker
+      - merge-docker
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     name: Generate Release SBOM
@@ -661,7 +772,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX and SPDX)
         run: |
-          cargo sbom --output-format cyclonedx_json_1_4 > moltis-sbom.cdx.json
+          cargo sbom --output-format cyclone_dx_json_1_4 > moltis-sbom.cdx.json
           cargo sbom --output-format spdx_json_2_3 > moltis-sbom.spdx.json
 
       - name: Sign SBOMs with Sigstore and generate checksums
@@ -682,3 +793,113 @@ jobs:
             moltis-sbom.spdx.json.sha256
             moltis-sbom.spdx.json.sig
             moltis-sbom.spdx.json.crt
+
+  update-homebrew-tap:
+    needs:
+      - build-deb
+      - build-rpm
+      - build-arch
+      - build-appimage
+      - build-snap
+      - build-homebrew-binaries
+      - merge-docker
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Update Homebrew tap
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check Homebrew tap token
+        id: token_check
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is not set; skipping Homebrew tap update"
+          else
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download release assets and compute SHAs
+        if: steps.token_check.outputs.has_token == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            ASSET="moltis-${VERSION}-${target}.tar.gz"
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+            curl --silent --show-error --fail --location "$URL" -o "$ASSET"
+            SHA=$(sha256sum "$ASSET" | cut -d' ' -f1)
+            VAR="SHA_$(echo "$target" | tr '-' '_')"
+            echo "${VAR}=${SHA}" >> "$GITHUB_ENV"
+            echo "$target: $SHA"
+          done
+
+      - name: Checkout homebrew-tap
+        if: steps.token_check.outputs.has_token == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: moltis-org/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
+
+      - name: Update formula
+        if: steps.token_check.outputs.has_token == 'true'
+        run: |
+          cat > Formula/moltis.rb <<RUBY
+          class Moltis < Formula
+            desc "Personal AI gateway - one binary, multiple LLM providers"
+            homepage "https://www.moltis.org/"
+            license "MIT"
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_aarch64_apple_darwin}"
+              else
+                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_x86_64_apple_darwin}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_aarch64_unknown_linux_gnu}"
+              else
+                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_x86_64_unknown_linux_gnu}"
+              end
+            end
+
+            def install
+              bin.install "moltis"
+            end
+
+            test do
+              assert_match "moltis", shell_output("#{bin}/moltis --version")
+            end
+          end
+          RUBY
+
+      - name: Commit and push
+        if: steps.token_check.outputs.has_token == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/moltis.rb
+          if git diff --cached --quiet; then
+            echo "No Homebrew formula changes to commit"
+            exit 0
+          fi
+          git commit -m "moltis ${VERSION}"
+          git push

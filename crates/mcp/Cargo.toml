@@ -9,7 +9,7 @@ metrics = ["dep:moltis-metrics"]
 
 [dependencies]
 anyhow         = { workspace = true }
-async-trait    = "0.1"
+async-trait    = { workspace = true }
 futures        = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 reqwest        = { workspace = true }
@@ -20,5 +20,5 @@ tracing        = { workspace = true }
 uuid           = { workspace = true }
 
 [dev-dependencies]
-tempfile   = "3"
-tokio-test = "0.4"
+tempfile   = { workspace = true }
+tokio-test = { workspace = true }
