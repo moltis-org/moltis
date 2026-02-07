@@ -723,6 +723,10 @@ and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
 
+**PR local validation:** When pushing code to an open pull request, run
+`./scripts/local-validate-pr.sh <PR_ID>` (for example `./scripts/local-validate-pr.sh 63`)
+to publish local verification statuses before/after pushing.
+
 ## Code Quality Checklist
 
 **You MUST run all checks before every commit and fix any issues they report:**

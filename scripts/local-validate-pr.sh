@@ -2,6 +2,48 @@
 
 set -euo pipefail
 
+ACTIVE_PIDS=()
+CURRENT_PID=""
+
+remove_active_pid() {
+  local target="$1"
+  local kept=()
+  local pid
+  for pid in "${ACTIVE_PIDS[@]}"; do
+    if [[ "$pid" != "$target" ]]; then
+      kept+=("$pid")
+    fi
+  done
+  ACTIVE_PIDS=("${kept[@]}")
+}
+
+handle_interrupt() {
+  echo "Interrupted: stopping local validation..." >&2
+
+  if [[ -n "$CURRENT_PID" ]]; then
+    kill -TERM "$CURRENT_PID" 2>/dev/null || true
+  fi
+
+  local pid
+  for pid in "${ACTIVE_PIDS[@]}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+
+  sleep 1
+
+  if [[ -n "$CURRENT_PID" ]]; then
+    kill -KILL "$CURRENT_PID" 2>/dev/null || true
+  fi
+
+  for pid in "${ACTIVE_PIDS[@]}"; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+
+  exit 130
+}
+
+trap handle_interrupt INT TERM
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "gh CLI is required" >&2
   exit 1
@@ -126,14 +168,18 @@ run_check() {
 
   start="$(date +%s)"
   set_status pending "$context" "Running locally"
-  if bash -lc "$cmd"; then
+  bash -lc "$cmd" &
+  CURRENT_PID="$!"
+  if wait "$CURRENT_PID"; then
     end="$(date +%s)"
     duration="$((end - start))"
+    CURRENT_PID=""
     set_status success "$context" "Passed locally"
     echo "[$context] passed in ${duration}s"
   else
     end="$(date +%s)"
     duration="$((end - start))"
+    CURRENT_PID=""
     set_status failure "$context" "Failed locally"
     echo "[$context] failed in ${duration}s" >&2
     return 1
@@ -162,8 +208,9 @@ run_check_async() {
     printf 'fail %s\n' "$duration" >"/tmp/local-validate-${safe_context}.result"
     exit 1
   ) &
-
-  echo "$!"
+  local pid="$!"
+  ACTIVE_PIDS+=("$pid")
+  echo "$pid"
 }
 
 report_async_result() {
@@ -178,6 +225,7 @@ report_async_result() {
   if [[ -f "$result_file" ]]; then
     read -r status_word duration <"$result_file"
     rm -f "$result_file"
+    remove_active_pid "$2"
     echo "[$context] total ${duration}s"
     [[ "$status_word" == "ok" ]]
     return
@@ -201,11 +249,11 @@ zizmor_pid="$(run_check_async "local/zizmor" "$zizmor_cmd")"
 
 parallel_failed=0
 if ! wait "$fmt_pid"; then parallel_failed=1; fi
-if ! report_async_result "local/fmt"; then parallel_failed=1; fi
+if ! report_async_result "local/fmt" "$fmt_pid"; then parallel_failed=1; fi
 if ! wait "$biome_pid"; then parallel_failed=1; fi
-if ! report_async_result "local/biome"; then parallel_failed=1; fi
+if ! report_async_result "local/biome" "$biome_pid"; then parallel_failed=1; fi
 if ! wait "$zizmor_pid"; then parallel_failed=1; fi
-if ! report_async_result "local/zizmor"; then parallel_failed=1; fi
+if ! report_async_result "local/zizmor" "$zizmor_pid"; then parallel_failed=1; fi
 
 if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2
