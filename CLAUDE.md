@@ -629,6 +629,11 @@ should only contain the message itself — no AI attribution trailers.
 When adding a new feature (`feat` commits), update the features list in
 `README.md` as part of the same branch/PR.
 
+**Never overwrite existing tags.** When a release build fails or needs fixes,
+always create a new version tag (e.g. `v0.1.7` instead of re-tagging `v0.1.6`).
+Moving or deleting published tags breaks downstream caches, package managers,
+and anyone who already pulled that version. Always move forward.
+
 **Merging main into your branch:** When merging `main` into your current branch
 and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
