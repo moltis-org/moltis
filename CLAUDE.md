@@ -39,6 +39,11 @@ each crate's `Cargo.toml`. Never add a version directly in a crate's
 `Cargo.toml` — centralising versions in the workspace avoids duplicate
 versions in the lock file and makes upgrades easier.
 
+When adding or upgrading dependencies, prefer the **latest stable crates.io
+version** whenever possible (unless there is a concrete compatibility or MSRV
+constraint). Before adding any new crate, check crates.io first and pin the
+current latest stable release in `[workspace.dependencies]`.
+
 ```toml
 # Root Cargo.toml
 [workspace.dependencies]
@@ -784,6 +789,11 @@ description with at least these sections:
 - `## Manual QA` (UI/manual checks performed, or explicitly say `None`)
 
 Do not leave PR bodies as a raw commit dump. Keep them concise and actionable.
+
+**PR descriptions must include test TODOs.** Every pull request description
+must include a dedicated checklist-style testing section (manual and/or
+automated) so reviewers can validate behavior without guessing. Keep the steps
+concrete (commands to run, UI paths to click, and expected results).
 
 ## Code Quality Checklist
 
