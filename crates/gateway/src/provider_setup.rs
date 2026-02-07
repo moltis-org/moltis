@@ -210,13 +210,19 @@ pub(crate) fn config_with_saved_keys(
     #[cfg(feature = "local-llm")]
     {
         if let Some(local_config) = crate::local_llm_setup::LocalLlmConfig::load() {
-            // Only merge if there's no model already configured in moltis.toml
+            // Collect all configured model IDs for multi-model support
+            config.local_models = local_config
+                .models
+                .iter()
+                .map(|m| m.model_id.clone())
+                .collect();
+
+            // Also set the first model as the default for backward compatibility
             let entry = config.providers.entry("local".into()).or_default();
-            if entry.model.is_none() {
-                // Use the first configured model from the multi-model config
-                if let Some(first_model) = local_config.models.first() {
-                    entry.model = Some(first_model.model_id.clone());
-                }
+            if entry.model.is_none()
+                && let Some(first_model) = local_config.models.first()
+            {
+                entry.model = Some(first_model.model_id.clone());
             }
         }
     }

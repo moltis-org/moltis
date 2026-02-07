@@ -19,7 +19,7 @@ use {async_trait::async_trait, tokio_stream::Stream, tracing::warn};
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent};
 
 /// How a provider error should be handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,7 +230,7 @@ impl LlmProvider for ProviderChain {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
         let mut errors = Vec::new();
@@ -325,14 +325,14 @@ impl LlmProvider for ProviderChain {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
 
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         // For streaming, we try the first non-tripped provider.
@@ -352,7 +352,7 @@ impl LlmProvider for ProviderChain {
 mod tests {
     use {
         super::*,
-        crate::model::{StreamEvent, Usage},
+        crate::model::{ChatMessage, StreamEvent, Usage},
         async_trait::async_trait,
         tokio_stream::StreamExt,
     };
@@ -374,7 +374,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -389,7 +389,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
                 input_tokens: 1,
@@ -416,7 +416,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             anyhow::bail!("{}", self.error_msg)
@@ -424,7 +424,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::once(StreamEvent::Error(
                 self.error_msg.into(),
@@ -673,7 +673,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -688,7 +688,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
                 input_tokens: 1,
@@ -698,7 +698,7 @@ mod tests {
 
         fn stream_with_tools(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
             tools: Vec<serde_json::Value>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             *self.received_tools.lock().unwrap() = Some(tools);

@@ -72,6 +72,11 @@ var sections = [
 		label: "Notifications",
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>`,
 	},
+	{
+		id: "config",
+		label: "Configuration",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>`,
+	},
 ];
 
 function SettingsSidebar() {
@@ -1006,6 +1011,324 @@ function bufToB64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// ── Configuration section ─────────────────────────────────────
+
+function ConfigSection() {
+	var [toml, setToml] = useState("");
+	var [configPath, setConfigPath] = useState("");
+	var [configLoading, setConfigLoading] = useState(true);
+	var [saving, setSaving] = useState(false);
+	var [testing, setTesting] = useState(false);
+	var [resettingTemplate, setResettingTemplate] = useState(false);
+	var [restarting, setRestarting] = useState(false);
+	var [msg, setMsg] = useState(null);
+	var [err, setErr] = useState(null);
+	var [warnings, setWarnings] = useState([]);
+
+	function fetchConfig() {
+		setConfigLoading(true);
+		rerender();
+		fetch("/api/config")
+			.then((r) => {
+				if (!r.ok) {
+					return r.text().then((text) => {
+						// Try to parse as JSON for structured error
+						try {
+							var json = JSON.parse(text);
+							return { error: json.error || `HTTP ${r.status}: ${r.statusText}` };
+						} catch (_e) {
+							return { error: `HTTP ${r.status}: ${r.statusText}` };
+						}
+					});
+				}
+				return r.json().catch(() => ({ error: "Invalid JSON response from server" }));
+			})
+			.then((d) => {
+				if (d.error) {
+					setErr(d.error);
+				} else {
+					setToml(d.toml || "");
+					setConfigPath(d.path || "");
+					setErr(null);
+				}
+				setConfigLoading(false);
+				rerender();
+			})
+			.catch((fetchErr) => {
+				// Network error or other fetch failure
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server. Please check if moltis is running.";
+				}
+				setErr(errMsg);
+				setConfigLoading(false);
+				rerender();
+			});
+	}
+
+	useEffect(() => {
+		fetchConfig();
+	}, []);
+
+	function onTest(e) {
+		e.preventDefault();
+		setTesting(true);
+		setMsg(null);
+		setErr(null);
+		setWarnings([]);
+		rerender();
+
+		fetch("/api/config/validate", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ toml }),
+		})
+			.then((r) => r.json().catch(() => ({ error: "Invalid JSON response" })))
+			.then((d) => {
+				setTesting(false);
+				if (d.valid) {
+					setMsg("Configuration is valid.");
+					setWarnings(d.warnings || []);
+				} else {
+					setErr(d.error || "Invalid configuration");
+				}
+				rerender();
+			})
+			.catch((fetchErr) => {
+				setTesting(false);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
+				rerender();
+			});
+	}
+
+	function onSave(e) {
+		e.preventDefault();
+		setSaving(true);
+		setMsg(null);
+		setErr(null);
+		setWarnings([]);
+		rerender();
+
+		fetch("/api/config", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ toml }),
+		})
+			.then((r) => r.json().catch(() => ({ error: "Invalid JSON response" })))
+			.then((d) => {
+				setSaving(false);
+				if (d.ok) {
+					setMsg("Configuration saved. Restart required for changes to take effect.");
+				} else {
+					setErr(d.error || "Failed to save");
+				}
+				rerender();
+			})
+			.catch((fetchErr) => {
+				setSaving(false);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
+				rerender();
+			});
+	}
+
+	function onRestart() {
+		setRestarting(true);
+		setMsg("Restarting moltis...");
+		setErr(null);
+		rerender();
+
+		fetch("/api/restart", { method: "POST" })
+			.then((r) => r.json())
+			.then(() => {
+				// Server will restart, wait a bit then start polling for reconnection
+				setTimeout(waitForRestart, 1000);
+			})
+			.catch(() => {
+				// Expected - server restarted before response
+				setTimeout(waitForRestart, 1000);
+			});
+	}
+
+	function waitForRestart() {
+		var attempts = 0;
+		var maxAttempts = 30;
+
+		function check() {
+			attempts++;
+			fetch("/api/gon", { method: "GET" })
+				.then((r) => {
+					if (r.ok) {
+						// Server is back up
+						window.location.reload();
+					} else if (attempts < maxAttempts) {
+						setTimeout(check, 1000);
+					} else {
+						setRestarting(false);
+						setErr("Server did not come back up. Check if moltis is running.");
+						rerender();
+					}
+				})
+				.catch(() => {
+					if (attempts < maxAttempts) {
+						setTimeout(check, 1000);
+					} else {
+						setRestarting(false);
+						setErr("Server did not come back up. Check if moltis is running.");
+						rerender();
+					}
+				});
+		}
+
+		check();
+	}
+
+	function onReset() {
+		fetchConfig();
+		setMsg(null);
+		setErr(null);
+		setWarnings([]);
+	}
+
+	function onResetToTemplate() {
+		if (
+			!confirm(
+				"Replace current config with the default template?\n\nThis will show all available options with documentation. Your current values will be lost unless you copy them first.",
+			)
+		) {
+			return;
+		}
+		setResettingTemplate(true);
+		setMsg(null);
+		setErr(null);
+		setWarnings([]);
+		rerender();
+
+		fetch("/api/config/template")
+			.then((r) => {
+				if (!r.ok) {
+					return { error: `HTTP ${r.status}: Failed to load template` };
+				}
+				return r.json().catch(() => ({ error: "Invalid JSON response" }));
+			})
+			.then((d) => {
+				setResettingTemplate(false);
+				if (d.error) {
+					setErr(d.error);
+				} else {
+					setToml(d.toml || "");
+					setMsg("Loaded default template with all options. Review and save when ready.");
+				}
+				rerender();
+			})
+			.catch((fetchErr) => {
+				setResettingTemplate(false);
+				var errMsg = fetchErr.message || "Network error";
+				if (errMsg.includes("pattern")) {
+					errMsg = "Failed to connect to server";
+				}
+				setErr(errMsg);
+				rerender();
+			});
+	}
+
+	if (configLoading) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
+			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:700px;margin:0;">
+			Edit the full moltis configuration. This includes server, tools, providers, auth, and all other settings.
+			Test your changes before saving. Changes require a restart to take effect.
+			<a href="https://moltis.dev/docs/configuration" target="_blank" rel="noopener"
+				style="color:var(--accent);text-decoration:underline;">View documentation \u2197</a>
+		</p>
+		${
+			configPath
+				? html`<div class="text-xs text-[var(--muted)]" style="font-family:var(--font-mono);">
+			<span style="opacity:0.7;">File:</span> ${configPath}
+		</div>`
+				: null
+		}
+
+		<form onSubmit=${onSave} style="max-width:800px;">
+			<div style="margin-bottom:12px;">
+				<textarea
+					class="provider-key-input"
+					rows="20"
+					style="width:100%;min-height:320px;resize:vertical;font-family:var(--font-mono);font-size:.78rem;line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;"
+					value=${toml}
+					onInput=${(e) => {
+						setToml(e.target.value);
+						setMsg(null);
+						setErr(null);
+						setWarnings([]);
+					}}
+					spellcheck="false"
+				/>
+			</div>
+
+			${
+				warnings.length > 0
+					? html`<div style="margin-bottom:12px;padding:10px 12px;background:color-mix(in srgb, orange 10%, transparent);border:1px solid orange;border-radius:6px;">
+					<div class="text-xs font-medium" style="color:orange;margin-bottom:6px;">Warnings:</div>
+					<ul style="margin:0;padding-left:16px;">
+						${warnings.map((w) => html`<li class="text-xs text-[var(--muted)]" style="margin:4px 0;">${w}</li>`)}
+					</ul>
+				</div>`
+					: null
+			}
+
+			<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onTest} disabled=${testing || saving || resettingTemplate || restarting}>
+					${testing ? "Testing\u2026" : "Test"}
+				</button>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onReset} disabled=${saving || testing || resettingTemplate || restarting}>
+					Reload
+				</button>
+				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onResetToTemplate} disabled=${saving || testing || resettingTemplate || restarting}>
+					${resettingTemplate ? "Resetting\u2026" : "Reset to defaults"}
+				</button>
+				<button type="button" class="provider-btn provider-btn-danger" onClick=${onRestart} disabled=${saving || testing || resettingTemplate || restarting}>
+					${restarting ? "Restarting\u2026" : "Restart"}
+				</button>
+				<div style="flex:1;"></div>
+				<button type="submit" class="provider-btn" disabled=${saving || testing || resettingTemplate || restarting}>
+					${saving ? "Saving\u2026" : "Save"}
+				</button>
+			</div>
+
+			${msg ? html`<div class="text-xs" style="margin-top:8px;color:var(--accent);">${msg}</div>` : null}
+			${err ? html`<div class="text-xs" style="margin-top:8px;color:var(--error);white-space:pre-wrap;font-family:var(--font-mono);">${err}</div>` : null}
+			${
+				restarting
+					? html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+						The page will reload automatically when the server is back up.
+					</div>`
+					: null
+			}
+		</form>
+
+		<div style="max-width:800px;margin-top:8px;padding-top:16px;border-top:1px solid var(--border);">
+			<p class="text-xs text-[var(--muted)] leading-relaxed">
+				<strong>Tip:</strong> Click "Load Template" to see all available configuration options with documentation.
+				This replaces the editor content with a fully documented template - copy your current values first if needed.
+			</p>
+		</div>
+	</div>`;
+}
+
 // ── Tailscale section ─────────────────────────────────────────
 
 /** Populate a text node with plain text + clickable URLs. */
@@ -1813,6 +2136,7 @@ function SettingsPage() {
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
 		${section === "notifications" ? html`<${NotificationsSection} />` : null}
+		${section === "config" ? html`<${ConfigSection} />` : null}
 	</div>`;
 }
 

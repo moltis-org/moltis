@@ -378,6 +378,7 @@ function InstallBox() {
   </div>`;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI component with multiple states
 function ServerCard({ server }) {
 	var expanded = useSignal(false);
 	var tools = useSignal(null);

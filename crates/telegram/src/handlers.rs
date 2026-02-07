@@ -14,7 +14,7 @@ use {
 
 use {
     moltis_channels::{
-        ChannelEvent, ChannelMessageMeta, ChannelOutbound, ChannelReplyTarget,
+        ChannelEvent, ChannelMessageMeta, ChannelOutbound, ChannelReplyTarget, ChannelType,
         message_log::MessageLogEntry,
     },
     moltis_common::types::ChatType,
@@ -137,7 +137,7 @@ pub async fn handle_message_direct(
         let entry = MessageLogEntry {
             id: 0,
             account_id: account_id.to_string(),
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram.to_string(),
             peer_id: peer_id.clone(),
             username: username.clone(),
             sender_name: sender_name.clone(),
@@ -155,7 +155,7 @@ pub async fn handle_message_direct(
     // Emit channel event for real-time UI updates.
     if let Some(ref sink) = event_sink {
         sink.emit(ChannelEvent::InboundMessage {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: account_id.to_string(),
             peer_id: peer_id.clone(),
             username: username.clone(),
@@ -202,7 +202,7 @@ pub async fn handle_message_direct(
         && !body.is_empty()
     {
         let reply_target = ChannelReplyTarget {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: account_id.to_string(),
             chat_id: msg.chat.id.0.to_string(),
         };
@@ -343,7 +343,7 @@ pub async fn handle_message_direct(
         }
 
         let meta = ChannelMessageMeta {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             sender_name: sender_name.clone(),
             username: username.clone(),
             model: config.model.clone(),
@@ -445,7 +445,7 @@ async fn handle_otp_flow(
                 // Emit resolved event.
                 if let Some(sink) = event_sink {
                     sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: "telegram".into(),
+                        channel_type: ChannelType::Telegram,
                         account_id: account_id.to_string(),
                         peer_id: peer_id.to_string(),
                         username: username.map(String::from),
@@ -483,7 +483,7 @@ async fn handle_otp_flow(
 
                 if let Some(sink) = event_sink {
                     sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: "telegram".into(),
+                        channel_type: ChannelType::Telegram,
                         account_id: account_id.to_string(),
                         peer_id: peer_id.to_string(),
                         username: username.map(String::from),
@@ -506,7 +506,7 @@ async fn handle_otp_flow(
 
                 if let Some(sink) = event_sink {
                     sink.emit(ChannelEvent::OtpResolved {
-                        channel_type: "telegram".into(),
+                        channel_type: ChannelType::Telegram,
                         account_id: account_id.to_string(),
                         peer_id: peer_id.to_string(),
                         username: username.map(String::from),
@@ -556,7 +556,7 @@ async fn handle_otp_flow(
                         + 300;
 
                     sink.emit(ChannelEvent::OtpChallenge {
-                        channel_type: "telegram".into(),
+                        channel_type: ChannelType::Telegram,
                         account_id: account_id.to_string(),
                         peer_id: peer_id.to_string(),
                         username: username.map(String::from),
@@ -890,7 +890,7 @@ pub async fn handle_callback_query(
     };
 
     let reply_target = moltis_channels::ChannelReplyTarget {
-        channel_type: "telegram".into(),
+        channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
     };

@@ -64,7 +64,7 @@ function handleChatThinkingDone(_p, isActive, isChatPage) {
 }
 
 /** Build a short summary string for a tool call card. */
-function toolCallSummary(name, args) {
+function toolCallSummary(name, args, executionMode) {
 	if (!args) return name || "tool";
 	switch (name) {
 		case "exec":
@@ -73,6 +73,13 @@ function toolCallSummary(name, args) {
 			return `web_fetch ${args.url || ""}`.trim();
 		case "web_search":
 			return `web_search "${args.query || ""}"`;
+		case "browser": {
+			// Format: browser action (mode) url
+			var action = args.action || "browser";
+			var mode = executionMode ? ` (${executionMode})` : "";
+			var url = args.url ? ` ${args.url}` : "";
+			return `browser ${action}${mode}${url}`.trim();
+		}
 		default:
 			return name || "tool";
 	}
@@ -81,11 +88,17 @@ function toolCallSummary(name, args) {
 function handleChatToolCallStart(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
+	// Close the current streaming element so new text deltas after this tool
+	// call will create a fresh element positioned after the tool card
+	if (S.streamEl) {
+		S.setStreamEl(null);
+		S.setStreamText("");
+	}
 	var tpl = document.getElementById("tpl-exec-card");
 	var frag = tpl.content.cloneNode(true);
 	var card = frag.firstElementChild;
 	card.id = `tool-${p.toolCallId}`;
-	var cmd = toolCallSummary(p.toolName, p.arguments);
+	var cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
 	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
 	S.chatMsgBox.appendChild(card);
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
@@ -113,20 +126,159 @@ function appendToolResult(toolCard, result) {
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
 	}
+	// Browser screenshot support - display as thumbnail with lightbox and download
+	if (result.screenshot) {
+		var imgContainer = document.createElement("div");
+		imgContainer.className = "screenshot-container";
+		var img = document.createElement("img");
+		// Handle both raw base64 and data URI formats
+		var imgSrc = result.screenshot.startsWith("data:")
+			? result.screenshot
+			: `data:image/png;base64,${result.screenshot}`;
+		img.src = imgSrc;
+		img.className = "screenshot-thumbnail";
+		img.alt = "Browser screenshot";
+		img.title = "Click to view full size";
+
+		// Scale factor for HiDPI/Retina displays (default to 1 if not provided)
+		var scale = result.screenshot_scale || 1;
+
+		// Once image loads, set display size based on scale factor
+		// This makes 2x screenshots display at their logical size (crisp on Retina)
+		img.onload = () => {
+			if (scale > 1) {
+				var logicalWidth = img.naturalWidth / scale;
+				var logicalHeight = img.naturalHeight / scale;
+				// Cap thumbnail at max-width from CSS, but set aspect ratio
+				img.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
+			}
+		};
+
+		// Helper to trigger download
+		var downloadScreenshot = (e) => {
+			e.stopPropagation();
+			var link = document.createElement("a");
+			link.href = imgSrc;
+			link.download = `screenshot-${Date.now()}.png`;
+			link.click();
+		};
+
+		img.onclick = () => {
+			// Create fullscreen lightbox overlay
+			var overlay = document.createElement("div");
+			overlay.className = "screenshot-lightbox";
+
+			// Container for image and controls
+			var lightboxContent = document.createElement("div");
+			lightboxContent.className = "screenshot-lightbox-content";
+
+			// Header with close button and download button
+			var header = document.createElement("div");
+			header.className = "screenshot-lightbox-header";
+			header.onclick = (e) => e.stopPropagation();
+
+			var closeBtn = document.createElement("button");
+			closeBtn.className = "screenshot-lightbox-close";
+			closeBtn.innerHTML = "✕";
+			closeBtn.title = "Close (Esc)";
+			closeBtn.onclick = () => overlay.remove();
+
+			var downloadBtn = document.createElement("button");
+			downloadBtn.className = "screenshot-download-btn";
+			downloadBtn.innerHTML = "⬇ Download";
+			downloadBtn.onclick = downloadScreenshot;
+
+			header.appendChild(closeBtn);
+			header.appendChild(downloadBtn);
+
+			// Scrollable container for the image
+			var scrollContainer = document.createElement("div");
+			scrollContainer.className = "screenshot-lightbox-scroll";
+			scrollContainer.onclick = (e) => e.stopPropagation();
+
+			var fullImg = document.createElement("img");
+			fullImg.src = img.src;
+			fullImg.className = "screenshot-lightbox-img";
+
+			// Scale lightbox image for proper display on HiDPI screens
+			// For tall screenshots, use a reasonable width to allow vertical scrolling
+			fullImg.onload = () => {
+				var logicalWidth = fullImg.naturalWidth / scale;
+				var logicalHeight = fullImg.naturalHeight / scale;
+				var viewportWidth = window.innerWidth - 80; // Account for padding
+
+				// Use logical width, but cap at viewport width minus padding
+				var displayWidth = Math.min(logicalWidth, viewportWidth);
+				fullImg.style.width = `${displayWidth}px`;
+
+				// Height scales proportionally - will overflow and scroll for tall images
+				var displayHeight = (displayWidth / logicalWidth) * logicalHeight;
+				fullImg.style.height = `${displayHeight}px`;
+			};
+
+			scrollContainer.appendChild(fullImg);
+			lightboxContent.appendChild(header);
+			lightboxContent.appendChild(scrollContainer);
+			overlay.appendChild(lightboxContent);
+
+			// Close on click outside image
+			overlay.onclick = () => overlay.remove();
+			// Close on Escape key
+			var closeOnEscape = (e) => {
+				if (e.key === "Escape") {
+					overlay.remove();
+					document.removeEventListener("keydown", closeOnEscape);
+				}
+			};
+			document.addEventListener("keydown", closeOnEscape);
+			document.body.appendChild(overlay);
+		};
+
+		// Download button next to thumbnail
+		var thumbDownloadBtn = document.createElement("button");
+		thumbDownloadBtn.className = "screenshot-download-btn-small";
+		thumbDownloadBtn.innerHTML = "⬇";
+		thumbDownloadBtn.title = "Download screenshot";
+		thumbDownloadBtn.onclick = downloadScreenshot;
+
+		imgContainer.appendChild(img);
+		imgContainer.appendChild(thumbDownloadBtn);
+		toolCard.appendChild(imgContainer);
+	}
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
 function handleChatToolCallEnd(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
 	if (!toolCard) return;
-	toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
+
+	// Check if this is a schema validation error (model sent malformed args)
+	// These are expected sometimes and the agent retries automatically
+	var isValidationError = false;
+	if (!p.success && p.error && p.error.detail) {
+		var errDetail = p.error.detail.toLowerCase();
+		isValidationError =
+			errDetail.includes("missing field") ||
+			errDetail.includes("missing required") ||
+			errDetail.includes("missing 'action'") ||
+			errDetail.includes("missing 'url'");
+	}
+
+	// Use muted "retry" style for validation errors, normal styles otherwise
+	if (isValidationError) {
+		toolCard.className = "msg exec-card exec-retry";
+	} else {
+		toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
+	}
+
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
 	if (p.success && p.result) {
 		appendToolResult(toolCard, p.result);
 	} else if (!p.success && p.error && p.error.detail) {
 		var errMsg = document.createElement("div");
-		errMsg.className = "exec-error-detail";
+		errMsg.className = isValidationError ? "exec-retry-detail" : "exec-error-detail";
 		errMsg.textContent = p.error.detail;
 		toolCard.appendChild(errMsg);
 	}
@@ -332,12 +484,114 @@ function handleSandboxImageProvision(payload) {
 	}
 }
 
+function handleBrowserImagePull(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	var image = payload.image || "browser container";
+	if (payload.phase === "start") {
+		chatAddMsg("system", `Pulling browser container image (${image})\u2026 This may take a few minutes on first run.`);
+	} else if (payload.phase === "done") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("system", `Browser container image ready: ${image}`);
+	} else if (payload.phase === "error") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("error", `Browser container image pull failed: ${payload.error || "unknown"}`);
+	}
+}
+
+// Track download indicator element
+var downloadIndicatorEl = null;
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Download progress UI with multiple states
+function handleLocalLlmDownload(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+
+	var modelName = payload.displayName || payload.modelId || "model";
+
+	if (payload.error) {
+		// Download error
+		if (downloadIndicatorEl) {
+			downloadIndicatorEl.remove();
+			downloadIndicatorEl = null;
+		}
+		chatAddMsg("error", `Failed to download ${modelName}: ${payload.error}`);
+		return;
+	}
+
+	if (payload.complete) {
+		// Download complete
+		if (downloadIndicatorEl) {
+			downloadIndicatorEl.remove();
+			downloadIndicatorEl = null;
+		}
+		chatAddMsg("system", `${modelName} ready`);
+		return;
+	}
+
+	// Download in progress - show/update progress indicator
+	if (!downloadIndicatorEl) {
+		downloadIndicatorEl = document.createElement("div");
+		downloadIndicatorEl.className = "msg system download-indicator";
+
+		var status = document.createElement("div");
+		status.className = "download-status";
+		status.textContent = `Downloading ${modelName}\u2026`;
+		downloadIndicatorEl.appendChild(status);
+
+		var progressContainer = document.createElement("div");
+		progressContainer.className = "download-progress";
+		var progressBar = document.createElement("div");
+		progressBar.className = "download-progress-bar";
+		progressContainer.appendChild(progressBar);
+		downloadIndicatorEl.appendChild(progressContainer);
+
+		var progressText = document.createElement("div");
+		progressText.className = "download-progress-text";
+		downloadIndicatorEl.appendChild(progressText);
+
+		if (S.chatMsgBox) {
+			S.chatMsgBox.appendChild(downloadIndicatorEl);
+			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+		}
+	}
+
+	// Update progress bar
+	var barEl = downloadIndicatorEl.querySelector(".download-progress-bar");
+	var textEl = downloadIndicatorEl.querySelector(".download-progress-text");
+	var containerEl = downloadIndicatorEl.querySelector(".download-progress");
+
+	if (barEl && containerEl) {
+		if (payload.progress != null) {
+			// Determinate progress - show actual percentage
+			containerEl.classList.remove("indeterminate");
+			barEl.style.width = `${payload.progress.toFixed(1)}%`;
+		} else if (payload.total == null && payload.downloaded != null) {
+			// Indeterminate progress - CSS handles the animation
+			containerEl.classList.add("indeterminate");
+			barEl.style.width = ""; // Let CSS control width
+		}
+	}
+
+	if (payload.downloaded != null && textEl) {
+		var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
+		if (payload.total != null) {
+			var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
+			textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
+		} else {
+			textEl.textContent = `${downloadedMb} MB`;
+		}
+	}
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
+	"browser.image.pull": handleBrowserImagePull,
+	"local-llm.download": handleLocalLlmDownload,
 };
 
 function dispatchFrame(frame) {

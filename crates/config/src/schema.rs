@@ -467,13 +467,14 @@ pub enum MessageQueueMode {
     Collect,
 }
 
-/// Tools configuration (exec, sandbox, policy, web).
+/// Tools configuration (exec, sandbox, policy, web, browser).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolsConfig {
     pub exec: ExecConfig,
     pub policy: ToolPolicyConfig,
     pub web: WebConfig,
+    pub browser: BrowserConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
@@ -488,6 +489,7 @@ impl Default for ToolsConfig {
             exec: ExecConfig::default(),
             policy: ToolPolicyConfig::default(),
             web: WebConfig::default(),
+            browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
         }
@@ -600,6 +602,74 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+        }
+    }
+}
+
+/// Browser automation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserConfig {
+    /// Whether browser support is enabled.
+    pub enabled: bool,
+    /// Path to Chrome/Chromium binary (auto-detected if not set).
+    pub chrome_path: Option<String>,
+    /// Whether to run in headless mode.
+    pub headless: bool,
+    /// Default viewport width.
+    pub viewport_width: u32,
+    /// Default viewport height.
+    pub viewport_height: u32,
+    /// Device scale factor for HiDPI/Retina displays.
+    /// 1.0 = standard, 2.0 = Retina/HiDPI, 3.0 = 3x scaling.
+    pub device_scale_factor: f64,
+    /// Maximum concurrent browser instances (0 = unlimited, limited by memory).
+    pub max_instances: usize,
+    /// System memory usage threshold (0-100) above which new instances are blocked.
+    /// Default is 90 (block new instances when memory > 90% used).
+    pub memory_limit_percent: u8,
+    /// Instance idle timeout in seconds before closing.
+    pub idle_timeout_secs: u64,
+    /// Default navigation timeout in milliseconds.
+    pub navigation_timeout_ms: u64,
+    /// User agent string (uses default if not set).
+    pub user_agent: Option<String>,
+    /// Additional Chrome arguments.
+    #[serde(default)]
+    pub chrome_args: Vec<String>,
+    /// Docker image to use for sandboxed browser.
+    /// Default: "browserless/chrome" - a purpose-built headless Chrome container.
+    /// Sandbox mode is controlled per-session via the request, not globally.
+    #[serde(default = "default_sandbox_image")]
+    pub sandbox_image: String,
+    /// Allowed domains for navigation. Empty list means all domains allowed.
+    /// When set, the browser will refuse to navigate to non-matching domains.
+    /// Supports wildcards: "*.example.com" matches subdomains.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+}
+
+fn default_sandbox_image() -> String {
+    "browserless/chrome".to_string()
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            chrome_path: None,
+            headless: true,
+            viewport_width: 2560,
+            viewport_height: 1440,
+            device_scale_factor: 2.0,
+            max_instances: 0, // 0 = unlimited, limited by memory
+            memory_limit_percent: 90,
+            idle_timeout_secs: 300,
+            navigation_timeout_ms: 30000,
+            user_agent: None,
+            chrome_args: Vec::new(),
+            sandbox_image: default_sandbox_image(),
+            allowed_domains: Vec::new(),
         }
     }
 }
@@ -727,6 +797,24 @@ fn default_sandbox_packages() -> Vec<String> {
         "patchelf",
         // Text processing & search
         "ripgrep",
+        // Browser automation (for browser tool)
+        "chromium",
+        "libxss1",
+        "libnss3",
+        "libnspr4",
+        "libasound2t64",
+        "libatk1.0-0t64",
+        "libatk-bridge2.0-0t64",
+        "libcups2t64",
+        "libdrm2",
+        "libgbm1",
+        "libgtk-3-0t64",
+        "libxcomposite1",
+        "libxdamage1",
+        "libxfixes3",
+        "libxrandr2",
+        "libxkbcommon0",
+        "fonts-liberation",
     ]
     .iter()
     .map(|s| (*s).to_string())
@@ -779,6 +867,11 @@ pub struct ProvidersConfig {
     /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
     #[serde(flatten)]
     pub providers: HashMap<String, ProviderEntry>,
+
+    /// Additional local model IDs to register (from local-llm.json).
+    /// This is populated at runtime by the gateway and not persisted.
+    #[serde(skip)]
+    pub local_models: Vec<String>,
 }
 
 /// Configuration for a single LLM provider.

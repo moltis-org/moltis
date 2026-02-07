@@ -89,6 +89,35 @@ wherever the shape is known. This gives compile-time guarantees, better
 documentation, and avoids stringly-typed field access. Reserve
 `serde_json::Value` for truly dynamic / schema-less data.
 
+### Leverage the type system
+
+**Always use types for comparisons — never convert to strings.** The Rust
+type system is your best tool for correctness; use it everywhere:
+
+```rust
+// Good — match on enum variants directly
+match channel_type {
+    ChannelType::Telegram => { ... }
+    ChannelType::Discord => { ... }
+}
+
+// Bad — convert to string then compare
+match channel_type.as_str() {
+    "telegram" => { ... }
+    "discord" => { ... }
+    _ => { ... }  // easy to forget, no exhaustiveness check
+}
+```
+
+Benefits of type-based matching:
+- **Exhaustiveness checking**: compiler warns if you miss a variant
+- **Refactoring safety**: renaming a variant updates all match arms
+- **No typos**: `ChannelType::Telgram` won't compile, `"telgram"` will
+- **IDE support**: autocomplete, go-to-definition, find references
+
+Only convert to strings at boundaries: serialization, database storage,
+logging, or display. Keep the core logic type-safe.
+
 ### Concurrency
 
 - Always prefer streaming over non-streaming API calls when possible.
@@ -126,6 +155,19 @@ days * 24 * 60 * 60
 
 This principle applies broadly: if a crate in the workspace already
 provides a clear one-liner, use it rather than reimplementing the logic.
+
+### Prefer crates over subprocesses
+
+Avoid shelling out to external CLIs from Rust when a mature crate exists.
+
+- Prefer in-process crates over `std::process::Command` / `tokio::process::Command`
+  for core functionality (e.g. git metadata via `gix`/gitoxide).
+- Consider a crate "good enough" when it is actively maintained, broadly used,
+  and supports the required operation directly (not by wrapping the same CLI).
+- Use subprocesses only for operations that are not yet practical in crates
+  (for example porcelain-only workflows like certain `git worktree` commands).
+- When a subprocess exception is necessary, keep the call narrowly scoped,
+  validate inputs, and document why the crate path was not used.
 
 The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
 whichever is already imported in the crate you're editing, but default to
@@ -722,6 +764,10 @@ packaging metadata consistency, and future non-tag runs.
 and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
+
+**Local validation:** Run `./scripts/local-validate.sh` to check fmt, lint, and
+tests locally. When pushing code to an open pull request, pass the PR number
+(e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
 
 ## Code Quality Checklist
 

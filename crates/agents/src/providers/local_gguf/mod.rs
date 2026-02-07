@@ -30,7 +30,7 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{gauge, histogram, labels, llm as llm_metrics};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, Usage};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage};
 
 use {
     chat_templates::{ChatTemplateHint, format_messages},
@@ -135,6 +135,17 @@ impl LocalGgufProvider {
                     config.model_id
                 );
             };
+
+            // MLX models require the MLX backend (Python mlx_lm), not llama.cpp
+            if matches!(def.backend, models::ModelBackend::Mlx) {
+                bail!(
+                    "Model '{}' requires the MLX backend which is not available in this context. \
+                     MLX models need Python with mlx_lm installed. \
+                     Please select a GGUF model instead (e.g., 'llama-3.2-1b-q4_k_m').",
+                    config.model_id
+                );
+            }
+
             let path = models::ensure_model(def, &config.cache_dir).await?;
             (path, Some(def))
         };
@@ -363,7 +374,7 @@ impl LlmProvider for LocalGgufProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let prompt = format_messages(messages, self.chat_template());
@@ -404,7 +415,7 @@ impl LlmProvider for LocalGgufProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         let prompt = format_messages(&messages, self.chat_template());
         let max_tokens = 4096u32;
@@ -676,7 +687,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
@@ -687,7 +698,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             if let Err(e) = self.ensure_loaded().await {
