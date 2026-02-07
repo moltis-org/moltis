@@ -12,11 +12,27 @@ use {
         cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams,
     },
     futures::StreamExt,
+    sysinfo::System,
     tokio::sync::{Mutex, RwLock},
     tracing::{debug, info, warn},
 };
 
 use crate::{container::BrowserContainer, error::BrowserError, types::BrowserConfig};
+
+/// Get current system memory usage as a percentage (0-100).
+fn get_memory_usage_percent() -> u8 {
+    let mut sys = System::new();
+    sys.refresh_memory();
+
+    let total = sys.total_memory();
+    if total == 0 {
+        return 0;
+    }
+
+    let used = sys.used_memory();
+    let percent = (used as f64 / total as f64 * 100.0) as u8;
+    percent.min(100)
+}
 
 /// A pooled browser instance with one or more pages.
 struct BrowserInstance {
@@ -62,16 +78,36 @@ impl BrowserPool {
             }
         }
 
-        // Check pool capacity
+        // Check pool capacity using memory-based limits
         {
-            let instances = self.instances.read().await;
-            if instances.len() >= self.config.max_instances {
-                // Try to clean up idle instances
-                drop(instances);
-                self.cleanup_idle().await;
-
+            // If max_instances is set (> 0), enforce it as a hard limit
+            if self.config.max_instances > 0 {
                 let instances = self.instances.read().await;
                 if instances.len() >= self.config.max_instances {
+                    drop(instances);
+                    self.cleanup_idle().await;
+
+                    let instances = self.instances.read().await;
+                    if instances.len() >= self.config.max_instances {
+                        return Err(BrowserError::PoolExhausted);
+                    }
+                }
+            }
+
+            // Check memory usage - block new instances if above threshold
+            let memory_percent = get_memory_usage_percent();
+            if memory_percent >= self.config.memory_limit_percent {
+                // Try to clean up idle instances first
+                self.cleanup_idle().await;
+
+                // Re-check memory after cleanup
+                let memory_after = get_memory_usage_percent();
+                if memory_after >= self.config.memory_limit_percent {
+                    warn!(
+                        memory_usage = memory_after,
+                        threshold = self.config.memory_limit_percent,
+                        "blocking new browser instance due to high memory usage"
+                    );
                     return Err(BrowserError::PoolExhausted);
                 }
             }

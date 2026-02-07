@@ -182,6 +182,7 @@ fn build_schema_map() -> KnownKeys {
             ("viewport_height", Leaf),
             ("device_scale_factor", Leaf),
             ("max_instances", Leaf),
+            ("memory_limit_percent", Leaf),
             ("idle_timeout_secs", Leaf),
             ("navigation_timeout_ms", Leaf),
             ("user_agent", Leaf),

@@ -838,7 +838,8 @@ mod tests {
         let config = BrowserConfig::default();
         assert!(config.enabled);
         assert!(config.headless);
-        assert_eq!(config.max_instances, 3);
+        assert_eq!(config.max_instances, 0); // 0 = unlimited, limited by memory
+        assert_eq!(config.memory_limit_percent, 90);
     }
 
     #[test]

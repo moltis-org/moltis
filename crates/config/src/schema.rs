@@ -623,8 +623,11 @@ pub struct BrowserConfig {
     /// Device scale factor for HiDPI/Retina displays.
     /// 1.0 = standard, 2.0 = Retina/HiDPI, 3.0 = 3x scaling.
     pub device_scale_factor: f64,
-    /// Maximum concurrent browser instances.
+    /// Maximum concurrent browser instances (0 = unlimited, limited by memory).
     pub max_instances: usize,
+    /// System memory usage threshold (0-100) above which new instances are blocked.
+    /// Default is 90 (block new instances when memory > 90% used).
+    pub memory_limit_percent: u8,
     /// Instance idle timeout in seconds before closing.
     pub idle_timeout_secs: u64,
     /// Default navigation timeout in milliseconds.
@@ -663,7 +666,8 @@ impl Default for BrowserConfig {
             viewport_width: 2560,
             viewport_height: 1440,
             device_scale_factor: 2.0,
-            max_instances: 3,
+            max_instances: 0, // 0 = unlimited, limited by memory
+            memory_limit_percent: 90,
             idle_timeout_secs: 300,
             navigation_timeout_ms: 30000,
             user_agent: None,
