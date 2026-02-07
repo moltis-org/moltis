@@ -126,20 +126,6 @@ function appendToolResult(toolCard, result) {
 		codeEl.textContent = `exit ${result.exit_code}`;
 		toolCard.appendChild(codeEl);
 	}
-	// Browser result - show URL and sandbox mode
-	if (result.url !== undefined || result.sandboxed !== undefined) {
-		var browserInfo = document.createElement("div");
-		browserInfo.className = "exec-output browser-info";
-		var parts = [];
-		if (result.url) parts.push(result.url);
-		if (result.sandboxed !== undefined) {
-			parts.push(result.sandboxed ? "(sandbox)" : "(host)");
-		}
-		if (parts.length > 0) {
-			browserInfo.textContent = parts.join(" ");
-			toolCard.appendChild(browserInfo);
-		}
-	}
 	// Browser screenshot support - display as thumbnail with lightbox
 	if (result.screenshot) {
 		var imgContainer = document.createElement("div");

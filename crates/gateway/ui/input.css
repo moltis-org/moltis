@@ -332,15 +332,6 @@
   .exec-output.exec-stderr {
     color: var(--warn);
   }
-  .exec-output.browser-info {
-    background: transparent;
-    border: none;
-    padding: 4px 0;
-    color: var(--muted);
-    font-size: 0.72rem;
-    max-height: none;
-    white-space: normal;
-  }
   .exec-exit {
     font-family: var(--font-mono);
     font-size: 0.72rem;
