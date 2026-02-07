@@ -633,6 +633,12 @@ jobs:
           sbom: true
           provenance: mode=max
 
+      - name: Smoke test Docker image startup
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm "ghcr.io/${{ github.repository }}@${DIGEST}" --help > /dev/null
+
       - name: Export digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
