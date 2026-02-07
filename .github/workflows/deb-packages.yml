@@ -48,6 +48,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
@@ -127,6 +130,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
@@ -144,8 +150,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' > .cargo/config.toml
 
       - name: Build release binary
         env:
@@ -217,6 +223,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
@@ -233,8 +242,8 @@ jobs:
         if: matrix.arch == 'aarch64'
         run: |
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' > .cargo/config.toml
 
       - name: Build release binary
         env:
@@ -318,6 +327,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Clean up corrupted cargo config
+        run: rm -f ~/.cargo/config.toml
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
@@ -332,8 +344,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' > .cargo/config.toml
 
       - name: Build release binary
         env:
@@ -470,7 +482,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
@@ -488,6 +500,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Clean up corrupted cargo config
+        if: runner.os == 'Linux'
+        run: rm -f ~/.cargo/config.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
