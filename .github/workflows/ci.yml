@@ -126,11 +126,6 @@ jobs:
               out.write(f"needs_ci={needs_ci}\n")
               out.write(f"missing_contexts={missing_str}\n")
           PY
-      - name: Gate decision
-        run: |
-          echo "needs_ci=${{ steps.gate.outputs.needs_ci }}"
-          echo "missing_contexts=${{ steps.gate.outputs.missing_contexts }}"
-
   rust-ci:
     name: Rust CI (clippy + test)
     needs: [fmt, biome, local-validation-gate]
