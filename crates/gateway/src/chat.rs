@@ -1606,14 +1606,22 @@ async fn run_with_tools(
                     id,
                     name,
                     arguments,
-                } => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "tool_call_start",
-                    "toolCallId": id,
-                    "toolName": name,
-                    "arguments": arguments,
-                }),
+                } => {
+                    let mut payload = serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "tool_call_start",
+                        "toolCallId": id,
+                        "toolName": name,
+                        "arguments": arguments,
+                    });
+                    // Add execution mode for browser tool
+                    if name == "browser" {
+                        let sandboxed = state.services.browser.is_sandboxed();
+                        payload["executionMode"] = serde_json::json!(if sandboxed { "sandbox" } else { "host" });
+                    }
+                    payload
+                },
                 RunnerEvent::ToolCallEnd {
                     id,
                     name,
