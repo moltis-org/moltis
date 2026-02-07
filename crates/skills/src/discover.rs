@@ -27,10 +27,13 @@ impl FsSkillDiscoverer {
     }
 
     /// Build the default search paths for skill discovery.
-    pub fn default_paths(cwd: &Path) -> Vec<(PathBuf, SkillSource)> {
-        let data = moltis_config::data_dir();
+    ///
+    /// Workspace root is always the configured data directory.
+    pub fn default_paths() -> Vec<(PathBuf, SkillSource)> {
+        let workspace_root = moltis_config::data_dir();
+        let data = workspace_root.clone();
         vec![
-            (cwd.join(".moltis/skills"), SkillSource::Project),
+            (workspace_root.join(".moltis/skills"), SkillSource::Project),
             (data.join("skills"), SkillSource::Personal),
             (data.join("installed-skills"), SkillSource::Registry),
             (data.join("installed-plugins"), SkillSource::Plugin),
@@ -94,6 +97,12 @@ fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillM
         match parse::parse_metadata(&content, &skill_dir) {
             Ok(mut meta) => {
                 meta.source = Some(source.clone());
+                tracing::info!(
+                    path = %skill_md.display(),
+                    source = ?source,
+                    name = %meta.name,
+                    "loaded SKILL.md"
+                );
                 skills.push(meta);
             },
             Err(e) => {
@@ -176,6 +185,12 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
             match parse::parse_metadata(&content, &skill_dir) {
                 Ok(mut meta) => {
                     meta.source = Some(SkillSource::Registry);
+                    tracing::info!(
+                        path = %skill_md.display(),
+                        source = "registry",
+                        name = %meta.name,
+                        "loaded SKILL.md"
+                    );
                     skills.push(meta);
                 },
                 Err(e) => {

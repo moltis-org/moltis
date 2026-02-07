@@ -435,14 +435,17 @@ impl DockerSandbox {
     }
 
     fn workspace_args(&self) -> Vec<String> {
-        let cwd = match std::env::current_dir() {
-            Ok(d) => d,
-            Err(_) => return Vec::new(),
-        };
-        let cwd_str = cwd.display().to_string();
+        let workspace_dir = moltis_config::data_dir();
+        let workspace_dir_str = workspace_dir.display().to_string();
         match self.config.workspace_mount {
-            WorkspaceMount::Ro => vec!["-v".to_string(), format!("{cwd_str}:{cwd_str}:ro")],
-            WorkspaceMount::Rw => vec!["-v".to_string(), format!("{cwd_str}:{cwd_str}:rw")],
+            WorkspaceMount::Ro => vec![
+                "-v".to_string(),
+                format!("{workspace_dir_str}:{workspace_dir_str}:ro"),
+            ],
+            WorkspaceMount::Rw => vec![
+                "-v".to_string(),
+                format!("{workspace_dir_str}:{workspace_dir_str}:rw"),
+            ],
             WorkspaceMount::None => Vec::new(),
         }
     }

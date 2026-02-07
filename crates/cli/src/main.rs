@@ -360,8 +360,7 @@ async fn handle_skills(action: SkillAction) -> anyhow::Result<()> {
         registry::{InMemoryRegistry, SkillRegistry},
     };
 
-    let cwd = std::env::current_dir()?;
-    let search_paths = FsSkillDiscoverer::default_paths(&cwd);
+    let search_paths = FsSkillDiscoverer::default_paths();
     let discoverer = FsSkillDiscoverer::new(search_paths);
 
     match action {

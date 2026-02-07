@@ -6,7 +6,10 @@ use std::{
 
 use tracing::{debug, warn};
 
-use crate::{env_subst::substitute_env, schema::MoltisConfig};
+use crate::{
+    env_subst::substitute_env,
+    schema::{AgentIdentity, MoltisConfig, UserProfile},
+};
 
 /// Generate a random available port by binding to port 0 and reading the assigned port.
 fn generate_random_port() -> u16 {
@@ -187,6 +190,282 @@ pub fn data_dir() -> PathBuf {
     home_dir()
         .map(|h| h.join(".moltis"))
         .unwrap_or_else(|| PathBuf::from(".moltis"))
+}
+
+/// Path to the workspace soul file.
+pub fn soul_path() -> PathBuf {
+    data_dir().join("SOUL.md")
+}
+
+/// Path to the workspace identity file.
+pub fn identity_path() -> PathBuf {
+    data_dir().join("IDENTITY.md")
+}
+
+/// Path to the workspace user profile file.
+pub fn user_path() -> PathBuf {
+    data_dir().join("USER.md")
+}
+
+/// Path to workspace tool-guidance markdown.
+pub fn tools_path() -> PathBuf {
+    data_dir().join("TOOLS.md")
+}
+
+/// Path to workspace bootstrap markdown.
+pub fn bootstrap_path() -> PathBuf {
+    data_dir().join("BOOTSTRAP.md")
+}
+
+/// Path to workspace heartbeat markdown.
+pub fn heartbeat_path() -> PathBuf {
+    data_dir().join("HEARTBEAT.md")
+}
+
+/// Load identity values from `IDENTITY.md` frontmatter if present.
+pub fn load_identity() -> Option<AgentIdentity> {
+    let path = identity_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let identity = parse_identity_frontmatter(frontmatter);
+    if identity.name.is_none()
+        && identity.emoji.is_none()
+        && identity.creature.is_none()
+        && identity.vibe.is_none()
+    {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
+/// Load user values from `USER.md` frontmatter if present.
+pub fn load_user() -> Option<UserProfile> {
+    let path = user_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let frontmatter = extract_yaml_frontmatter(&content)?;
+    let user = parse_user_frontmatter(frontmatter);
+    if user.name.is_none() && user.timezone.is_none() {
+        None
+    } else {
+        Some(user)
+    }
+}
+
+/// Load SOUL.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_soul() -> Option<String> {
+    let path = soul_path();
+    let content = std::fs::read_to_string(path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Load TOOLS.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_tools_md() -> Option<String> {
+    load_workspace_markdown(tools_path())
+}
+
+/// Load BOOTSTRAP.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_bootstrap_md() -> Option<String> {
+    load_workspace_markdown(bootstrap_path())
+}
+
+/// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_heartbeat_md() -> Option<String> {
+    load_workspace_markdown(heartbeat_path())
+}
+
+/// Persist SOUL.md in the workspace root (`data_dir`).
+///
+/// - `Some(non-empty)` writes `SOUL.md`
+/// - `None` or empty removes `SOUL.md` when it exists
+pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
+    let path = soul_path();
+    match soul.map(str::trim) {
+        Some(content) if !content.is_empty() => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, content)?;
+        },
+        _ => {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+        },
+    }
+    Ok(path)
+}
+
+/// Persist identity values to `IDENTITY.md` using YAML frontmatter.
+pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
+    let path = identity_path();
+    let has_values = identity.name.is_some()
+        || identity.emoji.is_some()
+        || identity.creature.is_some()
+        || identity.vibe.is_some();
+
+    if !has_values {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(path);
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(emoji) = identity.emoji.as_deref() {
+        yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
+    }
+    if let Some(creature) = identity.creature.as_deref() {
+        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
+    }
+    if let Some(vibe) = identity.vibe.as_deref() {
+        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    }
+    let yaml = yaml_lines.join("\n");
+    let content = format!(
+        "---\n{}\n---\n\n# IDENTITY.md\n\nThis file is managed by Moltis settings.\n",
+        yaml
+    );
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
+/// Persist user values to `USER.md` using YAML frontmatter.
+pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
+    let path = user_path();
+    let has_values = user.name.is_some() || user.timezone.is_some();
+
+    if !has_values {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(path);
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut yaml_lines = Vec::new();
+    if let Some(name) = user.name.as_deref() {
+        yaml_lines.push(format!("name: {}", yaml_scalar(name)));
+    }
+    if let Some(timezone) = user.timezone.as_deref() {
+        yaml_lines.push(format!("timezone: {}", yaml_scalar(timezone)));
+    }
+    let yaml = yaml_lines.join("\n");
+    let content = format!(
+        "---\n{}\n---\n\n# USER.md\n\nThis file is managed by Moltis settings.\n",
+        yaml
+    );
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
+fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return None;
+    }
+    let rest = trimmed.strip_prefix("---")?;
+    let rest = rest.strip_prefix('\n')?;
+    let end = rest.find("\n---")?;
+    Some(&rest[..end])
+}
+
+fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
+    let mut identity = AgentIdentity::default();
+    for raw in frontmatter.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value_raw)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = unquote_yaml_scalar(value_raw.trim());
+        if value.is_empty() {
+            continue;
+        }
+        match key {
+            "name" => identity.name = Some(value.to_string()),
+            "emoji" => identity.emoji = Some(value.to_string()),
+            "creature" => identity.creature = Some(value.to_string()),
+            "vibe" => identity.vibe = Some(value.to_string()),
+            _ => {},
+        }
+    }
+    identity
+}
+
+fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
+    let mut user = UserProfile::default();
+    for raw in frontmatter.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value_raw)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = unquote_yaml_scalar(value_raw.trim());
+        if value.is_empty() {
+            continue;
+        }
+        match key {
+            "name" => user.name = Some(value.to_string()),
+            "timezone" => user.timezone = Some(value.to_string()),
+            _ => {},
+        }
+    }
+    user
+}
+
+fn unquote_yaml_scalar(value: &str) -> &str {
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        &value[1..value.len() - 1]
+    } else if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn yaml_scalar(value: &str) -> String {
+    if value.contains(':')
+        || value.contains('#')
+        || value.starts_with(' ')
+        || value.ends_with(' ')
+        || value.contains('\n')
+    {
+        format!("'{}'", value.replace('\'', "''"))
+    } else {
+        value.to_string()
+    }
+}
+
+fn load_workspace_markdown(path: PathBuf) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -406,6 +685,8 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
 mod tests {
     use super::*;
 
+    static DATA_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn parse_env_value_bool() {
         assert_eq!(parse_env_value("true"), serde_json::Value::Bool(true));
@@ -533,9 +814,133 @@ mod tests {
 
     #[test]
     fn data_dir_override_works() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let path = PathBuf::from("/tmp/test-data-dir-override");
         set_data_dir(path.clone());
         assert_eq!(data_dir(), path);
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_and_load_identity_frontmatter() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let identity = AgentIdentity {
+            name: Some("Rex".to_string()),
+            emoji: Some("🐶".to_string()),
+            creature: Some("dog".to_string()),
+            vibe: Some("chill".to_string()),
+        };
+
+        let path = save_identity(&identity).expect("save identity");
+        assert!(path.exists());
+        let raw = std::fs::read_to_string(&path).expect("read identity file");
+
+        let loaded = load_identity().expect("load identity");
+        assert_eq!(loaded.name.as_deref(), Some("Rex"));
+        assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
+        assert_eq!(loaded.creature.as_deref(), Some("dog"));
+        assert_eq!(loaded.vibe.as_deref(), Some("chill"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_identity_removes_empty_file() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let seeded = AgentIdentity {
+            name: Some("Rex".to_string()),
+            emoji: None,
+            creature: None,
+            vibe: None,
+        };
+        let path = save_identity(&seeded).expect("seed identity");
+        assert!(path.exists());
+
+        save_identity(&AgentIdentity::default()).expect("save empty identity");
+        assert!(!path.exists());
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_and_load_user_frontmatter() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let user = UserProfile {
+            name: Some("Alice".to_string()),
+            timezone: Some("Europe/Berlin".to_string()),
+        };
+
+        let path = save_user(&user).expect("save user");
+        assert!(path.exists());
+
+        let loaded = load_user().expect("load user");
+        assert_eq!(loaded.name.as_deref(), Some("Alice"));
+        assert_eq!(loaded.timezone.as_deref(), Some("Europe/Berlin"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_user_removes_empty_file() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let seeded = UserProfile {
+            name: Some("Alice".to_string()),
+            timezone: None,
+        };
+        let path = save_user(&seeded).expect("seed user");
+        assert!(path.exists());
+
+        save_user(&UserProfile::default()).expect("save empty user");
+        assert!(!path.exists());
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_tools_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("TOOLS.md"), "\n  Use safe tools first.  \n").unwrap();
+        assert_eq!(load_tools_md().as_deref(), Some("Use safe tools first."));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_bootstrap_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("BOOTSTRAP.md"), "\nBootstrap now\n").unwrap();
+        assert_eq!(load_bootstrap_md().as_deref(), Some("Bootstrap now"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_heartbeat_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(dir.path().join("HEARTBEAT.md"), "\n# Heartbeat\n- ping\n").unwrap();
+        assert_eq!(load_heartbeat_md().as_deref(), Some("# Heartbeat\n- ping"));
+
         clear_data_dir();
     }
 }

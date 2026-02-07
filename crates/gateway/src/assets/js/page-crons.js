@@ -212,6 +212,7 @@ var systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 function HeartbeatSection() {
 	var cfg = heartbeatConfig.value;
 	var saving = heartbeatSaving.value;
+	var promptSource = heartbeatStatus.value?.promptSource || "default";
 	// Get heartbeat job from cronJobs (loaded from gon) for immediate availability on page load.
 	// Falls back to heartbeatStatus for updates after RPC calls.
 	var job = cronJobs.value.find((j) => j.name === "__heartbeat__") || heartbeatStatus.value?.job;
@@ -260,6 +261,12 @@ function HeartbeatSection() {
 	}
 
 	var running = heartbeatRunning.value;
+	var promptSourceText =
+		promptSource === "config"
+			? "config custom prompt"
+			: promptSource === "heartbeat_md"
+				? "HEARTBEAT.md"
+				: "built-in default";
 
 	return html`<div class="heartbeat-form" style="max-width:600px;">
     <!-- Header -->
@@ -304,6 +311,8 @@ function HeartbeatSection() {
       <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Prompt</h3>
       <label class="block text-xs text-[var(--muted)] mb-1">Custom Prompt (optional)</label>
       <textarea data-hb="prompt" class="provider-key-input textarea-sm" placeholder="Leave blank to use default heartbeat prompt">${cfg.prompt || ""}</textarea>
+      <p class="text-xs text-[var(--muted)] mt-2">Leave this empty to use <code>HEARTBEAT.md</code> in your workspace root (falls back to built-in default if missing).</p>
+      <p class="text-xs text-[var(--muted)] mt-1">Effective prompt source: <span class="text-[var(--text)]">${promptSourceText}</span></p>
       <div class="grid gap-4 mt-3" style="grid-template-columns:1fr;">
         <div>
           <label class="block text-xs text-[var(--muted)] mb-1">Max Response Characters</label>

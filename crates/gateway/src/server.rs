@@ -1374,8 +1374,7 @@ pub async fn start_gateway(
         ));
 
         // Register skill management tools for agent self-extension.
-        // Use data_dir so created skills land in ~/.moltis/skills/ (Personal
-        // source), which is always discovered regardless of the gateway's cwd.
+        // Use data_dir so created skills land in the configured workspace root.
         {
             tool_registry.register(Box::new(moltis_tools::skill_tools::CreateSkillTool::new(
                 data_dir.clone(),
@@ -1471,8 +1470,7 @@ pub async fn start_gateway(
     // Spawn skill file watcher for hot-reload.
     #[cfg(feature = "file-watcher")]
     {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths(&cwd);
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
         let watch_dirs: Vec<std::path::PathBuf> =
             search_paths.into_iter().map(|(p, _)| p).collect();
         if let Ok((_watcher, mut rx)) = moltis_skills::watcher::SkillWatcher::start(watch_dirs) {
@@ -1595,8 +1593,7 @@ pub async fn start_gateway(
     // Count enabled skills and repos for startup banner.
     let (skill_count, repo_count) = {
         use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths(&cwd));
+        let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
         let sc = discoverer.discover().await.map(|s| s.len()).unwrap_or(0);
         let rc = moltis_skills::manifest::ManifestStore::default_path()
             .ok()
@@ -2011,14 +2008,30 @@ pub async fn start_gateway(
     // Use a fixed ID so run history persists across restarts.
     {
         use moltis_cron::{
-            heartbeat::{DEFAULT_INTERVAL_MS, parse_interval_ms, resolve_heartbeat_prompt},
+            heartbeat::{
+                DEFAULT_INTERVAL_MS, HeartbeatPromptSource, parse_interval_ms,
+                resolve_heartbeat_prompt,
+            },
             types::{CronJobCreate, CronJobPatch, CronPayload, CronSchedule, SessionTarget},
         };
         const HEARTBEAT_JOB_ID: &str = "__heartbeat__";
 
         let hb = &config.heartbeat;
         let interval_ms = parse_interval_ms(&hb.every).unwrap_or(DEFAULT_INTERVAL_MS);
-        let prompt = resolve_heartbeat_prompt(hb.prompt.as_deref());
+        let heartbeat_md = moltis_config::load_heartbeat_md();
+        let (prompt, prompt_source) =
+            resolve_heartbeat_prompt(hb.prompt.as_deref(), heartbeat_md.as_deref());
+        if prompt_source == HeartbeatPromptSource::HeartbeatMd {
+            tracing::info!("loaded heartbeat prompt from HEARTBEAT.md");
+        }
+        if hb.prompt.as_deref().is_some_and(|p| !p.trim().is_empty())
+            && heartbeat_md.as_deref().is_some_and(|p| !p.trim().is_empty())
+            && prompt_source == HeartbeatPromptSource::Config
+        {
+            tracing::warn!(
+                "heartbeat prompt source conflict: config heartbeat.prompt overrides HEARTBEAT.md"
+            );
+        }
 
         // Check if heartbeat job already exists.
         let existing = cron_service.list().await;
@@ -2836,11 +2849,8 @@ async fn api_skills_handler(State(state): State<AppState>) -> impl IntoResponse 
                 data_dir.join("skills"),
                 moltis_skills::types::SkillSource::Personal,
             ),
-            // Project-local skills if gateway was started from a project directory.
             (
-                std::env::current_dir()
-                    .unwrap_or_default()
-                    .join(".moltis/skills"),
+                data_dir.join(".moltis/skills"),
                 moltis_skills::types::SkillSource::Project,
             ),
         ];
@@ -3362,7 +3372,7 @@ fn builtin_hook_metadata() -> Vec<(
     vec![
         (
             "boot-md",
-            "Reads BOOT.md from the workspace on startup and injects its content as the initial user message to the agent.",
+            "Reads BOOTSTRAP.md and BOOT.md from the workspace on startup and injects their content as the initial user message to the agent.",
             vec![HookEvent::GatewayStart],
             "crates/plugins/src/bundled/boot_md.rs",
         ),
@@ -3507,8 +3517,7 @@ pub(crate) async fn discover_and_build_hooks(
         shell_hook::ShellHookHandler,
     };
 
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
+    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths());
     let discovered = discoverer.discover().await.unwrap_or_default();
 
     let mut registry = moltis_common::hooks::HookRegistry::new();
@@ -3578,11 +3587,10 @@ pub(crate) async fn discover_and_build_hooks(
 
     // ── Built-in hooks (compiled Rust, always active) ──────────────────
     {
-        let cwd = std::env::current_dir().unwrap_or_default();
         let data = moltis_config::data_dir();
 
         // boot-md: inject BOOT.md content on GatewayStart.
-        let boot = BootMdHook::new(cwd.clone());
+        let boot = BootMdHook::new(data.clone());
         registry.register(Arc::new(boot));
 
         // command-logger: append JSONL entries for every slash command.

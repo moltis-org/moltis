@@ -293,7 +293,6 @@ fn build_schema_map() -> KnownKeys {
                 ("emoji", Leaf),
                 ("creature", Leaf),
                 ("vibe", Leaf),
-                ("soul", Leaf),
             ])),
         ),
         (

@@ -227,6 +227,7 @@ impl MemoryManager {
             size,
         };
         self.store.upsert_file(&file_row).await?;
+        info!(path = %path_str, source, size, "memory: loaded markdown file");
 
         // Chunk the content
         let raw_chunks =

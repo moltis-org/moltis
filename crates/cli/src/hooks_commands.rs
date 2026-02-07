@@ -26,8 +26,7 @@ pub enum HookAction {
 }
 
 pub async fn handle_hooks(action: HookAction) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir()?;
-    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
+    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths());
     let hooks: Vec<_> = discoverer.discover().await?;
 
     match action {
@@ -83,8 +82,11 @@ pub async fn handle_hooks(action: HookAction) -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&entries)?);
             } else if hooks.is_empty() {
                 println!("No hooks found.");
+                let data_dir = moltis_config::data_dir();
                 println!(
-                    "Place hooks in .moltis/hooks/<name>/HOOK.md or ~/.moltis/hooks/<name>/HOOK.md"
+                    "Place hooks in {}/hooks/<name>/HOOK.md or {}/.moltis/hooks/<name>/HOOK.md",
+                    data_dir.display(),
+                    data_dir.display(),
                 );
             }
         },

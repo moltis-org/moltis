@@ -14,8 +14,10 @@ pub mod validate;
 pub use {
     loader::{
         apply_env_overrides, clear_config_dir, clear_data_dir, config_dir, data_dir,
-        discover_and_load, find_or_default_config_path, save_config, set_config_dir, set_data_dir,
-        update_config,
+        bootstrap_path, discover_and_load, find_or_default_config_path, heartbeat_path,
+        identity_path, load_bootstrap_md, load_heartbeat_md, load_identity, load_soul,
+        load_tools_md, load_user, save_config, save_identity, save_soul, save_user,
+        set_config_dir, set_data_dir, soul_path, tools_path, update_config, user_path,
     },
     schema::{
         AgentIdentity, AuthConfig, ChatConfig, MessageQueueMode, MoltisConfig, ResolvedIdentity,

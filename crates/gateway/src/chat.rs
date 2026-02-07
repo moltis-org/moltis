@@ -523,8 +523,7 @@ impl ChatService for LiveChatService {
         }
 
         // Discover enabled skills/plugins for prompt injection.
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths(&cwd);
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
         let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
         let discovered_skills = match discoverer.discover().await {
             Ok(s) => s,
@@ -1211,8 +1210,7 @@ impl ChatService for LiveChatService {
 
         // Save compaction summary to memory file and trigger sync.
         if let Some(ref mm) = self.state.memory_manager {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let memory_dir = cwd.join("memory");
+            let memory_dir = moltis_config::data_dir().join("memory");
             if let Err(e) = tokio::fs::create_dir_all(&memory_dir).await {
                 warn!(error = %e, "compact: failed to create memory dir");
             } else {
@@ -1441,8 +1439,7 @@ impl ChatService for LiveChatService {
 
         // Discover enabled skills/plugins (only if provider supports tools)
         let skills_list: Vec<serde_json::Value> = if supports_tools {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths(&cwd);
+            let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
             let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
             match discoverer.discover().await {
                 Ok(s) => s
@@ -1514,6 +1511,32 @@ async fn run_with_tools(
 ) -> Option<(String, u32, u32)> {
     // Load identity and user profile from config so the LLM knows who it is.
     let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity() {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
+        }
+    }
+    let mut user = config.user.clone();
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    let soul_text = moltis_config::load_soul();
+    let tools_text = moltis_config::load_tools_md();
 
     let native_tools = provider.supports_tools();
 
@@ -1534,8 +1557,10 @@ async fn run_with_tools(
             project_context,
             session_context,
             skills,
-            Some(&config.identity),
-            Some(&config.user),
+            Some(&identity),
+            Some(&user),
+            soul_text.as_deref(),
+            tools_text.as_deref(),
         );
         drop(registry_guard);
         prompt
@@ -1544,8 +1569,10 @@ async fn run_with_tools(
         build_system_prompt_minimal(
             project_context,
             session_context,
-            Some(&config.identity),
-            Some(&config.user),
+            Some(&identity),
+            Some(&user),
+            soul_text.as_deref(),
+            tools_text.as_deref(),
         )
     };
 

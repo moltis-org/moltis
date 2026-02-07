@@ -201,6 +201,7 @@ function IdentitySection() {
 			<!-- Agent section -->
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Agent</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Saved to <code>IDENTITY.md</code> in your workspace root.</p>
 				<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;">
 					<div>
 						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Name *</div>
@@ -230,6 +231,7 @@ function IdentitySection() {
 			<!-- User section -->
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">User</h3>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Saved to <code>USER.md</code> in your workspace root.</p>
 				<div>
 					<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Your name *</div>
 					<input type="text" class="provider-key-input" style="width:100%;max-width:280px;"
@@ -241,7 +243,7 @@ function IdentitySection() {
 			<!-- Soul section -->
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:4px;">Soul</h3>
-				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Personality and tone injected into every conversation. Leave empty for the default.</p>
+				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Personality and tone injected into every conversation. Saved to <code>SOUL.md</code> in your workspace root. Leave empty for the default.</p>
 				<textarea
 					class="provider-key-input"
 					rows="8"

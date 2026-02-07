@@ -76,9 +76,9 @@ pub struct SkillState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillSource {
-    /// Project-local: `<cwd>/.moltis/skills/`
+    /// Project-local: `<data_dir>/.moltis/skills/`
     Project,
-    /// Personal: `~/.moltis/skills/`
+    /// Personal: `<data_dir>/skills/`
     Personal,
     /// Bundled inside a plugin directory.
     Plugin,

@@ -138,7 +138,10 @@ enabled = true              # run in sandbox (default)
 
 ## Identity Protection
 
-The agent's identity (name, personality "soul") is stored in `moltis.toml`.
+The agent's identity fields (name, emoji, creature, vibe) are stored in `IDENTITY.md`
+YAML frontmatter at the workspace root (`data_dir`).
+User profile fields are stored in `USER.md` YAML frontmatter at the same location.
+The personality text is stored separately in `SOUL.md` at the workspace root (`data_dir`).
 Modifying identity requires the `operator.write` scope, not just `operator.read`.
 
 This prevents prompt injection attacks from subtly modifying the agent's

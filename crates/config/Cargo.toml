@@ -20,5 +20,8 @@ tracing        = { workspace = true }
 default = []
 metrics = ["dep:moltis-metrics"]
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

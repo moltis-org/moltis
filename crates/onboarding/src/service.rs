@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Mutex};
 
 use serde_json::{Value, json};
 
-use moltis_config::MoltisConfig;
+use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
 use crate::state::{WizardState, WizardStep};
 
@@ -35,12 +35,28 @@ impl LiveOnboardingService {
 
     /// Check whether the config file already has onboarding data.
     fn is_already_onboarded(&self) -> bool {
+        let mut identity_name: Option<String> = None;
+        let mut user_name: Option<String> = None;
+
         if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
-            return cfg.is_onboarded();
+            identity_name = cfg.identity.name;
+            user_name = cfg.user.name;
         }
-        false
+
+        if let Some(file_identity) = moltis_config::load_identity()
+            && file_identity.name.is_some()
+        {
+            identity_name = file_identity.name;
+        }
+        if let Some(file_user) = moltis_config::load_user()
+            && file_user.name.is_some()
+        {
+            user_name = file_user.name;
+        }
+
+        identity_name.is_some() && user_name.is_some()
     }
 
     /// Start the wizard. Returns current step info.
@@ -65,6 +81,12 @@ impl LiveOnboardingService {
             ws.identity = cfg.identity;
             ws.user = cfg.user;
         }
+        if let Some(file_identity) = moltis_config::load_identity() {
+            merge_identity(&mut ws.identity, &file_identity);
+        }
+        if let Some(file_user) = moltis_config::load_user() {
+            merge_user(&mut ws.user, &file_user);
+        }
 
         let resp = step_response(&ws);
         *self.state.lock().unwrap() = Some(ws);
@@ -88,6 +110,12 @@ impl LiveOnboardingService {
             config.user = ws.user.clone();
             self.save(&config)
                 .map_err(|e| format!("failed to save config: {e}"))?;
+            if let Err(e) = moltis_config::save_identity(&ws.identity) {
+                return Err(format!("failed to save IDENTITY.md: {e}"));
+            }
+            if let Err(e) = moltis_config::save_user(&ws.user) {
+                return Err(format!("failed to save USER.md: {e}"));
+            }
 
             let resp = json!({
                 "step": "done",
@@ -142,6 +170,14 @@ impl LiveOnboardingService {
         } else {
             MoltisConfig::default()
         };
+        let mut identity = config.identity.clone();
+        if let Some(file_identity) = moltis_config::load_identity() {
+            merge_identity(&mut identity, &file_identity);
+        }
+        let mut user = config.user.clone();
+        if let Some(file_user) = moltis_config::load_user() {
+            merge_user(&mut user, &file_user);
+        }
 
         /// Extract an optional non-empty string from JSON, mapping `""` to `None`.
         fn str_field(params: &Value, key: &str) -> Option<Option<String>> {
@@ -152,49 +188,49 @@ impl LiveOnboardingService {
         }
 
         if let Some(v) = str_field(&params, "name") {
-            config.identity.name = v;
+            identity.name = v;
         }
         if let Some(v) = str_field(&params, "emoji") {
-            config.identity.emoji = v;
+            identity.emoji = v;
         }
         if let Some(v) = str_field(&params, "creature") {
-            config.identity.creature = v;
+            identity.creature = v;
         }
         if let Some(v) = str_field(&params, "vibe") {
-            config.identity.vibe = v;
+            identity.vibe = v;
         }
         if let Some(v) = params.get("soul") {
-            config.identity.soul = if v.is_null() {
+            let soul = if v.is_null() {
                 None
             } else {
-                v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty())
+                v.as_str().map(|s| s.to_string())
             };
+            moltis_config::save_soul(soul.as_deref())?;
         }
         if let Some(v) = str_field(&params, "user_name") {
-            config.user.name = v;
+            user.name = v;
         }
 
+        config.identity = identity.clone();
+        config.user = user.clone();
+
         self.save(&config)?;
+        moltis_config::save_identity(&identity)?;
+        moltis_config::save_user(&user)?;
 
         Ok(json!({
-            "name": config.identity.name,
-            "emoji": config.identity.emoji,
-            "creature": config.identity.creature,
-            "vibe": config.identity.vibe,
-            "soul": config.identity.soul,
-            "user_name": config.user.name,
+            "name": identity.name,
+            "emoji": identity.emoji,
+            "creature": identity.creature,
+            "vibe": identity.vibe,
+            "soul": moltis_config::load_soul(),
+            "user_name": user.name,
         }))
     }
 
-    /// Update the soul text in the config file.
+    /// Update SOUL.md in the workspace root.
     pub fn identity_update_soul(&self, soul: Option<String>) -> anyhow::Result<Value> {
-        let mut config = if self.config_path.exists() {
-            moltis_config::loader::load_config(&self.config_path).unwrap_or_default()
-        } else {
-            MoltisConfig::default()
-        };
-        config.identity.soul = soul;
-        self.save(&config)?;
+        moltis_config::save_soul(soul.as_deref())?;
         Ok(json!({}))
     }
 
@@ -203,9 +239,67 @@ impl LiveOnboardingService {
         if self.config_path.exists()
             && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
         {
-            return moltis_config::ResolvedIdentity::from_config(&cfg);
+            let mut id = moltis_config::ResolvedIdentity::from_config(&cfg);
+            if let Some(file_identity) = moltis_config::load_identity() {
+                if let Some(name) = file_identity.name {
+                    id.name = name;
+                }
+                if let Some(emoji) = file_identity.emoji {
+                    id.emoji = Some(emoji);
+                }
+                if let Some(creature) = file_identity.creature {
+                    id.creature = Some(creature);
+                }
+                if let Some(vibe) = file_identity.vibe {
+                    id.vibe = Some(vibe);
+                }
+            }
+            if let Some(file_user) = moltis_config::load_user() {
+                if let Some(name) = file_user.name {
+                    id.user_name = Some(name);
+                }
+            }
+            id.soul = moltis_config::load_soul();
+            return id;
         }
-        moltis_config::ResolvedIdentity::default()
+        let mut id = moltis_config::ResolvedIdentity::default();
+        if let Some(file_identity) = moltis_config::load_identity() {
+            if let Some(name) = file_identity.name {
+                id.name = name;
+            }
+            id.emoji = file_identity.emoji;
+            id.creature = file_identity.creature;
+            id.vibe = file_identity.vibe;
+        }
+        if let Some(file_user) = moltis_config::load_user() {
+            id.user_name = file_user.name;
+        }
+        id.soul = moltis_config::load_soul();
+        id
+    }
+}
+
+fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {
+    if src.name.is_some() {
+        dst.name = src.name.clone();
+    }
+    if src.emoji.is_some() {
+        dst.emoji = src.emoji.clone();
+    }
+    if src.creature.is_some() {
+        dst.creature = src.creature.clone();
+    }
+    if src.vibe.is_some() {
+        dst.vibe = src.vibe.clone();
+    }
+}
+
+fn merge_user(dst: &mut UserProfile, src: &UserProfile) {
+    if src.name.is_some() {
+        dst.name = src.name.clone();
+    }
+    if src.timezone.is_some() {
+        dst.timezone = src.timezone.clone();
     }
 }
 
@@ -236,9 +330,13 @@ fn current_value(ws: &WizardState) -> Option<&str> {
 mod tests {
     use {super::*, std::io::Write};
 
+    static DATA_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn wizard_round_trip() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
         let config_path = dir.path().join("moltis.toml");
         let svc = LiveOnboardingService::new(config_path.clone());
 
@@ -266,11 +364,17 @@ mod tests {
         // Should report as onboarded now
         let status = svc.wizard_status();
         assert_eq!(status["onboarded"], true);
+
+        assert!(dir.path().join("IDENTITY.md").exists());
+        assert!(dir.path().join("USER.md").exists());
+        moltis_config::clear_data_dir();
     }
 
     #[test]
     fn already_onboarded() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
         let config_path = dir.path().join("moltis.toml");
         // Write a config with identity and user
         let mut f = std::fs::File::create(&config_path).unwrap();
@@ -279,21 +383,27 @@ mod tests {
         let svc = LiveOnboardingService::new(config_path);
         let resp = svc.wizard_start(false);
         assert_eq!(resp["onboarded"], true);
+        moltis_config::clear_data_dir();
     }
 
     #[test]
     fn cancel_wizard() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
         let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
         svc.wizard_start(false);
         assert_eq!(svc.wizard_status()["active"], true);
         svc.wizard_cancel();
         assert_eq!(svc.wizard_status()["active"], false);
+        moltis_config::clear_data_dir();
     }
 
     #[test]
     fn identity_update_partial() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
         let config_path = dir.path().join("moltis.toml");
         let svc = LiveOnboardingService::new(config_path.clone());
 
@@ -332,18 +442,26 @@ mod tests {
         let res = svc.identity_update(json!({ "soul": null })).unwrap();
         assert!(res["soul"].is_null());
 
+        let soul_path = dir.path().join("SOUL.md");
+        assert!(!soul_path.exists());
+
         // Reports as onboarded
         assert_eq!(svc.wizard_status()["onboarded"], true);
+
+        moltis_config::clear_data_dir();
     }
 
     #[test]
     fn identity_update_empty_fields() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
         let svc = LiveOnboardingService::new(dir.path().join("moltis.toml"));
 
         // Set name, then clear it
         svc.identity_update(json!({ "name": "Rex" })).unwrap();
         let res = svc.identity_update(json!({ "name": "" })).unwrap();
         assert!(res["name"].is_null());
+        moltis_config::clear_data_dir();
     }
 }

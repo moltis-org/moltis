@@ -25,7 +25,17 @@ pub fn build_system_prompt(
     native_tools: bool,
     project_context: Option<&str>,
 ) -> String {
-    build_system_prompt_with_session(tools, native_tools, project_context, None, &[], None, None)
+    build_system_prompt_with_session(
+        tools,
+        native_tools,
+        project_context,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Build the system prompt, optionally including session context stats, skills,
@@ -41,6 +51,8 @@ pub fn build_system_prompt_with_session(
     skills: &[SkillMetadata],
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    tools_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         tools,
@@ -50,6 +62,8 @@ pub fn build_system_prompt_with_session(
         skills,
         identity,
         user,
+        soul_text,
+        tools_text,
         true, // include_tools
     )
 }
@@ -60,6 +74,8 @@ pub fn build_system_prompt_minimal(
     session_context: Option<&str>,
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    tools_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         &ToolRegistry::new(),
@@ -69,6 +85,8 @@ pub fn build_system_prompt_minimal(
         &[],
         identity,
         user,
+        soul_text,
+        tools_text,
         false, // include_tools
     )
 }
@@ -82,6 +100,8 @@ fn build_system_prompt_full(
     skills: &[SkillMetadata],
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    tools_text: Option<&str>,
     include_tools: bool,
 ) -> String {
     let tool_schemas = if include_tools {
@@ -115,7 +135,7 @@ fn build_system_prompt_full(
             prompt.push_str(&parts.join(" "));
             prompt.push('\n');
         }
-        let soul = id.soul.as_deref().unwrap_or(DEFAULT_SOUL);
+        let soul = soul_text.unwrap_or(DEFAULT_SOUL);
         prompt.push_str("\n## Soul\n\n");
         prompt.push_str(soul);
         prompt.push('\n');
@@ -148,6 +168,12 @@ fn build_system_prompt_full(
     // Skip for minimal prompts since skills require tool calling.
     if include_tools && !skills.is_empty() {
         prompt.push_str(&moltis_skills::prompt_gen::generate_skills_prompt(skills));
+    }
+
+    if include_tools && let Some(tools_md) = tools_text {
+        prompt.push_str("## Tools Policy\n\n");
+        prompt.push_str(tools_md);
+        prompt.push_str("\n\n");
     }
 
     // If memory tools are registered, add a hint about them.
@@ -266,7 +292,17 @@ mod tests {
             source: None,
         }];
         let prompt =
-            build_system_prompt_with_session(&tools, true, None, None, &skills, None, None);
+            build_system_prompt_with_session(
+                &tools,
+                true,
+                None,
+                None,
+                &skills,
+                None,
+                None,
+                None,
+                None,
+            );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
     }
@@ -274,7 +310,8 @@ mod tests {
     #[test]
     fn test_no_skills_block_when_empty() {
         let tools = ToolRegistry::new();
-        let prompt = build_system_prompt_with_session(&tools, true, None, None, &[], None, None);
+        let prompt =
+            build_system_prompt_with_session(&tools, true, None, None, &[], None, None, None, None);
         assert!(!prompt.contains("<available_skills>"));
     }
 
@@ -300,6 +337,8 @@ mod tests {
             &[],
             Some(&identity),
             Some(&user),
+            None,
+            None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
         assert!(prompt.contains("You are a parrot."));
@@ -315,11 +354,19 @@ mod tests {
         let tools = ToolRegistry::new();
         let identity = AgentIdentity {
             name: Some("Rex".into()),
-            soul: Some("You are a loyal companion who loves fetch.".into()),
             ..Default::default()
         };
-        let prompt =
-            build_system_prompt_with_session(&tools, true, None, None, &[], Some(&identity), None);
+        let prompt = build_system_prompt_with_session(
+            &tools,
+            true,
+            None,
+            None,
+            &[],
+            Some(&identity),
+            None,
+            Some("You are a loyal companion who loves fetch."),
+            None,
+        );
         assert!(prompt.contains("## Soul"));
         assert!(prompt.contains("loyal companion who loves fetch"));
         assert!(!prompt.contains("Be genuinely helpful"));
@@ -328,9 +375,28 @@ mod tests {
     #[test]
     fn test_no_identity_no_extra_lines() {
         let tools = ToolRegistry::new();
-        let prompt = build_system_prompt_with_session(&tools, true, None, None, &[], None, None);
+        let prompt =
+            build_system_prompt_with_session(&tools, true, None, None, &[], None, None, None, None);
         assert!(!prompt.contains("Your name is"));
         assert!(!prompt.contains("The user's name is"));
         assert!(!prompt.contains("## Soul"));
+    }
+
+    #[test]
+    fn test_tools_policy_injected_when_provided() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt_with_session(
+            &tools,
+            true,
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            Some("Prefer read-only tools first."),
+        );
+        assert!(prompt.contains("## Tools Policy"));
+        assert!(prompt.contains("Prefer read-only tools first."));
     }
 }

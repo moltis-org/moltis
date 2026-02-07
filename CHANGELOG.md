@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Release packaging**: Derive release artifact versions from the Git tag (`vX.Y.Z`) in CI, and sync package metadata during release jobs to prevent filename/version drift.
 - **Versioning**: Bump workspace and snap baseline version to `0.2.0`.
 - **Onboarding auth flow**: Route first-run setup directly into `/onboarding` and remove the separate `/setup` web UI page.
+- **Startup observability**: Log each loaded context markdown (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/*.md`), memory markdown (`MEMORY.md` and `memory/*.md`), and discovered `SKILL.md` to make startup/context loading easier to audit.
+- **Workspace root pathing**: Standardize workspace-scoped file discovery/loading on `moltis_config::data_dir()` instead of process cwd (affects BOOT.md, hook discovery, skill discovery, and compaction memory output paths).
+- **Soul storage**: Move agent personality text out of `moltis.toml` into workspace `SOUL.md`; identity APIs/UI still edit soul, but now persist it as a markdown file.
+- **Identity storage**: Persist agent identity fields (`name`, `emoji`, `creature`, `vibe`) to workspace `IDENTITY.md` using YAML frontmatter; settings UI continues to edit these fields through the same RPC/API.
+- **User profile storage**: Persist user profile fields (`name`, `timezone`) to workspace `USER.md` using YAML frontmatter; onboarding/settings continue to use the same API/UI while reading/writing the markdown file.
+- **Workspace markdown support**: Add `TOOLS.md` prompt injection and `BOOTSTRAP.md` startup injection support from workspace root (`data_dir`), with built-in boot hook support for combining `BOOTSTRAP.md` + `BOOT.md`.
+- **Heartbeat prompt precedence**: Support workspace `HEARTBEAT.md` as heartbeat prompt source with precedence `heartbeat.prompt` (config override) → `HEARTBEAT.md` → built-in default; log when config prompt overrides `HEARTBEAT.md`.
+- **Heartbeat UX**: Expose effective heartbeat prompt source (`config`, `HEARTBEAT.md`, or default) via `heartbeat.status` and display it in the Heartbeat settings UI.
 
 ### Fixed
 

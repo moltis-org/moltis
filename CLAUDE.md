@@ -587,6 +587,11 @@ Moltis uses two directories, **never** the current working directory:
 - **Never use `std::env::current_dir()`** to resolve paths for persistent
   storage (databases, memory files, config). Always use `data_dir()` or
   `config_dir()`. Writing to cwd leaks files into the user's repo.
+- **Workspace root is `data_dir()`**. Any workspace-scoped markdown files
+  (for example `BOOTSTRAP.md`, `BOOT.md`, `HEARTBEAT.md`, `TOOLS.md`,
+  `IDENTITY.md`, `USER.md`, `SOUL.md`, `MEMORY.md`, `memory/*.md`,
+  `.moltis/*`) must be resolved relative to `moltis_config::data_dir()`,
+  never cwd.
 - When a function needs a storage path, pass `data_dir` explicitly or call
   `moltis_config::data_dir()`. Don't assume the process was started from a
   specific directory.
