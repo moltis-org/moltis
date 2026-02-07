@@ -178,6 +178,7 @@ pub fn build_gateway_app(
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -296,6 +297,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -2560,6 +2562,52 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 #[cfg(feature = "web-ui")]
 async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
     Json(build_gon_data(&state.gateway).await)
+}
+
+#[cfg(feature = "web-ui")]
+async fn oauth_callback_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(code) = params.get("code") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing authorization code.</p>".to_string()),
+        )
+            .into_response();
+    };
+    let Some(oauth_state) = params.get("state") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing OAuth state.</p>".to_string()),
+        )
+            .into_response();
+    };
+
+    match state
+        .gateway
+        .services
+        .provider_setup
+        .oauth_complete(serde_json::json!({
+            "code": code,
+            "state": oauth_state,
+        }))
+        .await
+    {
+        Ok(_) => Html(
+            "<h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script>"
+                .to_string(),
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth callback completion failed");
+            (
+                StatusCode::BAD_REQUEST,
+                Html("<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>".to_string()),
+            )
+                .into_response()
+        },
+    }
 }
 
 #[cfg(feature = "web-ui")]
