@@ -10,6 +10,7 @@ use {
     chromiumoxide::{
         Browser, BrowserConfig as CdpBrowserConfig, Page,
         cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams,
+        handler::HandlerConfig,
     },
     futures::StreamExt,
     sysinfo::System,
@@ -328,13 +329,29 @@ impl BrowserPool {
             "connecting to sandboxed browser"
         );
 
-        // Connect to the containerized browser
-        let (browser, mut handler) = Browser::connect(&ws_url).await.map_err(|e| {
-            BrowserError::LaunchFailed(format!(
-                "failed to connect to containerized browser at {}: {}",
-                ws_url, e
-            ))
-        })?;
+        // Connect to the containerized browser with custom timeout
+        let handler_config = HandlerConfig {
+            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+            viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                width: self.config.viewport_width,
+                height: self.config.viewport_height,
+                device_scale_factor: Some(self.config.device_scale_factor),
+                emulating_mobile: false,
+                is_landscape: true,
+                has_touch: false,
+            }),
+            ..Default::default()
+        };
+
+        let (browser, mut handler) =
+            Browser::connect_with_config(&ws_url, handler_config)
+                .await
+                .map_err(|e| {
+                    BrowserError::LaunchFailed(format!(
+                        "failed to connect to containerized browser at {}: {}",
+                        ws_url, e
+                    ))
+                })?;
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
