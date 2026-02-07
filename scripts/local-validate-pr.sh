@@ -37,6 +37,17 @@ fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
 
+repair_stale_llama_build_dirs() {
+  shopt -s nullglob
+  for dir in target/debug/build/llama-cpp-sys-2-*/out/build; do
+    if [[ -d "$dir" && ! -f "$dir/Makefile" && ! -f "$dir/build.ninja" ]]; then
+      echo "Removing stale llama-cpp build dir: $dir"
+      rm -rf "$dir"
+    fi
+  done
+  shopt -u nullglob
+}
+
 set_status() {
   local state="$1"
   local context="$2"
@@ -77,6 +88,10 @@ run_check() {
 
 echo "Validating PR #$PR_NUMBER ($SHA) in $BASE_REPO"
 echo "Publishing commit statuses to: $REPO"
+
+# macOS local builds can leave stale cmake output dirs where configure was skipped
+# but no generator files remain. Clean those up before lint/test.
+repair_stale_llama_build_dirs
 
 run_check "local/fmt" "$fmt_cmd"
 run_check "local/lint" "$lint_cmd"
