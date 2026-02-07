@@ -13,13 +13,289 @@ use {
     tracing::info,
 };
 
-use moltis_agents::providers::{ProviderRegistry, local_gguf};
+use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
     services::{LocalLlmService, ServiceResult},
     state::GatewayState,
 };
+
+/// Check if a local model is cached on disk, and download it if not.
+///
+/// Returns Ok(true) if download was needed and completed successfully.
+/// Returns Ok(false) if model was already cached.
+/// Returns Err if download failed.
+pub async fn ensure_local_model_cached(
+    model_id: &str,
+    state: &Arc<crate::state::GatewayState>,
+) -> Result<bool, String> {
+    let cache_dir = local_gguf::models::default_models_dir();
+    info!(model_id, ?cache_dir, "checking if local model is cached");
+
+    // First check the unified registry
+    if let Some(def) = moltis_agents::providers::local_llm::models::find_model(model_id) {
+        // Determine backend type
+        let backend =
+            moltis_agents::providers::local_llm::backend::detect_backend_for_model(model_id);
+        let is_cached =
+            moltis_agents::providers::local_llm::models::is_model_cached(def, backend, &cache_dir);
+
+        info!(model_id, is_cached, "found in unified registry");
+
+        if is_cached {
+            return Ok(false);
+        }
+
+        // Model not cached - download with progress
+        return download_unified_model(def, backend, &cache_dir, state).await;
+    }
+
+    // Check legacy registry
+    if let Some(def) = local_gguf::models::find_model(model_id) {
+        let is_cached = local_gguf::models::is_model_cached(def, &cache_dir);
+
+        info!(
+            model_id,
+            is_cached,
+            backend = ?def.backend,
+            hf_repo = def.hf_repo,
+            "found in legacy registry"
+        );
+
+        if is_cached {
+            return Ok(false);
+        }
+
+        // Model not cached - download with progress
+        return download_legacy_model(def, &cache_dir, state).await;
+    }
+
+    // Unknown model - let the provider handle it (will fail with a clear error)
+    info!(model_id, "model not found in any registry");
+    Ok(false)
+}
+
+/// Download a model from the unified registry with progress broadcasting.
+async fn download_unified_model(
+    model: &'static moltis_agents::providers::local_llm::models::LocalModelDef,
+    backend: moltis_agents::providers::local_llm::backend::BackendType,
+    cache_dir: &std::path::Path,
+    state: &Arc<crate::state::GatewayState>,
+) -> Result<bool, String> {
+    use moltis_agents::providers::local_llm::models as llm_models;
+
+    let model_id = model.id.to_string();
+    let display_name = model.display_name.to_string();
+
+    // Broadcast download start
+    broadcast(
+        state,
+        "local-llm.download",
+        serde_json::json!({
+            "modelId": model_id,
+            "displayName": display_name,
+            "status": "starting",
+            "message": "Missing model on disk, downloading...",
+        }),
+        BroadcastOpts::default(),
+    )
+    .await;
+
+    // Set up progress channel
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Option<u64>)>();
+    let state_for_progress = Arc::clone(state);
+    let model_id_for_broadcast = model_id.clone();
+    let display_name_for_broadcast = display_name.clone();
+
+    // Spawn progress broadcast task
+    let broadcast_task = tokio::spawn(async move {
+        while let Some((downloaded, total)) = rx.recv().await {
+            let progress = total.map(|t| {
+                if t > 0 {
+                    (downloaded as f64 / t as f64 * 100.0).min(100.0)
+                } else {
+                    0.0
+                }
+            });
+            broadcast(
+                &state_for_progress,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id_for_broadcast,
+                    "displayName": display_name_for_broadcast,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "progress": progress,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+    });
+
+    // Download based on backend
+    let result = match backend {
+        moltis_agents::providers::local_llm::backend::BackendType::Gguf => {
+            llm_models::ensure_model_with_progress(model, cache_dir, |p| {
+                let _ = tx.send((p.downloaded, p.total));
+            })
+            .await
+        },
+        moltis_agents::providers::local_llm::backend::BackendType::Mlx => {
+            llm_models::ensure_mlx_model_with_progress(model, cache_dir, |p| {
+                let _ = tx.send((p.downloaded, p.total));
+            })
+            .await
+        },
+    };
+
+    // Clean up
+    drop(tx);
+    let _ = broadcast_task.await;
+
+    match result {
+        Ok(_) => {
+            // Broadcast completion
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "displayName": display_name,
+                    "progress": 100.0,
+                    "complete": true,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Ok(true)
+        },
+        Err(e) => {
+            // Broadcast error
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "error": e.to_string(),
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Err(format!("Failed to download model: {}", e))
+        },
+    }
+}
+
+/// Download a model from the legacy registry with progress broadcasting.
+async fn download_legacy_model(
+    model: &'static local_gguf::models::GgufModelDef,
+    cache_dir: &std::path::Path,
+    state: &Arc<crate::state::GatewayState>,
+) -> Result<bool, String> {
+    let model_id = model.id.to_string();
+    let display_name = model.display_name.to_string();
+
+    // Broadcast download start
+    broadcast(
+        state,
+        "local-llm.download",
+        serde_json::json!({
+            "modelId": model_id,
+            "displayName": display_name,
+            "status": "starting",
+            "message": "Missing model on disk, downloading...",
+        }),
+        BroadcastOpts::default(),
+    )
+    .await;
+
+    // Set up progress channel
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, Option<u64>)>();
+    let state_for_progress = Arc::clone(state);
+    let model_id_for_broadcast = model_id.clone();
+    let display_name_for_broadcast = display_name.clone();
+
+    // Spawn progress broadcast task
+    let broadcast_task = tokio::spawn(async move {
+        while let Some((downloaded, total)) = rx.recv().await {
+            let progress = total.map(|t| {
+                if t > 0 {
+                    (downloaded as f64 / t as f64 * 100.0).min(100.0)
+                } else {
+                    0.0
+                }
+            });
+            broadcast(
+                &state_for_progress,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id_for_broadcast,
+                    "displayName": display_name_for_broadcast,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "progress": progress,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+    });
+
+    // Download based on backend
+    let result = match model.backend {
+        local_gguf::models::ModelBackend::Gguf => {
+            local_gguf::models::ensure_model_with_progress(model, cache_dir, |p| {
+                let _ = tx.send((p.downloaded, p.total));
+            })
+            .await
+        },
+        local_gguf::models::ModelBackend::Mlx => {
+            local_gguf::models::ensure_mlx_model_with_progress(model, cache_dir, |p| {
+                let _ = tx.send((p.downloaded, p.total));
+            })
+            .await
+        },
+    };
+
+    // Clean up
+    drop(tx);
+    let _ = broadcast_task.await;
+
+    match result {
+        Ok(_) => {
+            // Broadcast completion
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "displayName": display_name,
+                    "progress": 100.0,
+                    "complete": true,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Ok(true)
+        },
+        Err(e) => {
+            // Broadcast error
+            broadcast(
+                state,
+                "local-llm.download",
+                serde_json::json!({
+                    "modelId": model_id,
+                    "error": e.to_string(),
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+            Err(format!("Failed to download model: {}", e))
+        },
+    }
+}
 
 /// Check if mlx-lm is installed (either via pip or brew).
 fn is_mlx_installed() -> bool {
@@ -460,6 +736,7 @@ impl LocalLlmService for LiveLocalLlmService {
         let state_cell = Arc::clone(&self.state);
         let cache_dir = local_gguf::models::default_models_dir();
         let display_name = model_def.display_name.to_string();
+        let backend_for_download = backend.clone();
 
         tokio::spawn(async move {
             // Get state if available (for broadcasting progress)
@@ -503,12 +780,18 @@ impl LocalLlmService for LiveLocalLlmService {
                 }
             });
 
-            let result =
-                local_gguf::models::ensure_model_with_progress(model_def, &cache_dir, |p| {
-                    // Send progress to the broadcast task (ignore errors if channel closed)
+            // Download the model using the appropriate function based on backend
+            let result = if backend_for_download == "MLX" {
+                local_gguf::models::ensure_mlx_model_with_progress(model_def, &cache_dir, |p| {
                     let _ = tx.send((p.downloaded, p.total));
                 })
-                .await;
+                .await
+            } else {
+                local_gguf::models::ensure_model_with_progress(model_def, &cache_dir, |p| {
+                    let _ = tx.send((p.downloaded, p.total));
+                })
+                .await
+            };
 
             // Drop the sender to signal the broadcast task to finish
             drop(tx);
@@ -536,16 +819,18 @@ impl LocalLlmService for LiveLocalLlmService {
                     }
 
                     // Register the provider in the registry
-                    let gguf_config = local_gguf::LocalGgufConfig {
+                    // Use LocalLlmProvider which auto-detects backend (GGUF or MLX)
+                    let llm_config = local_llm::LocalLlmConfig {
                         model_id: model_id_clone.clone(),
                         model_path: None,
+                        backend: None, // Auto-detect based on model type
                         context_size: None,
                         gpu_layers: 0,
                         temperature: 0.7,
                         cache_dir,
                     };
 
-                    let provider = Arc::new(local_gguf::LazyLocalGgufProvider::new(gguf_config));
+                    let provider = Arc::new(local_llm::LocalLlmProvider::new(llm_config));
 
                     let mut reg = registry.write().await;
                     reg.register(

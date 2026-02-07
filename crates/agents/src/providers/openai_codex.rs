@@ -7,10 +7,13 @@ use {
     moltis_oauth::{OAuthFlow, TokenStore, load_oauth_config},
     secrecy::{ExposeSecret, Secret},
     tokio_stream::Stream,
-    tracing::debug,
+    tracing::{debug, info, trace},
 };
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
+use crate::{
+    model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    providers::openai_compat::to_responses_api_tools,
+};
 
 pub struct OpenAiCodexProvider {
     model: String,
@@ -132,11 +135,18 @@ impl OpenAiCodexProvider {
                         }
                     },
                     "tool" => {
-                        // Convert tool result to function_call_output
+                        // Convert tool result to function_call_output.
+                        // Content can be a string or array (multimodal).
+                        let output = if let Some(s) = msg["content"].as_str() {
+                            s.to_string()
+                        } else {
+                            // Array content (e.g., multimodal with images) - serialize as JSON
+                            msg["content"].to_string()
+                        };
                         vec![serde_json::json!({
                             "type": "function_call_output",
                             "call_id": msg["tool_call_id"],
-                            "output": msg["content"].as_str().unwrap_or(""),
+                            "output": output,
                         })]
                     },
                     _ => {
@@ -229,22 +239,11 @@ impl LlmProvider for OpenAiCodexProvider {
         });
 
         if !tools.is_empty() {
-            let api_tools: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "type": "function",
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": t["parameters"],
-                    })
-                })
-                .collect();
-            body["tools"] = serde_json::Value::Array(api_tools);
+            body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
             body["tool_choice"] = serde_json::json!("auto");
         }
 
-        debug!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
+        trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
 
         let http_resp = self
             .client
@@ -385,6 +384,10 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: Vec<serde_json::Value>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        info!(
+            tools_received = tools.len(),
+            "stream_with_tools entry (before async_stream)"
+        );
         Box::pin(async_stream::stream! {
             let token = match self.get_valid_token() {
                 Ok(t) => t,
@@ -426,27 +429,17 @@ impl LlmProvider for OpenAiCodexProvider {
             });
 
             if !tools.is_empty() {
-                let api_tools: Vec<serde_json::Value> = tools
-                    .iter()
-                    .map(|t| {
-                        serde_json::json!({
-                            "type": "function",
-                            "name": t["name"],
-                            "description": t["description"],
-                            "parameters": t["parameters"],
-                        })
-                    })
-                    .collect();
-                body["tools"] = serde_json::Value::Array(api_tools);
+                body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
                 body["tool_choice"] = serde_json::json!("auto");
             }
 
-            debug!(
+            info!(
                 model = %self.model,
                 messages_count = messages.len(),
                 tools_count = tools.len(),
                 "openai-codex stream_with_tools request"
             );
+            debug!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex stream request body");
 
             let resp = match self
                 .client
@@ -479,8 +472,11 @@ impl LlmProvider for OpenAiCodexProvider {
             let mut buf = String::new();
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
-            // Track function calls by index for streaming tool call events.
-            let mut fn_call_index: usize = 0;
+
+            // Track tool calls being streamed (index -> (id, name))
+            let mut tool_calls: std::collections::HashMap<usize, (String, String)> =
+                std::collections::HashMap::new();
+            let mut current_tool_index: usize = 0;
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -505,12 +501,17 @@ impl LlmProvider for OpenAiCodexProvider {
                     };
 
                     if data == "[DONE]" {
+                        // Emit completion for any pending tool calls
+                        for index in tool_calls.keys() {
+                            yield StreamEvent::ToolCallComplete { index: *index };
+                        }
                         yield StreamEvent::Done(Usage { input_tokens, output_tokens });
                         return;
                     }
 
                     if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
                         let evt_type = evt["type"].as_str().unwrap_or("");
+                        trace!(evt_type = %evt_type, evt = %evt, "openai-codex stream event");
 
                         match evt_type {
                             "response.output_text.delta" => {
@@ -521,19 +522,25 @@ impl LlmProvider for OpenAiCodexProvider {
                                 }
                             }
                             "response.output_item.added" => {
+                                // New output item - could be text or function_call
                                 if evt["item"]["type"].as_str() == Some("function_call") {
                                     let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
                                     let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                                    let index = fn_call_index;
-                                    fn_call_index += 1;
+                                    let index = current_tool_index;
+                                    current_tool_index += 1;
+                                    tool_calls.insert(index, (id.clone(), name.clone()));
                                     yield StreamEvent::ToolCallStart { id, name, index };
                                 }
                             }
                             "response.function_call_arguments.delta" => {
                                 if let Some(delta) = evt["delta"].as_str() {
                                     if !delta.is_empty() {
-                                        // The current tool call is fn_call_index - 1
-                                        let index = fn_call_index.saturating_sub(1);
+                                        // Find the index for this tool call (use the most recent one)
+                                        let index = if current_tool_index > 0 {
+                                            current_tool_index - 1
+                                        } else {
+                                            0
+                                        };
                                         yield StreamEvent::ToolCallArgumentsDelta {
                                             index,
                                             delta: delta.to_string(),
@@ -542,8 +549,7 @@ impl LlmProvider for OpenAiCodexProvider {
                                 }
                             }
                             "response.function_call_arguments.done" => {
-                                let index = fn_call_index.saturating_sub(1);
-                                yield StreamEvent::ToolCallComplete { index };
+                                // Function call arguments complete - tool call will be finalized at [DONE]
                             }
                             "response.completed" => {
                                 if let Some(u) = evt["response"]["usage"].as_object() {
@@ -553,6 +559,10 @@ impl LlmProvider for OpenAiCodexProvider {
                                     output_tokens = u.get("output_tokens")
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0) as u32;
+                                }
+                                // Emit completion for any pending tool calls
+                                for index in tool_calls.keys() {
+                                    yield StreamEvent::ToolCallComplete { index: *index };
                                 }
                                 yield StreamEvent::Done(Usage { input_tokens, output_tokens });
                                 return;
@@ -669,5 +679,178 @@ mod tests {
         assert_eq!(converted[1]["type"], "function_call_output");
         assert_eq!(converted[1]["call_id"], "call_1");
         assert_eq!(converted[1]["output"], "12:00");
+    }
+
+    // ── Array Content Handling Tests ───────────────────────────────────
+    // These tests verify that the Codex provider correctly handles array
+    // content (multimodal) in tool results, which can occur even when we
+    // send string content due to model behavior or content format.
+
+    #[test]
+    fn convert_messages_tool_result_with_string_content() {
+        // Standard case: tool result content is a string
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_123",
+            "content": "Command executed successfully"
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_123");
+        assert_eq!(converted[0]["output"], "Command executed successfully");
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_array_content() {
+        // Edge case: tool result content is an array (multimodal format)
+        // This can happen if content was accidentally left as an array
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_456",
+            "content": [
+                {"type": "text", "text": "Screenshot captured"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC123"}}
+            ]
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_456");
+        // Array content should be serialized to JSON string
+        let output = converted[0]["output"].as_str().unwrap();
+        assert!(
+            output.contains("Screenshot captured"),
+            "output should contain text: {output}"
+        );
+        assert!(
+            output.contains("image_url"),
+            "output should contain image type: {output}"
+        );
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_null_content() {
+        // Edge case: tool result content is null
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_789",
+            "content": null
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_789");
+        // Null content should be serialized as "null"
+        assert_eq!(converted[0]["output"], "null");
+    }
+
+    #[test]
+    fn convert_messages_tool_result_with_object_content() {
+        // Edge case: tool result content is an object
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_abc",
+            "content": {"result": "success", "data": [1, 2, 3]}
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["call_id"], "call_abc");
+        // Object content should be serialized to JSON string
+        let output = converted[0]["output"].as_str().unwrap();
+        assert!(output.contains("success"), "output should contain result");
+        assert!(
+            output.contains("[1,2,3]"),
+            "output should contain data array"
+        );
+    }
+
+    #[test]
+    fn convert_messages_preserves_tool_call_id() {
+        // Verify that tool_call_id is correctly preserved for various content types
+        let test_cases = vec![
+            ("call_str", "simple string"),
+            ("call_empty", ""),
+            ("call_unicode", "日本語テスト"),
+        ];
+
+        for (call_id, content) in test_cases {
+            let messages = vec![serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": content
+            })];
+            let converted = OpenAiCodexProvider::convert_messages(&messages);
+            assert_eq!(
+                converted[0]["call_id"], call_id,
+                "call_id should be preserved for content: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn convert_messages_empty_array_content() {
+        // Edge case: tool result content is an empty array
+        let messages = vec![serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "call_empty_arr",
+            "content": []
+        })];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["type"], "function_call_output");
+        assert_eq!(converted[0]["output"], "[]");
+    }
+
+    #[test]
+    fn convert_messages_mixed_conversation_with_array_content() {
+        // Full conversation with various message types including array content
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "Take a screenshot"}),
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_screenshot",
+                    "type": "function",
+                    "function": {"name": "browser_screenshot", "arguments": "{}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_screenshot",
+                "content": [
+                    {"type": "text", "text": "Screenshot taken"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,XYZ"}}
+                ]
+            }),
+            serde_json::json!({"role": "assistant", "content": "Here is the screenshot."}),
+        ];
+
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+
+        // Verify all messages are converted
+        assert_eq!(converted.len(), 4);
+
+        // User message
+        assert_eq!(converted[0]["content"][0]["type"], "input_text");
+        assert_eq!(converted[0]["content"][0]["text"], "Take a screenshot");
+
+        // Tool call
+        assert_eq!(converted[1]["type"], "function_call");
+        assert_eq!(converted[1]["name"], "browser_screenshot");
+
+        // Tool result with array content
+        assert_eq!(converted[2]["type"], "function_call_output");
+        let output = converted[2]["output"].as_str().unwrap();
+        assert!(output.contains("Screenshot taken"));
+        assert!(output.contains("image_url"));
+
+        // Assistant response
+        assert_eq!(converted[3]["type"], "message");
+        assert_eq!(
+            converted[3]["content"][0]["text"],
+            "Here is the screenshot."
+        );
     }
 }

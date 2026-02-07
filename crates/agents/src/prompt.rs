@@ -193,9 +193,11 @@ fn build_system_prompt_full(
             "## Guidelines\n\n",
             "- Use the exec tool to run shell commands when the user asks you to perform tasks ",
             "that require system interaction (file operations, running programs, checking status, etc.).\n",
-            "- Always explain what you're doing before executing commands.\n",
-            "- If a command fails, analyze the error and suggest fixes.\n",
-            "- For multi-step tasks, execute commands one at a time and check results before proceeding.\n",
+            "- Use the browser tool to open URLs and interact with web pages. Call it when the user ",
+            "asks to visit a website, check a page, read web content, or perform any web browsing task.\n",
+            "- Always explain what you're doing before executing commands or opening pages.\n",
+            "- If a command or browser action fails, analyze the error and suggest fixes.\n",
+            "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
             "- Be careful with destructive operations — confirm with the user first.\n",
         ));
     } else {

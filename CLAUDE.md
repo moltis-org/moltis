@@ -89,6 +89,35 @@ wherever the shape is known. This gives compile-time guarantees, better
 documentation, and avoids stringly-typed field access. Reserve
 `serde_json::Value` for truly dynamic / schema-less data.
 
+### Leverage the type system
+
+**Always use types for comparisons — never convert to strings.** The Rust
+type system is your best tool for correctness; use it everywhere:
+
+```rust
+// Good — match on enum variants directly
+match channel_type {
+    ChannelType::Telegram => { ... }
+    ChannelType::Discord => { ... }
+}
+
+// Bad — convert to string then compare
+match channel_type.as_str() {
+    "telegram" => { ... }
+    "discord" => { ... }
+    _ => { ... }  // easy to forget, no exhaustiveness check
+}
+```
+
+Benefits of type-based matching:
+- **Exhaustiveness checking**: compiler warns if you miss a variant
+- **Refactoring safety**: renaming a variant updates all match arms
+- **No typos**: `ChannelType::Telgram` won't compile, `"telgram"` will
+- **IDE support**: autocomplete, go-to-definition, find references
+
+Only convert to strings at boundaries: serialization, database storage,
+logging, or display. Keep the core logic type-safe.
+
 ### Concurrency
 
 - Always prefer streaming over non-streaming API calls when possible.

@@ -17,6 +17,7 @@ futures            = { workspace = true }
 hostname           = { workspace = true }
 include_dir        = { optional = true, workspace = true }
 moltis-agents      = { workspace = true }
+moltis-browser     = { workspace = true }
 moltis-canvas      = { workspace = true }
 moltis-channels    = { workspace = true }
 moltis-common      = { workspace = true }

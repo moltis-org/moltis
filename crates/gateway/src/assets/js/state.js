@@ -59,6 +59,7 @@ export var sessionSwitchInProgress = false;
 // real-time events that duplicate already-rendered history entries.
 export var lastHistoryIndex = -1;
 export var sessionContextWindow = 0;
+export var sessionToolsEnabled = true;
 
 // Provider/channel page refresh callbacks
 export var refreshProvidersPage = null;
@@ -223,6 +224,9 @@ export function setLastHistoryIndex(v) {
 }
 export function setSessionContextWindow(v) {
 	sessionContextWindow = v;
+}
+export function setSessionToolsEnabled(v) {
+	sessionToolsEnabled = v;
 }
 export function setRefreshProvidersPage(v) {
 	refreshProvidersPage = v;

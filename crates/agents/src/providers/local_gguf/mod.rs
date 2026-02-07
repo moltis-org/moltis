@@ -135,6 +135,17 @@ impl LocalGgufProvider {
                     config.model_id
                 );
             };
+
+            // MLX models require the MLX backend (Python mlx_lm), not llama.cpp
+            if matches!(def.backend, models::ModelBackend::Mlx) {
+                bail!(
+                    "Model '{}' requires the MLX backend which is not available in this context. \
+                     MLX models need Python with mlx_lm installed. \
+                     Please select a GGUF model instead (e.g., 'llama-3.2-1b-q4_k_m').",
+                    config.model_id
+                );
+            }
+
             let path = models::ensure_model(def, &config.cache_dir).await?;
             (path, Some(def))
         };

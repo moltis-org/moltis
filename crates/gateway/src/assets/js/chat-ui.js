@@ -245,5 +245,8 @@ export function updateTokenBar() {
 		var pct = Math.max(0, 100 - Math.round((total / S.sessionContextWindow) * 100));
 		text += ` \u00b7 Context left before auto-compact: ${pct}%`;
 	}
+	if (!S.sessionToolsEnabled) {
+		text += " \u00b7 Tools: disabled";
+	}
 	bar.textContent = text;
 }

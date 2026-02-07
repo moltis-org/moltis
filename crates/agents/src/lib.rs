@@ -5,6 +5,7 @@
 
 pub mod auth_profiles;
 pub mod model;
+pub mod multimodal;
 pub mod prompt;
 pub mod providers;
 pub mod runner;

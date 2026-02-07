@@ -10,6 +10,7 @@ function sandboxRuntimeAvailable() {
 	return (S.sandboxInfo?.backend || "none") !== "none";
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
 function applySandboxControlAvailability() {
 	var available = sandboxRuntimeAvailable();
 	var title = available ? null : SANDBOX_DISABLED_HINT;

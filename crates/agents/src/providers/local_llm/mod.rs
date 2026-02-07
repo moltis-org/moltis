@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod models;
+pub mod response_parser;
 pub mod system_info;
 
 use std::{path::PathBuf, pin::Pin};
@@ -109,7 +110,7 @@ impl LocalLlmProvider {
         let backend_type = self
             .config
             .backend
-            .unwrap_or_else(backend::detect_best_backend);
+            .unwrap_or_else(|| backend::detect_backend_for_model(&self.config.model_id));
         info!(
             model = %self.config.model_id,
             backend = ?backend_type,
