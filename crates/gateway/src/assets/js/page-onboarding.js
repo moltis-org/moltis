@@ -328,7 +328,10 @@ function ProviderStep({ onNext, onBack }) {
 	function startOAuth(p) {
 		setPhase("oauth");
 		setOauthInfo({ status: "starting" });
-		sendRpc("providers.oauth.start", { provider: p.name }).then((res) => {
+		sendRpc("providers.oauth.start", {
+			provider: p.name,
+			redirectUri: `${window.location.origin}/auth/callback`,
+		}).then((res) => {
 			if (res?.ok && res.payload?.authUrl) {
 				window.open(res.payload.authUrl, "_blank");
 				setOauthInfo({ status: "waiting" });

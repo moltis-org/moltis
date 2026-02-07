@@ -110,6 +110,7 @@ const WRITE_METHODS: &[&str] = &[
     "providers.save_key",
     "providers.remove_key",
     "providers.oauth.start",
+    "providers.oauth.complete",
     "providers.local.configure",
     "providers.local.configure_custom",
     "channels.add",
@@ -2639,6 +2640,19 @@ impl MethodRegistry {
                         .services
                         .provider_setup
                         .oauth_status(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.oauth.complete",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .provider_setup
+                        .oauth_complete(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
