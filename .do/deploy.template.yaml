@@ -1,3 +1,7 @@
+# NOTE: DigitalOcean App Platform does not support persistent disks for
+# image-based services. Data (databases, sessions, memory) is ephemeral
+# and will be lost on each redeploy. For persistent storage, use a
+# Droplet with Docker instead.
 spec:
   name: moltis
   services:
