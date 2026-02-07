@@ -37,11 +37,22 @@ fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
 
+if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
+  if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
+    lint_cmd="cargo clippy --workspace -- -D warnings"
+  fi
+  if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
+    test_cmd="cargo test"
+  fi
+  echo "Detected macOS without nvcc; using non-CUDA local validation commands." >&2
+  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
+fi
+
 repair_stale_llama_build_dirs() {
   shopt -s nullglob
-  for dir in target/debug/build/llama-cpp-sys-2-*/out/build; do
-    if [[ -d "$dir" && ! -f "$dir/Makefile" && ! -f "$dir/build.ninja" ]]; then
-      echo "Removing stale llama-cpp build dir: $dir"
+  for dir in target/*/build/llama-cpp-sys-2-* target/*/build/llama-cpp-2-*; do
+    if [[ -d "$dir" ]]; then
+      echo "Removing cached llama build dir: $dir"
       rm -rf "$dir"
     fi
   done
