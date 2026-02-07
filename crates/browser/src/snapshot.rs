@@ -118,8 +118,16 @@ const EXTRACT_ELEMENTS_JS: &str = r#"
         el.dataset.moltisRef = (refNum - 1).toString();
     }
 
+    // Extract page content (truncated to avoid huge responses)
+    let content = document.body?.innerText || '';
+    content = content.replace(/\s+/g, ' ').trim();
+    if (content.length > 8000) {
+        content = content.substring(0, 8000) + '... [truncated]';
+    }
+
     return {
         elements: results,
+        content: content || null,
         viewport: {
             width: window.innerWidth,
             height: window.innerHeight
@@ -171,18 +179,25 @@ pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, BrowserError> 
         .map_err(|e| BrowserError::JsEvalFailed(format!("failed to get result: {e:?}")))?;
 
     let elements = parse_elements(&result)?;
+    let content = result
+        .get("content")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     let viewport = parse_viewport(&result)?;
     let scroll = parse_scroll(&result)?;
 
     debug!(
         url = url,
         elements = elements.len(),
+        content_len = content.as_ref().map(|c| c.len()).unwrap_or(0),
         "extracted DOM snapshot"
     );
 
     Ok(DomSnapshot {
         url,
         title,
+        content,
         elements,
         viewport,
         scroll,

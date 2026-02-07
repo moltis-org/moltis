@@ -146,6 +146,9 @@ pub struct DomSnapshot {
     pub url: String,
     /// Page title.
     pub title: String,
+    /// Page text content (body innerText, truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
     /// Interactive elements with reference numbers.
     pub elements: Vec<ElementRef>,
     /// Viewport dimensions.
