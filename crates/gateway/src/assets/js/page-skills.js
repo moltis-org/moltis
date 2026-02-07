@@ -463,8 +463,21 @@ function SkillDetail(props) {
     <${MissingDepsSection} detail=${d} onReload=${props.onReload} />
     ${d.compatibility && html`<div style="margin-bottom:8px;font-size:.75rem;color:var(--muted);font-style:italic">${d.compatibility}</div>`}
     ${d.allowed_tools && d.allowed_tools.length > 0 && html`<div style="margin-bottom:8px;font-size:.75rem;color:var(--muted)">Allowed tools: ${d.allowed_tools.join(", ")}</div>`}
-    ${d.body_html && html`<div ref=${bodyRef} class="skill-body-md" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;max-height:400px;overflow-y:auto;font-size:.8rem;color:var(--text);line-height:1.5" />`}
-    ${!d.body_html && d.body && html`<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px"><pre style="white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:var(--text);font-family:var(--font-mono);margin:0;max-height:400px;overflow-y:auto">${d.body}</pre></div>`}
+    ${
+			d.body_html &&
+			html`<div style="margin-top:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+      <div style="padding:6px 10px;border-bottom:1px solid var(--border);font-size:.68rem;color:var(--muted);font-family:var(--font-mono);letter-spacing:.02em;text-transform:uppercase">SKILL.md source</div>
+      <div ref=${bodyRef} class="skill-body-md" style="padding:10px;max-height:400px;overflow-y:auto;font-size:.8rem;color:var(--text);line-height:1.5" />
+    </div>`
+		}
+    ${
+			!d.body_html &&
+			d.body &&
+			html`<div style="margin-top:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface2)">
+      <div style="padding:6px 10px;border-bottom:1px solid var(--border);font-size:.68rem;color:var(--muted);font-family:var(--font-mono);letter-spacing:.02em;text-transform:uppercase">SKILL.md source</div>
+      <pre style="white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:var(--text);font-family:var(--font-mono);margin:0;padding:10px;max-height:400px;overflow-y:auto">${d.body}</pre>
+    </div>`
+		}
   </div>`;
 }
 
