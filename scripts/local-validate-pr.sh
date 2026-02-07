@@ -50,9 +50,35 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
 fi
 
-if [[ -z "${LOCAL_VALIDATE_ZIZMOR_CMD:-}" ]] && ! command -v zizmor >/dev/null 2>&1; then
-  echo "zizmor CLI not found. Install it or set LOCAL_VALIDATE_ZIZMOR_CMD." >&2
-  exit 1
+ensure_zizmor() {
+  if command -v zizmor >/dev/null 2>&1; then
+    return 0
+  fi
+
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        echo "zizmor not found; installing with Homebrew..." >&2
+        brew install zizmor
+      fi
+      ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then
+        echo "zizmor not found; installing with apt..." >&2
+        sudo apt-get update
+        sudo apt-get install -y zizmor
+      fi
+      ;;
+  esac
+
+  if ! command -v zizmor >/dev/null 2>&1; then
+    echo "zizmor CLI not found. Install it or set LOCAL_VALIDATE_ZIZMOR_CMD." >&2
+    exit 1
+  fi
+}
+
+if [[ -z "${LOCAL_VALIDATE_ZIZMOR_CMD:-}" ]]; then
+  ensure_zizmor
 fi
 
 repair_stale_llama_build_dirs() {
