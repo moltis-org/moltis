@@ -1677,10 +1677,11 @@ var VOICE_PROVIDERS = {
 		name: "ElevenLabs Scribe",
 		type: "stt",
 		category: "cloud",
-		description: "90+ languages, word timestamps, speaker diarization",
+		description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
 		keyPlaceholder: "API key",
 		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
 		keyUrlLabel: "elevenlabs.io",
+		hint: "If you already have ElevenLabs TTS configured, use the same API key here.",
 	},
 	// STT Local
 	"whisper-cli": {
@@ -1710,10 +1711,11 @@ var VOICE_PROVIDERS = {
 		name: "ElevenLabs",
 		type: "tts",
 		category: "cloud",
-		description: "Lowest latency (~75ms), most natural voices",
+		description: "Lowest latency (~75ms), natural voices. Same key enables Scribe STT",
 		keyPlaceholder: "API key",
 		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
 		keyUrlLabel: "elevenlabs.io",
+		hint: "This API key also enables ElevenLabs Scribe for speech-to-text.",
 	},
 	openai: {
 		id: "openai",
@@ -2055,6 +2057,8 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 					<div class="text-xs text-[var(--muted)]">
 						Get your API key at <a href=${providerMeta.keyUrl} target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">${providerMeta.keyUrlLabel}</a>
 					</div>
+
+					${providerMeta.hint && html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;padding:8px;background:var(--surface-alt);border-radius:4px;font-style:italic;">${providerMeta.hint}</div>`}
 
 					${error && html`<div class="text-xs" style="color:var(--error);">${error}</div>`}
 

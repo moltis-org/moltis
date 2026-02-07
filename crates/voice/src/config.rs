@@ -199,6 +199,26 @@ impl Default for CoquiTtsConfig {
     }
 }
 
+/// ElevenLabs Scribe STT configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ElevenLabsSttConfig {
+    /// API key (from ELEVENLABS_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+
+    /// Model to use (e.g., "scribe_v2").
+    pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
 /// Speech-to-Text configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -206,7 +226,7 @@ pub struct SttConfig {
     /// Enable STT globally.
     pub enabled: bool,
 
-    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx".
+    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs".
     pub provider: String,
 
     /// OpenAI Whisper settings.
@@ -232,6 +252,9 @@ pub struct SttConfig {
 
     /// sherpa-onnx offline settings.
     pub sherpa_onnx: SherpaOnnxConfig,
+
+    /// ElevenLabs Scribe settings.
+    pub elevenlabs: ElevenLabsSttConfig,
 }
 
 impl Default for SttConfig {
@@ -247,6 +270,7 @@ impl Default for SttConfig {
             voxtral_local: VoxtralLocalConfig::default(),
             whisper_cli: WhisperCliConfig::default(),
             sherpa_onnx: SherpaOnnxConfig::default(),
+            elevenlabs: ElevenLabsSttConfig::default(),
         }
     }
 }

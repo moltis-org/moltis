@@ -22,8 +22,8 @@ use {
 /// ElevenLabs API base URL.
 const API_BASE: &str = "https://api.elevenlabs.io/v1";
 
-/// Default model (Scribe v1 for best quality).
-const DEFAULT_MODEL: &str = "scribe_v1";
+/// Default model (Scribe v2 for best quality and 150ms latency).
+const DEFAULT_MODEL: &str = "scribe_v2";
 
 /// ElevenLabs Scribe STT provider.
 #[derive(Clone)]
@@ -126,6 +126,11 @@ impl SttProvider for ElevenLabsStt {
         // Use request language if provided, otherwise fall back to configured language
         if let Some(language) = request.language.as_ref().or(self.language.as_ref()) {
             form = form.text("language", language.clone());
+        }
+
+        // Add context text for terminology hints (Scribe v2 feature)
+        if let Some(prompt) = request.prompt.as_ref() {
+            form = form.text("context_text", prompt.clone());
         }
 
         let url = format!("{API_BASE}/speech-to-text");

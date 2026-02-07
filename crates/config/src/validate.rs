@@ -460,7 +460,11 @@ fn build_schema_map() -> KnownKeys {
                         ),
                         (
                             "elevenlabs",
-                            Struct(HashMap::from([("api_key", Leaf), ("model", Leaf)])),
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
                         ),
                         (
                             "voxtral_local",

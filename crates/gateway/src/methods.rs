@@ -3079,6 +3079,7 @@ impl MethodRegistry {
                                 "groq_configured": config.voice.stt.groq.api_key.is_some(),
                                 "deepgram_configured": config.voice.stt.deepgram.api_key.is_some(),
                                 "google_configured": config.voice.stt.google.api_key.is_some(),
+                                "elevenlabs_configured": config.voice.stt.elevenlabs.api_key.is_some(),
                                 "whisper_cli_configured": config.voice.stt.whisper_cli.model_path.is_some(),
                                 "sherpa_onnx_configured": config.voice.stt.sherpa_onnx.model_dir.is_some(),
                             },
@@ -3203,6 +3204,10 @@ impl MethodRegistry {
                                 cfg.voice.stt.mistral.api_key =
                                     Some(Secret::new(api_key.to_string()));
                             },
+                            "elevenlabs-stt" => {
+                                cfg.voice.stt.elevenlabs.api_key =
+                                    Some(Secret::new(api_key.to_string()));
+                            },
                             _ => {},
                         })
                         .map_err(|e| {
@@ -3260,6 +3265,9 @@ impl MethodRegistry {
                             },
                             "mistral" => {
                                 cfg.voice.stt.mistral.api_key = None;
+                            },
+                            "elevenlabs-stt" => {
+                                cfg.voice.stt.elevenlabs.api_key = None;
                             },
                             _ => {},
                         })

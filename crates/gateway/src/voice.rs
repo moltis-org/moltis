@@ -18,9 +18,9 @@ use {base64::Engine, secrecy::Secret, tokio::sync::RwLock, tracing::debug};
 
 #[cfg(feature = "voice")]
 use moltis_voice::{
-    AudioFormat, CoquiTts, DeepgramStt, ElevenLabsTts, GoogleStt, GoogleTts, GroqStt, MistralStt,
-    OpenAiTts, PiperTts, SherpaOnnxStt, SttProvider, SynthesizeRequest, TranscribeRequest,
-    TtsConfig, TtsProvider, VoxtralLocalStt, WhisperCliStt, WhisperStt,
+    AudioFormat, CoquiTts, DeepgramStt, ElevenLabsStt, ElevenLabsTts, GoogleStt, GoogleTts,
+    GroqStt, MistralStt, OpenAiTts, PiperTts, SherpaOnnxStt, SttProvider, SynthesizeRequest,
+    TranscribeRequest, TtsConfig, TtsProvider, VoxtralLocalStt, WhisperCliStt, WhisperStt,
 };
 
 #[cfg(feature = "voice")]
@@ -369,6 +369,7 @@ pub struct LiveSttService {
     voxtral_local: Option<VoxtralLocalStt>,
     whisper_cli: Option<WhisperCliStt>,
     sherpa_onnx: Option<SherpaOnnxStt>,
+    elevenlabs: Option<ElevenLabsStt>,
 }
 
 #[cfg(feature = "voice")]
@@ -411,6 +412,10 @@ impl std::fmt::Debug for LiveSttService {
                 "sherpa_onnx_configured",
                 &self.sherpa_onnx.as_ref().is_some_and(|p| p.is_configured()),
             )
+            .field(
+                "elevenlabs_configured",
+                &self.elevenlabs.as_ref().is_some_and(|p| p.is_configured()),
+            )
             .finish()
     }
 }
@@ -442,6 +447,9 @@ pub struct SttServiceConfig {
     pub sherpa_onnx_binary: Option<String>,
     pub sherpa_onnx_model_dir: Option<String>,
     pub sherpa_onnx_language: Option<String>,
+    pub elevenlabs_key: Option<Secret<String>>,
+    pub elevenlabs_model: Option<String>,
+    pub elevenlabs_language: Option<String>,
 }
 
 #[cfg(feature = "voice")]
@@ -472,6 +480,9 @@ impl Default for SttServiceConfig {
             sherpa_onnx_binary: None,
             sherpa_onnx_model_dir: None,
             sherpa_onnx_language: None,
+            elevenlabs_key: None,
+            elevenlabs_model: None,
+            elevenlabs_language: None,
         }
     }
 }
@@ -523,6 +534,14 @@ impl LiveSttService {
             config.sherpa_onnx_language,
         ));
 
+        let elevenlabs = config.elevenlabs_key.map(|key| {
+            ElevenLabsStt::with_options(
+                Some(key),
+                config.elevenlabs_model,
+                config.elevenlabs_language,
+            )
+        });
+
         Self {
             provider: config.provider,
             whisper,
@@ -533,6 +552,7 @@ impl LiveSttService {
             voxtral_local,
             whisper_cli,
             sherpa_onnx,
+            elevenlabs,
         }
     }
 
@@ -543,6 +563,7 @@ impl LiveSttService {
         let deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok().map(Secret::new);
         let google_key = std::env::var("GOOGLE_CLOUD_API_KEY").ok().map(Secret::new);
         let mistral_key = std::env::var("MISTRAL_API_KEY").ok().map(Secret::new);
+        let elevenlabs_key = std::env::var("ELEVENLABS_API_KEY").ok().map(Secret::new);
 
         Self::new(SttServiceConfig {
             openai_key,
@@ -550,6 +571,7 @@ impl LiveSttService {
             deepgram_key,
             google_key,
             mistral_key,
+            elevenlabs_key,
             ..Default::default()
         })
     }
@@ -565,6 +587,7 @@ impl LiveSttService {
             "voxtral-local" => self.voxtral_local.as_ref().map(|p| p as &dyn SttProvider),
             "whisper-cli" => self.whisper_cli.as_ref().map(|p| p as &dyn SttProvider),
             "sherpa-onnx" => self.sherpa_onnx.as_ref().map(|p| p as &dyn SttProvider),
+            "elevenlabs" => self.elevenlabs.as_ref().map(|p| p as &dyn SttProvider),
             _ => None,
         }
     }
@@ -613,6 +636,11 @@ impl LiveSttService {
                 "sherpa-onnx",
                 "sherpa-onnx",
                 self.sherpa_onnx.as_ref().is_some_and(|p| p.is_configured()),
+            ),
+            (
+                "elevenlabs",
+                "ElevenLabs Scribe",
+                self.elevenlabs.as_ref().is_some_and(|p| p.is_configured()),
             ),
         ]
     }
@@ -805,8 +833,8 @@ mod tests {
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        // Now we have 8 providers (5 cloud + 3 local)
-        assert_eq!(providers_arr.len(), 8);
+        // Now we have 9 providers (6 cloud + 3 local)
+        assert_eq!(providers_arr.len(), 9);
         // Check all providers are listed
         let ids: Vec<_> = providers_arr
             .iter()
@@ -820,6 +848,7 @@ mod tests {
         assert!(ids.contains(&"voxtral-local"));
         assert!(ids.contains(&"whisper-cli"));
         assert!(ids.contains(&"sherpa-onnx"));
+        assert!(ids.contains(&"elevenlabs"));
     }
 
     #[tokio::test]
