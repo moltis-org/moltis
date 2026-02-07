@@ -374,18 +374,11 @@
     inset: 0;
     background: rgba(0, 0, 0, 0.9);
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
     z-index: 9999;
     cursor: zoom-out;
     padding: 20px;
-  }
-  .screenshot-lightbox-img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: var(--radius-md);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   }
   .screenshot-lightbox-content {
     display: flex;
@@ -393,7 +386,63 @@
     align-items: center;
     gap: 12px;
     max-width: 100%;
+    width: 100%;
     max-height: 100%;
+    cursor: default;
+  }
+  .screenshot-lightbox-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    padding: 8px 0;
+  }
+  .screenshot-lightbox-close {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 1.25rem;
+    font-weight: 300;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .screenshot-lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .screenshot-lightbox-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    /* Visible scrollbar for long screenshots */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 4px;
+  }
+  .screenshot-lightbox-img {
+    max-width: 100%;
+    height: auto;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   }
   /* Download button in lightbox */
   .screenshot-download-btn {

@@ -140,6 +140,20 @@ function appendToolResult(toolCard, result) {
 		img.alt = "Browser screenshot";
 		img.title = "Click to view full size";
 
+		// Scale factor for HiDPI/Retina displays (default to 1 if not provided)
+		var scale = result.screenshot_scale || 1;
+
+		// Once image loads, set display size based on scale factor
+		// This makes 2x screenshots display at their logical size (crisp on Retina)
+		img.onload = () => {
+			if (scale > 1) {
+				var logicalWidth = img.naturalWidth / scale;
+				var logicalHeight = img.naturalHeight / scale;
+				// Cap thumbnail at max-width from CSS, but set aspect ratio
+				img.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
+			}
+		};
+
 		// Helper to trigger download
 		var downloadScreenshot = (e) => {
 			e.stopPropagation();
@@ -158,19 +172,48 @@ function appendToolResult(toolCard, result) {
 			var lightboxContent = document.createElement("div");
 			lightboxContent.className = "screenshot-lightbox-content";
 
-			var fullImg = document.createElement("img");
-			fullImg.src = img.src;
-			fullImg.className = "screenshot-lightbox-img";
-			fullImg.onclick = (e) => e.stopPropagation(); // Don't close when clicking image
+			// Header with close button and download button
+			var header = document.createElement("div");
+			header.className = "screenshot-lightbox-header";
+			header.onclick = (e) => e.stopPropagation();
 
-			// Download button in lightbox
+			var closeBtn = document.createElement("button");
+			closeBtn.className = "screenshot-lightbox-close";
+			closeBtn.innerHTML = "✕";
+			closeBtn.title = "Close (Esc)";
+			closeBtn.onclick = () => overlay.remove();
+
 			var downloadBtn = document.createElement("button");
 			downloadBtn.className = "screenshot-download-btn";
 			downloadBtn.innerHTML = "⬇ Download";
 			downloadBtn.onclick = downloadScreenshot;
 
-			lightboxContent.appendChild(fullImg);
-			lightboxContent.appendChild(downloadBtn);
+			header.appendChild(closeBtn);
+			header.appendChild(downloadBtn);
+
+			// Scrollable container for the image
+			var scrollContainer = document.createElement("div");
+			scrollContainer.className = "screenshot-lightbox-scroll";
+			scrollContainer.onclick = (e) => e.stopPropagation();
+
+			var fullImg = document.createElement("img");
+			fullImg.src = img.src;
+			fullImg.className = "screenshot-lightbox-img";
+
+			// Scale lightbox image for proper display on HiDPI screens
+			if (scale > 1) {
+				fullImg.onload = () => {
+					var logicalWidth = fullImg.naturalWidth / scale;
+					// Set width to logical size so it displays at 1:1 on Retina
+					// Height is unconstrained to allow scrolling for long screenshots
+					fullImg.style.width = `${logicalWidth}px`;
+					fullImg.style.maxWidth = "100%";
+				};
+			}
+
+			scrollContainer.appendChild(fullImg);
+			lightboxContent.appendChild(header);
+			lightboxContent.appendChild(scrollContainer);
 			overlay.appendChild(lightboxContent);
 
 			// Close on click outside image

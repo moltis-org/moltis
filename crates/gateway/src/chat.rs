@@ -2239,6 +2239,11 @@ async fn send_screenshot_to_channels(
                             chat_id = target.chat_id,
                             "failed to send screenshot to channel: {e}"
                         );
+                        // Notify the user of the error
+                        let error_msg = format!("⚠️ Failed to send screenshot: {e}");
+                        let _ = outbound
+                            .send_text(&target.account_id, &target.chat_id, &error_msg)
+                            .await;
                     } else {
                         debug!(
                             account_id = target.account_id,

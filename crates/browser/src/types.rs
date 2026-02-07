@@ -229,6 +229,10 @@ pub struct BrowserResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
 
+    /// Device scale factor used for the screenshot (for proper display sizing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot_scale: Option<f64>,
+
     /// DOM snapshot (for snapshot action).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<DomSnapshot>,
@@ -257,6 +261,7 @@ impl BrowserResponse {
             sandboxed,
             error: None,
             screenshot: None,
+            screenshot_scale: None,
             snapshot: None,
             result: None,
             url: None,
@@ -272,6 +277,7 @@ impl BrowserResponse {
             sandboxed: false,
             error: Some(error.into()),
             screenshot: None,
+            screenshot_scale: None,
             snapshot: None,
             result: None,
             url: None,
@@ -280,8 +286,9 @@ impl BrowserResponse {
         }
     }
 
-    pub fn with_screenshot(mut self, screenshot: String) -> Self {
+    pub fn with_screenshot(mut self, screenshot: String, scale: f64) -> Self {
         self.screenshot = Some(screenshot);
+        self.screenshot_scale = Some(scale);
         self
     }
 

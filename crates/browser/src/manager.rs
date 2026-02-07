@@ -322,7 +322,8 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_screenshot(data_uri),
+            BrowserResponse::success(sid, 0, self.config.sandbox)
+                .with_screenshot(data_uri, self.config.device_scale_factor),
         ))
     }
 
