@@ -361,6 +361,7 @@ function RepoCard(props) {
 	var searchQuery = useSignal("");
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
+	var removingRepo = useSignal(false);
 	var isOrphan = repo.orphaned === true || String(repo.source || "").startsWith("orphan:");
 	var sourceLabel = isOrphan ? repo.repo_name : repo.source;
 
@@ -408,9 +409,12 @@ function RepoCard(props) {
 
 	function removeRepo(e) {
 		e.stopPropagation();
-		if (!S.connected) return;
+		if (!S.connected || removingRepo.value) return;
+		removingRepo.value = true;
 		sendRpc("plugins.repos.remove", { source: repo.source }).then((res) => {
+			removingRepo.value = false;
 			if (res?.ok) fetchAll();
+			else showToast(`Failed: ${res?.error || "unknown"}`, "error");
 		});
 	}
 
@@ -430,8 +434,8 @@ function RepoCard(props) {
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
 				${isOrphan && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">orphaned on disk</span>`}
       </div>
-      <button onClick=${removeRepo}
-        class="provider-btn provider-btn-sm provider-btn-danger">Remove</button>
+      <button onClick=${removeRepo} disabled=${removingRepo.value}
+        class="provider-btn provider-btn-sm provider-btn-danger">${removingRepo.value ? "Removing..." : "Remove"}</button>
     </div>
     ${
 			expanded.value &&

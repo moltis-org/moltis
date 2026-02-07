@@ -39,6 +39,49 @@ fn security_audit(event: &str, details: serde_json::Value) {
     })();
 }
 
+async fn command_available(command: &str) -> bool {
+    tokio::process::Command::new(command)
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<serde_json::Value> {
+    let mut cmd = if command_available("uvx").await {
+        let mut c = tokio::process::Command::new("uvx");
+        c.arg("mcp-scan@latest");
+        c
+    } else {
+        tokio::process::Command::new("mcp-scan")
+    };
+
+    cmd.arg("--skills")
+        .arg(installed_dir)
+        .arg("--json")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(300), cmd.output())
+        .await
+        .map_err(|_| anyhow::anyhow!("mcp-scan timed out after 5 minutes"))??;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!(if stderr.is_empty() {
+            "mcp-scan failed".to_string()
+        } else {
+            format!("mcp-scan failed: {stderr}")
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| anyhow::anyhow!("invalid mcp-scan JSON output: {e}"))?;
+    Ok(parsed)
+}
+
 fn is_protected_discovered_skill(name: &str) -> bool {
     matches!(name, "template-skill" | "template")
 }
@@ -555,6 +598,8 @@ pub trait SkillsService: Send + Sync {
     async fn skill_trust(&self, params: Value) -> ServiceResult;
     async fn skill_detail(&self, params: Value) -> ServiceResult;
     async fn install_dep(&self, params: Value) -> ServiceResult;
+    async fn security_status(&self) -> ServiceResult;
+    async fn security_scan(&self) -> ServiceResult;
 }
 
 // ── Plugins ─────────────────────────────────────────────────────────────────
@@ -1187,6 +1232,54 @@ impl SkillsService for NoopSkillsService {
                 }
             ))
         }
+    }
+
+    async fn security_status(&self) -> ServiceResult {
+        let installed_dir =
+            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+        let mcp_scan_available = command_available("mcp-scan").await;
+        let uvx_available = command_available("uvx").await;
+        Ok(serde_json::json!({
+            "mcp_scan_available": mcp_scan_available,
+            "uvx_available": uvx_available,
+            "supported": mcp_scan_available || uvx_available,
+            "installed_skills_dir": installed_dir,
+            "install_hint": "Install uv (https://docs.astral.sh/uv/) or mcp-scan to run skill security scans",
+        }))
+    }
+
+    async fn security_scan(&self) -> ServiceResult {
+        let installed_dir =
+            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+        if !installed_dir.exists() {
+            return Ok(serde_json::json!({
+                "ok": true,
+                "message": "No installed skills directory found",
+                "results": null,
+            }));
+        }
+
+        let status = self.security_status().await?;
+        let supported = status
+            .get("supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !supported {
+            return Err("mcp-scan is not available. Install uvx or mcp-scan binary first".into());
+        }
+
+        let results = run_mcp_scan(&installed_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        security_audit(
+            "skills.security.scan",
+            serde_json::json!({ "installed_dir": installed_dir, "status": "ok" }),
+        );
+        Ok(serde_json::json!({
+            "ok": true,
+            "installed_skills_dir": installed_dir,
+            "results": results,
+        }))
     }
 }
 

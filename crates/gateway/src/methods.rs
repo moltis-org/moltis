@@ -51,7 +51,9 @@ const READ_METHODS: &[&str] = &[
     "agent.identity.get",
     "skills.list",
     "skills.status",
+    "skills.security.status",
     "skills.repos.list",
+    "skills.security.scan",
     "voicewake.get",
     "sessions.list",
     "sessions.preview",
@@ -2105,12 +2107,62 @@ impl MethodRegistry {
             "skills.install",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
-                        .services
-                        .skills
-                        .install(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    let source = ctx
+                        .params
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let op_id = ctx
+                        .params
+                        .get("op_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(ctx.request_id.as_str())
+                        .to_string();
+
+                    broadcast(
+                        &ctx.state,
+                        "skills.install.progress",
+                        serde_json::json!({
+                            "phase": "start",
+                            "source": source,
+                            "op_id": op_id,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+
+                    match ctx.state.services.skills.install(ctx.params.clone()).await {
+                        Ok(payload) => {
+                            broadcast(
+                                &ctx.state,
+                                "skills.install.progress",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "source": source,
+                                    "op_id": op_id,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            Ok(payload)
+                        },
+                        Err(e) => {
+                            broadcast(
+                                &ctx.state,
+                                "skills.install.progress",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "source": source,
+                                    "op_id": op_id,
+                                    "error": e,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+                            Err(ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        },
+                    }
                 })
             }),
         );

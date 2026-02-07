@@ -5,6 +5,7 @@ import { computed, signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
@@ -17,6 +18,9 @@ var enabledSkills = signal([]); // only enabled skills (from skills.list)
 var loading = signal(false);
 var toasts = signal([]);
 var toastId = 0;
+var installProgresses = signal([]);
+var installProgressId = 0;
+var installProgressTimers = {};
 
 // Lazy prefetch: starts on first navigation to /skills, not at module load
 var prefetchPromise = null;
@@ -75,6 +79,35 @@ function shortSha(sha) {
 	return sha.slice(0, 12);
 }
 
+function startInstallProgress(source, id) {
+	if (!id) id = `install-${++installProgressId}`;
+	if (installProgresses.value.some((p) => p.id === id)) return id;
+	installProgresses.value = installProgresses.value.concat([{ id: id, source: source || "repository", percent: 8 }]);
+	installProgressTimers[id] = setInterval(() => {
+		installProgresses.value = installProgresses.value.map((p) => {
+			if (p.id !== id) return p;
+			var next = Math.min(92, p.percent + Math.max(1, Math.floor((100 - p.percent) / 12)));
+			return { ...p, percent: next };
+		});
+	}, 450);
+	return id;
+}
+
+function stopInstallProgress(id, ok) {
+	if (installProgressTimers[id]) {
+		clearInterval(installProgressTimers[id]);
+		delete installProgressTimers[id];
+	}
+	if (ok) {
+		installProgresses.value = installProgresses.value.map((p) => (p.id === id ? { ...p, percent: 100 } : p));
+		setTimeout(() => {
+			installProgresses.value = installProgresses.value.filter((p) => p.id !== id);
+		}, 280);
+	} else {
+		installProgresses.value = installProgresses.value.filter((p) => p.id !== id);
+	}
+}
+
 function fetchAll() {
 	loading.value = true;
 	fetch("/api/skills")
@@ -95,14 +128,18 @@ function doInstall(source) {
 		if (!S.connected) showToast("Not connected to gateway.", "error");
 		return Promise.resolve();
 	}
-	return sendRpc("skills.install", { source: source }).then((res) => {
+	var opId = `skills-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	var progressId = startInstallProgress(source, opId);
+	return sendRpc("skills.install", { source: source, op_id: opId }).then((res) => {
 		if (res?.ok) {
 			var p = res.payload || {};
 			var count = (p.installed || []).length;
 			showToast(`Installed ${source} (${count} skill${count !== 1 ? "s" : ""})`, "success");
 			fetchAll();
+			stopInstallProgress(progressId, true);
 		} else {
 			showToast(`Failed: ${res?.error || "unknown error"}`, "error");
+			stopInstallProgress(progressId, false);
 		}
 	});
 }
@@ -132,6 +169,26 @@ function Toasts() {
 				boxShadow: "0 4px 12px rgba(0,0,0,.15)",
 			}}>${t.message}</div>`;
 		})}
+  </div>`;
+}
+
+function InstallProgressBar() {
+	var items = installProgresses.value;
+	if (!items.length) return null;
+	return html`<div style="display:flex;flex-direction:column;gap:8px">
+    ${items.map(
+			(
+				p,
+			) => html`<div key=${p.id} style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:.76rem;color:var(--muted)">
+        <span>Installing ${p.source}...</span>
+        <span>${p.percent}%</span>
+      </div>
+      <div style="height:8px;border-radius:9999px;background:var(--surface2);overflow:hidden">
+        <div style=${{ width: `${p.percent}%`, height: "100%", background: "var(--accent)", transition: "width .35s ease" }}></div>
+      </div>
+    </div>`,
+		)}
   </div>`;
 }
 
@@ -288,6 +345,7 @@ function SkillDetail(props) {
 
 	var panelRef = useRef(null);
 	var didScroll = useRef(false);
+	var actionBusy = useSignal(false);
 
 	var bodyRef = useRef(null);
 	useEffect(() => {
@@ -329,8 +387,10 @@ function SkillDetail(props) {
 	var isProtected = isDisc && d.protected === true;
 
 	function doToggle() {
+		actionBusy.value = true;
 		var method = d.enabled ? "skills.skill.disable" : "skills.skill.enable";
 		sendRpc(method, { source: props.repoSource, skill: d.name }).then((r) => {
+			actionBusy.value = false;
 			if (r?.ok) {
 				if (isDisc) onClose();
 				fetchAll();
@@ -343,6 +403,7 @@ function SkillDetail(props) {
 
 	function onToggle() {
 		if (!S.connected) return;
+		if (actionBusy.value) return;
 		if (isProtected) {
 			showToast(`Skill ${d.name} is protected and cannot be deleted from UI`, "error");
 			return;
@@ -352,8 +413,10 @@ function SkillDetail(props) {
 				confirmLabel: "Trust & Enable",
 			}).then((yes) => {
 				if (!yes) return;
+				actionBusy.value = true;
 				sendRpc("skills.skill.trust", { source: props.repoSource, skill: d.name }).then((res) => {
 					if (!res?.ok) {
+						actionBusy.value = false;
 						showToast(`Trust failed: ${res?.error || "unknown error"}`, "error");
 						return;
 					}
@@ -385,7 +448,7 @@ function SkillDetail(props) {
         ${trustBadge(d)}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-				<button onClick=${onToggle} disabled=${isProtected} class=${isDisc && d.enabled ? "provider-btn provider-btn-sm provider-btn-danger" : ""} style=${
+				<button onClick=${onToggle} disabled=${isProtected || actionBusy.value} class=${isDisc && d.enabled ? "provider-btn provider-btn-sm provider-btn-danger" : ""} style=${
 					isDisc && d.enabled
 						? {}
 						: {
@@ -398,7 +461,19 @@ function SkillDetail(props) {
 								color: d.enabled ? "var(--muted)" : "#fff",
 								fontWeight: 500,
 							}
-				}>${isProtected ? "Protected" : isDisc && d.enabled ? "Delete" : d.enabled ? "Disable" : "Enable"}</button>
+				}>${
+					actionBusy.value
+						? isDisc && d.enabled
+							? "Deleting..."
+							: "Loading..."
+						: isProtected
+							? "Protected"
+							: isDisc && d.enabled
+								? "Delete"
+								: d.enabled
+									? "Disable"
+									: "Enable"
+				}</button>
         <button onClick=${onClose} style="background:none;border:none;color:var(--muted);font-size:.9rem;cursor:pointer;padding:2px 4px">\u2715</button>
       </div>
     </div>
@@ -424,6 +499,7 @@ function RepoCard(props) {
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
 	var searchTimer = useRef(null);
+	var removingRepo = useSignal(false);
 	var isOrphan = repo.orphaned === true || String(repo.source || "").startsWith("orphan:");
 	var sourceLabel = isOrphan ? repo.repo_name : repo.source;
 
@@ -471,9 +547,12 @@ function RepoCard(props) {
 
 	function removeRepo(e) {
 		e.stopPropagation();
-		if (!S.connected) return;
+		if (!S.connected || removingRepo.value) return;
+		removingRepo.value = true;
 		sendRpc("skills.repos.remove", { source: repo.source }).then((res) => {
+			removingRepo.value = false;
 			if (res?.ok) fetchAll();
+			else showToast(`Failed: ${res?.error || "unknown error"}`, "error");
 		});
 	}
 
@@ -494,7 +573,7 @@ function RepoCard(props) {
 				${repo.drifted && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
 				${isOrphan && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">orphaned on disk</span>`}
       </div>
-      <button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${removeRepo}>Remove</button>
+      <button class="provider-btn provider-btn-sm provider-btn-danger" disabled=${removingRepo.value} onClick=${removeRepo}>${removingRepo.value ? "Removing..." : "Remove"}</button>
     </div>
     ${
 			expanded.value &&
@@ -587,6 +666,7 @@ function EnabledSkillsTable() {
 	var map = skillRepoMap.value;
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
+	var pendingActionSkill = useSignal(null);
 	if (!s || s.length === 0) return null;
 
 	function isDiscovered(skill) {
@@ -596,7 +676,9 @@ function EnabledSkillsTable() {
 
 	function doDisable(skill) {
 		var source = map[skill.name] || skill.source;
+		pendingActionSkill.value = skill.name;
 		sendRpc("skills.skill.disable", { source: source, skill: skill.name }).then((res) => {
+			pendingActionSkill.value = null;
 			if (res?.ok) {
 				activeDetail.value = null;
 				showToast(isDiscovered(skill) ? `Deleted ${skill.name}` : `Disabled ${skill.name}`, "success");
@@ -613,6 +695,7 @@ function EnabledSkillsTable() {
 			showToast("Cannot disable: unknown source for skill.", "error");
 			return;
 		}
+		if (pendingActionSkill.value) return;
 		if (isDiscovered(skill) && skill.protected === true) {
 			showToast(`Skill ${skill.name} is protected and cannot be deleted from UI`, "error");
 			return;
@@ -676,12 +759,22 @@ function EnabledSkillsTable() {
               <td style="padding:8px 12px;color:var(--text)">${skill.description || "\u2014"}</td>
               <td style="padding:8px 12px"><${SourceBadge} source=${skill.source} /></td>
               <td style="padding:8px 12px;text-align:right">
-                <button disabled=${isDiscovered(skill) && skill.protected === true} class=${isDiscovered(skill) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary"} onClick=${(
+                <button disabled=${(isDiscovered(skill) && skill.protected === true) || pendingActionSkill.value === skill.name} class=${isDiscovered(skill) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary"} onClick=${(
 									e,
 								) => {
 									e.stopPropagation();
 									onDisable(skill);
-								}}>${isDiscovered(skill) && skill.protected === true ? "Protected" : isDiscovered(skill) ? "Delete" : "Disable"}</button>
+								}}>${
+									pendingActionSkill.value === skill.name
+										? isDiscovered(skill)
+											? "Deleting..."
+											: "Disabling..."
+										: isDiscovered(skill) && skill.protected === true
+											? "Protected"
+											: isDiscovered(skill)
+												? "Delete"
+												: "Disable"
+								}</button>
               </td>
             </tr>`,
 					)}
@@ -710,6 +803,25 @@ function SkillsPage() {
 		ensurePrefetch().then(() => {
 			fetchAll();
 		});
+
+		var off = onEvent("skills.install.progress", (payload) => {
+			var opId = payload?.op_id;
+			if (!opId) return;
+			var source = payload?.source || "repository";
+			if (payload?.phase === "start") {
+				startInstallProgress(source, opId);
+				return;
+			}
+			if (payload?.phase === "done") {
+				stopInstallProgress(opId, true);
+				return;
+			}
+			if (payload?.phase === "error") {
+				stopInstallProgress(opId, false);
+			}
+		});
+
+		return off;
 	}, []);
 
 	return html`
@@ -722,6 +834,7 @@ function SkillsPage() {
       <p class="text-sm text-[var(--muted)]">SKILL.md-based skills discovered from project, personal, and installed paths. <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview" target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] no-underline hover:underline">How to write a skill?</a></p>
       <${SecurityWarning} />
       <${InstallBox} />
+      <${InstallProgressBar} />
       <${FeaturedSection} />
       <${ReposSection} />
       ${loading.value && enabledSkills.value.length === 0 && repos.value.length === 0 && html`<div style="padding:24px;text-align:center;color:var(--muted);font-size:.85rem">Loading skills\u2026</div>`}

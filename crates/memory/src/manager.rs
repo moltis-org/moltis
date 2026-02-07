@@ -148,7 +148,10 @@ impl MemoryManager {
                 }
             }
             if removed_stale > 0 {
-                info!(removed = removed_stale, "memory: removed stale indexed files");
+                info!(
+                    removed = removed_stale,
+                    "memory: removed stale indexed files"
+                );
             }
         }
 
