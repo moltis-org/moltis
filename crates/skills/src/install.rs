@@ -37,26 +37,9 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
 
     tokio::fs::create_dir_all(install_dir).await?;
 
-    // Try git clone first.
-    let git_url = format!("https://github.com/{owner}/{repo}");
-    let git_result = tokio::process::Command::new("git")
-        .args(["clone", "--depth=1", &git_url, &target.to_string_lossy()])
-        .output()
-        .await;
-
-    let commit_sha = match git_result {
-        Ok(output) if output.status.success() => {
-            #[cfg(feature = "metrics")]
-            counter!("moltis_skills_git_clone_total").increment(1);
-            tracing::info!(%source, "installed skill repo via git clone");
-            resolve_git_head_sha(&target).await
-        },
-        _ => {
-            #[cfg(feature = "metrics")]
-            counter!("moltis_skills_git_clone_fallback_total").increment(1);
-            install_via_http(&owner, &repo, &target).await?
-        },
-    };
+    #[cfg(feature = "metrics")]
+    counter!("moltis_skills_git_clone_fallback_total").increment(1);
+    let commit_sha = install_via_http(&owner, &repo, &target).await?;
 
     // Scan for SKILL.md files only.
     let (skills_meta, skill_states) = scan_repo_skills(&target, install_dir).await?;
@@ -185,25 +168,6 @@ async fn install_via_http(
 
     tracing::info!(%owner, %repo, "installed skill repo via HTTP tarball");
     Ok(commit_sha)
-}
-
-async fn resolve_git_head_sha(repo_dir: &Path) -> Option<String> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if sha.len() == 40 {
-        Some(sha)
-    } else {
-        None
-    }
 }
 
 async fn fetch_latest_commit_sha(

@@ -39,6 +39,36 @@ fn security_audit(event: &str, details: serde_json::Value) {
     })();
 }
 
+fn commit_url_for_source(source: &str, sha: &str) -> Option<String> {
+    if sha.trim().is_empty() {
+        return None;
+    }
+    if source.starts_with("https://") || source.starts_with("http://") {
+        return Some(format!("{}/commit/{}", source.trim_end_matches('/'), sha));
+    }
+    if source.contains('/') {
+        return Some(format!("https://github.com/{}/commit/{}", source, sha));
+    }
+    None
+}
+
+fn local_repo_head_timestamp_ms(repo_dir: &Path) -> Option<u64> {
+    let repo = gix::open(repo_dir).ok()?;
+    let obj = repo.rev_parse_single("HEAD").ok()?;
+    let commit = repo.find_commit(obj.detach()).ok()?;
+    let secs = commit.time().ok()?.seconds;
+    Some((secs as i128).max(0) as u64 * 1000)
+}
+
+fn commit_age_days(commit_ts_ms: Option<u64>) -> Option<u64> {
+    let ts = commit_ts_ms?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    Some(now_ms.saturating_sub(ts) / 86_400_000)
+}
+
 fn risky_install_pattern(command: &str) -> Option<&'static str> {
     let c = command.to_ascii_lowercase();
     if (c.contains("curl") || c.contains("wget")) && (c.contains("| sh") || c.contains("|bash")) {
@@ -865,6 +895,7 @@ impl SkillsService for NoopSkillsService {
             .ok_or_else(|| format!("skill '{skill_name}' not found in repo '{source}'"))?;
 
         let skill_dir = install_dir.join(&skill_state.relative_path);
+        let repo_dir = install_dir.join(&repo.repo_name);
         let skill_md = skill_dir.join("SKILL.md");
         let raw = std::fs::read_to_string(&skill_md)
             .map_err(|e| format!("failed to read SKILL.md: {e}"))?;
@@ -880,6 +911,11 @@ impl SkillsService for NoopSkillsService {
             .as_ref()
             .and_then(|m| m.latest.as_ref())
             .and_then(|l| l.version.clone());
+        let commit_sha = repo.commit_sha.clone();
+        let commit_url = commit_sha
+            .as_ref()
+            .and_then(|sha| commit_url_for_source(source, sha));
+        let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
 
         // Build a direct link to the skill source on GitHub
         let source_url: Option<String> = {
@@ -917,7 +953,9 @@ impl SkillsService for NoopSkillsService {
             "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
             "drifted": drifted_sources.contains(source),
-            "commit_sha": repo.commit_sha,
+            "commit_sha": commit_sha,
+            "commit_url": commit_url,
+            "commit_age_days": commit_age_days,
             "source_url": source_url,
             "body": content.body,
             "body_html": markdown_to_html(&content.body),
@@ -1273,6 +1311,11 @@ impl PluginsService for NoopPluginsService {
                 format!("https://github.com/{}/blob/main/{}", source, file)
             }
         });
+        let commit_sha = repo.commit_sha.clone();
+        let commit_url = commit_sha
+            .as_ref()
+            .and_then(|sha| commit_url_for_source(source, sha));
+        let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
 
         let empty: Vec<String> = Vec::new();
         Ok(serde_json::json!({
@@ -1292,7 +1335,9 @@ impl PluginsService for NoopPluginsService {
             "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
             "drifted": drifted_sources.contains(source),
-            "commit_sha": repo.commit_sha,
+            "commit_sha": commit_sha,
+            "commit_url": commit_url,
+            "commit_age_days": commit_age_days,
             "source_url": source_url,
             "body": entry.body,
             "body_html": markdown_to_html(&entry.body),
@@ -1302,17 +1347,9 @@ impl PluginsService for NoopPluginsService {
 }
 
 fn local_repo_head_sha(repo_dir: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (sha.len() == 40).then_some(sha)
+    let repo = gix::open(repo_dir).ok()?;
+    let obj = repo.rev_parse_single("HEAD").ok()?;
+    Some(obj.detach().to_hex().to_string())
 }
 
 fn detect_and_mark_repo_drift(

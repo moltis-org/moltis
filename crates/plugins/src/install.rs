@@ -45,20 +45,7 @@ pub async fn install_plugin(
 
     tokio::fs::create_dir_all(install_dir).await?;
 
-    // Try git clone first.
-    let git_url = format!("https://github.com/{owner}/{repo}");
-    let git_result = tokio::process::Command::new("git")
-        .args(["clone", "--depth=1", &git_url, &target.to_string_lossy()])
-        .output()
-        .await;
-
-    let commit_sha = match git_result {
-        Ok(output) if output.status.success() => {
-            tracing::info!(%source, "installed plugin repo via git clone");
-            resolve_git_head_sha(&target).await
-        },
-        _ => install_via_http(&owner, &repo, &target).await?,
-    };
+    let commit_sha = install_via_http(&owner, &repo, &target).await?;
 
     // Detect format — must be a non-Skill format for the plugins crate.
     let format = detect_format(&target);
@@ -220,25 +207,6 @@ async fn install_via_http(
 
     tracing::info!(%owner, %repo, "installed plugin repo via HTTP tarball");
     Ok(commit_sha)
-}
-
-async fn resolve_git_head_sha(repo_dir: &Path) -> Option<String> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if sha.len() == 40 {
-        Some(sha)
-    } else {
-        None
-    }
 }
 
 async fn fetch_latest_commit_sha(

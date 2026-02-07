@@ -52,6 +52,24 @@ function showToast(message, type) {
 	}, 4000);
 }
 
+function emergencyDisableAllSkills() {
+	requestConfirm("Disable all third-party skills and plugins now?", {
+		confirmLabel: "Disable All",
+		danger: true,
+	}).then((yes) => {
+		if (!yes) return;
+		sendRpc("skills.emergency_disable", {}).then((res) => {
+			if (!res?.ok) {
+				showToast(`Emergency disable failed: ${res?.error || "unknown"}`, "error");
+				return;
+			}
+			var p = res.payload || {};
+			showToast(`Disabled ${p.skills_disabled || 0} skills and ${p.plugins_disabled || 0} plugins`, "success");
+			fetchAll();
+		});
+	});
+}
+
 function shortSha(sha) {
 	if (!(sha && typeof sha === "string")) return "";
 	return sha.slice(0, 12);
@@ -131,24 +149,6 @@ function SecurityWarning() {
 		dismissed.value = true;
 	}
 
-	function emergencyDisableAll() {
-		requestConfirm("Disable all third-party skills and plugins now?", {
-			confirmLabel: "Disable All",
-			danger: true,
-		}).then((yes) => {
-			if (!yes) return;
-			sendRpc("skills.emergency_disable", {}).then((res) => {
-				if (!res?.ok) {
-					showToast(`Emergency disable failed: ${res?.error || "unknown"}`, "error");
-					return;
-				}
-				var p = res.payload || {};
-				showToast(`Disabled ${p.skills_disabled || 0} skills and ${p.plugins_disabled || 0} plugins`, "success");
-				fetchAll();
-			});
-		});
-	}
-
 	return html`<div class="skills-warn">
     <div class="skills-warn-title">\u26a0\ufe0f Skills run code on your machine \u2014 treat every skill as untrusted</div>
     <div>Skills are community-authored instructions that the AI agent follows <strong>with your full system privileges</strong>. Popularity or download count does not mean a skill is safe. A malicious skill can instruct the agent to:</div>
@@ -159,7 +159,7 @@ function SecurityWarning() {
     <div style="margin-top:6px;color:var(--success, #4a4)">With sandbox mode enabled (Docker, Apple Container, or cgroup), command execution is isolated and the damage a malicious skill can do is significantly limited.</div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
       <button onClick=${dismiss} style="background:none;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.72rem;padding:3px 10px;cursor:pointer;color:var(--muted)">Dismiss</button>
-      <button class="provider-btn provider-btn-danger provider-btn-sm" onClick=${emergencyDisableAll}>Disable all third-party skills</button>
+      <button class="provider-btn provider-btn-danger provider-btn-sm" onClick=${emergencyDisableAllSkills}>Disable all third-party skills</button>
     </div>
   </div>`;
 }
@@ -245,11 +245,13 @@ function trustBadge(d) {
 
 function SkillMetadata(props) {
 	var d = props.detail;
-	if (!(d.author || d.version || d.homepage || d.source_url || d.commit_sha)) return null;
+	if (!(d.author || d.version || d.homepage || d.source_url || d.commit_sha || d.commit_age_days != null)) return null;
 	return html`<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:.75rem;color:var(--muted);flex-wrap:wrap">
     ${d.author && html`<span>Author: ${d.author}</span>`}
     ${d.version && html`<span>v${d.version}</span>`}
-    ${d.commit_sha && html`<span>Commit: <code>${shortSha(d.commit_sha)}</code></span>`}
+    ${d.commit_sha && d.commit_url && html`<a href=${d.commit_url} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">Commit: <code>${shortSha(d.commit_sha)}</code></a>`}
+    ${d.commit_sha && !d.commit_url && html`<span>Commit: <code>${shortSha(d.commit_sha)}</code></span>`}
+    ${d.commit_age_days != null && html`<span>Commit age: ${d.commit_age_days} day${d.commit_age_days === 1 ? "" : "s"}</span>`}
     ${d.homepage && html`<a href=${d.homepage} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">${d.homepage.replace(/^https?:\/\//, "")}</a>`}
     ${d.source_url && html`<a href=${d.source_url} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">View source</a>`}
   </div>`;
@@ -395,6 +397,7 @@ function SkillDetail(props) {
       </div>
     </div>
     <${SkillMetadata} detail=${d} />
+    ${d.commit_age_days != null && d.commit_age_days <= 14 && html`<div style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--warning, #c77d00);background:color-mix(in srgb, var(--warning, #c77d00) 14%, transparent);border-radius:var(--radius-sm);font-size:.8rem;color:var(--text)"><strong style="color:var(--warning, #c77d00)">Recent commit warning:</strong> This skill was updated ${d.commit_age_days} day${d.commit_age_days === 1 ? "" : "s"} ago. Treat recent updates as high risk and review diffs before trusting/enabling.</div>`}
     ${d.drifted && html`<div style="margin:0 0 8px;font-size:.75rem;color:var(--warning, #c77d00)">Source changed since last trust; review updates before enabling again.</div>`}
     ${d.description && html`<p style="margin:0 0 8px;font-size:.82rem;color:var(--text)">${d.description}</p>`}
     <${MissingDepsSection} detail=${d} onReload=${props.onReload} />
@@ -695,7 +698,8 @@ function SkillsPage() {
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
         <h2 class="text-lg font-medium text-[var(--text-strong)]">Skills</h2>
-        <button class="logs-btn" onClick=${fetchAll}>Refresh</button>
+        <button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${fetchAll}>Refresh</button>
+        <button class="provider-btn provider-btn-danger provider-btn-sm" onClick=${emergencyDisableAllSkills}>Emergency Disable</button>
       </div>
       <p class="text-sm text-[var(--muted)]">SKILL.md-based skills discovered from project, personal, and installed paths.</p>
       <${SecurityWarning} />

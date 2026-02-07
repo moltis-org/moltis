@@ -2384,27 +2384,21 @@ fn collect_mem_snapshot() -> MemSnapshot {
 }
 
 /// Detect the current git branch, returning `None` for `main`/`master` or
-/// when not inside a git repository. The result is cached in a `OnceLock` so
-/// the `git` subprocess runs at most once per process.
+/// when not inside a git repository. The result is cached in a `OnceLock`.
 #[cfg(feature = "web-ui")]
 fn detect_git_branch() -> Option<String> {
     static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     BRANCH
         .get_or_init(|| {
-            let output = std::process::Command::new("git")
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .output()
-                .ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let raw = String::from_utf8(output.stdout).ok()?;
-            parse_git_branch(&raw)
+            let repo = gix::discover(".").ok()?;
+            let head = repo.head().ok()?;
+            let branch = head.referent_name()?.shorten().to_string();
+            parse_git_branch(&branch)
         })
         .clone()
 }
 
-/// Parse the raw output of `git rev-parse --abbrev-ref HEAD`, returning
+/// Parse a branch name, returning
 /// `None` for default branches (`main`/`master`) or empty/blank output.
 #[cfg(feature = "web-ui")]
 fn parse_git_branch(raw: &str) -> Option<String> {

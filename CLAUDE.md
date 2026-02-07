@@ -127,6 +127,19 @@ days * 24 * 60 * 60
 This principle applies broadly: if a crate in the workspace already
 provides a clear one-liner, use it rather than reimplementing the logic.
 
+### Prefer crates over subprocesses
+
+Avoid shelling out to external CLIs from Rust when a mature crate exists.
+
+- Prefer in-process crates over `std::process::Command` / `tokio::process::Command`
+  for core functionality (e.g. git metadata via `gix`/gitoxide).
+- Consider a crate "good enough" when it is actively maintained, broadly used,
+  and supports the required operation directly (not by wrapping the same CLI).
+- Use subprocesses only for operations that are not yet practical in crates
+  (for example porcelain-only workflows like certain `git worktree` commands).
+- When a subprocess exception is necessary, keep the call narrowly scoped,
+  validate inputs, and document why the crate path was not used.
+
 The `chrono` crate is also used in some crates (`cron`, `gateway`) — prefer
 whichever is already imported in the crate you're editing, but default to
 `time` for new code since it's lighter.

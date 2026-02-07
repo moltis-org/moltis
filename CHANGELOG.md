@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Exec approval policy wiring**: Gateway now initializes exec approval mode/security level/allowlist from `moltis.toml` (`tools.exec.*`) instead of always using hardcoded defaults.
 - **Runtime tool enforcement**: Chat runs now apply configured tool policy (`tools.policy`) and skill `allowed_tools` constraints when selecting callable tools.
 - **Skill trust lifecycle**: Installed marketplace skills/plugins now track a `trusted` state and must be trusted before they can be enabled; the skills UI now surfaces untrusted status and supports trust-before-enable.
+- **Git metadata via gitoxide**: Gateway now resolves branch names, repo HEAD SHAs, and commit timestamps using `gix` (gitoxide) instead of shelling out to `git` for those read-only operations.
 
 ### Fixed
 
@@ -54,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Emergency kill switch**: Added `skills.emergency_disable` to immediately disable all installed third-party skills and plugins; exposed in the Skills UI as a one-click emergency action.
 - **Risky dependency install blocking**: `skills.install_dep` now blocks suspicious install command patterns by default (e.g. piped shell payloads, base64 decode chains, quarantine bypass) unless explicitly overridden with `allow_risky_install=true`.
 - **Provenance visibility**: Skills UI now displays pinned install commit SHA in repo and detail views to make source provenance easier to verify.
+- **Recent-commit risk warnings**: Skill/plugin detail views now include commit links and commit-age indicators, with a prominent warning banner when the pinned commit is very recent.
+- **Installer subprocess reduction**: Skills/plugins install paths now avoid `git` subprocess clone attempts and use GitHub tarball installs with pinned commit metadata.
 
 ### Documentation
 
