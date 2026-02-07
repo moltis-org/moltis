@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LlmProvider` trait — metadata can no longer leak because the type only contains
   LLM-relevant fields (`role`, `content`, `tool_calls`). Conversion from persisted JSON
   happens once at the gateway boundary via `values_to_chat_messages()`.
+- **Chat skill creation not persisting new skills**: Runtime tool filtering incorrectly
+  applied the union of discovered skill `allowed_tools` to all chat turns, which could
+  hide `create_skill`/`update_skill` and leave only a subset (for example `web_fetch`).
+  Chat runs now use configured tool policy for runtime filtering without globally
+  restricting tools based on discovered skill metadata.
 
 ### Added
 
