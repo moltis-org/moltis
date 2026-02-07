@@ -273,7 +273,7 @@ async fn scan_repo_skills(
                 let content = match tokio::fs::read_to_string(&skill_md).await {
                     Ok(c) => c,
                     Err(e) => {
-                        tracing::warn!(?skill_md, %e, "failed to read SKILL.md");
+                        tracing::debug!(?skill_md, %e, "skipping unreadable SKILL.md");
                         continue;
                     },
                 };
@@ -294,7 +294,7 @@ async fn scan_repo_skills(
                         skills_meta.push(meta);
                     },
                     Err(e) => {
-                        tracing::warn!(?skill_md, %e, "failed to parse SKILL.md");
+                        tracing::debug!(?skill_md, %e, "skipping non-conforming SKILL.md");
                     },
                 }
             } else {

@@ -941,6 +941,7 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
+    seed_example_skill();
     seed_example_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
     let (hook_registry, discovered_hooks_info) =
@@ -3438,6 +3439,25 @@ fn seed_example_hook() {
     }
 }
 
+/// Seed a starter personal skill into `~/.moltis/skills/template-skill/`.
+///
+/// This is a safe template to help users author their own SKILL.md. Existing
+/// user content is never overwritten.
+fn seed_example_skill() {
+    let skill_dir = moltis_config::data_dir().join("skills/template-skill");
+    let skill_md = skill_dir.join("SKILL.md");
+    if skill_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+        tracing::debug!("could not create template skill dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&skill_md, EXAMPLE_SKILL_MD) {
+        tracing::debug!("could not write template SKILL.md: {e}");
+    }
+}
+
 /// Content for the skeleton example hook.
 const EXAMPLE_HOOK_MD: &str = r#"+++
 name = "example"
@@ -3521,6 +3541,29 @@ os = ["darwin", "linux"]    # skip on other OSes
 bins = ["jq"]               # required binaries in PATH
 env = ["MY_API_KEY"]        # required environment variables
 ```
+"#;
+
+/// Content for the starter example personal skill.
+const EXAMPLE_SKILL_MD: &str = r#"---
+name: template-skill
+description: Starter skill template (safe to copy and edit)
+---
+
+# Template Skill
+
+Use this as a starting point for your own skills.
+
+## How to use
+
+1. Copy this folder to a new skill name (or edit in place)
+2. Update `name` and `description` in frontmatter
+3. Replace this body with clear, specific instructions
+
+## Tips
+
+- Keep instructions explicit and task-focused
+- Avoid broad permissions unless required
+- Document required tools and expected inputs
 "#;
 
 /// Discover hooks from the filesystem, check eligibility, and build a

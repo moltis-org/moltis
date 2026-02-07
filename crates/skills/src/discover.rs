@@ -179,7 +179,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                     skills.push(meta);
                 },
                 Err(e) => {
-                    tracing::warn!(?skill_dir, %e, "failed to parse SKILL.md");
+                    tracing::debug!(?skill_dir, %e, "skipping non-conforming SKILL.md");
                 },
             }
         }

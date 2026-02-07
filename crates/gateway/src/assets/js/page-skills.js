@@ -719,7 +719,7 @@ function SkillsPage() {
         <button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${fetchAll}>Refresh</button>
         <button class="provider-btn provider-btn-danger provider-btn-sm" onClick=${emergencyDisableAllSkills}>Emergency Disable</button>
       </div>
-      <p class="text-sm text-[var(--muted)]">SKILL.md-based skills discovered from project, personal, and installed paths.</p>
+      <p class="text-sm text-[var(--muted)]">SKILL.md-based skills discovered from project, personal, and installed paths. <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview" target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] no-underline hover:underline">How to write a skill?</a></p>
       <${SecurityWarning} />
       <${InstallBox} />
       <${FeaturedSection} />

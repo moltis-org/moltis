@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Orphaned repo visibility**: Skills/plugins repo listing now surfaces manifest-missing directories found on disk as `orphaned` entries and allows removing them from the UI.
 - **Protected seed skills**: Discovered template skills (`template-skill` / `template`) are now marked protected and cannot be deleted from the web UI.
 - **License review links**: Skill/plugin license badges now link directly to repository license files when detectable (e.g. `LICENSE.txt`, `LICENSE.md`, `LICENSE`).
+- **Example skill seeding**: Gateway now seeds `~/.moltis/skills/template-skill/SKILL.md` on startup when missing, so users always have a starter personal skill template.
 
 ### Documentation
 
