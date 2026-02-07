@@ -133,12 +133,6 @@ const WRITE_METHODS: &[&str] = &[
     "skills.skill.enable",
     "skills.skill.disable",
     "skills.install_dep",
-    "plugins.install",
-    "plugins.remove",
-    "plugins.repos.remove",
-    "plugins.skill.trust",
-    "plugins.skill.enable",
-    "plugins.skill.disable",
     "mcp.add",
     "mcp.remove",
     "mcp.enable",
@@ -2291,112 +2285,6 @@ impl MethodRegistry {
                         .services
                         .skills
                         .install_dep(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-
-        // Plugins
-        self.register(
-            "plugins.install",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .install(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.remove",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .remove(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.repos.list",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .repos_list()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.repos.remove",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .repos_remove(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.trust",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_trust(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.enable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_enable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.disable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_disable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.detail",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_detail(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
