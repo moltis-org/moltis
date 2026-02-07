@@ -52,6 +52,11 @@ function showToast(message, type) {
 	}, 4000);
 }
 
+function shortSha(sha) {
+	if (!(sha && typeof sha === "string")) return "";
+	return sha.slice(0, 12);
+}
+
 function fetchAll() {
 	loading.value = true;
 	fetch("/api/skills")
@@ -240,10 +245,11 @@ function trustBadge(d) {
 
 function SkillMetadata(props) {
 	var d = props.detail;
-	if (!(d.author || d.version || d.homepage || d.source_url)) return null;
+	if (!(d.author || d.version || d.homepage || d.source_url || d.commit_sha)) return null;
 	return html`<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:.75rem;color:var(--muted);flex-wrap:wrap">
     ${d.author && html`<span>Author: ${d.author}</span>`}
     ${d.version && html`<span>v${d.version}</span>`}
+    ${d.commit_sha && html`<span>Commit: <code>${shortSha(d.commit_sha)}</code></span>`}
     ${d.homepage && html`<a href=${d.homepage} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">${d.homepage.replace(/^https?:\/\//, "")}</a>`}
     ${d.source_url && html`<a href=${d.source_url} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">View source</a>`}
   </div>`;
@@ -468,6 +474,7 @@ function RepoCard(props) {
 				}}
            style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${repo.source}</a>
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
+				${repo.commit_sha && html`<span style="font-size:.68rem;color:var(--muted)">sha ${shortSha(repo.commit_sha)}</span>`}
 				${repo.drifted && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
       </div>
       <button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${removeRepo}>Remove</button>
