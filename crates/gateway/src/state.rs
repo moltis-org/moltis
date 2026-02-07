@@ -283,6 +283,8 @@ pub struct GatewayState {
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
+    /// Auto-update availability state from GitHub releases.
+    pub update: RwLock<crate::update_check::UpdateAvailability>,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
     pub run_errors: RwLock<HashMap<String, String>>,
     /// Metrics handle for Prometheus export (None if metrics disabled).
@@ -401,6 +403,7 @@ impl GatewayState {
             tls_active,
             deploy_platform,
             port,
+            update: RwLock::new(crate::update_check::UpdateAvailability::default()),
             heartbeat_config: RwLock::new(moltis_config::schema::HeartbeatConfig::default()),
             run_errors: RwLock::new(HashMap::new()),
             #[cfg(feature = "metrics")]

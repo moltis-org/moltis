@@ -4,66 +4,67 @@ name              = "moltis-gateway"
 version.workspace = true
 
 [dependencies]
-anyhow                = { workspace = true }
-argon2                = { workspace = true }
-async-trait           = { workspace = true }
-axum                  = { workspace = true }
-axum-extra            = { features = ["cookie"], workspace = true }
-axum-server           = { optional = true, workspace = true }
-base64                = { workspace = true }
-chrono                = { features = ["serde"], optional = true, workspace = true }
-dashmap               = { workspace = true }
-futures               = { workspace = true }
-hostname              = { workspace = true }
-include_dir           = { optional = true, workspace = true }
-moltis-agents         = { workspace = true }
-moltis-canvas         = { workspace = true }
-moltis-channels       = { workspace = true }
-moltis-common         = { workspace = true }
-moltis-config         = { workspace = true }
-moltis-cron           = { workspace = true }
-moltis-mcp            = { workspace = true }
-moltis-media          = { workspace = true }
-moltis-memory         = { workspace = true }
-moltis-metrics        = { optional = true, workspace = true }
-moltis-oauth          = { workspace = true }
-moltis-onboarding     = { workspace = true }
-moltis-plugins        = { workspace = true }
-moltis-projects       = { workspace = true }
-moltis-protocol       = { workspace = true }
-moltis-qmd            = { optional = true, workspace = true }
-moltis-routing        = { workspace = true }
-moltis-sessions       = { workspace = true }
-moltis-skills         = { workspace = true }
-moltis-telegram       = { workspace = true }
-moltis-tools          = { workspace = true }
-p256                  = { features = ["ecdsa"], optional = true, workspace = true }
-password-hash         = { workspace = true }
-pulldown-cmark        = { features = ["html"], workspace = true }
-rand                  = { workspace = true }
-rcgen                 = { optional = true, workspace = true }
-reqwest               = { workspace = true }
-rustls                = { optional = true, workspace = true }
-rustls-pemfile        = { optional = true, workspace = true }
-secrecy               = { workspace = true }
-serde                 = { workspace = true }
-serde_json            = { workspace = true }
-sha2                  = { workspace = true }
-sqlx                  = { workspace = true }
-sysinfo               = { workspace = true }
-time                  = { optional = true, workspace = true }
-tokio                 = { workspace = true }
-tokio-rustls          = { optional = true, workspace = true }
-tokio-stream          = { workspace = true }
-tokio-tungstenite     = { workspace = true }
-toml                  = { workspace = true }
-tower-http            = { features = ["cors"], workspace = true }
-tracing               = { workspace = true }
-tracing-subscriber    = { workspace = true }
-uuid                  = { workspace = true }
-web-push              = { optional = true, workspace = true }
-webauthn-rs           = { features = ["danger-allow-state-serialisation"], workspace = true }
-webauthn-rs-proto     = { workspace = true }
+anyhow             = { workspace = true }
+argon2             = { workspace = true }
+async-trait        = { workspace = true }
+axum               = { workspace = true }
+axum-extra         = { features = ["cookie"], workspace = true }
+axum-server        = { optional = true, workspace = true }
+base64             = { workspace = true }
+chrono             = { features = ["serde"], optional = true, workspace = true }
+dashmap            = { workspace = true }
+futures            = { workspace = true }
+hostname           = { workspace = true }
+include_dir        = { optional = true, workspace = true }
+moltis-agents      = { workspace = true }
+moltis-canvas      = { workspace = true }
+moltis-channels    = { workspace = true }
+moltis-common      = { workspace = true }
+moltis-config      = { workspace = true }
+moltis-cron        = { workspace = true }
+moltis-mcp         = { workspace = true }
+moltis-media       = { workspace = true }
+moltis-memory      = { workspace = true }
+moltis-metrics     = { optional = true, workspace = true }
+moltis-oauth       = { workspace = true }
+moltis-onboarding  = { workspace = true }
+moltis-plugins     = { workspace = true }
+moltis-projects    = { workspace = true }
+moltis-protocol    = { workspace = true }
+moltis-qmd         = { optional = true, workspace = true }
+moltis-routing     = { workspace = true }
+moltis-sessions    = { workspace = true }
+moltis-skills      = { workspace = true }
+moltis-telegram    = { workspace = true }
+moltis-tools       = { workspace = true }
+p256               = { features = ["ecdsa"], optional = true, workspace = true }
+password-hash      = { workspace = true }
+pulldown-cmark     = { features = ["html"], workspace = true }
+rand               = { workspace = true }
+rcgen              = { optional = true, workspace = true }
+reqwest            = { workspace = true }
+rustls             = { optional = true, workspace = true }
+rustls-pemfile     = { optional = true, workspace = true }
+secrecy            = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+sha2               = { workspace = true }
+sqlx               = { workspace = true }
+sysinfo            = { workspace = true }
+thiserror          = { workspace = true }
+time               = { optional = true, workspace = true }
+tokio              = { workspace = true }
+tokio-rustls       = { optional = true, workspace = true }
+tokio-stream       = { workspace = true }
+tokio-tungstenite  = { workspace = true }
+toml               = { workspace = true }
+tower-http         = { features = ["cors"], workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid               = { workspace = true }
+web-push           = { optional = true, workspace = true }
+webauthn-rs        = { features = ["danger-allow-state-serialisation"], workspace = true }
+webauthn-rs-proto  = { workspace = true }
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
 openssl     = { workspace = true }
 urlencoding = { workspace = true }

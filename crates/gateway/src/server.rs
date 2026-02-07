@@ -46,6 +46,9 @@ use crate::{
     services::GatewayServices,
     session::LiveSessionService,
     state::GatewayState,
+    update_check::{
+        UPDATE_CHECK_INTERVAL, fetch_update_availability, github_latest_release_api_url,
+    },
     ws::handle_connection,
 };
 
@@ -1778,6 +1781,61 @@ pub async fn start_gateway(
         }
     });
 
+    // Spawn periodic update check against latest GitHub release.
+    let update_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let latest_release_api_url =
+            match github_latest_release_api_url(env!("CARGO_PKG_REPOSITORY")) {
+                Ok(url) => url,
+                Err(e) => {
+                    warn!("update checker disabled: {e}");
+                    return;
+                },
+            };
+
+        let client = match reqwest::Client::builder()
+            .user_agent(format!("moltis-gateway/{}", update_state.version))
+            .timeout(std::time::Duration::from_secs(12))
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                warn!("failed to initialize update checker HTTP client: {e}");
+                return;
+            },
+        };
+
+        let mut interval = tokio::time::interval(UPDATE_CHECK_INTERVAL);
+        loop {
+            interval.tick().await;
+            match fetch_update_availability(&client, &latest_release_api_url, &update_state.version)
+                .await
+            {
+                Ok(next) => {
+                    let changed = {
+                        let mut update = update_state.update.write().await;
+                        if *update == next {
+                            false
+                        } else {
+                            *update = next.clone();
+                            true
+                        }
+                    };
+                    if changed && let Ok(payload) = serde_json::to_value(&next) {
+                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
+                        .await;
+                    }
+                },
+                Err(e) => {
+                    warn!("failed to check latest release: {e}");
+                },
+            }
+        }
+    });
+
     // Spawn metrics history collection and broadcast task (every 10 seconds).
     #[cfg(feature = "metrics")]
     {
@@ -2305,6 +2363,8 @@ struct GonData {
     /// Cloud deploy platform (e.g. "flyio"), `None` when running locally.
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_platform: Option<String>,
+    /// Availability of newer GitHub release for this running version.
+    update: crate::update_check::UpdateAvailability,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -2439,6 +2499,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
+        update: gw.update.read().await.clone(),
     }
 }
 
