@@ -373,6 +373,123 @@ fn build_schema_map() -> KnownKeys {
                 ("rate_limit_window_secs", Leaf),
             ])),
         ),
+        (
+            "voice",
+            Struct(HashMap::from([
+                (
+                    "tts",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice_id", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "openai",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("language_code", Leaf),
+                                ("voice_name", Leaf),
+                            ])),
+                        ),
+                        ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
+                        (
+                            "coqui",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("voice_id", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
+                (
+                    "stt",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        (
+                            "whisper",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "groq",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "deepgram",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                                ("smart_format", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([("api_key", Leaf), ("language_code", Leaf)])),
+                        ),
+                        (
+                            "mistral",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([("api_key", Leaf), ("model", Leaf)])),
+                        ),
+                        (
+                            "voxtral_local",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("model", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                        (
+                            "whisper_cli",
+                            Struct(HashMap::from([
+                                ("binary_path", Leaf),
+                                ("model_path", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "sherpa_onnx",
+                            Struct(HashMap::from([
+                                ("model_dir", Leaf),
+                                ("language", Leaf),
+                                ("sample_rate", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
+            ])),
+        ),
     ]))
 }
 
