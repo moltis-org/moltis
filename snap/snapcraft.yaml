@@ -27,3 +27,7 @@ parts:
     build-packages:
       - pkg-config
       - libssl-dev
+      - cmake
+      - build-essential
+      - libclang-dev
+      - git

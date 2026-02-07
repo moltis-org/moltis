@@ -9,8 +9,9 @@
 [![CI](https://github.com/moltis-org/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/moltis-org/moltis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
+[![Discord](https://img.shields.io/discord/1469505370169933837?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/t873en2E)
 
-[Features](#features) • [Installation](#installation) • [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Hooks](#hooks)
+[Features](#features) • [Installation](#installation) • [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Hooks](#hooks) • [Discord](https://discord.gg/t873en2E)
 
 </div>
 
@@ -113,6 +114,9 @@ What you get out of the box:
   Hijacking (CSWSH)
 - **Onboarding wizard** — guided setup for agent identity (name, emoji,
   creature, vibe, soul) and user profile
+- **Config validation** — `moltis config check` validates the configuration
+  file, detects unknown/misspelled fields with suggestions, and reports
+  security warnings
 - **Default config on first run** — writes a complete `moltis.toml` with all
   defaults so you can edit packages and settings without recompiling
 - **Random port per installation** — each fresh install picks a unique available

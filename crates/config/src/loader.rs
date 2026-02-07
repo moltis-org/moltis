@@ -126,7 +126,7 @@ pub fn discover_and_load() -> MoltisConfig {
 ///
 /// When a config dir override is set, only that directory is searched —
 /// project-local and user-global paths are skipped for isolation.
-fn find_config_file() -> Option<PathBuf> {
+pub fn find_config_file() -> Option<PathBuf> {
     if let Some(dir) = config_dir_override() {
         for name in CONFIG_FILENAMES {
             let p = dir.join(name);

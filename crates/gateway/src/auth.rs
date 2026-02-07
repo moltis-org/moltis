@@ -588,7 +588,7 @@ fn generate_token() -> String {
     use {base64::Engine, rand::RngCore};
 
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 

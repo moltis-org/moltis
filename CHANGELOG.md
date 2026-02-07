@@ -7,7 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-02-06
+
+### Changed
+
+- **CI builds**: Build Docker images natively per architecture instead of QEMU emulation, then merge into multi-arch manifest
+
+## [0.1.9] - 2026-02-06
+
+### Changed
+
+- **CI builds**: Migrate all release build jobs from self-hosted to GitHub-hosted runners for full parallelism (`ubuntu-latest`, `ubuntu-latest-arm`, `macos-latest`), remove all cross-compilation toolchain steps
+
+## [0.1.8] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Fix corrupted cargo config on all self-hosted runner jobs, fix macOS runner label, add llama-cpp build deps to Docker and Snap builds
+
+## [0.1.7] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Use project-local `.cargo/config.toml` for cross-compilation instead of appending to global config (fixes duplicate key errors on self-hosted runners)
+
+## [0.1.6] - 2026-02-06
+
+### Fixed
+
+- **CI builds**: Use macOS GitHub-hosted runners for apple-darwin binary builds instead of cross-compiling from Linux
+- **CI performance**: Run lightweight lint jobs (zizmor, biome, fmt) on GitHub-hosted runners to free up self-hosted runners
+
+## [0.1.5] - 2026-02-06
+
+### Fixed
+
+- **CI security**: Use GitHub-hosted runners for PRs to prevent untrusted code from running on self-hosted infrastructure
+- **CI security**: Add `persist-credentials: false` to docs workflow checkout (fixes zizmor artipacked warning)
+
+## [0.1.4] - 2026-02-06
+
 ### Added
+
+- **Config Check Command**: `moltis config check` validates the configuration file, detects unknown/misspelled fields with Levenshtein-based suggestions, warns about security misconfigurations, and checks file references
+
+- **Memory Usage Indicator**: Display process RSS and system free memory in the header bar, updated every 30 seconds via the tick WebSocket broadcast
 
 - **QMD Backend Support**: Optional QMD (Query Memory Daemon) backend for hybrid search with BM25 + vector + LLM reranking
   - Gated behind `qmd` feature flag (enabled by default)

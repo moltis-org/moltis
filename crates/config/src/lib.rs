@@ -10,6 +10,7 @@ pub mod loader;
 pub mod migrate;
 pub mod schema;
 pub mod template;
+pub mod validate;
 
 pub use {
     loader::{
@@ -21,4 +22,5 @@ pub use {
         AgentIdentity, AuthConfig, ChatConfig, MessageQueueMode, MoltisConfig, ResolvedIdentity,
         UserProfile,
     },
+    validate::{Diagnostic, Severity, ValidationResult},
 };
