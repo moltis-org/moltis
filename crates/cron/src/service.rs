@@ -1100,4 +1100,58 @@ mod tests {
         // All should succeed.
         assert_eq!(svc.list().await.len(), 3);
     }
+
+    #[tokio::test]
+    async fn test_start_executes_due_jobs_and_records_runs() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(
+            store,
+            noop_system_event(),
+            counting_agent_turn(Arc::clone(&counter)),
+        );
+
+        let job = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "live-timer".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 25,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "tick".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: false,
+                    channel: None,
+                    to: None,
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+            })
+            .await
+            .unwrap();
+
+        svc.start().await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while counter.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("cron scheduler did not execute any due jobs in time");
+
+        let runs = svc.runs(&job.id, 10).await.unwrap();
+        assert!(
+            !runs.is_empty(),
+            "expected at least one persisted run record"
+        );
+
+        svc.stop().await;
+    }
 }
