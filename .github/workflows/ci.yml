@@ -63,7 +63,7 @@ jobs:
   clippy:
     name: Clippy
     needs: fmt
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -79,8 +79,19 @@ jobs:
           nvcc --version
       - name: Configure CUDA linker paths
         run: |
-          echo "CUDA_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs" >> "$GITHUB_ENV"
+          sudo mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/include
+          if [ -f /usr/include/cuda.h ]; then
+            sudo ln -sf /usr/include/cuda.h /usr/local/cuda/include/cuda.h
+          fi
+          for lib in libcudart_static.a libcublas_static.a libcublasLt_static.a libculibos.a; do
+            if [ -f "/usr/lib/x86_64-linux-gnu/${lib}" ]; then
+              sudo ln -sf "/usr/lib/x86_64-linux-gnu/${lib}" "/usr/local/cuda/lib64/${lib}"
+            fi
+          done
+          echo "CUDA_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "CUDA_ROOT=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "CUDA_LIBRARY_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
@@ -107,7 +118,7 @@ jobs:
   build:
     name: Build & Test
     needs: [clippy, biome]
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -123,8 +134,19 @@ jobs:
           nvcc --version
       - name: Configure CUDA linker paths
         run: |
-          echo "CUDA_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs" >> "$GITHUB_ENV"
+          sudo mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/include
+          if [ -f /usr/include/cuda.h ]; then
+            sudo ln -sf /usr/include/cuda.h /usr/local/cuda/include/cuda.h
+          fi
+          for lib in libcudart_static.a libcublas_static.a libcublasLt_static.a libculibos.a; do
+            if [ -f "/usr/lib/x86_64-linux-gnu/${lib}" ]; then
+              sudo ln -sf "/usr/lib/x86_64-linux-gnu/${lib}" "/usr/local/cuda/lib64/${lib}"
+            fi
+          done
+          echo "CUDA_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "CUDA_ROOT=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "CUDA_LIBRARY_PATH=/usr/local/cuda" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
