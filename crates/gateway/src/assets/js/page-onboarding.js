@@ -567,7 +567,8 @@ function ProviderStep({ onNext, onBack }) {
 function ChannelStep({ onNext, onBack }) {
 	var [accountId, setAccountId] = useState("");
 	var [token, setToken] = useState("");
-	var [dmPolicy, setDmPolicy] = useState("open");
+	var [dmPolicy, setDmPolicy] = useState("allowlist");
+	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -583,6 +584,11 @@ function ChannelStep({ onNext, onBack }) {
 		}
 		setError(null);
 		setSaving(true);
+		var allowlistEntries = allowlist
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
 		sendRpc("channels.add", {
 			type: "telegram",
 			account_id: accountId.trim(),
@@ -590,6 +596,7 @@ function ChannelStep({ onNext, onBack }) {
 				token: token.trim(),
 				dm_policy: dmPolicy,
 				mention_mode: "mention",
+				allowlist: allowlistEntries,
 			},
 		}).then((res) => {
 			setSaving(false);
@@ -626,10 +633,17 @@ function ChannelStep({ onNext, onBack }) {
 			<div>
 				<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
 				<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+					<option value="allowlist">Allowlist only (recommended)</option>
 					<option value="open">Open (anyone)</option>
-					<option value="allowlist">Allowlist only</option>
 					<option value="disabled">Disabled</option>
 				</select>
+			</div>
+			<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
+				<textarea class="provider-key-input w-full" rows="2"
+					value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+					placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+				<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
 			</div>
 			${error && html`<p class="text-xs text-[var(--error)]">${error}</p>`}
 			<div class="flex items-center gap-3 mt-1">
