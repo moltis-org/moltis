@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   zizmor:
     name: Workflow Security
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
@@ -34,10 +34,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: arm64
+            os: ubuntu-latest-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .deb (${{ matrix.arch }})
     permissions:
       contents: write
@@ -59,14 +61,6 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
-
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
         env:
@@ -113,10 +107,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-latest-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .rpm (${{ matrix.arch }})
     permissions:
       contents: write
@@ -139,14 +135,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -154,14 +142,8 @@ jobs:
 
       - name: Strip binary
         env:
-          MATRIX_ARCH: ${{ matrix.arch }}
           BUILD_TARGET: ${{ matrix.target }}
-        run: |
-          if [ "$MATRIX_ARCH" = "x86_64" ]; then
-            strip "target/$BUILD_TARGET/release/moltis"
-          else
-            aarch64-linux-gnu-strip "target/$BUILD_TARGET/release/moltis"
-          fi
+        run: strip "target/$BUILD_TARGET/release/moltis"
 
       - name: Build .rpm package
         env:
@@ -203,10 +185,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-latest-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
       contents: write
@@ -228,13 +212,6 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
-
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
         env:
@@ -304,10 +281,14 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
+            os: ubuntu-latest
+            appimagetool_arch: x86_64
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
+            os: ubuntu-latest-arm
+            appimagetool_arch: aarch64
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build AppImage (${{ matrix.arch }})
     permissions:
       contents: write
@@ -327,14 +308,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -351,9 +324,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_TARGET: ${{ matrix.target }}
           MATRIX_ARCH: ${{ matrix.arch }}
+          APPIMAGETOOL_ARCH: ${{ matrix.appimagetool_arch }}
         run: |
-          # Download appimagetool for the host (always x86_64 runner)
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          # Download appimagetool matching the runner architecture
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGETOOL_ARCH}.AppImage" -O appimagetool
           chmod +x appimagetool
 
           # Build AppDir structure
@@ -420,7 +394,7 @@ jobs:
 
   build-snap:
     needs: zizmor
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     name: Build Snap
     permissions:
       contents: write
@@ -470,11 +444,15 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
+            os: macos-latest
           - target: aarch64-apple-darwin
+            os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest-arm
 
-    runs-on: self-hosted
+    runs-on: ${{ matrix.os }}
     name: Build binary (${{ matrix.target }})
     permissions:
       contents: write
@@ -493,14 +471,6 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
         env:
