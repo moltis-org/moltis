@@ -126,6 +126,7 @@ const WRITE_METHODS: &[&str] = &[
     "skills.install",
     "skills.remove",
     "skills.repos.remove",
+    "skills.emergency_disable",
     "skills.skill.trust",
     "skills.skill.enable",
     "skills.skill.disable",
@@ -2160,6 +2161,19 @@ impl MethodRegistry {
                         .services
                         .skills
                         .repos_remove(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "skills.emergency_disable",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .skills
+                        .emergency_disable()
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

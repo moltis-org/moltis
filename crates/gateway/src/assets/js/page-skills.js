@@ -125,6 +125,25 @@ function SecurityWarning() {
 		localStorage.setItem("moltis-skills-warning-dismissed", "1");
 		dismissed.value = true;
 	}
+
+	function emergencyDisableAll() {
+		requestConfirm("Disable all third-party skills and plugins now?", {
+			confirmLabel: "Disable All",
+			danger: true,
+		}).then((yes) => {
+			if (!yes) return;
+			sendRpc("skills.emergency_disable", {}).then((res) => {
+				if (!res?.ok) {
+					showToast(`Emergency disable failed: ${res?.error || "unknown"}`, "error");
+					return;
+				}
+				var p = res.payload || {};
+				showToast(`Disabled ${p.skills_disabled || 0} skills and ${p.plugins_disabled || 0} plugins`, "success");
+				fetchAll();
+			});
+		});
+	}
+
 	return html`<div class="skills-warn">
     <div class="skills-warn-title">\u26a0\ufe0f Skills run code on your machine \u2014 treat every skill as untrusted</div>
     <div>Skills are community-authored instructions that the AI agent follows <strong>with your full system privileges</strong>. Popularity or download count does not mean a skill is safe. A malicious skill can instruct the agent to:</div>
@@ -133,7 +152,10 @@ function SecurityWarning() {
     </ul>
     <div style="margin-top:4px"><strong>Triple-check the source code</strong> of every skill before enabling it. Read the full SKILL.md and any scripts it references \u2014 these are the exact instructions the agent will execute on your behalf. Do not trust a skill just because it is popular, highly downloaded, or appears on a leaderboard.</div>
     <div style="margin-top:6px;color:var(--success, #4a4)">With sandbox mode enabled (Docker, Apple Container, or cgroup), command execution is isolated and the damage a malicious skill can do is significantly limited.</div>
-    <button onClick=${dismiss} style="margin-top:8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.72rem;padding:3px 10px;cursor:pointer;color:var(--muted)">Dismiss</button>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button onClick=${dismiss} style="background:none;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.72rem;padding:3px 10px;cursor:pointer;color:var(--muted)">Dismiss</button>
+      <button class="provider-btn provider-btn-danger provider-btn-sm" onClick=${emergencyDisableAll}>Disable all third-party skills</button>
+    </div>
   </div>`;
 }
 

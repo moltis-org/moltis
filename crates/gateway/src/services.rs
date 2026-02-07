@@ -453,6 +453,7 @@ pub trait SkillsService: Send + Sync {
     /// Full repos list with per-skill details (for search). Heavyweight.
     async fn repos_list_full(&self) -> ServiceResult;
     async fn repos_remove(&self, params: Value) -> ServiceResult;
+    async fn emergency_disable(&self) -> ServiceResult;
     async fn skill_enable(&self, params: Value) -> ServiceResult;
     async fn skill_disable(&self, params: Value) -> ServiceResult;
     async fn skill_trust(&self, params: Value) -> ServiceResult;
@@ -714,6 +715,57 @@ impl SkillsService for NoopSkillsService {
         );
 
         Ok(serde_json::json!({ "removed": source }))
+    }
+
+    async fn emergency_disable(&self) -> ServiceResult {
+        let skills_manifest_path =
+            moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+        let skills_store = moltis_skills::manifest::ManifestStore::new(skills_manifest_path);
+        let mut skills_manifest = skills_store.load().map_err(|e| e.to_string())?;
+
+        let mut skills_disabled = 0_u64;
+        for repo in &mut skills_manifest.repos {
+            for skill in &mut repo.skills {
+                if skill.enabled {
+                    skills_disabled += 1;
+                }
+                skill.enabled = false;
+            }
+        }
+        skills_store
+            .save(&skills_manifest)
+            .map_err(|e| e.to_string())?;
+
+        let plugins_manifest_path =
+            moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
+        let plugins_store = moltis_skills::manifest::ManifestStore::new(plugins_manifest_path);
+        let mut plugins_manifest = plugins_store.load().map_err(|e| e.to_string())?;
+
+        let mut plugins_disabled = 0_u64;
+        for repo in &mut plugins_manifest.repos {
+            for skill in &mut repo.skills {
+                if skill.enabled {
+                    plugins_disabled += 1;
+                }
+                skill.enabled = false;
+            }
+        }
+        plugins_store
+            .save(&plugins_manifest)
+            .map_err(|e| e.to_string())?;
+
+        security_audit(
+            "skills.emergency_disable",
+            serde_json::json!({
+                "skills_disabled": skills_disabled,
+                "plugins_disabled": plugins_disabled,
+            }),
+        );
+
+        Ok(serde_json::json!({
+            "skills_disabled": skills_disabled,
+            "plugins_disabled": plugins_disabled,
+        }))
     }
 
     async fn skill_enable(&self, params: Value) -> ServiceResult {
