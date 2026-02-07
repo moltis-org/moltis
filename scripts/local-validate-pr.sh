@@ -71,9 +71,33 @@ HEAD_OWNER="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepositoryO
 HEAD_REPO_NAME="$(gh pr view "$PR_NUMBER" --repo "$BASE_REPO" --json headRepository -q .headRepository.name)"
 
 if [[ -n "$HEAD_OWNER" && -n "$HEAD_REPO_NAME" ]]; then
-  REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
+REPO="${HEAD_OWNER}/${HEAD_REPO_NAME}"
 else
   REPO="$BASE_REPO"
+fi
+
+if [[ "$(git rev-parse HEAD)" != "$SHA" ]]; then
+  cat >&2 <<EOF
+Current checkout does not match PR head commit.
+  local HEAD: $(git rev-parse --short HEAD)
+  PR head:    ${SHA:0:7}
+
+Check out the PR head commit before running local validation.
+EOF
+  exit 1
+fi
+
+if ! git diff --quiet --ignore-submodules -- || \
+   ! git diff --cached --quiet --ignore-submodules -- || \
+   [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  cat >&2 <<EOF
+Working tree is not clean.
+
+Commit or stash all local changes (including untracked files) before running
+local validation. This prevents publishing statuses for a commit while testing
+different local files.
+EOF
+  exit 1
 fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"

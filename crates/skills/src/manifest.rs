@@ -70,10 +70,12 @@ mod tests {
             source: "owner/repo".into(),
             repo_name: "repo".into(),
             installed_at_ms: 1234567890,
+            commit_sha: Some("abc123".into()),
             format: Default::default(),
             skills: vec![SkillState {
                 name: "my-skill".into(),
                 relative_path: "skills/my-skill".into(),
+                trusted: true,
                 enabled: true,
             }],
         });
@@ -93,16 +95,19 @@ mod tests {
             source: "a/b".into(),
             repo_name: "b".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![
                 SkillState {
                     name: "s1".into(),
                     relative_path: "s1".into(),
+                    trusted: true,
                     enabled: true,
                 },
                 SkillState {
                     name: "s2".into(),
                     relative_path: "s2".into(),
+                    trusted: true,
                     enabled: true,
                 },
             ],
@@ -119,12 +124,35 @@ mod tests {
     }
 
     #[test]
+    fn test_manifest_set_skill_trusted() {
+        let mut m = SkillsManifest::default();
+        m.add_repo(RepoEntry {
+            source: "a/b".into(),
+            repo_name: "b".into(),
+            installed_at_ms: 0,
+            commit_sha: None,
+            format: Default::default(),
+            skills: vec![SkillState {
+                name: "s1".into(),
+                relative_path: "s1".into(),
+                trusted: false,
+                enabled: false,
+            }],
+        });
+
+        assert!(m.set_skill_trusted("a/b", "s1", true));
+        assert!(m.find_repo("a/b").unwrap().skills[0].trusted);
+        assert!(!m.set_skill_trusted("a/b", "missing", true));
+    }
+
+    #[test]
     fn test_manifest_remove_repo() {
         let mut m = SkillsManifest::default();
         m.add_repo(RepoEntry {
             source: "a/b".into(),
             repo_name: "b".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![],
         });
@@ -132,6 +160,7 @@ mod tests {
             source: "c/d".into(),
             repo_name: "d".into(),
             installed_at_ms: 0,
+            commit_sha: None,
             format: Default::default(),
             skills: vec![],
         });

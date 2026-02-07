@@ -137,13 +137,21 @@ impl MemoryManager {
         if existing_files.len() != discovered_paths.len() || report.files_updated > 0 {
             let discovered_set: std::collections::HashSet<&str> =
                 discovered_paths.iter().map(|s| s.as_str()).collect();
+            let mut removed_stale = 0usize;
             for file in existing_files {
                 if !discovered_set.contains(file.path.as_str()) {
-                    info!(path = %file.path, "removing deleted file from memory");
+                    debug!(path = %file.path, "removing stale file from memory index");
                     self.store.delete_chunks_for_file(&file.path).await?;
                     self.store.delete_file(&file.path).await?;
                     report.files_removed += 1;
+                    removed_stale += 1;
                 }
+            }
+            if removed_stale > 0 {
+                info!(
+                    removed = removed_stale,
+                    "memory: removed stale indexed files"
+                );
             }
         }
 

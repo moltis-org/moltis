@@ -33,6 +33,11 @@ function ensurePrefetch() {
 	return prefetchPromise;
 }
 
+function requestConfirm(message, opts) {
+	opts = opts || {};
+	return Promise.resolve(window.confirm(message));
+}
+
 // ── Helpers ─────────────────────────────────────────────────
 function showToast(message, type) {
 	var id = ++toastId;
@@ -168,9 +173,12 @@ function FeaturedSection() {
 // ── Plugin metadata row ──────────────────────────────────────
 function PluginMetadata(props) {
 	var d = props.detail;
-	if (!(d.author || d.homepage || d.source_url)) return null;
+	if (!(d.author || d.homepage || d.source_url || d.commit_sha || d.commit_age_days != null)) return null;
 	return html`<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;font-size:.75rem;color:var(--muted);flex-wrap:wrap">
     ${d.author && html`<span>Author: ${d.author}</span>`}
+    ${d.commit_sha && d.commit_url && html`<a href=${d.commit_url} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">Commit: ${d.commit_sha.slice(0, 12)}</a>`}
+    ${d.commit_sha && !d.commit_url && html`<span>Commit: ${d.commit_sha.slice(0, 12)}</span>`}
+    ${d.commit_age_days != null && html`<span>Commit age: ${d.commit_age_days} day${d.commit_age_days === 1 ? "" : "s"}</span>`}
     ${d.homepage && html`<a href=${d.homepage} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">${d.homepage.replace(/^https?:\/\//, "")}</a>`}
     ${d.source_url && html`<a href=${d.source_url} target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none;font-size:.75rem">View source</a>`}
   </div>`;
@@ -198,14 +206,38 @@ function SkillDetail(props) {
 	}, [d?.body_html]);
 
 	if (!d) return null;
+	var needsTrust = d.trusted === false;
 
 	function onToggle() {
 		if (!S.connected) return;
+		if (!d.enabled && needsTrust) {
+			requestConfirm(`Trust plugin "${d.name}" from ${props.repoSource}?`, {
+				confirmLabel: "Trust & Enable",
+			}).then((yes) => {
+				if (!yes) return;
+				toggling.value = true;
+				sendRpc("plugins.skill.trust", { source: props.repoSource, skill: d.name }).then((trustRes) => {
+					if (!trustRes?.ok) {
+						toggling.value = false;
+						showToast(`Trust failed: ${trustRes?.error || "unknown"}`, "error");
+						return;
+					}
+					sendRpc("plugins.skill.enable", { source: props.repoSource, skill: d.name }).then((r) => {
+						toggling.value = false;
+						if (r?.ok) fetchAll();
+						else showToast(`Enable failed: ${r?.error || "unknown"}`, "error");
+					});
+				});
+			});
+			return;
+		}
+
 		toggling.value = true;
 		var method = d.enabled ? "plugins.skill.disable" : "plugins.skill.enable";
 		sendRpc(method, { source: props.repoSource, skill: d.name }).then((r) => {
 			toggling.value = false;
 			if (r?.ok) fetchAll();
+			else showToast(`Failed: ${r?.error || "unknown"}`, "error");
 		});
 	}
 
@@ -214,7 +246,9 @@ function SkillDetail(props) {
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-family:var(--font-mono);font-size:.9rem;font-weight:600;color:var(--text-strong)">${d.display_name || d.name}</span>
         ${d.display_name && html`<span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted)">${d.name}</span>`}
-        ${d.license && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
+        ${d.license && d.license_url && html`<a href=${d.license_url} target="_blank" rel="noopener noreferrer" style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted);text-decoration:none">${d.license}</a>`}
+        ${d.license && !d.license_url && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
+        ${d.trusted === false && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff">untrusted</span>`}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <button onClick=${onToggle} disabled=${toggling.value} style=${{
@@ -232,6 +266,7 @@ function SkillDetail(props) {
       </div>
     </div>
     <${PluginMetadata} detail=${d} />
+    ${d.commit_age_days != null && d.commit_age_days <= 14 && html`<div style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--warning, #c77d00);background:color-mix(in srgb, var(--warning, #c77d00) 14%, transparent);border-radius:var(--radius-sm);font-size:.8rem;color:var(--text)"><strong style="color:var(--warning, #c77d00)">Recent commit warning:</strong> This plugin was updated ${d.commit_age_days} day${d.commit_age_days === 1 ? "" : "s"} ago. Review commit diff before trusting or enabling.</div>`}
     ${d.description && html`<p style="margin:0 0 8px;font-size:.82rem;color:var(--text)">${d.description}</p>`}
     ${d.allowed_tools && d.allowed_tools.length > 0 && html`<div style="margin-bottom:8px;font-size:.75rem;color:var(--muted)">Allowed tools: ${d.allowed_tools.join(", ")}</div>`}
     ${d.body_html && html`<div ref=${bodyRef} class="skill-body-md" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;max-height:400px;overflow-y:auto;font-size:.8rem;color:var(--text);line-height:1.5" />`}
@@ -244,9 +279,36 @@ function SkillRow(props) {
 	var skill = props.skill;
 	var repoSource = props.repoSource;
 	var toggling = useSignal(false);
+	var needsTrust = skill.trusted === false;
 
 	function onToggle() {
 		if (!S.connected) return;
+		if (!skill.enabled && needsTrust) {
+			requestConfirm(`Trust plugin "${skill.name}" from ${repoSource}?`, {
+				confirmLabel: "Trust & Enable",
+			}).then((yes) => {
+				if (!yes) return;
+				toggling.value = true;
+				sendRpc("plugins.skill.trust", { source: repoSource, skill: skill.name }).then((trustRes) => {
+					if (!trustRes?.ok) {
+						toggling.value = false;
+						showToast(`Trust failed: ${trustRes?.error || "unknown"}`, "error");
+						return;
+					}
+					sendRpc("plugins.skill.enable", { source: repoSource, skill: skill.name }).then((r) => {
+						toggling.value = false;
+						if (r?.ok) {
+							fetchAll();
+							if (props.onToggled) props.onToggled();
+						} else {
+							showToast(`Enable failed: ${r?.error || "unknown"}`, "error");
+						}
+					});
+				});
+			});
+			return;
+		}
+
 		toggling.value = true;
 		var method = skill.enabled ? "plugins.skill.disable" : "plugins.skill.enable";
 		sendRpc(method, { source: repoSource, skill: skill.name }).then((r) => {
@@ -254,6 +316,8 @@ function SkillRow(props) {
 			if (r?.ok) {
 				fetchAll();
 				if (props.onToggled) props.onToggled();
+			} else {
+				showToast(`Failed: ${r?.error || "unknown"}`, "error");
 			}
 		});
 	}
@@ -271,6 +335,7 @@ function SkillRow(props) {
       ${skill.description && html`<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${skill.description}</span>`}
     </div>
     <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
+      ${skill.trusted === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`}
       ${skill.eligible === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--error, #e55);color:#fff;font-weight:500">blocked</span>`}
       <button onClick=${onToggle} disabled=${toggling.value} style=${{
 				background: skill.enabled ? "none" : "var(--accent)",
@@ -296,15 +361,18 @@ function RepoCard(props) {
 	var searchQuery = useSignal("");
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
+	var removingRepo = useSignal(false);
+	var isOrphan = repo.orphaned === true || String(repo.source || "").startsWith("orphan:");
+	var sourceLabel = isOrphan ? repo.repo_name : repo.source;
 
-	var href = /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+	var href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
 	var formatLabel =
 		repo.format === "claude_code" ? "Claude Code" : repo.format === "codex" ? "Codex" : repo.format || "Plugin";
 
 	function toggleExpand() {
 		expanded.value = !expanded.value;
 		// Load all skills on first expand
-		if (expanded.value && allSkills.value === null) {
+		if (expanded.value && allSkills.value === null && !isOrphan) {
 			skillsLoading.value = true;
 			searchSkills(repo.source, "").then((results) => {
 				allSkills.value = results;
@@ -318,7 +386,7 @@ function RepoCard(props) {
 		var skills = allSkills.value;
 		if (!skills) return [];
 		var q = searchQuery.value.toLowerCase().trim();
-		if (!q) return skills;
+		if (!q || isOrphan) return skills;
 		return skills.filter((s) => {
 			var name = (s.name || "").toLowerCase();
 			var display = (s.display_name || "").toLowerCase();
@@ -341,9 +409,12 @@ function RepoCard(props) {
 
 	function removeRepo(e) {
 		e.stopPropagation();
-		if (!S.connected) return;
+		if (!S.connected || removingRepo.value) return;
+		removingRepo.value = true;
 		sendRpc("plugins.repos.remove", { source: repo.source }).then((res) => {
+			removingRepo.value = false;
 			if (res?.ok) fetchAll();
+			else showToast(`Failed: ${res?.error || "unknown"}`, "error");
 		});
 	}
 
@@ -351,19 +422,25 @@ function RepoCard(props) {
     <div class="skills-repo-header" onClick=${toggleExpand}>
       <div style="display:flex;align-items:center;gap:8px">
         <span style=${{ fontSize: ".65rem", color: "var(--muted)", transition: "transform .15s", transform: expanded.value ? "rotate(90deg)" : "" }}>\u25B6</span>
-        <a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
-					e.stopPropagation();
-				}}
-           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${repo.source}</a>
+				${
+					href
+						? html`<a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
+								e.stopPropagation();
+							}}
+           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${sourceLabel}</a>`
+						: html`<span style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong)">${sourceLabel}</span>`
+				}
         <span style="font-size:.62rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted);font-weight:500">${formatLabel}</span>
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
+				${isOrphan && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">orphaned on disk</span>`}
       </div>
-      <button onClick=${removeRepo}
-        class="provider-btn provider-btn-sm provider-btn-danger">Remove</button>
+      <button onClick=${removeRepo} disabled=${removingRepo.value}
+        class="provider-btn provider-btn-sm provider-btn-danger">${removingRepo.value ? "Removing..." : "Remove"}</button>
     </div>
     ${
 			expanded.value &&
 			html`<div class="skills-repo-detail" style="display:block">
+      ${isOrphan && html`<div style="color:var(--warning, #c77d00);font-size:.78rem;padding:8px 0">This repository exists on disk but is missing manifest metadata. Remove it or reinstall to restore normal plugin metadata.</div>`}
       ${
 				allSkills.value &&
 				allSkills.value.length > 8 &&
