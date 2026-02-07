@@ -339,18 +339,19 @@ fn find_available_port() -> Result<u16> {
     Ok(port)
 }
 
-/// Wait for the container to be ready by attempting TCP connection.
+/// Wait for the container to be ready by probing the Chrome DevTools endpoint.
+///
+/// TCP connectivity alone isn't sufficient - Chrome inside the container may accept
+/// connections before it's ready to handle WebSocket requests. We probe `/json/version`
+/// which browserless exposes when Chrome is truly ready.
 fn wait_for_ready(port: u16) -> Result<()> {
-    use std::{
-        net::TcpStream,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
-    let addr = format!("127.0.0.1:{}", port);
-    let timeout = Duration::from_secs(60); // Increased timeout for container startup
+    let url = format!("http://127.0.0.1:{}/json/version", port);
+    let timeout = Duration::from_secs(60);
     let start = Instant::now();
 
-    debug!(addr, "waiting for browser container to be ready");
+    debug!(url, "waiting for browser container to be ready");
 
     loop {
         if start.elapsed() > timeout {
@@ -360,20 +361,48 @@ fn wait_for_ready(port: u16) -> Result<()> {
             );
         }
 
-        match TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)) {
-            Ok(_) => {
-                debug!("browser container TCP connection succeeded");
-                // Give it a moment more to fully initialize
-                std::thread::sleep(Duration::from_millis(500));
+        // Try HTTP GET /json/version - this endpoint returns 200 when Chrome is ready
+        match probe_http_endpoint(port) {
+            Ok(true) => {
+                debug!("browser container Chrome endpoint is ready");
                 return Ok(());
             },
+            Ok(false) => {
+                debug!("Chrome endpoint not ready yet, retrying");
+            },
             Err(e) => {
-                debug!(error = %e, "TCP connection failed, retrying");
+                debug!(error = %e, "probe failed, retrying");
             },
         }
 
         std::thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// Probe the Chrome /json/version endpoint to check if it's ready.
+fn probe_http_endpoint(port: u16) -> Result<bool> {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpStream,
+        time::Duration,
+    };
+
+    let addr = format!("127.0.0.1:{}", port);
+    let mut stream = TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_secs(2))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+
+    // Send minimal HTTP request
+    let request = "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    stream.write_all(request.as_bytes())?;
+
+    // Read response status line
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line)?;
+
+    // Check for HTTP 200 response
+    Ok(status_line.contains("200"))
 }
 
 /// Check if Docker is available.
