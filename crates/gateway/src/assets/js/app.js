@@ -29,6 +29,7 @@ import "./page-metrics.js";
 import "./page-settings.js";
 import "./page-images.js";
 import "./page-setup.js";
+import "./page-onboarding.js";
 import { setHasPasskeys } from "./page-login.js";
 
 // Import side-effect modules
@@ -118,11 +119,6 @@ function showAuthDisabledBanner() {
 	if (el) el.style.display = "";
 }
 
-function showOnboardingBanner() {
-	var el = document.getElementById("onboardingBanner");
-	if (el) el.style.display = "";
-}
-
 function showBranchBanner(branch) {
 	var el = document.getElementById("branchBanner");
 	if (!el) return;
@@ -200,11 +196,8 @@ function fetchBootstrap() {
 		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Bootstrap requires handling many conditional paths
 		.then((boot) => {
 			if (boot.onboarded === false) {
-				showOnboardingBanner();
-				if (location.pathname === "/" || location.pathname === "/chats") {
-					navigate("/settings");
-					return;
-				}
+				navigate("/onboarding");
+				return;
 			}
 			if (boot.channels) S.setCachedChannels(boot.channels.channels || boot.channels || []);
 			if (boot.sessions) {
