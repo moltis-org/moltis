@@ -13,6 +13,32 @@ use {
 pub type ServiceError = String;
 pub type ServiceResult<T = Value> = Result<T, ServiceError>;
 
+fn security_audit(event: &str, details: serde_json::Value) {
+    let dir = moltis_config::data_dir().join("logs");
+    let path = dir.join("security-audit.jsonl");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let line = serde_json::json!({
+        "ts": now_ms,
+        "event": event,
+        "details": details,
+    })
+    .to_string();
+
+    let _ = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&dir)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        use std::io::Write as _;
+        writeln!(file, "{line}")?;
+        Ok(())
+    })();
+}
+
 /// Convert markdown to sanitized HTML using pulldown-cmark.
 pub(crate) fn markdown_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
@@ -482,6 +508,13 @@ impl SkillsService for NoopSkillsService {
                 })
             })
             .collect();
+        security_audit(
+            "skills.install",
+            serde_json::json!({
+                "source": source,
+                "installed_count": installed.len(),
+            }),
+        );
         Ok(serde_json::json!({ "installed": installed }))
     }
 
@@ -529,6 +562,8 @@ impl SkillsService for NoopSkillsService {
         moltis_skills::install::remove_repo(source, &install_dir)
             .await
             .map_err(|e| e.to_string())?;
+
+        security_audit("skills.remove", serde_json::json!({ "source": source }));
 
         Ok(serde_json::json!({ "removed": source }))
     }
@@ -672,6 +707,11 @@ impl SkillsService for NoopSkillsService {
         moltis_skills::install::remove_repo(source, &install_dir)
             .await
             .map_err(|e| e.to_string())?;
+
+        security_audit(
+            "skills.repos.remove",
+            serde_json::json!({ "source": source }),
+        );
 
         Ok(serde_json::json!({ "removed": source }))
     }
@@ -872,6 +912,15 @@ impl SkillsService for NoopSkillsService {
 
         let result = run_install(spec).await.map_err(|e| e.to_string())?;
 
+        security_audit(
+            "skills.install_dep",
+            serde_json::json!({
+                "skill": skill_name,
+                "command": command_preview,
+                "success": result.success,
+            }),
+        );
+
         if result.success {
             Ok(serde_json::json!({
                 "success": true,
@@ -915,6 +964,13 @@ impl PluginsService for NoopPluginsService {
                 })
             })
             .collect();
+        security_audit(
+            "plugins.install",
+            serde_json::json!({
+                "source": source,
+                "installed_count": installed.len(),
+            }),
+        );
         Ok(serde_json::json!({ "installed": installed }))
     }
 
@@ -928,6 +984,7 @@ impl PluginsService for NoopPluginsService {
         moltis_plugins::install::remove_plugin(source, &install_dir)
             .await
             .map_err(|e| e.to_string())?;
+        security_audit("plugins.remove", serde_json::json!({ "source": source }));
         Ok(serde_json::json!({ "removed": source }))
     }
 
@@ -1171,6 +1228,13 @@ fn detect_and_mark_repo_drift(
                 skill.trusted = false;
                 skill.enabled = false;
             }
+            security_audit(
+                "skills.source_drift_detected",
+                serde_json::json!({
+                    "source": repo.source,
+                    "new_commit_sha": repo.commit_sha,
+                }),
+            );
             changed = true;
         }
     }
@@ -1225,6 +1289,15 @@ fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
     }
     store.save(&manifest).map_err(|e| e.to_string())?;
 
+    security_audit(
+        "plugins.skill.toggle",
+        serde_json::json!({
+            "source": source,
+            "skill": skill_name,
+            "enabled": enabled,
+        }),
+    );
+
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
 }
 
@@ -1254,6 +1327,14 @@ fn set_plugin_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
     }
 
     store.save(&manifest).map_err(|e| e.to_string())?;
+    security_audit(
+        "plugins.skill.trust",
+        serde_json::json!({
+            "source": source,
+            "skill": skill_name,
+            "trusted": trusted,
+        }),
+    );
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "trusted": trusted }))
 }
 
@@ -1283,6 +1364,14 @@ fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
 
     std::fs::remove_dir_all(&skill_dir)
         .map_err(|e| format!("failed to delete skill '{skill_name}': {e}"))?;
+
+    security_audit(
+        "skills.discovered.delete",
+        serde_json::json!({
+            "source": source_type,
+            "skill": skill_name,
+        }),
+    );
 
     Ok(serde_json::json!({ "source": source_type, "skill": skill_name, "deleted": true }))
 }
@@ -1374,6 +1463,15 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
     }
     store.save(&manifest).map_err(|e| e.to_string())?;
 
+    security_audit(
+        "skills.skill.toggle",
+        serde_json::json!({
+            "source": source,
+            "skill": skill_name,
+            "enabled": enabled,
+        }),
+    );
+
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
 }
 
@@ -1401,6 +1499,14 @@ fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
     }
 
     store.save(&manifest).map_err(|e| e.to_string())?;
+    security_audit(
+        "skills.skill.trust",
+        serde_json::json!({
+            "source": source,
+            "skill": skill_name,
+            "trusted": trusted,
+        }),
+    );
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "trusted": trusted }))
 }
 
