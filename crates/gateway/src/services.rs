@@ -39,6 +39,10 @@ fn security_audit(event: &str, details: serde_json::Value) {
     })();
 }
 
+fn is_protected_discovered_skill(name: &str) -> bool {
+    matches!(name, "template-skill" | "template")
+}
+
 fn commit_url_for_source(source: &str, sha: &str) -> Option<String> {
     if sha.trim().is_empty() {
         return None;
@@ -50,6 +54,27 @@ fn commit_url_for_source(source: &str, sha: &str) -> Option<String> {
         return Some(format!("https://github.com/{}/commit/{}", source, sha));
     }
     None
+}
+
+fn license_url_for_source(source: &str, license: Option<&str>) -> Option<String> {
+    let text = license?.to_ascii_lowercase();
+    let file = if text.contains("license.txt") {
+        "LICENSE.txt"
+    } else if text.contains("license.md") {
+        "LICENSE.md"
+    } else if text.contains("license") {
+        "LICENSE"
+    } else {
+        return None;
+    };
+
+    if source.starts_with("https://") || source.starts_with("http://") {
+        Some(format!("{}/blob/main/{}", source.trim_end_matches('/'), file))
+    } else if source.contains('/') {
+        Some(format!("https://github.com/{}/blob/main/{}", source, file))
+    } else {
+        None
+    }
 }
 
 fn local_repo_head_timestamp_ms(repo_dir: &Path) -> Option<u64> {
@@ -603,6 +628,11 @@ impl SkillsService for NoopSkillsService {
             .iter()
             .map(|s| {
                 let elig = check_requirements(s);
+                let protected = matches!(
+                    s.source,
+                    Some(moltis_skills::types::SkillSource::Personal)
+                        | Some(moltis_skills::types::SkillSource::Project)
+                ) && is_protected_discovered_skill(&s.name);
                 serde_json::json!({
                     "name": s.name,
                     "description": s.description,
@@ -610,6 +640,7 @@ impl SkillsService for NoopSkillsService {
                     "allowed_tools": s.allowed_tools,
                     "path": s.path.to_string_lossy(),
                     "source": s.source,
+                    "protected": protected,
                     "eligible": elig.eligible,
                     "missing_bins": elig.missing_bins,
                     "install_options": elig.install_options,
@@ -673,6 +704,32 @@ impl SkillsService for NoopSkillsService {
                 })
             })
             .collect();
+
+        let mut repos = repos;
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let repo_name = entry.file_name().to_string_lossy().to_string();
+                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
+                    continue;
+                }
+                let format = moltis_plugins::formats::detect_format(&path);
+                repos.push(serde_json::json!({
+                    "source": format!("orphan:{repo_name}"),
+                    "repo_name": repo_name,
+                    "installed_at_ms": 0,
+                    "commit_sha": null,
+                    "drifted": false,
+                    "orphaned": true,
+                    "format": format,
+                    "skill_count": 0,
+                    "enabled_count": 0,
+                }));
+            }
+        }
 
         Ok(serde_json::json!(repos))
     }
@@ -761,6 +818,31 @@ impl SkillsService for NoopSkillsService {
             })
             .collect();
 
+        let mut repos = repos;
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let repo_name = entry.file_name().to_string_lossy().to_string();
+                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
+                    continue;
+                }
+                let format = moltis_plugins::formats::detect_format(&path);
+                repos.push(serde_json::json!({
+                    "source": format!("orphan:{repo_name}"),
+                    "repo_name": repo_name,
+                    "installed_at_ms": 0,
+                    "commit_sha": null,
+                    "drifted": false,
+                    "orphaned": true,
+                    "format": format,
+                    "skills": [],
+                }));
+            }
+        }
+
         Ok(serde_json::json!(repos))
     }
 
@@ -769,6 +851,20 @@ impl SkillsService for NoopSkillsService {
             .get("source")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'source' parameter".to_string())?;
+
+        if let Some(repo_name) = source.strip_prefix("orphan:") {
+            let install_dir =
+                moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            let dir = install_dir.join(repo_name);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+            }
+            security_audit(
+                "skills.orphan.remove",
+                serde_json::json!({ "source": source, "repo_name": repo_name }),
+            );
+            return Ok(serde_json::json!({ "removed": source }));
+        }
 
         let install_dir =
             moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
@@ -915,6 +1011,7 @@ impl SkillsService for NoopSkillsService {
         let commit_url = commit_sha
             .as_ref()
             .and_then(|sha| commit_url_for_source(source, sha));
+        let license_url = license_url_for_source(source, content.metadata.license.as_deref());
         let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
 
         // Build a direct link to the skill source on GitHub
@@ -944,6 +1041,7 @@ impl SkillsService for NoopSkillsService {
             "homepage": content.metadata.homepage,
             "version": version,
             "license": content.metadata.license,
+            "license_url": license_url,
             "compatibility": content.metadata.compatibility,
             "allowed_tools": content.metadata.allowed_tools,
             "requires": content.metadata.requires,
@@ -1171,6 +1269,32 @@ impl PluginsService for NoopPluginsService {
             })
             .collect();
 
+        let mut repos = repos;
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let repo_name = entry.file_name().to_string_lossy().to_string();
+                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
+                    continue;
+                }
+                let format = moltis_plugins::formats::detect_format(&path);
+                repos.push(serde_json::json!({
+                    "source": format!("orphan:{repo_name}"),
+                    "repo_name": repo_name,
+                    "installed_at_ms": 0,
+                    "commit_sha": null,
+                    "drifted": false,
+                    "orphaned": true,
+                    "format": format,
+                    "skill_count": 0,
+                    "enabled_count": 0,
+                }));
+            }
+        }
+
         Ok(serde_json::json!(repos))
     }
 
@@ -1231,10 +1355,52 @@ impl PluginsService for NoopPluginsService {
             })
             .collect();
 
+        let mut repos = repos;
+        if let Ok(entries) = std::fs::read_dir(&install_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let repo_name = entry.file_name().to_string_lossy().to_string();
+                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
+                    continue;
+                }
+                let format = moltis_plugins::formats::detect_format(&path);
+                repos.push(serde_json::json!({
+                    "source": format!("orphan:{repo_name}"),
+                    "repo_name": repo_name,
+                    "installed_at_ms": 0,
+                    "commit_sha": null,
+                    "drifted": false,
+                    "orphaned": true,
+                    "format": format,
+                    "skills": [],
+                }));
+            }
+        }
+
         Ok(serde_json::json!(repos))
     }
 
     async fn repos_remove(&self, params: Value) -> ServiceResult {
+        let source = params
+            .get("source")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'source' parameter".to_string())?;
+        if let Some(repo_name) = source.strip_prefix("orphan:") {
+            let install_dir =
+                moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
+            let dir = install_dir.join(repo_name);
+            if dir.exists() {
+                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+            }
+            security_audit(
+                "plugins.orphan.remove",
+                serde_json::json!({ "source": source, "repo_name": repo_name }),
+            );
+            return Ok(serde_json::json!({ "removed": source }));
+        }
         self.remove(params).await
     }
 
@@ -1315,6 +1481,7 @@ impl PluginsService for NoopPluginsService {
         let commit_url = commit_sha
             .as_ref()
             .and_then(|sha| commit_url_for_source(source, sha));
+        let license_url = license_url_for_source(source, entry.metadata.license.as_deref());
         let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
 
         let empty: Vec<String> = Vec::new();
@@ -1326,6 +1493,7 @@ impl PluginsService for NoopPluginsService {
             "homepage": entry.metadata.homepage,
             "version": null,
             "license": entry.metadata.license,
+            "license_url": license_url,
             "compatibility": entry.metadata.compatibility,
             "allowed_tools": entry.metadata.allowed_tools,
             "requires": entry.metadata.requires,
@@ -1493,6 +1661,12 @@ fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
+    if is_protected_discovered_skill(skill_name) {
+        return Err(format!(
+            "skill '{skill_name}' is protected and cannot be deleted from the UI"
+        ));
+    }
+
     if !moltis_skills::parse::validate_name(skill_name) {
         return Err(format!("invalid skill name '{skill_name}'"));
     }
@@ -1551,6 +1725,7 @@ fn skill_detail_discovered(source_type: &str, skill_name: &str) -> ServiceResult
         "name": content.metadata.name,
         "description": content.metadata.description,
         "license": content.metadata.license,
+        "license_url": license_url_for_source(source_type, content.metadata.license.as_deref()),
         "compatibility": content.metadata.compatibility,
         "allowed_tools": content.metadata.allowed_tools,
         "requires": content.metadata.requires,
@@ -1559,6 +1734,7 @@ fn skill_detail_discovered(source_type: &str, skill_name: &str) -> ServiceResult
         "install_options": elig.install_options,
         "trusted": true,
         "enabled": true,
+        "protected": is_protected_discovered_skill(skill_name),
         "body": content.body,
         "body_html": markdown_to_html(&content.body),
         "source": source_type,

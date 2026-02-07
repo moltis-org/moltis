@@ -37,10 +37,17 @@ pub async fn install_plugin(
     let target = install_dir.join(&dir_name);
 
     if target.exists() {
-        anyhow::bail!(
-            "plugin directory already exists: {}. Remove it first with `plugins remove`.",
-            target.display()
-        );
+        let manifest_path = default_manifest_path()?;
+        let store = ManifestStore::new(manifest_path);
+        let manifest = store.load()?;
+        if manifest.find_repo(source).is_none() {
+            tokio::fs::remove_dir_all(&target).await?;
+        } else {
+            anyhow::bail!(
+                "plugin directory already exists: {}. Remove it first with `plugins remove`.",
+                target.display()
+            );
+        }
     }
 
     tokio::fs::create_dir_all(install_dir).await?;
@@ -161,6 +168,8 @@ async fn install_via_http(
 
     tokio::fs::create_dir_all(target).await?;
     let target_owned = target.to_path_buf();
+    let owner_owned = owner.to_string();
+    let repo_owned = repo.to_string();
     tokio::task::spawn_blocking(move || {
         let canonical_target = std::fs::canonicalize(&target_owned)?;
         let decoder = flate2::read::GzDecoder::new(&bytes[..]);
@@ -170,7 +179,8 @@ async fn install_via_http(
             if entry.header().entry_type().is_symlink()
                 || entry.header().entry_type().is_hard_link()
             {
-                anyhow::bail!("archive contains unsupported link entry");
+                tracing::warn!(owner = %owner_owned, repo = %repo_owned, "skipping symlink/hardlink archive entry");
+                continue;
             }
 
             let path = entry.path()?.into_owned();

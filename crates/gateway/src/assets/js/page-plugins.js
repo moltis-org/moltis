@@ -246,7 +246,8 @@ function SkillDetail(props) {
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-family:var(--font-mono);font-size:.9rem;font-weight:600;color:var(--text-strong)">${d.display_name || d.name}</span>
         ${d.display_name && html`<span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted)">${d.name}</span>`}
-        ${d.license && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
+        ${d.license && d.license_url && html`<a href=${d.license_url} target="_blank" rel="noopener noreferrer" style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted);text-decoration:none">${d.license}</a>`}
+        ${d.license && !d.license_url && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
         ${d.trusted === false && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff">untrusted</span>`}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
@@ -360,15 +361,17 @@ function RepoCard(props) {
 	var searchQuery = useSignal("");
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
+	var isOrphan = repo.orphaned === true || String(repo.source || "").startsWith("orphan:");
+	var sourceLabel = isOrphan ? repo.repo_name : repo.source;
 
-	var href = /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+	var href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
 	var formatLabel =
 		repo.format === "claude_code" ? "Claude Code" : repo.format === "codex" ? "Codex" : repo.format || "Plugin";
 
 	function toggleExpand() {
 		expanded.value = !expanded.value;
 		// Load all skills on first expand
-		if (expanded.value && allSkills.value === null) {
+		if (expanded.value && allSkills.value === null && !isOrphan) {
 			skillsLoading.value = true;
 			searchSkills(repo.source, "").then((results) => {
 				allSkills.value = results;
@@ -382,7 +385,7 @@ function RepoCard(props) {
 		var skills = allSkills.value;
 		if (!skills) return [];
 		var q = searchQuery.value.toLowerCase().trim();
-		if (!q) return skills;
+		if (!q || isOrphan) return skills;
 		return skills.filter((s) => {
 			var name = (s.name || "").toLowerCase();
 			var display = (s.display_name || "").toLowerCase();
@@ -415,12 +418,17 @@ function RepoCard(props) {
     <div class="skills-repo-header" onClick=${toggleExpand}>
       <div style="display:flex;align-items:center;gap:8px">
         <span style=${{ fontSize: ".65rem", color: "var(--muted)", transition: "transform .15s", transform: expanded.value ? "rotate(90deg)" : "" }}>\u25B6</span>
-        <a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
-					e.stopPropagation();
-				}}
-           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${repo.source}</a>
+				${
+					href
+						? html`<a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
+								e.stopPropagation();
+							}}
+           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${sourceLabel}</a>`
+						: html`<span style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong)">${sourceLabel}</span>`
+				}
         <span style="font-size:.62rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted);font-weight:500">${formatLabel}</span>
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
+				${isOrphan && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">orphaned on disk</span>`}
       </div>
       <button onClick=${removeRepo}
         class="provider-btn provider-btn-sm provider-btn-danger">Remove</button>
@@ -428,6 +436,7 @@ function RepoCard(props) {
     ${
 			expanded.value &&
 			html`<div class="skills-repo-detail" style="display:block">
+      ${isOrphan && html`<div style="color:var(--warning, #c77d00);font-size:.78rem;padding:8px 0">This repository exists on disk but is missing manifest metadata. Remove it or reinstall to restore normal plugin metadata.</div>`}
       ${
 				allSkills.value &&
 				allSkills.value.length > 8 &&

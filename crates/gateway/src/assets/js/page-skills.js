@@ -326,6 +326,7 @@ function SkillDetail(props) {
 
 	var isDisc = d.source === "personal" || d.source === "project";
 	var needsTrust = !isDisc && d.trusted === false;
+	var isProtected = isDisc && d.protected === true;
 
 	function doToggle() {
 		var method = d.enabled ? "skills.skill.disable" : "skills.skill.enable";
@@ -342,6 +343,10 @@ function SkillDetail(props) {
 
 	function onToggle() {
 		if (!S.connected) return;
+		if (isProtected) {
+			showToast(`Skill ${d.name} is protected and cannot be deleted from UI`, "error");
+			return;
+		}
 		if (!d.enabled && needsTrust) {
 			requestConfirm(`Trust skill "${d.name}" from ${props.repoSource}?`, {
 				confirmLabel: "Trust & Enable",
@@ -374,12 +379,13 @@ function SkillDetail(props) {
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-family:var(--font-mono);font-size:.9rem;font-weight:600;color:var(--text-strong)">${d.display_name || d.name}</span>
         ${d.display_name && html`<span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted)">${d.name}</span>`}
-        ${d.license && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
+        ${d.license && d.license_url && html`<a href=${d.license_url} target="_blank" rel="noopener noreferrer" style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted);text-decoration:none">${d.license}</a>`}
+        ${d.license && !d.license_url && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
         ${eligibilityBadge(d)}
         ${trustBadge(d)}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button onClick=${onToggle} class=${isDisc && d.enabled ? "provider-btn provider-btn-sm provider-btn-danger" : ""} style=${
+				<button onClick=${onToggle} disabled=${isProtected} class=${isDisc && d.enabled ? "provider-btn provider-btn-sm provider-btn-danger" : ""} style=${
 					isDisc && d.enabled
 						? {}
 						: {
@@ -392,7 +398,7 @@ function SkillDetail(props) {
 								color: d.enabled ? "var(--muted)" : "#fff",
 								fontWeight: 500,
 							}
-				}>${isDisc && d.enabled ? "Delete" : d.enabled ? "Disable" : "Enable"}</button>
+				}>${isProtected ? "Protected" : isDisc && d.enabled ? "Delete" : d.enabled ? "Disable" : "Enable"}</button>
         <button onClick=${onClose} style="background:none;border:none;color:var(--muted);font-size:.9rem;cursor:pointer;padding:2px 4px">\u2715</button>
       </div>
     </div>
@@ -418,14 +424,17 @@ function RepoCard(props) {
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
 	var searchTimer = useRef(null);
+	var isOrphan = repo.orphaned === true || String(repo.source || "").startsWith("orphan:");
+	var sourceLabel = isOrphan ? repo.repo_name : repo.source;
 
-	var href = /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+	var href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
 
 	function toggleExpand() {
 		expanded.value = !expanded.value;
 	}
 
 	function onSearchInput(e) {
+		if (isOrphan) return;
 		var q = e.target.value;
 		searchQuery.value = q;
 		activeDetail.value = null;
@@ -472,13 +481,18 @@ function RepoCard(props) {
     <div class="skills-repo-header" onClick=${toggleExpand}>
       <div style="display:flex;align-items:center;gap:8px">
         <span style=${{ fontSize: ".65rem", color: "var(--muted)", transition: "transform .15s", transform: expanded.value ? "rotate(90deg)" : "" }}>\u25B6</span>
-        <a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
-					e.stopPropagation();
-				}}
-           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${repo.source}</a>
+        ${
+					href
+						? html`<a href=${href} target="_blank" rel="noopener noreferrer" onClick=${(e) => {
+								e.stopPropagation();
+							}}
+           style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong);text-decoration:none">${sourceLabel}</a>`
+						: html`<span style="font-family:var(--font-mono);font-size:.82rem;font-weight:500;color:var(--text-strong)">${sourceLabel}</span>`
+				}
         <span style="font-size:.72rem;color:var(--muted)">${repo.enabled_count}/${repo.skill_count} enabled</span>
 				${repo.commit_sha && html`<span style="font-size:.68rem;color:var(--muted)">sha ${shortSha(repo.commit_sha)}</span>`}
 				${repo.drifted && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
+				${isOrphan && html`<span style="font-size:.64rem;padding:1px 6px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">orphaned on disk</span>`}
       </div>
       <button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${removeRepo}>Remove</button>
     </div>
@@ -486,7 +500,7 @@ function RepoCard(props) {
 			expanded.value &&
 			html`<div class="skills-repo-detail" style="display:block">
       <div style="position:relative;margin-bottom:8px">
-        <input type="text" placeholder=${`Search skills in ${repo.source}\u2026`} value=${searchQuery.value}
+        <input type="text" placeholder=${isOrphan ? "Orphaned repo: reinstall to restore metadata" : `Search skills in ${repo.source}\u2026`} value=${searchQuery.value} disabled=${isOrphan}
           onInput=${onSearchInput}
           style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:.8rem;font-family:var(--font-mono);box-sizing:border-box" />
         ${
@@ -599,6 +613,10 @@ function EnabledSkillsTable() {
 			showToast("Cannot disable: unknown source for skill.", "error");
 			return;
 		}
+		if (isDiscovered(skill) && skill.protected === true) {
+			showToast(`Skill ${skill.name} is protected and cannot be deleted from UI`, "error");
+			return;
+		}
 		if (isDiscovered(skill)) {
 			requestConfirm(`Delete skill "${skill.name}"? This removes the SKILL.md file.`, {
 				confirmLabel: "Delete",
@@ -658,12 +676,12 @@ function EnabledSkillsTable() {
               <td style="padding:8px 12px;color:var(--text)">${skill.description || "\u2014"}</td>
               <td style="padding:8px 12px"><${SourceBadge} source=${skill.source} /></td>
               <td style="padding:8px 12px;text-align:right">
-                <button class=${isDiscovered(skill) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary"} onClick=${(
+                <button disabled=${isDiscovered(skill) && skill.protected === true} class=${isDiscovered(skill) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary"} onClick=${(
 									e,
 								) => {
 									e.stopPropagation();
 									onDisable(skill);
-								}}>${isDiscovered(skill) ? "Delete" : "Disable"}</button>
+								}}>${isDiscovered(skill) && skill.protected === true ? "Protected" : isDiscovered(skill) ? "Delete" : "Disable"}</button>
               </td>
             </tr>`,
 					)}
