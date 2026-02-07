@@ -770,9 +770,10 @@ and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
 
-**Local validation:** Run `./scripts/local-validate.sh` to check fmt, lint, and
-tests locally. When pushing code to an open pull request, pass the PR number
-(e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
+**Local validation:** When a PR exists, **always** run
+`./scripts/local-validate.sh <PR_NUMBER>` (e.g. `./scripts/local-validate.sh 63`)
+to check fmt, lint, and tests locally and publish commit statuses to the PR.
+Running the script without a PR number is useless — it skips status publishing.
 
 **PR descriptions must include test TODOs.** Every pull request description
 must include a dedicated section with checklist-style testing steps for the

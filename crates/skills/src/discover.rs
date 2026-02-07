@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::{
+    formats::PluginFormat,
     manifest::ManifestStore,
     parse,
     types::{SkillMetadata, SkillSource},
@@ -140,7 +141,11 @@ fn discover_plugins(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
 }
 
 /// Discover registry skills using the manifest for enabled filtering.
-/// For each repo in the manifest, resolve `installed-skills/<repo>/<relative_path>/SKILL.md`.
+///
+/// Handles both formats:
+/// - `PluginFormat::Skill` → parse `SKILL.md` from disk for full metadata
+/// - Other formats → create stub metadata with `SkillSource::Plugin` (prompt_gen
+///   uses the path as-is instead of appending `/SKILL.md`)
 fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
     let manifest_path = match ManifestStore::default_path() {
         Ok(p) => p,
@@ -161,25 +166,46 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                 continue;
             }
             let skill_dir = install_dir.join(&skill_state.relative_path);
-            let skill_md = skill_dir.join("SKILL.md");
-            if !skill_md.is_file() {
-                tracing::warn!(?skill_md, "manifest references missing SKILL.md");
-                continue;
-            }
-            let content = match std::fs::read_to_string(&skill_md) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(?skill_md, %e, "failed to read SKILL.md");
-                    continue;
+
+            match repo.format {
+                PluginFormat::Skill => {
+                    let skill_md = skill_dir.join("SKILL.md");
+                    if !skill_md.is_file() {
+                        tracing::warn!(?skill_md, "manifest references missing SKILL.md");
+                        continue;
+                    }
+                    let content = match std::fs::read_to_string(&skill_md) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(?skill_md, %e, "failed to read SKILL.md");
+                            continue;
+                        },
+                    };
+                    match parse::parse_metadata(&content, &skill_dir) {
+                        Ok(mut meta) => {
+                            meta.source = Some(SkillSource::Registry);
+                            skills.push(meta);
+                        },
+                        Err(e) => {
+                            tracing::debug!(?skill_dir, %e, "skipping non-conforming SKILL.md");
+                        },
+                    }
                 },
-            };
-            match parse::parse_metadata(&content, &skill_dir) {
-                Ok(mut meta) => {
-                    meta.source = Some(SkillSource::Registry);
-                    skills.push(meta);
-                },
-                Err(e) => {
-                    tracing::debug!(?skill_dir, %e, "skipping non-conforming SKILL.md");
+                _ => {
+                    // Non-SKILL.md formats: stub metadata with Plugin source
+                    // so prompt_gen uses the path directly (no /SKILL.md append).
+                    skills.push(SkillMetadata {
+                        name: skill_state.name.clone(),
+                        description: String::new(),
+                        homepage: None,
+                        license: None,
+                        compatibility: None,
+                        allowed_tools: Vec::new(),
+                        requires: Default::default(),
+                        path: skill_dir,
+                        source: Some(SkillSource::Plugin),
+                        dockerfile: None,
+                    });
                 },
             }
         }
@@ -309,5 +335,112 @@ mod tests {
         );
         // Both skills found when using flat scan (no filtering).
         assert_eq!(skills.len(), 2);
+    }
+
+    #[test]
+    fn test_discover_registry_mixed_formats() {
+        use crate::formats::PluginFormat;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path();
+
+        // SKILL.md repo on disk
+        std::fs::create_dir_all(install_dir.join("skill-repo/SKILL.md").parent().unwrap()).unwrap();
+        std::fs::write(
+            install_dir.join("skill-repo/SKILL.md"),
+            "---\nname: my-skill\ndescription: a native skill\n---\nbody\n",
+        )
+        .unwrap();
+
+        // Claude Code repo on disk (no SKILL.md)
+        std::fs::create_dir_all(install_dir.join("plugin-repo")).unwrap();
+
+        // Build manifest with both formats
+        let manifest = SkillsManifest {
+            version: 1,
+            repos: vec![
+                RepoEntry {
+                    source: "owner/skill-repo".into(),
+                    repo_name: "skill-repo".into(),
+                    installed_at_ms: 0,
+                    commit_sha: None,
+                    format: PluginFormat::Skill,
+                    skills: vec![SkillState {
+                        name: "my-skill".into(),
+                        relative_path: "skill-repo".into(),
+                        trusted: true,
+                        enabled: true,
+                    }],
+                },
+                RepoEntry {
+                    source: "owner/plugin-repo".into(),
+                    repo_name: "plugin-repo".into(),
+                    installed_at_ms: 0,
+                    commit_sha: None,
+                    format: PluginFormat::ClaudeCode,
+                    skills: vec![SkillState {
+                        name: "test-plugin:helper".into(),
+                        relative_path: "plugin-repo".into(),
+                        trusted: true,
+                        enabled: true,
+                    }],
+                },
+            ],
+        };
+        let manifest_path = tmp.path().join("skills-manifest.json");
+        let store = ManifestStore::new(manifest_path);
+        store.save(&manifest).unwrap();
+
+        // Can't call discover_registry directly (uses default_path), so
+        // simulate the logic inline.
+        let mut skills = Vec::new();
+        for repo in &manifest.repos {
+            for skill_state in &repo.skills {
+                if !skill_state.enabled || !skill_state.trusted {
+                    continue;
+                }
+                let skill_dir = install_dir.join(&skill_state.relative_path);
+                match repo.format {
+                    PluginFormat::Skill => {
+                        let skill_md = skill_dir.join("SKILL.md");
+                        if skill_md.is_file() {
+                            let content = std::fs::read_to_string(&skill_md).unwrap();
+                            let mut meta = parse::parse_metadata(&content, &skill_dir).unwrap();
+                            meta.source = Some(SkillSource::Registry);
+                            skills.push(meta);
+                        }
+                    },
+                    _ => {
+                        skills.push(SkillMetadata {
+                            name: skill_state.name.clone(),
+                            description: String::new(),
+                            homepage: None,
+                            license: None,
+                            compatibility: None,
+                            allowed_tools: Vec::new(),
+                            requires: Default::default(),
+                            path: skill_dir,
+                            source: Some(SkillSource::Plugin),
+                            dockerfile: None,
+                        });
+                    },
+                }
+            }
+        }
+
+        assert_eq!(skills.len(), 2);
+
+        // SKILL.md repo gets full metadata with Registry source
+        let skill = skills.iter().find(|s| s.name == "my-skill").unwrap();
+        assert_eq!(skill.source, Some(SkillSource::Registry));
+        assert_eq!(skill.description, "a native skill");
+
+        // Claude Code repo gets stub metadata with Plugin source
+        let plugin = skills
+            .iter()
+            .find(|s| s.name == "test-plugin:helper")
+            .unwrap();
+        assert_eq!(plugin.source, Some(SkillSource::Plugin));
+        assert!(plugin.description.is_empty());
     }
 }

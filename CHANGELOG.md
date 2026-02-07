@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified plugins and skills into a single system**: Plugins and skills were separate
+  systems with duplicate code, manifests, and UI pages. They are now merged into one
+  unified "Skills" system. All installed repos (SKILL.md, Claude Code `.claude-plugin/`,
+  Codex) are managed through a single `skills-manifest.json` and `installed-skills/`
+  directory. The `/plugins` page has been removed — everything is accessible from the
+  `/skills` page. A one-time startup migration automatically moves data from the old
+  plugins manifest and directory into the new unified location.
+
 ### Fixed
 
 - **Mistral and other providers rejecting requests with HTTP 422**: Session metadata fields
