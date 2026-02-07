@@ -90,7 +90,7 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.8
+      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
         with:
           shared-key: rust-ci-cuda-v1
@@ -143,7 +143,7 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.8
+      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
         with:
           shared-key: rust-ci-cuda-v1
