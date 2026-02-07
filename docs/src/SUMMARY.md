@@ -30,6 +30,7 @@
 # Security
 
 - [Security Architecture](security.md)
+- [Third-Party Skills Security](skills-security.md)
 
 ---
 
