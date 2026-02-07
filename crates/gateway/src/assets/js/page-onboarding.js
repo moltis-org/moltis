@@ -149,8 +149,8 @@ function AuthStep({ onNext, skippable }) {
 
 function IdentityStep({ onNext, onBack }) {
 	var [userName, setUserName] = useState("");
-	var [name, setName] = useState("");
-	var [emoji, setEmoji] = useState("");
+	var [name, setName] = useState("Moltis");
+	var [emoji, setEmoji] = useState("\u{1f916}");
 	var [creature, setCreature] = useState("");
 	var [vibe, setVibe] = useState("");
 	var [saving, setSaving] = useState(false);
