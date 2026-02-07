@@ -1606,7 +1606,7 @@ async fn run_with_tools(
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        let prompt = build_system_prompt_with_session(
+        build_system_prompt_with_session(
             &filtered_registry,
             native_tools,
             project_context,
@@ -1614,8 +1614,7 @@ async fn run_with_tools(
             skills,
             Some(&config.identity),
             Some(&config.user),
-        );
-        prompt
+        )
     } else {
         // Minimal prompt without tools for local LLMs
         build_system_prompt_minimal(
