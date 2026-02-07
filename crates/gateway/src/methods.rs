@@ -3163,11 +3163,8 @@ impl MethodRegistry {
                                     .load(std::sync::atomic::Ordering::Relaxed);
                                 hook.call_count = calls;
                                 hook.failure_count = failures;
-                                hook.avg_latency_ms = if calls > 0 {
-                                    total_us / calls / 1000
-                                } else {
-                                    0
-                                };
+                                hook.avg_latency_ms =
+                                    total_us.checked_div(calls).unwrap_or(0) / 1000;
                             }
                         }
                     }
