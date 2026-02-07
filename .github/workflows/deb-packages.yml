@@ -707,7 +707,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX and SPDX)
         run: |
-          cargo sbom --output-format cyclonedx_json_1_4 > moltis-sbom.cdx.json
+          cargo sbom --output-format cyclone_dx_json_1_4 > moltis-sbom.cdx.json
           cargo sbom --output-format spdx_json_2_3 > moltis-sbom.spdx.json
 
       - name: Sign SBOMs with Sigstore and generate checksums
