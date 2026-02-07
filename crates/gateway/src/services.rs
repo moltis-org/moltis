@@ -69,7 +69,11 @@ fn license_url_for_source(source: &str, license: Option<&str>) -> Option<String>
     };
 
     if source.starts_with("https://") || source.starts_with("http://") {
-        Some(format!("{}/blob/main/{}", source.trim_end_matches('/'), file))
+        Some(format!(
+            "{}/blob/main/{}",
+            source.trim_end_matches('/'),
+            file
+        ))
     } else if source.contains('/') {
         Some(format!("https://github.com/{}/blob/main/{}", source, file))
     } else {

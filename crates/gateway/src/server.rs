@@ -75,6 +75,66 @@ fn should_prebuild_sandbox_image(
     !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
 }
 
+async fn ollama_has_model(base_url: &str, model: &str) -> bool {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let response = match reqwest::Client::new().get(url).send().await {
+        Ok(resp) => resp,
+        Err(_) => return false,
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let value: serde_json::Value = match response.json().await {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    value
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|models| {
+            models.iter().any(|m| {
+                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+                name == model || name.starts_with(&format!("{model}:"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+async fn ensure_ollama_model(base_url: &str, model: &str) {
+    if ollama_has_model(base_url, model).await {
+        return;
+    }
+
+    warn!(
+        model = %model,
+        base_url = %base_url,
+        "memory: missing Ollama embedding model, attempting auto-pull"
+    );
+
+    let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
+    let pull = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({ "name": model, "stream": false }))
+        .send()
+        .await;
+
+    match pull {
+        Ok(resp) if resp.status().is_success() => {
+            info!(model = %model, "memory: Ollama model pull complete");
+        },
+        Ok(resp) => {
+            warn!(
+                model = %model,
+                status = %resp.status(),
+                "memory: Ollama model pull failed"
+            );
+        },
+        Err(e) => {
+            warn!(model = %model, error = %e, "memory: Ollama model pull request failed");
+        },
+    }
+}
+
 fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
     let mut manager = ApprovalManager::default();
 
@@ -1013,6 +1073,10 @@ pub async fn start_gateway(
                             "ollama" => "http://localhost:11434".into(),
                             _ => "https://api.openai.com".into(),
                         });
+                    if provider_name == "ollama" {
+                        let model = mem_cfg.model.as_deref().unwrap_or("nomic-embed-text");
+                        ensure_ollama_model(&base_url, model).await;
+                    }
                     let api_key = mem_cfg
                         .api_key
                         .as_ref()
@@ -1043,6 +1107,7 @@ pub async fn start_gateway(
                 .await
                 .is_ok();
             if ollama_ok {
+                ensure_ollama_model("http://localhost:11434", "nomic-embed-text").await;
                 let e =
                     moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(String::new())
                         .with_base_url("http://localhost:11434".into())
@@ -1123,19 +1188,29 @@ pub async fn start_gateway(
                 } else {
                     // Scan the data directory for memory files written by the
                     // silent memory turn (MEMORY.md, memory/*.md).
-                    let data_memory_root = data_dir.clone();
+                    let data_memory_file = data_dir.join("MEMORY.md");
+                    let data_memory_file_lower = data_dir.join("memory.md");
                     let data_memory_sub = data_dir.join("memory");
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
-                        memory_dirs: vec![data_memory_root, data_memory_sub],
+                        memory_dirs: vec![
+                            data_memory_file,
+                            data_memory_file_lower,
+                            data_memory_sub,
+                        ],
                         ..Default::default()
                     };
 
                     let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
                         memory_pool,
                     ));
-                    let watch_dirs = config.memory_dirs.clone();
+                    let watch_dirs: Vec<_> = config
+                        .memory_dirs
+                        .iter()
+                        .filter(|p| p.is_dir())
+                        .cloned()
+                        .collect();
                     let manager = Arc::new(if let Some(embedder) = embedder {
                         moltis_memory::manager::MemoryManager::new(config, store, embedder)
                     } else {
