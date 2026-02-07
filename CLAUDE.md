@@ -769,6 +769,12 @@ integrate them together so nothing is lost.
 tests locally. When pushing code to an open pull request, pass the PR number
 (e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
 
+**PR descriptions must include test TODOs.** Every pull request description
+must include a dedicated section with checklist-style testing steps for the
+current PR (manual and/or automated), so reviewers can validate behavior
+without guessing. Keep the steps concrete (commands to run, UI paths to click,
+and expected results).
+
 ## Code Quality Checklist
 
 **You MUST run all checks before every commit and fix any issues they report:**
