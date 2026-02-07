@@ -417,11 +417,12 @@
   }
   .screenshot-lightbox-scroll {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
+    min-height: 0; /* Allow flex item to shrink below content size */
+    overflow: auto;
     width: 100%;
     display: flex;
     justify-content: center;
+    align-items: flex-start; /* Don't stretch image vertically */
     border-radius: var(--radius-md);
     /* Visible scrollbar for long screenshots */
     scrollbar-width: thin;
@@ -438,9 +439,10 @@
     border-radius: 4px;
   }
   .screenshot-lightbox-img {
-    max-width: 100%;
-    height: auto;
-    object-fit: contain;
+    /* Don't constrain height - allow scrolling for tall images */
+    /* Width is set by JS based on logical size, capped at viewport width */
+    display: block;
+    flex-shrink: 0; /* Prevent flex from shrinking the image */
     border-radius: var(--radius-md);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   }

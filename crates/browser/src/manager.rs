@@ -49,25 +49,15 @@ impl Default for BrowserManager {
 impl BrowserManager {
     /// Create a new browser manager with the given configuration.
     pub fn new(config: BrowserConfig) -> Self {
-        // Log sandbox mode status
-        if config.sandbox {
-            info!(
-                sandbox_image = %config.sandbox_image,
-                "browser sandbox mode enabled"
-            );
-        } else {
-            info!("browser running on host (sandbox disabled)");
-        }
+        info!(
+            sandbox_image = %config.sandbox_image,
+            "browser manager initialized (sandbox mode controlled per-session)"
+        );
 
         Self {
             pool: Arc::new(BrowserPool::new(config.clone())),
             config,
         }
-    }
-
-    /// Check if browser is running in sandbox mode.
-    pub fn is_sandboxed(&self) -> bool {
-        self.config.sandbox
     }
 
     /// Check if browser support is enabled.
@@ -85,8 +75,11 @@ impl BrowserManager {
             );
         }
 
+        // Determine sandbox mode from request (defaults to false/host)
+        let sandbox = request.sandbox.unwrap_or(false);
+
         // Log the action with execution mode for visibility
-        let mode = if self.config.sandbox {
+        let mode = if sandbox {
             "sandbox"
         } else {
             "host"
@@ -104,7 +97,7 @@ impl BrowserManager {
 
         match timeout(
             timeout_duration,
-            self.execute_action(request.session_id.as_deref(), request.action),
+            self.execute_action(request.session_id.as_deref(), request.action, sandbox),
         )
         .await
         {
@@ -155,29 +148,40 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         action: BrowserAction,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         match action {
-            BrowserAction::Navigate { url } => self.navigate(session_id, &url).await,
+            BrowserAction::Navigate { url } => self.navigate(session_id, &url, sandbox).await,
             BrowserAction::Screenshot {
                 full_page,
                 highlight_ref,
-            } => self.screenshot(session_id, full_page, highlight_ref).await,
-            BrowserAction::Snapshot => self.snapshot(session_id).await,
-            BrowserAction::Click { ref_ } => self.click(session_id, ref_).await,
-            BrowserAction::Type { ref_, text } => self.type_text(session_id, ref_, &text).await,
-            BrowserAction::Scroll { ref_, x, y } => self.scroll(session_id, ref_, x, y).await,
-            BrowserAction::Evaluate { code } => self.evaluate(session_id, &code).await,
+            } => {
+                self.screenshot(session_id, full_page, highlight_ref, sandbox)
+                    .await
+            },
+            BrowserAction::Snapshot => self.snapshot(session_id, sandbox).await,
+            BrowserAction::Click { ref_ } => self.click(session_id, ref_, sandbox).await,
+            BrowserAction::Type { ref_, text } => {
+                self.type_text(session_id, ref_, &text, sandbox).await
+            },
+            BrowserAction::Scroll { ref_, x, y } => {
+                self.scroll(session_id, ref_, x, y, sandbox).await
+            },
+            BrowserAction::Evaluate { code } => self.evaluate(session_id, &code, sandbox).await,
             BrowserAction::Wait {
                 selector,
                 ref_,
                 timeout_ms,
-            } => self.wait(session_id, selector, ref_, timeout_ms).await,
-            BrowserAction::GetUrl => self.get_url(session_id).await,
-            BrowserAction::GetTitle => self.get_title(session_id).await,
-            BrowserAction::Back => self.go_back(session_id).await,
-            BrowserAction::Forward => self.go_forward(session_id).await,
-            BrowserAction::Refresh => self.refresh(session_id).await,
-            BrowserAction::Close => self.close(session_id).await,
+            } => {
+                self.wait(session_id, selector, ref_, timeout_ms, sandbox)
+                    .await
+            },
+            BrowserAction::GetUrl => self.get_url(session_id, sandbox).await,
+            BrowserAction::GetTitle => self.get_title(session_id, sandbox).await,
+            BrowserAction::Back => self.go_back(session_id, sandbox).await,
+            BrowserAction::Forward => self.go_forward(session_id, sandbox).await,
+            BrowserAction::Refresh => self.refresh(session_id, sandbox).await,
+            BrowserAction::Close => self.close(session_id, sandbox).await,
         }
     }
 
@@ -186,6 +190,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         url: &str,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         // Validate URL before navigation
         validate_url(url)?;
@@ -198,7 +203,7 @@ impl BrowserManager {
             )));
         }
 
-        let sid = self.pool.get_or_create(session_id).await?;
+        let sid = self.pool.get_or_create(session_id, sandbox).await?;
         let page = self.pool.get_page(&sid).await?;
 
         #[cfg(feature = "metrics")]
@@ -213,8 +218,8 @@ impl BrowserManager {
                     "browser connection dead, closing session and retrying"
                 );
                 let _ = self.pool.close_session(&sid).await;
-                // Retry with a fresh session
-                let new_sid = self.pool.get_or_create(None).await?;
+                // Retry with a fresh session (use same sandbox mode)
+                let new_sid = self.pool.get_or_create(None, sandbox).await?;
                 let new_page = self.pool.get_page(&new_sid).await?;
                 new_page
                     .goto(url)
@@ -230,7 +235,7 @@ impl BrowserManager {
                 );
                 return Ok((
                     new_sid.clone(),
-                    BrowserResponse::success(new_sid, 0, self.config.sandbox).with_url(current_url),
+                    BrowserResponse::success(new_sid, 0, sandbox).with_url(current_url),
                 ));
             }
             return Err(BrowserError::NavigationFailed(err_str));
@@ -251,7 +256,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(current_url),
+            BrowserResponse::success(sid, 0, sandbox).with_url(current_url),
         ))
     }
 
@@ -261,8 +266,9 @@ impl BrowserManager {
         session_id: Option<&str>,
         full_page: bool,
         highlight_ref: Option<u32>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id).await?;
+        let sid = self.pool.get_or_create(session_id, sandbox).await?;
         let page = self.pool.get_page(&sid).await?;
 
         // Optionally highlight an element before screenshot
@@ -322,7 +328,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox)
+            BrowserResponse::success(sid, 0, sandbox)
                 .with_screenshot(data_uri, self.config.device_scale_factor),
         ))
     }
@@ -331,8 +337,9 @@ impl BrowserManager {
     async fn snapshot(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id).await?;
+        let sid = self.pool.get_or_create(session_id, sandbox).await?;
         let page = self.pool.get_page(&sid).await?;
 
         // Try snapshot, retry with fresh session if connection is dead
@@ -363,7 +370,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_snapshot(snapshot),
+            BrowserResponse::success(sid, 0, sandbox).with_snapshot(snapshot),
         ))
     }
 
@@ -372,6 +379,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         ref_: u32,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "click")?;
 
@@ -421,10 +429,7 @@ impl BrowserManager {
             "clicked element"
         );
 
-        Ok((
-            sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox),
-        ))
+        Ok((sid.clone(), BrowserResponse::success(sid, 0, sandbox)))
     }
 
     /// Type text into an element.
@@ -433,6 +438,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         ref_: u32,
         text: &str,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "type")?;
 
@@ -471,10 +477,7 @@ impl BrowserManager {
             "typed text"
         );
 
-        Ok((
-            sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox),
-        ))
+        Ok((sid.clone(), BrowserResponse::success(sid, 0, sandbox)))
     }
 
     /// Scroll the page or an element.
@@ -484,6 +487,7 @@ impl BrowserManager {
         ref_: Option<u32>,
         x: i32,
         y: i32,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "scroll")?;
 
@@ -507,10 +511,7 @@ impl BrowserManager {
 
         debug!(session_id = sid, ref_ = ?ref_, x = x, y = y, "scrolled");
 
-        Ok((
-            sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox),
-        ))
+        Ok((sid.clone(), BrowserResponse::success(sid, 0, sandbox)))
     }
 
     /// Execute JavaScript in the page context.
@@ -518,6 +519,7 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         code: &str,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "evaluate")?;
 
@@ -534,7 +536,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_result(result),
+            BrowserResponse::success(sid, 0, sandbox).with_result(result),
         ))
     }
 
@@ -545,6 +547,7 @@ impl BrowserManager {
         selector: Option<String>,
         ref_: Option<u32>,
         timeout_ms: u64,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "wait")?;
 
@@ -576,10 +579,7 @@ impl BrowserManager {
 
             if found {
                 debug!(session_id = sid, "element found");
-                return Ok((
-                    sid.clone(),
-                    BrowserResponse::success(sid, 0, self.config.sandbox),
-                ));
+                return Ok((sid.clone(), BrowserResponse::success(sid, 0, sandbox)));
             }
 
             tokio::time::sleep(interval).await;
@@ -595,6 +595,7 @@ impl BrowserManager {
     async fn get_url(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "get_url")?;
 
@@ -603,7 +604,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+            BrowserResponse::success(sid, 0, sandbox).with_url(url),
         ))
     }
 
@@ -611,6 +612,7 @@ impl BrowserManager {
     async fn get_title(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "get_title")?;
 
@@ -619,7 +621,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_title(title),
+            BrowserResponse::success(sid, 0, sandbox).with_title(title),
         ))
     }
 
@@ -627,6 +629,7 @@ impl BrowserManager {
     async fn go_back(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "back")?;
 
@@ -643,7 +646,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+            BrowserResponse::success(sid, 0, sandbox).with_url(url),
         ))
     }
 
@@ -651,6 +654,7 @@ impl BrowserManager {
     async fn go_forward(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "forward")?;
 
@@ -667,7 +671,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+            BrowserResponse::success(sid, 0, sandbox).with_url(url),
         ))
     }
 
@@ -675,6 +679,7 @@ impl BrowserManager {
     async fn refresh(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "refresh")?;
 
@@ -691,7 +696,7 @@ impl BrowserManager {
 
         Ok((
             sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox).with_url(url),
+            BrowserResponse::success(sid, 0, sandbox).with_url(url),
         ))
     }
 
@@ -699,6 +704,7 @@ impl BrowserManager {
     async fn close(
         &self,
         session_id: Option<&str>,
+        sandbox: bool,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         let sid = require_session(session_id, "close")?;
 
@@ -706,10 +712,7 @@ impl BrowserManager {
 
         info!(session_id = sid, "closed browser session");
 
-        Ok((
-            sid.clone(),
-            BrowserResponse::success(sid, 0, self.config.sandbox),
-        ))
+        Ok((sid.clone(), BrowserResponse::success(sid, 0, sandbox)))
     }
 
     /// Highlight an element (for screenshots).

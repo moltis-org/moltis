@@ -1586,6 +1586,13 @@ async fn run_with_tools(
         )
     };
 
+    // Determine if this session is sandboxed (for browser tool execution mode)
+    let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
+        router.is_sandboxed(session_key).await
+    } else {
+        false
+    };
+
     // Broadcast tool events to the UI as they happen.
     let state_for_events = Arc::clone(state);
     let run_id_for_events = run_id.to_string();
@@ -1619,10 +1626,9 @@ async fn run_with_tools(
                         "toolName": name,
                         "arguments": arguments,
                     });
-                    // Add execution mode for browser tool
+                    // Add execution mode for browser tool (follows session sandbox mode)
                     if name == "browser" {
-                        let sandboxed = state.services.browser.is_sandboxed();
-                        payload["executionMode"] = serde_json::json!(if sandboxed {
+                        payload["executionMode"] = serde_json::json!(if session_is_sandboxed {
                             "sandbox"
                         } else {
                             "host"
@@ -1740,9 +1746,13 @@ async fn run_with_tools(
         Some(history.to_vec())
     };
 
-    // Inject session key and accept-language into tool call params so tools can
+    // Inject session key, sandbox mode, and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    let mut tool_context = serde_json::json!({ "_session_key": session_key });
+    // The browser tool uses _sandbox to determine whether to run in a container.
+    let mut tool_context = serde_json::json!({
+        "_session_key": session_key,
+        "_sandbox": session_is_sandboxed,
+    });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
     }

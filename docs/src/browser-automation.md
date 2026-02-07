@@ -63,9 +63,8 @@ navigation_timeout_ms = 30000  # Page load timeout
 # user_agent = "Custom UA"         # Custom user agent
 # chrome_args = ["--disable-extensions"]  # Extra args
 
-# Security options (see Security section below)
-sandbox = false             # Run browser in Docker container for isolation
-sandbox_image = "browserless/chrome"  # Container image for sandbox mode
+# Sandbox image (browser sandbox mode follows session sandbox mode)
+sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 ```
 
@@ -258,36 +257,35 @@ When the `metrics` feature is enabled, the browser module records:
 
 ## Sandbox Mode
 
-The browser can run in two modes:
+Browser sandbox mode **automatically follows the session's sandbox mode**. When
+a chat session uses sandbox mode (controlled by `[tools.exec.sandbox]`), the
+browser tool will also run in a sandboxed container. When the session is not
+sandboxed, the browser runs directly on the host.
 
-### Host Mode (default)
+### Host Mode
 
-```toml
-[tools.browser]
-sandbox = false
-```
-
-Chrome runs directly on the host machine. This is faster but the browser has
-full access to the host network and filesystem.
+When the session is not sandboxed (or sandbox mode is "off"), Chrome runs
+directly on the host machine. This is faster but the browser has full access
+to the host network and filesystem.
 
 ### Sandbox Mode
 
-```toml
-[tools.browser]
-sandbox = true
-sandbox_image = "browserless/chrome"  # or custom image
-```
-
-Chrome runs inside a Docker container with:
+When the session is sandboxed, Chrome runs inside a Docker container with:
 
 - **Network isolation**: Browser can access the internet but not local services
 - **Filesystem isolation**: No access to host filesystem
 - **Automatic lifecycle**: Container started/stopped with browser session
 - **Readiness detection**: Waits for Chrome to be fully ready before connecting
 
+```toml
+[tools.browser]
+sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
+```
+
 Requirements:
-- Docker must be installed and running
+- Docker or Apple Container must be installed and running
 - The container image is pulled automatically on first use
+- Session sandbox mode must be enabled (`[tools.exec.sandbox] mode = "all"`)
 
 ### Exec Tool Scripts
 
@@ -318,14 +316,16 @@ malicious sites could attempt to inject instructions.
 2. **Review returned content**: The snapshot action returns element text which
    could contain injected prompts. Be cautious with untrusted sites.
 
-3. **Sandbox mode**: Run the browser in an isolated Docker container for
-   additional security. Set `sandbox = true` in your config.
+3. **Sandbox mode**: Use sandboxed sessions to run the browser in an isolated
+   Docker container for additional security. Browser sandbox follows session
+   sandbox mode automatically.
 
 ### Other Security Considerations
 
-1. **Host vs Sandbox mode**: By default, the browser runs on the host with
-   `--no-sandbox` for container compatibility. Enable `sandbox = true` to run
-   in a Docker container with network/filesystem isolation.
+1. **Host vs Sandbox mode**: Browser sandbox mode follows the session's sandbox
+   mode. For sandboxed sessions, the browser runs in a Docker container with
+   network/filesystem isolation. For non-sandboxed sessions, the browser runs
+   on the host with `--no-sandbox` for container compatibility.
 
 2. **Resource limits**: Browser instances are limited by memory usage (default:
    block when > 90% used). Set `max_instances > 0` for a hard limit.

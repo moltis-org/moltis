@@ -154,6 +154,13 @@ impl AgentTool for BrowserTool {
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
         let mut params = params;
 
+        // Extract sandbox mode from context (injected by gateway based on session sandbox mode).
+        // The browser should be sandboxed when the chat session is sandboxed.
+        let sandbox_mode = params
+            .get("_sandbox")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // Inject saved session_id if LLM didn't provide one (or provided empty string)
         if let Some(obj) = params.as_object_mut() {
             let needs_session = match obj.get("session_id") {
@@ -170,6 +177,9 @@ impl AgentTool for BrowserTool {
                 );
                 obj.insert("session_id".to_string(), serde_json::json!(saved_sid));
             }
+
+            // Inject sandbox mode from session context
+            obj.insert("sandbox".to_string(), serde_json::json!(sandbox_mode));
         }
 
         // Check if this is a "close" action - we'll clear saved session after

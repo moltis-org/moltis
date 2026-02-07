@@ -791,9 +791,15 @@ pub async fn start_gateway(
         }
     }
 
-    // Pre-pull browser container image if browser sandbox is enabled.
-    // This ensures the image is ready before the user tries to use the browser tool.
-    if config.tools.browser.enabled && config.tools.browser.sandbox {
+    // Pre-pull browser container image if browser is enabled and sandbox mode is available.
+    // Browser sandbox mode follows session sandbox mode, so we pre-pull if sandboxing is available.
+    // Don't pre-pull if sandbox is disabled (mode = Off).
+    if config.tools.browser.enabled
+        && !matches!(
+            sandbox_router.config().mode,
+            moltis_tools::sandbox::SandboxMode::Off
+        )
+    {
         let sandbox_image = config.tools.browser.sandbox_image.clone();
         let deferred_for_browser = Arc::clone(&deferred_state);
         tokio::spawn(async move {

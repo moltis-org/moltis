@@ -637,13 +637,9 @@ pub struct BrowserConfig {
     /// Additional Chrome arguments.
     #[serde(default)]
     pub chrome_args: Vec<String>,
-    /// Run browser in a container for isolation. Requires Docker.
-    /// When true, Chrome runs inside a container with network access but
-    /// filesystem isolation from the host.
-    #[serde(default)]
-    pub sandbox: bool,
     /// Docker image to use for sandboxed browser.
     /// Default: "browserless/chrome" - a purpose-built headless Chrome container.
+    /// Sandbox mode is controlled per-session via the request, not globally.
     #[serde(default = "default_sandbox_image")]
     pub sandbox_image: String,
     /// Allowed domains for navigation. Empty list means all domains allowed.
@@ -672,7 +668,6 @@ impl Default for BrowserConfig {
             navigation_timeout_ms: 30000,
             user_agent: None,
             chrome_args: Vec::new(),
-            sandbox: false,
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
         }

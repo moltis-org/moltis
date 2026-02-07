@@ -1156,8 +1156,6 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
 #[async_trait]
 pub trait BrowserService: Send + Sync {
     async fn request(&self, params: Value) -> ServiceResult;
-    /// Whether browser is running in sandboxed container mode.
-    fn is_sandboxed(&self) -> bool;
 }
 
 pub struct NoopBrowserService;
@@ -1166,10 +1164,6 @@ pub struct NoopBrowserService;
 impl BrowserService for NoopBrowserService {
     async fn request(&self, _p: Value) -> ServiceResult {
         Err("browser not available".into())
-    }
-
-    fn is_sandboxed(&self) -> bool {
-        false
     }
 }
 
@@ -1205,10 +1199,6 @@ impl BrowserService for RealBrowserService {
         let response = self.manager.handle_request(request).await;
 
         serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))
-    }
-
-    fn is_sandboxed(&self) -> bool {
-        self.manager.is_sandboxed()
     }
 }
 

@@ -126,6 +126,11 @@ pub struct BrowserRequest {
     /// Global timeout in milliseconds.
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+
+    /// Whether to run in sandbox mode (Docker container).
+    /// If None, uses host mode (no sandbox).
+    #[serde(default)]
+    pub sandbox: Option<bool>,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -343,10 +348,8 @@ pub struct BrowserConfig {
     /// Additional Chrome arguments.
     #[serde(default)]
     pub chrome_args: Vec<String>,
-    /// Run browser in a container for isolation.
-    #[serde(default)]
-    pub sandbox: bool,
     /// Docker image to use for sandboxed browser.
+    /// Sandbox mode is controlled per-session via the request, not globally.
     #[serde(default = "default_sandbox_image")]
     pub sandbox_image: String,
     /// Allowed domains for navigation (empty = all allowed).
@@ -373,7 +376,6 @@ impl Default for BrowserConfig {
             navigation_timeout_ms: 30000,
             user_agent: None,
             chrome_args: Vec::new(),
-            sandbox: false,
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
         }
@@ -395,7 +397,6 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             navigation_timeout_ms: cfg.navigation_timeout_ms,
             user_agent: cfg.user_agent.clone(),
             chrome_args: cfg.chrome_args.clone(),
-            sandbox: cfg.sandbox,
             sandbox_image: cfg.sandbox_image.clone(),
             allowed_domains: cfg.allowed_domains.clone(),
         }

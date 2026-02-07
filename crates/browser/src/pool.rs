@@ -39,6 +39,9 @@ struct BrowserInstance {
     browser: Browser,
     pages: HashMap<String, Page>,
     last_used: Instant,
+    /// Whether this instance is running in sandbox mode.
+    #[allow(dead_code)]
+    sandboxed: bool,
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
@@ -65,7 +68,15 @@ impl BrowserPool {
 
     /// Get or create a browser instance for the given session ID.
     /// Returns the session ID for the browser instance.
-    pub async fn get_or_create(&self, session_id: Option<&str>) -> Result<String, BrowserError> {
+    ///
+    /// The `sandbox` parameter determines whether to run the browser in a
+    /// Docker container (true) or on the host (false). This is set when
+    /// creating a new session and cannot be changed for existing sessions.
+    pub async fn get_or_create(
+        &self,
+        session_id: Option<&str>,
+        sandbox: bool,
+    ) -> Result<String, BrowserError> {
         // Treat empty string as None (generate new session ID)
         let session_id = session_id.filter(|s| !s.is_empty());
 
@@ -118,7 +129,7 @@ impl BrowserPool {
             .map(String::from)
             .unwrap_or_else(generate_session_id);
 
-        let instance = self.launch_browser(&sid).await?;
+        let instance = self.launch_browser(&sid, sandbox).await?;
         let instance = Arc::new(Mutex::new(instance));
 
         {
@@ -135,7 +146,7 @@ impl BrowserPool {
             moltis_metrics::counter!(moltis_metrics::browser::INSTANCES_CREATED_TOTAL).increment(1);
         }
 
-        let mode = if self.config.sandbox {
+        let mode = if sandbox {
             "sandboxed"
         } else {
             "host"
@@ -266,8 +277,12 @@ impl BrowserPool {
     }
 
     /// Launch a new browser instance.
-    async fn launch_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
-        if self.config.sandbox {
+    async fn launch_browser(
+        &self,
+        session_id: &str,
+        sandbox: bool,
+    ) -> Result<BrowserInstance, BrowserError> {
+        if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
             self.launch_host_browser(session_id).await
@@ -340,6 +355,7 @@ impl BrowserPool {
             browser,
             pages: HashMap::new(),
             last_used: Instant::now(),
+            sandboxed: true,
             container: Some(container),
         })
     }
@@ -426,6 +442,7 @@ impl BrowserPool {
             browser,
             pages: HashMap::new(),
             last_used: Instant::now(),
+            sandboxed: false,
             container: None,
         })
     }

@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic container lifecycle management
   - Uses `browserless/chrome` image by default (configurable via `sandbox_image`)
   - Container readiness detection via HTTP endpoint probing
-  - Enable with `sandbox = true` in browser config
+  - Browser sandbox mode automatically follows the session's sandbox mode
+    (no separate `browser.sandbox` config - sandboxed sessions use sandboxed browser)
 
 - **Memory-Based Browser Pool Limits**: Browser instances now limited by system memory
   - `max_instances = 0` (default) allows unlimited instances, limited only by memory

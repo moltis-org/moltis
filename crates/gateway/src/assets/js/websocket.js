@@ -201,15 +201,20 @@ function appendToolResult(toolCard, result) {
 			fullImg.className = "screenshot-lightbox-img";
 
 			// Scale lightbox image for proper display on HiDPI screens
-			if (scale > 1) {
-				fullImg.onload = () => {
-					var logicalWidth = fullImg.naturalWidth / scale;
-					// Set width to logical size so it displays at 1:1 on Retina
-					// Height is unconstrained to allow scrolling for long screenshots
-					fullImg.style.width = `${logicalWidth}px`;
-					fullImg.style.maxWidth = "100%";
-				};
-			}
+			// For tall screenshots, use a reasonable width to allow vertical scrolling
+			fullImg.onload = () => {
+				var logicalWidth = fullImg.naturalWidth / scale;
+				var logicalHeight = fullImg.naturalHeight / scale;
+				var viewportWidth = window.innerWidth - 80; // Account for padding
+
+				// Use logical width, but cap at viewport width minus padding
+				var displayWidth = Math.min(logicalWidth, viewportWidth);
+				fullImg.style.width = `${displayWidth}px`;
+
+				// Height scales proportionally - will overflow and scroll for tall images
+				var displayHeight = (displayWidth / logicalWidth) * logicalHeight;
+				fullImg.style.height = `${displayHeight}px`;
+			};
 
 			scrollContainer.appendChild(fullImg);
 			lightboxContent.appendChild(header);
