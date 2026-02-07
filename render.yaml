@@ -17,4 +17,6 @@ services:
         value: /data/config
       - key: MOLTIS_DATA_DIR
         value: /data
+      - key: MOLTIS_DEPLOY_PLATFORM
+        value: render
     dockerCommand: moltis --bind 0.0.0.0 --port 10000 --no-tls

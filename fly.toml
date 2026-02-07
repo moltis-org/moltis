@@ -5,9 +5,10 @@ primary_region = "iad"
 image = "ghcr.io/moltis-org/moltis:latest"
 
 [env]
-MOLTIS_CONFIG_DIR = "/data/config"
-MOLTIS_DATA_DIR   = "/data"
-MOLTIS_NO_TLS     = "true"
+MOLTIS_CONFIG_DIR      = "/data/config"
+MOLTIS_DATA_DIR        = "/data"
+MOLTIS_DEPLOY_PLATFORM = "flyio"
+MOLTIS_NO_TLS          = "true"
 
 [http_service]
 auto_start_machines  = true

@@ -319,6 +319,9 @@ pub async fn start_gateway(
     // Resolve auth from environment (MOLTIS_TOKEN / MOLTIS_PASSWORD).
     let token = std::env::var("MOLTIS_TOKEN").ok();
     let password = std::env::var("MOLTIS_PASSWORD").ok();
+
+    // Cloud deploy platform — hides local-only providers (local-llm, ollama).
+    let deploy_platform = std::env::var("MOLTIS_DEPLOY_PLATFORM").ok();
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
@@ -363,6 +366,7 @@ pub async fn start_gateway(
     services.provider_setup = Arc::new(LiveProviderSetupService::new(
         Arc::clone(&registry),
         config.providers.clone(),
+        deploy_platform.clone(),
     ));
 
     // Wire live local-llm service when the feature is enabled.
@@ -1311,6 +1315,7 @@ pub async fn start_gateway(
         hook_registry.clone(),
         memory_manager.clone(),
         port,
+        deploy_platform.clone(),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
@@ -2278,6 +2283,9 @@ struct GonData {
     git_branch: Option<String>,
     /// Memory stats snapshot (process RSS + system available/total).
     mem: MemSnapshot,
+    /// Cloud deploy platform (e.g. "flyio"), `None` when running locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deploy_platform: Option<String>,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -2410,6 +2418,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_runs,
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
+        deploy_platform: gw.deploy_platform.clone(),
     }
 }
 

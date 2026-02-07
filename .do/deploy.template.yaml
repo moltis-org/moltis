@@ -20,3 +20,5 @@ spec:
       envs:
         - key: MOLTIS_DATA_DIR
           value: /data
+        - key: MOLTIS_DEPLOY_PLATFORM
+          value: digitalocean

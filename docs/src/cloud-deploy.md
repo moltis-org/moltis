@@ -16,6 +16,7 @@ HTTP mode. The key settings are:
 | `--port <PORT>` | Listen port | Must match provider's expected internal port |
 | `MOLTIS_CONFIG_DIR=/data/config` | Config directory | Persist moltis.toml, credentials |
 | `MOLTIS_DATA_DIR=/data` | Data directory | Persist databases, sessions, memory |
+| `MOLTIS_DEPLOY_PLATFORM` | Deploy platform | Hides local-only providers (see below) |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
 ```admonish warning
@@ -25,6 +26,15 @@ inside isolated containers) will not work on these platforms. The agent will
 still function for chat, tool calls that don't require shell execution, and
 MCP server connections.
 ```
+
+### `MOLTIS_DEPLOY_PLATFORM`
+
+Set this to the name of your cloud provider (e.g. `flyio`, `digitalocean`,
+`render`, `railway`). When set, Moltis hides local-only LLM providers
+(local-llm and Ollama) from the provider setup page since they cannot run
+on cloud VMs. The included deploy templates for Fly.io, DigitalOcean, and
+Render already set this variable. Railway users should set it manually in
+the dashboard (`MOLTIS_DEPLOY_PLATFORM=railway`).
 
 ## Fly.io
 
@@ -114,6 +124,7 @@ or:
    - `MOLTIS_NO_TLS` = `true`
    - `MOLTIS_CONFIG_DIR` = `/data/config`
    - `MOLTIS_DATA_DIR` = `/data`
+   - `MOLTIS_DEPLOY_PLATFORM` = `railway`
    - `MOLTIS_PASSWORD` = your password
 
 ### Persistent storage

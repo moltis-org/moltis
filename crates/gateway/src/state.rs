@@ -245,6 +245,9 @@ pub struct GatewayState {
     pub localhost_only: bool,
     /// Whether TLS is active on the gateway listener.
     pub tls_active: bool,
+    /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
+    /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
+    pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
@@ -281,6 +284,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            None,
             #[cfg(feature = "metrics")]
             None,
             #[cfg(feature = "metrics")]
@@ -306,6 +310,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            None,
             #[cfg(feature = "metrics")]
             None,
             #[cfg(feature = "metrics")]
@@ -326,6 +331,7 @@ impl GatewayState {
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
         port: u16,
+        deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
     ) -> Arc<Self> {
@@ -358,6 +364,7 @@ impl GatewayState {
             setup_code: RwLock::new(None),
             localhost_only,
             tls_active,
+            deploy_platform,
             port,
             heartbeat_config: RwLock::new(moltis_config::schema::HeartbeatConfig::default()),
             run_errors: RwLock::new(HashMap::new()),
