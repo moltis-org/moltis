@@ -2873,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "moltis"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-agents"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -2938,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-auto-reply"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "moltis-agents",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-browser"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -2965,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-canvas"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "axum",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-channels"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2992,7 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-common"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-config"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "directories",
@@ -3025,7 +3025,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-cron"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-gateway"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3117,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-mcp"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3135,7 +3135,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-media"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -3148,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-memory"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-metrics"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3191,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-oauth"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "axum",
@@ -3212,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-onboarding"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -3228,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-plugins"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3252,7 +3252,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-projects"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3269,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-protocol"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "moltis-metrics",
  "serde",
@@ -3279,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-qmd"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3293,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-routing"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -3306,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-sessions"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "fd-lock",
@@ -3323,7 +3323,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-skills"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-telegram"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3363,7 +3363,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-tools"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
