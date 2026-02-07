@@ -436,9 +436,10 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
 }
 
 fn unquote_yaml_scalar(value: &str) -> &str {
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        &value[1..value.len() - 1]
-    } else if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
         &value[1..value.len() - 1]
     } else {
         value

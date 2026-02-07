@@ -254,10 +254,10 @@ impl LiveOnboardingService {
                     id.vibe = Some(vibe);
                 }
             }
-            if let Some(file_user) = moltis_config::load_user() {
-                if let Some(name) = file_user.name {
-                    id.user_name = Some(name);
-                }
+            if let Some(file_user) = moltis_config::load_user()
+                && let Some(name) = file_user.name
+            {
+                id.user_name = Some(name);
             }
             id.soul = moltis_config::load_soul();
             return id;
