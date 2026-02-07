@@ -166,7 +166,7 @@ run_check() {
   local start
   local end
   local duration
-  local log_file
+  local log_file=""
 
   start="$(date +%s)"
   set_status pending "$context" "Running locally"
@@ -254,6 +254,14 @@ report_async_result() {
 
 echo "Validating PR #$PR_NUMBER ($SHA) in $BASE_REPO"
 echo "Publishing commit statuses to: $REPO"
+
+PR_CHECKS_URL="https://github.com/$BASE_REPO/pull/$PR_NUMBER/checks"
+RUN_URL="$(gh api "repos/$BASE_REPO/actions/runs?head_sha=$SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].html_url // empty' 2>/dev/null || true)"
+if [[ -n "$RUN_URL" ]]; then
+  echo "Current CI workflow: $RUN_URL"
+else
+  echo "Current CI checks: $PR_CHECKS_URL"
+fi
 
 # macOS local builds can leave stale cmake output dirs where configure was skipped
 # but no generator files remain. Clean those up before lint/test.
