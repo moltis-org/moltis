@@ -1,6 +1,7 @@
 use {
     anyhow::Result,
     async_trait::async_trait,
+    base64::Engine,
     teloxide::{
         payloads::SendMessageSetters,
         prelude::*,
@@ -69,7 +70,35 @@ impl ChannelOutbound for TelegramOutbound {
         let chat_id = ChatId(to.parse::<i64>()?);
 
         if let Some(ref media) = payload.media {
-            let input = InputFile::url(media.url.parse()?);
+            // Handle base64 data URIs (e.g., "data:image/png;base64,...")
+            let input = if media.url.starts_with("data:") {
+                // Parse data URI: data:<mime>;base64,<data>
+                let Some(comma_pos) = media.url.find(',') else {
+                    anyhow::bail!("invalid data URI: no comma separator");
+                };
+                let base64_data = &media.url[comma_pos + 1..];
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(base64_data)
+                    .map_err(|e| anyhow::anyhow!("failed to decode base64: {e}"))?;
+
+                debug!(
+                    bytes = bytes.len(),
+                    mime_type = %media.mime_type,
+                    "sending base64 media to telegram"
+                );
+
+                // Use memory upload with a filename
+                let ext = match media.mime_type.as_str() {
+                    "image/png" => "png",
+                    "image/jpeg" | "image/jpg" => "jpg",
+                    "image/gif" => "gif",
+                    "image/webp" => "webp",
+                    _ => "bin",
+                };
+                InputFile::memory(bytes).file_name(format!("screenshot.{ext}"))
+            } else {
+                InputFile::url(media.url.parse()?)
+            };
 
             match media.mime_type.as_str() {
                 t if t.starts_with("image/") => {

@@ -1644,6 +1644,14 @@ async fn run_with_tools(
                     if let Some(err) = error {
                         payload["error"] = serde_json::json!(parse_chat_error(err, None));
                     }
+                    // Check for screenshot to send to channel (Telegram, etc.)
+                    let screenshot_to_send = result
+                        .as_ref()
+                        .and_then(|r| r.get("screenshot"))
+                        .and_then(|s| s.as_str())
+                        .filter(|s| s.starts_with("data:image/"))
+                        .map(String::from);
+
                     if let Some(res) = result {
                         // Cap output sent to the UI to avoid huge WS frames.
                         let mut capped = res.clone();
@@ -1661,6 +1669,17 @@ async fn run_with_tools(
                         }
                         payload["result"] = capped;
                     }
+
+                    // Send screenshot to channel targets (Telegram) if present
+                    if let Some(screenshot_data) = screenshot_to_send {
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        tokio::spawn(async move {
+                            send_screenshot_to_channels(&state_clone, &sk_clone, &screenshot_data)
+                                .await;
+                        });
+                    }
+
                     payload
                 },
                 RunnerEvent::ThinkingText(text) => serde_json::json!({
@@ -2169,6 +2188,66 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
                 },
                 other => {
                     warn!(channel_type = other, "unsupported channel type for reply");
+                },
+            }
+        });
+    }
+}
+
+/// Send a screenshot to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn send_screenshot_to_channels(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    screenshot_data: &str,
+) {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.services.channel_outbound_arc() {
+        Some(o) => o,
+        None => return,
+    };
+
+    let payload = ReplyPayload {
+        text: String::new(), // No caption, just the image
+        media: Some(MediaAttachment {
+            url: screenshot_data.to_string(),
+            mime_type: "image/png".to_string(),
+        }),
+        reply_to_id: None,
+        silent: false,
+    };
+
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let payload = payload.clone();
+        tokio::spawn(async move {
+            match target.channel_type.as_str() {
+                "telegram" => {
+                    if let Err(e) = outbound
+                        .send_media(&target.account_id, &target.chat_id, &payload)
+                        .await
+                    {
+                        warn!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "failed to send screenshot to channel: {e}"
+                        );
+                    } else {
+                        debug!(
+                            account_id = target.account_id,
+                            chat_id = target.chat_id,
+                            "sent screenshot to telegram"
+                        );
+                    }
+                },
+                _ => {
+                    // Other channel types don't support media yet
                 },
             }
         });

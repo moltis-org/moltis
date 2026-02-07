@@ -3449,6 +3449,7 @@ version = "0.2.5"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "moltis-auto-reply",
  "moltis-channels",
  "moltis-common",
