@@ -72,6 +72,7 @@ pub async fn start_polling(
         accounts: Arc::clone(&accounts),
     });
 
+    let otp_cooldown = config.otp_cooldown_secs;
     let state = AccountState {
         bot: bot.clone(),
         bot_username,
@@ -81,6 +82,7 @@ pub async fn start_polling(
         cancel: cancel.clone(),
         message_log,
         event_sink,
+        otp: std::sync::Mutex::new(crate::otp::OtpState::new(otp_cooldown)),
     };
 
     {

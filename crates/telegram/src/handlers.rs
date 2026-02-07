@@ -23,7 +23,11 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, telegram as tg_metrics};
 
-use crate::{access, state::AccountStateMap};
+use crate::{
+    access::{self, AccessDenied},
+    otp::{OtpInitResult, OtpVerifyResult},
+    state::AccountStateMap,
+};
 
 /// Shared context injected into teloxide's dispatcher.
 #[derive(Clone)]
@@ -166,6 +170,25 @@ pub async fn handle_message_direct(
         warn!(account_id, %reason, peer_id, username = ?username, "handler: access denied");
         #[cfg(feature = "metrics")]
         counter!(tg_metrics::ACCESS_CONTROL_DENIALS_TOTAL).increment(1);
+
+        // OTP self-approval for non-allowlisted DM users.
+        if reason == AccessDenied::NotOnAllowlist
+            && chat_type == ChatType::Dm
+            && config.otp_self_approval
+        {
+            handle_otp_flow(
+                accounts,
+                account_id,
+                &peer_id,
+                username.as_deref(),
+                sender_name.as_deref(),
+                text.as_deref(),
+                &msg,
+                event_sink.as_deref(),
+            )
+            .await;
+        }
+
         return Ok(());
     }
 
@@ -332,6 +355,226 @@ pub async fn handle_message_direct(
     histogram!(tg_metrics::POLLING_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
 
     Ok(())
+}
+
+/// OTP challenge message sent to the Telegram user.
+///
+/// **Security invariant:** this message must NEVER contain the actual
+/// verification code.  The code is only visible to the bot owner in the
+/// web UI (Channels → Senders).  Leaking it here would let any
+/// unauthenticated user self-approve without admin awareness.
+pub(crate) const OTP_CHALLENGE_MSG: &str = "To use this bot, please enter the verification code.\n\nAsk the bot owner for the code \u{2014} it is visible in the web UI under <b>Channels \u{2192} Senders</b>.\n\nThe code expires in 5 minutes.";
+
+/// Handle OTP challenge/verification flow for a non-allowlisted DM user.
+///
+/// Called when `dm_policy = Allowlist`, the peer is not on the allowlist, and
+/// `otp_self_approval` is enabled. Manages the full lifecycle:
+/// - First message: issue a 6-digit OTP challenge
+/// - Code reply: verify and auto-approve on match
+/// - Non-code messages while pending: silently ignored (flood protection)
+#[allow(clippy::too_many_arguments)]
+async fn handle_otp_flow(
+    accounts: &AccountStateMap,
+    account_id: &str,
+    peer_id: &str,
+    username: Option<&str>,
+    sender_name: Option<&str>,
+    text: Option<&str>,
+    msg: &Message,
+    event_sink: Option<&dyn moltis_channels::ChannelEventSink>,
+) {
+    let chat_id = msg.chat.id;
+
+    // Resolve bot early (needed for sending messages).
+    let bot = {
+        let accts = accounts.read().unwrap();
+        accts.get(account_id).map(|s| s.bot.clone())
+    };
+    let bot = match bot {
+        Some(b) => b,
+        None => return,
+    };
+
+    // Check current OTP state.
+    let has_pending = {
+        let accts = accounts.read().unwrap();
+        accts
+            .get(account_id)
+            .map(|s| {
+                let otp = s.otp.lock().unwrap();
+                otp.has_pending(peer_id)
+            })
+            .unwrap_or(false)
+    };
+
+    if has_pending {
+        // A challenge is already pending. Check if the user sent a 6-digit code.
+        let body = text.unwrap_or("").trim();
+        let is_code = body.len() == 6 && body.chars().all(|c| c.is_ascii_digit());
+
+        if !is_code {
+            // Silent ignore — flood protection.
+            return;
+        }
+
+        // Verify the code.
+        let result = {
+            let accts = accounts.read().unwrap();
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap();
+                    otp.verify(peer_id, body)
+                },
+                None => return,
+            }
+        };
+
+        match result {
+            OtpVerifyResult::Approved => {
+                // Auto-approve: add to allowlist via the event sink.
+                let identifier = username.unwrap_or(peer_id);
+                if let Some(sink) = event_sink {
+                    sink.request_sender_approval("telegram", account_id, identifier)
+                        .await;
+                }
+
+                let _ = bot
+                    .send_message(chat_id, "Verified! You now have access to this bot.")
+                    .await;
+
+                // Emit resolved event.
+                if let Some(sink) = event_sink {
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: "telegram".into(),
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "approved".into(),
+                    })
+                    .await;
+                }
+
+                #[cfg(feature = "metrics")]
+                counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "approved").increment(1);
+            },
+            OtpVerifyResult::WrongCode { attempts_left } => {
+                let _ = bot
+                    .send_message(
+                        chat_id,
+                        format!(
+                            "Incorrect code. {attempts_left} attempt{} remaining.",
+                            if attempts_left == 1 {
+                                ""
+                            } else {
+                                "s"
+                            }
+                        ),
+                    )
+                    .await;
+
+                #[cfg(feature = "metrics")]
+                counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "wrong_code")
+                    .increment(1);
+            },
+            OtpVerifyResult::LockedOut => {
+                let _ = bot
+                    .send_message(chat_id, "Too many failed attempts. Please try again later.")
+                    .await;
+
+                if let Some(sink) = event_sink {
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: "telegram".into(),
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "locked_out".into(),
+                    })
+                    .await;
+                }
+
+                #[cfg(feature = "metrics")]
+                counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "locked_out")
+                    .increment(1);
+            },
+            OtpVerifyResult::Expired => {
+                let _ = bot
+                    .send_message(
+                        chat_id,
+                        "Your code has expired. Send any message to get a new one.",
+                    )
+                    .await;
+
+                if let Some(sink) = event_sink {
+                    sink.emit(ChannelEvent::OtpResolved {
+                        channel_type: "telegram".into(),
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        resolution: "expired".into(),
+                    })
+                    .await;
+                }
+
+                #[cfg(feature = "metrics")]
+                counter!(tg_metrics::OTP_VERIFICATIONS_TOTAL, "result" => "expired").increment(1);
+            },
+            OtpVerifyResult::NoPending => {
+                // Shouldn't happen since we checked has_pending, but handle gracefully.
+            },
+        }
+    } else {
+        // No pending challenge — initiate one.
+        let init_result = {
+            let accts = accounts.read().unwrap();
+            match accts.get(account_id) {
+                Some(s) => {
+                    let mut otp = s.otp.lock().unwrap();
+                    otp.initiate(
+                        peer_id,
+                        username.map(String::from),
+                        sender_name.map(String::from),
+                    )
+                },
+                None => return,
+            }
+        };
+
+        match init_result {
+            OtpInitResult::Created(code) => {
+                let _ = bot
+                    .send_message(chat_id, OTP_CHALLENGE_MSG)
+                    .parse_mode(ParseMode::Html)
+                    .await;
+
+                // Emit OTP challenge event for the admin UI.
+                if let Some(sink) = event_sink {
+                    // Compute expires_at epoch.
+                    let expires_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64
+                        + 300;
+
+                    sink.emit(ChannelEvent::OtpChallenge {
+                        channel_type: "telegram".into(),
+                        account_id: account_id.to_string(),
+                        peer_id: peer_id.to_string(),
+                        username: username.map(String::from),
+                        sender_name: sender_name.map(String::from),
+                        code,
+                        expires_at,
+                    })
+                    .await;
+                }
+
+                #[cfg(feature = "metrics")]
+                counter!(tg_metrics::OTP_CHALLENGES_TOTAL).increment(1);
+            },
+            OtpInitResult::AlreadyPending | OtpInitResult::LockedOut => {
+                // Silent ignore.
+            },
+        }
+    }
 }
 
 /// Handle a single inbound Telegram message (teloxide dispatcher endpoint).
@@ -797,5 +1040,36 @@ mod tests {
     fn session_key_group() {
         let key = build_session_key("bot1", &ChatType::Group, "user123", Some("-100999"));
         assert_eq!(key, "telegram:bot1:group:-100999");
+    }
+
+    /// Security: the OTP challenge message sent to the Telegram user must
+    /// NEVER contain the verification code.  The code should only be visible
+    /// to the admin in the web UI.  If this test fails, unauthenticated users
+    /// can self-approve without admin involvement.
+    #[test]
+    fn security_otp_challenge_message_does_not_contain_code() {
+        let msg = OTP_CHALLENGE_MSG;
+
+        // Must not contain any 6-digit numeric sequences (OTP codes are 6 digits).
+        let has_six_digits = msg
+            .as_bytes()
+            .windows(6)
+            .any(|w| w.iter().all(|b| b.is_ascii_digit()));
+        assert!(
+            !has_six_digits,
+            "OTP challenge message must not contain a 6-digit code: {msg}"
+        );
+
+        // Must not contain format placeholders that could interpolate a code.
+        assert!(
+            !msg.contains("{code}") && !msg.contains("{0}"),
+            "OTP challenge message must not contain format placeholders: {msg}"
+        );
+
+        // Must contain instructions pointing to the web UI.
+        assert!(
+            msg.contains("Channels") && msg.contains("Senders"),
+            "OTP challenge message must tell the user where to find the code"
+        );
     }
 }
