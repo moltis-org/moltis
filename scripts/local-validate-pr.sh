@@ -35,6 +35,7 @@ fi
 
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci crates/gateway/src/assets/js/}"
+zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor .}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
 
@@ -47,6 +48,11 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   fi
   echo "Detected macOS without nvcc; using non-CUDA local validation commands." >&2
   echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
+fi
+
+if [[ -z "${LOCAL_VALIDATE_ZIZMOR_CMD:-}" ]] && ! command -v zizmor >/dev/null 2>&1; then
+  echo "zizmor CLI not found. Install it or set LOCAL_VALIDATE_ZIZMOR_CMD." >&2
+  exit 1
 fi
 
 repair_stale_llama_build_dirs() {
@@ -107,6 +113,7 @@ repair_stale_llama_build_dirs
 
 run_check "local/fmt" "$fmt_cmd"
 run_check "local/biome" "$biome_cmd"
+run_check "local/zizmor" "$zizmor_cmd"
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
 

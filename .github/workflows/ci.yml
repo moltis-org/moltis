@@ -33,6 +33,8 @@ jobs:
             context: local/fmt
           - label: biome
             context: local/biome
+          - label: zizmor
+            context: local/zizmor
           - label: clippy
             context: local/lint
           - label: test
