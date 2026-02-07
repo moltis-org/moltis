@@ -74,6 +74,7 @@ mod tests {
             skills: vec![SkillState {
                 name: "my-skill".into(),
                 relative_path: "skills/my-skill".into(),
+                trusted: true,
                 enabled: true,
             }],
         });
@@ -98,11 +99,13 @@ mod tests {
                 SkillState {
                     name: "s1".into(),
                     relative_path: "s1".into(),
+                    trusted: true,
                     enabled: true,
                 },
                 SkillState {
                     name: "s2".into(),
                     relative_path: "s2".into(),
+                    trusted: true,
                     enabled: true,
                 },
             ],
@@ -116,6 +119,27 @@ mod tests {
         assert!(!m.set_skill_enabled("a/b", "nope", false));
         // Non-existent repo returns false.
         assert!(!m.set_skill_enabled("x/y", "s1", false));
+    }
+
+    #[test]
+    fn test_manifest_set_skill_trusted() {
+        let mut m = SkillsManifest::default();
+        m.add_repo(RepoEntry {
+            source: "a/b".into(),
+            repo_name: "b".into(),
+            installed_at_ms: 0,
+            format: Default::default(),
+            skills: vec![SkillState {
+                name: "s1".into(),
+                relative_path: "s1".into(),
+                trusted: false,
+                enabled: false,
+            }],
+        });
+
+        assert!(m.set_skill_trusted("a/b", "s1", true));
+        assert!(m.find_repo("a/b").unwrap().skills[0].trusted);
+        assert!(!m.set_skill_trusted("a/b", "missing", true));
     }
 
     #[test]

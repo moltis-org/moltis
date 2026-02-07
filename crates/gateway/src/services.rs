@@ -426,6 +426,7 @@ pub trait SkillsService: Send + Sync {
     async fn repos_remove(&self, params: Value) -> ServiceResult;
     async fn skill_enable(&self, params: Value) -> ServiceResult;
     async fn skill_disable(&self, params: Value) -> ServiceResult;
+    async fn skill_trust(&self, params: Value) -> ServiceResult;
     async fn skill_detail(&self, params: Value) -> ServiceResult;
     async fn install_dep(&self, params: Value) -> ServiceResult;
 }
@@ -442,6 +443,7 @@ pub trait PluginsService: Send + Sync {
     async fn repos_remove(&self, params: Value) -> ServiceResult;
     async fn skill_enable(&self, params: Value) -> ServiceResult;
     async fn skill_disable(&self, params: Value) -> ServiceResult;
+    async fn skill_trust(&self, params: Value) -> ServiceResult;
     async fn skill_detail(&self, params: Value) -> ServiceResult;
 }
 
@@ -616,6 +618,7 @@ impl SkillsService for NoopSkillsService {
                             "description": description,
                             "display_name": display_name,
                             "relative_path": s.relative_path,
+                            "trusted": s.trusted,
                             "enabled": s.enabled,
                             "eligible": elig.as_ref().map(|e| e.eligible).unwrap_or(true),
                             "missing_bins": elig.as_ref().map(|e| e.missing_bins.clone()).unwrap_or_default(),
@@ -670,6 +673,10 @@ impl SkillsService for NoopSkillsService {
         }
 
         toggle_skill(&params, false)
+    }
+
+    async fn skill_trust(&self, params: Value) -> ServiceResult {
+        set_skill_trusted(&params, true)
     }
 
     async fn skill_detail(&self, params: Value) -> ServiceResult {
@@ -757,6 +764,7 @@ impl SkillsService for NoopSkillsService {
             "eligible": elig.eligible,
             "missing_bins": elig.missing_bins,
             "install_options": elig.install_options,
+            "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
             "source_url": source_url,
             "body": content.body,
@@ -965,6 +973,7 @@ impl PluginsService for NoopPluginsService {
                             "description": entry.map(|e| e.metadata.description.as_str()).unwrap_or(""),
                             "display_name": entry.and_then(|e| e.display_name.as_deref()),
                             "relative_path": s.relative_path,
+                            "trusted": s.trusted,
                             "enabled": s.enabled,
                             "eligible": true,
                             "missing_bins": [],
@@ -1002,6 +1011,10 @@ impl PluginsService for NoopPluginsService {
         }
 
         toggle_plugin_skill(&params, false)
+    }
+
+    async fn skill_trust(&self, params: Value) -> ServiceResult {
+        set_plugin_skill_trusted(&params, true)
     }
 
     async fn skill_detail(&self, params: Value) -> ServiceResult {
@@ -1069,6 +1082,7 @@ impl PluginsService for NoopPluginsService {
             "eligible": true,
             "missing_bins": empty,
             "install_options": empty,
+            "trusted": skill_state.trusted,
             "enabled": skill_state.enabled,
             "source_url": source_url,
             "body": entry.body,
@@ -1093,6 +1107,19 @@ fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(|e| e.to_string())?;
 
+    if enabled {
+        let trusted = manifest
+            .find_repo(source)
+            .and_then(|r| r.skills.iter().find(|s| s.name == skill_name))
+            .map(|s| s.trusted)
+            .ok_or_else(|| format!("skill '{skill_name}' not found in plugin repo '{source}'"))?;
+        if !trusted {
+            return Err(format!(
+                "skill '{skill_name}' is not trusted. Review it and run plugins.skill.trust before enabling"
+            ));
+        }
+    }
+
     if !manifest.set_skill_enabled(source, skill_name, enabled) {
         return Err(format!(
             "skill '{skill_name}' not found in plugin repo '{source}'"
@@ -1101,6 +1128,35 @@ fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
     store.save(&manifest).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
+}
+
+fn set_plugin_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'source' parameter".to_string())?;
+    let skill_name = params
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+    let manifest_path =
+        moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
+    let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
+    let mut manifest = store.load().map_err(|e| e.to_string())?;
+
+    if !manifest.set_skill_trusted(source, skill_name, trusted) {
+        return Err(format!(
+            "skill '{skill_name}' not found in plugin repo '{source}'"
+        ));
+    }
+
+    if !trusted {
+        let _ = manifest.set_skill_enabled(source, skill_name, false);
+    }
+
+    store.save(&manifest).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "source": source, "skill": skill_name, "trusted": trusted }))
 }
 
 /// Delete a personal or project skill directory to disable it.
@@ -1166,6 +1222,7 @@ fn skill_detail_discovered(source_type: &str, skill_name: &str) -> ServiceResult
         "eligible": elig.eligible,
         "missing_bins": elig.missing_bins,
         "install_options": elig.install_options,
+        "trusted": true,
         "enabled": true,
         "body": content.body,
         "body_html": markdown_to_html(&content.body),
@@ -1189,12 +1246,52 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(|e| e.to_string())?;
 
+    if enabled {
+        let trusted = manifest
+            .find_repo(source)
+            .and_then(|r| r.skills.iter().find(|s| s.name == skill_name))
+            .map(|s| s.trusted)
+            .ok_or_else(|| format!("skill '{skill_name}' not found in repo '{source}'"))?;
+        if !trusted {
+            return Err(format!(
+                "skill '{skill_name}' is not trusted. Review it and run skills.skill.trust before enabling"
+            ));
+        }
+    }
+
     if !manifest.set_skill_enabled(source, skill_name, enabled) {
         return Err(format!("skill '{skill_name}' not found in repo '{source}'"));
     }
     store.save(&manifest).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
+}
+
+fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'source' parameter".to_string())?;
+    let skill_name = params
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+    let manifest_path =
+        moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+    let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
+    let mut manifest = store.load().map_err(|e| e.to_string())?;
+
+    if !manifest.set_skill_trusted(source, skill_name, trusted) {
+        return Err(format!("skill '{skill_name}' not found in repo '{source}'"));
+    }
+
+    if !trusted {
+        let _ = manifest.set_skill_enabled(source, skill_name, false);
+    }
+
+    store.save(&manifest).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "source": source, "skill": skill_name, "trusted": trusted }))
 }
 
 // ── Browser ─────────────────────────────────────────────────────────────────

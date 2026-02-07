@@ -210,6 +210,12 @@ function eligibilityBadge(d) {
 	return html`<span style="font-size:.65rem;padding:1px 5px;border-radius:9999px;background:var(--surface2);color:var(--muted);font-weight:500">no deps declared</span>`;
 }
 
+function trustBadge(d) {
+	if (d.trusted === false)
+		return html`<span style="font-size:.65rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`;
+	return null;
+}
+
 function SkillMetadata(props) {
 	var d = props.detail;
 	if (!(d.author || d.version || d.homepage || d.source_url)) return null;
@@ -289,6 +295,7 @@ function SkillDetail(props) {
 	if (!d) return null;
 
 	var isDisc = d.source === "personal" || d.source === "project";
+	var needsTrust = !isDisc && d.trusted === false;
 
 	function doToggle() {
 		var method = d.enabled ? "skills.skill.disable" : "skills.skill.enable";
@@ -296,12 +303,30 @@ function SkillDetail(props) {
 			if (r?.ok) {
 				if (isDisc) onClose();
 				fetchAll();
+				props.onReload?.();
+			} else {
+				showToast(`Failed: ${r?.error || "unknown error"}`, "error");
 			}
 		});
 	}
 
 	function onToggle() {
 		if (!S.connected) return;
+		if (!d.enabled && needsTrust) {
+			requestConfirm(`Trust skill "${d.name}" from ${props.repoSource}?`, {
+				confirmLabel: "Trust & Enable",
+			}).then((yes) => {
+				if (!yes) return;
+				sendRpc("skills.skill.trust", { source: props.repoSource, skill: d.name }).then((res) => {
+					if (!res?.ok) {
+						showToast(`Trust failed: ${res?.error || "unknown error"}`, "error");
+						return;
+					}
+					doToggle();
+				});
+			});
+			return;
+		}
 		if (isDisc && d.enabled) {
 			requestConfirm(`Delete skill "${d.name}"? This removes the SKILL.md file.`, {
 				confirmLabel: "Delete",
@@ -321,6 +346,7 @@ function SkillDetail(props) {
         ${d.display_name && html`<span style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted)">${d.name}</span>`}
         ${d.license && html`<span style="font-size:.65rem;padding:1px 6px;border-radius:9999px;background:var(--surface2);color:var(--muted)">${d.license}</span>`}
         ${eligibilityBadge(d)}
+        ${trustBadge(d)}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <button onClick=${onToggle} class=${isDisc && d.enabled ? "provider-btn provider-btn-sm provider-btn-danger" : ""} style=${
@@ -446,6 +472,7 @@ function RepoCard(props) {
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
                   ${skill.enabled && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--accent);color:#fff;font-weight:500">enabled</span>`}
+                  ${skill.trusted === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`}
                   ${skill.eligible === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--error, #e55);color:#fff;font-weight:500">blocked</span>`}
                 </div>
               </div>`,

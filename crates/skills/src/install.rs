@@ -179,6 +179,7 @@ async fn scan_repo_skills(
         let state = SkillState {
             name: meta.name.clone(),
             relative_path: relative,
+            trusted: false,
             enabled: false,
         };
         return Ok((vec![meta], vec![state]));
@@ -219,6 +220,7 @@ async fn scan_repo_skills(
                         skill_states.push(SkillState {
                             name: meta.name.clone(),
                             relative_path: relative,
+                            trusted: false,
                             enabled: false,
                         });
                         skills_meta.push(meta);

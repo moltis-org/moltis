@@ -87,6 +87,7 @@ pub async fn install_plugin(
                     SkillState {
                         name: e.metadata.name.clone(),
                         relative_path: relative,
+                        trusted: false,
                         enabled: false,
                     }
                 })

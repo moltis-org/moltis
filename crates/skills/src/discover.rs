@@ -119,7 +119,7 @@ fn discover_plugins(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
 
     for repo in &manifest.repos {
         for skill_state in &repo.skills {
-            if !skill_state.enabled {
+            if !skill_state.enabled || !skill_state.trusted {
                 continue;
             }
             let skill_dir = install_dir.join(&skill_state.relative_path);
@@ -157,7 +157,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
 
     for repo in &manifest.repos {
         for skill_state in &repo.skills {
-            if !skill_state.enabled {
+            if !skill_state.enabled || !skill_state.trusted {
                 continue;
             }
             let skill_dir = install_dir.join(&skill_state.relative_path);
@@ -279,11 +279,13 @@ mod tests {
                     SkillState {
                         name: "a".into(),
                         relative_path: "repo/skills/a".into(),
+                        trusted: true,
                         enabled: true,
                     },
                     SkillState {
                         name: "b".into(),
                         relative_path: "repo/skills/b".into(),
+                        trusted: false,
                         enabled: false,
                     },
                 ],

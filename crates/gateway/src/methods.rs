@@ -126,12 +126,14 @@ const WRITE_METHODS: &[&str] = &[
     "skills.install",
     "skills.remove",
     "skills.repos.remove",
+    "skills.skill.trust",
     "skills.skill.enable",
     "skills.skill.disable",
     "skills.install_dep",
     "plugins.install",
     "plugins.remove",
     "plugins.repos.remove",
+    "plugins.skill.trust",
     "plugins.skill.enable",
     "plugins.skill.disable",
     "mcp.add",
@@ -2164,6 +2166,19 @@ impl MethodRegistry {
             }),
         );
         self.register(
+            "skills.skill.trust",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .skills
+                        .skill_trust(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
             "skills.skill.enable",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -2264,6 +2279,19 @@ impl MethodRegistry {
                         .services
                         .plugins
                         .repos_remove(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "plugins.skill.trust",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .plugins
+                        .skill_trust(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
