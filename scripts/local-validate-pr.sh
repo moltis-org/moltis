@@ -4,6 +4,7 @@ set -euo pipefail
 
 ACTIVE_PIDS=()
 CURRENT_PID=""
+RUN_CHECK_ASYNC_PID=""
 
 remove_active_pid() {
   local target="$1"
@@ -197,7 +198,7 @@ run_check_async() {
     local ended
     local duration
     started="$(date +%s)"
-    if run_check "$context" "$cmd"; then
+    if run_check "$context" "$cmd" >&2; then
       ended="$(date +%s)"
       duration="$((ended - started))"
       printf 'ok %s\n' "$duration" >"/tmp/local-validate-${safe_context}.result"
@@ -210,7 +211,7 @@ run_check_async() {
   ) &
   local pid="$!"
   ACTIVE_PIDS+=("$pid")
-  echo "$pid"
+  RUN_CHECK_ASYNC_PID="$pid"
 }
 
 report_async_result() {
@@ -243,9 +244,12 @@ echo "Publishing commit statuses to: $REPO"
 repair_stale_llama_build_dirs
 
 # Run fast independent checks in parallel.
-fmt_pid="$(run_check_async "local/fmt" "$fmt_cmd")"
-biome_pid="$(run_check_async "local/biome" "$biome_cmd")"
-zizmor_pid="$(run_check_async "local/zizmor" "$zizmor_cmd")"
+run_check_async "local/fmt" "$fmt_cmd"
+fmt_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/biome" "$biome_cmd"
+biome_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/zizmor" "$zizmor_cmd"
+zizmor_pid="$RUN_CHECK_ASYNC_PID"
 
 parallel_failed=0
 if ! wait "$fmt_pid"; then parallel_failed=1; fi
