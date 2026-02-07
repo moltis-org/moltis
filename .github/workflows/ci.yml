@@ -159,26 +159,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    container:
-      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_CACHE_SIZE: "5G"
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      SCCACHE_CACHE_SIZE: "2G"
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Clean up corrupted cargo config
-        run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y curl git cmake build-essential clang libclang-dev pkg-config ca-certificates
-          nvcc --version
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: nightly
@@ -186,7 +183,7 @@ jobs:
       - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
         with:
-          shared-key: rust-ci-cuda-v1
+          shared-key: coverage-v1
           cache-all-crates: true
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
@@ -205,7 +202,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
