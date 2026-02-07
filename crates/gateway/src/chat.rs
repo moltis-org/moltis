@@ -1618,6 +1618,21 @@ async fn run_with_tools(
                     name,
                     arguments,
                 } => {
+                    // Send tool status to channels (Telegram, etc.)
+                    let state_clone = Arc::clone(&state);
+                    let sk_clone = sk.clone();
+                    let name_clone = name.clone();
+                    let args_clone = arguments.clone();
+                    tokio::spawn(async move {
+                        send_tool_status_to_channels(
+                            &state_clone,
+                            &sk_clone,
+                            &name_clone,
+                            &args_clone,
+                        )
+                        .await;
+                    });
+
                     let mut payload = serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -2202,6 +2217,139 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
                 },
             }
         });
+    }
+}
+
+/// Send a tool execution status to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn send_tool_status_to_channels(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) {
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.services.channel_outbound_arc() {
+        Some(o) => o,
+        None => return,
+    };
+
+    // Format a concise tool execution message
+    let message = format_tool_status_message(tool_name, arguments);
+
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let message = message.clone();
+        tokio::spawn(async move {
+            // Send as a silent message to avoid notification spam
+            if let Err(e) = outbound
+                .send_text_silent(&target.account_id, &target.chat_id, &message)
+                .await
+            {
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send tool status to channel: {e}"
+                );
+            }
+        });
+    }
+}
+
+/// Format a human-readable tool execution message.
+fn format_tool_status_message(tool_name: &str, arguments: &serde_json::Value) -> String {
+    match tool_name {
+        "browser" => {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let url = arguments.get("url").and_then(|v| v.as_str());
+            let ref_ = arguments.get("ref_").and_then(|v| v.as_u64());
+
+            match action {
+                "navigate" => {
+                    if let Some(u) = url {
+                        format!("🌐 Navigating to {}", truncate_url(u))
+                    } else {
+                        "🌐 Navigating...".to_string()
+                    }
+                },
+                "screenshot" => "📸 Taking screenshot...".to_string(),
+                "snapshot" => "📋 Getting page snapshot...".to_string(),
+                "click" => {
+                    if let Some(r) = ref_ {
+                        format!("👆 Clicking element #{}", r)
+                    } else {
+                        "👆 Clicking...".to_string()
+                    }
+                },
+                "type" => "⌨️ Typing...".to_string(),
+                "scroll" => "📜 Scrolling...".to_string(),
+                "evaluate" => "⚡ Running JavaScript...".to_string(),
+                "wait" => "⏳ Waiting for element...".to_string(),
+                "close" => "🚪 Closing browser...".to_string(),
+                _ => format!("🌐 Browser: {}", action),
+            }
+        },
+        "exec" => {
+            let command = arguments.get("command").and_then(|v| v.as_str());
+            if let Some(cmd) = command {
+                // Show first ~50 chars of command
+                let display_cmd = if cmd.len() > 50 {
+                    format!("{}...", &cmd[..50])
+                } else {
+                    cmd.to_string()
+                };
+                format!("💻 Running: `{}`", display_cmd)
+            } else {
+                "💻 Executing command...".to_string()
+            }
+        },
+        "web_fetch" => {
+            let url = arguments.get("url").and_then(|v| v.as_str());
+            if let Some(u) = url {
+                format!("🔗 Fetching {}", truncate_url(u))
+            } else {
+                "🔗 Fetching URL...".to_string()
+            }
+        },
+        "web_search" => {
+            let query = arguments.get("query").and_then(|v| v.as_str());
+            if let Some(q) = query {
+                let display_q = if q.len() > 40 {
+                    format!("{}...", &q[..40])
+                } else {
+                    q.to_string()
+                };
+                format!("🔍 Searching: {}", display_q)
+            } else {
+                "🔍 Searching...".to_string()
+            }
+        },
+        "memory_search" => "🧠 Searching memory...".to_string(),
+        "memory_store" => "🧠 Storing to memory...".to_string(),
+        _ => format!("🔧 {}", tool_name),
+    }
+}
+
+/// Truncate a URL for display (show domain + short path).
+fn truncate_url(url: &str) -> String {
+    // Try to extract domain from URL
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+
+    // Take first 50 chars max
+    if without_scheme.len() > 50 {
+        format!("{}...", &without_scheme[..50])
+    } else {
+        without_scheme.to_string()
     }
 }
 

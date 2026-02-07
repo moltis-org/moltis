@@ -173,6 +173,10 @@ pub trait ChannelOutbound: Send + Sync {
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())
     }
+    /// Send a text message without notification (silent). Falls back to send_text by default.
+    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
+        self.send_text(account_id, to, text).await
+    }
 }
 
 /// Probe channel account health.

@@ -65,6 +65,23 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
+    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
+        let bot = self.get_bot(account_id)?;
+        let chat_id = ChatId(to.parse::<i64>()?);
+
+        let html = markdown::markdown_to_telegram_html(text);
+        let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
+
+        for chunk in chunks {
+            bot.send_message(chat_id, &chunk)
+                .parse_mode(ParseMode::Html)
+                .disable_notification(true) // Silent - no sound/vibration
+                .await?;
+        }
+
+        Ok(())
+    }
+
     async fn send_media(&self, account_id: &str, to: &str, payload: &ReplyPayload) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);

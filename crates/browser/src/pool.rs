@@ -9,8 +9,7 @@ use std::{
 use {
     chromiumoxide::{
         Browser, BrowserConfig as CdpBrowserConfig, Page,
-        cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams,
-        handler::HandlerConfig,
+        cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams, handler::HandlerConfig,
     },
     futures::StreamExt,
     sysinfo::System,
@@ -343,15 +342,14 @@ impl BrowserPool {
             ..Default::default()
         };
 
-        let (browser, mut handler) =
-            Browser::connect_with_config(&ws_url, handler_config)
-                .await
-                .map_err(|e| {
-                    BrowserError::LaunchFailed(format!(
-                        "failed to connect to containerized browser at {}: {}",
-                        ws_url, e
-                    ))
-                })?;
+        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
+            .await
+            .map_err(|e| {
+                BrowserError::LaunchFailed(format!(
+                    "failed to connect to containerized browser at {}: {}",
+                    ws_url, e
+                ))
+            })?;
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
