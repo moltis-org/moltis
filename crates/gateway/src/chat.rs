@@ -2197,11 +2197,20 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
         Some(o) => o,
         None => return,
     };
+    deliver_channel_replies_to_targets(outbound, targets, text).await;
+}
+
+async fn deliver_channel_replies_to_targets(
+    outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
+    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    text: &str,
+) {
     let text = text.to_string();
+    let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let text = text.clone();
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => {
                     if let Err(e) = outbound
@@ -2216,7 +2225,13 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
                     }
                 },
             }
-        });
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel reply task join failed");
+        }
     }
 }
 
@@ -2400,10 +2415,11 @@ async fn send_screenshot_to_channels(
         silent: false,
     };
 
+    let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let payload = payload.clone();
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => {
                     if let Err(e) = outbound
@@ -2429,13 +2445,77 @@ async fn send_screenshot_to_channels(
                     }
                 },
             }
-        });
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel reply task join failed");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        anyhow::Result,
+        moltis_common::types::ReplyPayload,
+        std::{
+            sync::{
+                Arc,
+                atomic::{AtomicUsize, Ordering},
+            },
+            time::{Duration, Instant},
+        },
+    };
+
+    struct MockChannelOutbound {
+        calls: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl moltis_channels::plugin::ChannelOutbound for MockChannelOutbound {
+        async fn send_text(&self, _account_id: &str, _to: &str, _text: &str) -> Result<()> {
+            tokio::time::sleep(self.delay).await;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn deliver_channel_replies_waits_for_outbound_sends() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> =
+            Arc::new(MockChannelOutbound {
+                calls: Arc::clone(&calls),
+                delay: Duration::from_millis(50),
+            });
+        let targets = vec![moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+        }];
+
+        let start = Instant::now();
+        deliver_channel_replies_to_targets(outbound, targets, "hello").await;
+
+        assert!(
+            start.elapsed() >= Duration::from_millis(45),
+            "delivery should wait for outbound send completion"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     /// Build a bare session_locks map for testing the semaphore logic
     /// without constructing a full LiveChatService.

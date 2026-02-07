@@ -64,6 +64,13 @@ pub struct TailscaleOpts {
     pub reset_on_exit: bool,
 }
 
+fn should_prebuild_sandbox_image(
+    mode: &moltis_tools::sandbox::SandboxMode,
+    packages: &[String],
+) -> bool {
+    !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
+}
+
 // ── Shared app state ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -214,6 +221,7 @@ pub fn build_gateway_app(
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -268,6 +276,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -720,7 +729,7 @@ pub async fn start_gateway(
             .clone()
             .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
 
-        if !packages.is_empty() {
+        if should_prebuild_sandbox_image(router.mode(), &packages) {
             let deferred_for_build = Arc::clone(&deferred_state);
             tokio::spawn(async move {
                 // Broadcast build start event.
@@ -2619,6 +2628,52 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[cfg(feature = "web-ui")]
+async fn oauth_callback_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(code) = params.get("code") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing authorization code.</p>".to_string()),
+        )
+            .into_response();
+    };
+    let Some(oauth_state) = params.get("state") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing OAuth state.</p>".to_string()),
+        )
+            .into_response();
+    };
+
+    match state
+        .gateway
+        .services
+        .provider_setup
+        .oauth_complete(serde_json::json!({
+            "code": code,
+            "state": oauth_state,
+        }))
+        .await
+    {
+        Ok(_) => Html(
+            "<h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script>"
+                .to_string(),
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth callback completion failed");
+            (
+                StatusCode::BAD_REQUEST,
+                Html("<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>".to_string()),
+            )
+                .into_response()
+        },
+    }
+}
+
+#[cfg(feature = "web-ui")]
 async fn spa_fallback(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -3778,6 +3833,27 @@ mod tests {
         assert!(is_same_origin(
             "https://app.moltis.localhost:8080",
             "localhost:8080"
+        ));
+    }
+
+    #[test]
+    fn prebuild_runs_only_when_mode_enabled_and_packages_present() {
+        let packages = vec!["curl".to_string()];
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &packages
+        ));
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::NonMain,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::Off,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &[]
         ));
     }
 
