@@ -23,6 +23,24 @@ pub enum ChannelEvent {
         account_id: String,
         reason: String,
     },
+    /// An OTP challenge was issued to a non-allowlisted DM user.
+    OtpChallenge {
+        channel_type: String,
+        account_id: String,
+        peer_id: String,
+        username: Option<String>,
+        sender_name: Option<String>,
+        code: String,
+        expires_at: i64,
+    },
+    /// An OTP challenge was resolved (approved, locked out, or expired).
+    OtpResolved {
+        channel_type: String,
+        account_id: String,
+        peer_id: String,
+        username: Option<String>,
+        resolution: String,
+    },
 }
 
 /// Sink for channel events — the gateway provides the concrete implementation.
@@ -54,6 +72,18 @@ pub trait ChannelEventSink: Send + Sync {
     /// This is used when the polling loop detects an unrecoverable error
     /// (e.g. another bot instance is running with the same token).
     async fn request_disable_account(&self, channel_type: &str, account_id: &str, reason: &str);
+
+    /// Request adding a sender to the allowlist (OTP self-approval).
+    ///
+    /// The gateway implementation calls `sender_approve` to persist the change
+    /// and restart the account.
+    async fn request_sender_approval(
+        &self,
+        _channel_type: &str,
+        _account_id: &str,
+        _identifier: &str,
+    ) {
+    }
 }
 
 /// Metadata about a channel message, used for UI display.

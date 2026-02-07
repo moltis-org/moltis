@@ -8,6 +8,7 @@ pub mod bot;
 pub mod config;
 pub mod handlers;
 pub mod markdown;
+pub mod otp;
 pub mod outbound;
 pub mod plugin;
 pub mod state;

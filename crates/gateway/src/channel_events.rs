@@ -309,6 +309,35 @@ impl ChannelEventSink for GatewayChannelEventSink {
         }
     }
 
+    async fn request_sender_approval(
+        &self,
+        _channel_type: &str,
+        account_id: &str,
+        identifier: &str,
+    ) {
+        if let Some(state) = self.state.get() {
+            let params = serde_json::json!({
+                "account_id": account_id,
+                "identifier": identifier,
+            });
+            match state.services.channel.sender_approve(params).await {
+                Ok(_) => {
+                    info!(account_id, identifier, "OTP self-approval: sender approved");
+                },
+                Err(e) => {
+                    warn!(
+                        account_id,
+                        identifier,
+                        error = %e,
+                        "OTP self-approval: failed to approve sender"
+                    );
+                },
+            }
+        } else {
+            warn!("request_sender_approval: gateway not ready");
+        }
+    }
+
     async fn dispatch_command(
         &self,
         command: &str,
