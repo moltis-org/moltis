@@ -10,7 +10,7 @@ import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
 import { connected, models as modelsSig } from "./signals.js";
 import * as S from "./state.js";
-import { ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
+import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./ui.js";
 
 var channels = signal([]);
 
@@ -137,7 +137,10 @@ function SendersTab() {
 		sendRpc(rpc, {
 			account_id: sendersAccount.value,
 			identifier: identifier,
-		}).then(() => loadSenders());
+		}).then(() => {
+			loadSenders();
+			loadChannels();
+		});
 	}
 
 	return html`<div>
@@ -171,7 +174,13 @@ function SendersTab() {
             <td class="senders-td">${s.message_count}</td>
             <td class="senders-td" style="color:var(--muted);font-size:12px;">${lastSeenMs ? html`<time data-epoch-ms="${lastSeenMs}">${new Date(lastSeenMs).toISOString()}</time>` : "\u2014"}</td>
             <td class="senders-td">
-              <span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? "Allowed" : "Denied"}</span>
+              ${
+								s.otp_pending
+									? html`<span class="provider-item-badge cursor-pointer select-none" style="background:var(--warning-bg, #fef3c7);color:var(--warning-text, #92400e);" onClick=${() => {
+											navigator.clipboard.writeText(s.otp_pending.code).then(() => showToast("OTP code copied"));
+										}}>OTP: <code class="text-xs">${s.otp_pending.code}</code></span>`
+									: html`<span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? "Allowed" : "Denied"}</span>`
+							}
             </td>
             <td class="senders-td">
               ${
@@ -188,11 +197,61 @@ function SendersTab() {
   </div>`;
 }
 
+// ── Tag-style allowlist input ────────────────────────────────
+function AllowlistInput({ value, onChange }) {
+	var input = useSignal("");
+
+	function addTag(raw) {
+		var tag = raw.trim().replace(/^@/, "");
+		if (tag && !value.includes(tag)) onChange([...value, tag]);
+		input.value = "";
+	}
+
+	function removeTag(tag) {
+		onChange(value.filter((t) => t !== tag));
+	}
+
+	function onKeyDown(e) {
+		if (e.key === "Enter" || e.key === ",") {
+			e.preventDefault();
+			if (input.value.trim()) addTag(input.value);
+		} else if (e.key === "Backspace" && !input.value && value.length > 0) {
+			onChange(value.slice(0, -1));
+		}
+	}
+
+	return html`<div class="flex flex-wrap items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1.5"
+    style="min-height:38px;cursor:text;"
+    onClick=${(e) => e.currentTarget.querySelector("input")?.focus()}>
+    ${value.map(
+			(tag) => html`<span key=${tag}
+        class="inline-flex items-center gap-1 rounded-full bg-[var(--accent)]/10 px-2 py-0.5 text-xs text-[var(--accent)]">
+        ${tag}
+        <button type="button" class="inline-flex items-center text-[var(--muted)] hover:text-[var(--accent)]"
+          style="line-height:1;font-size:14px;padding:0;background:none;border:none;cursor:pointer;"
+          onClick=${(e) => {
+						e.stopPropagation();
+						removeTag(tag);
+					}}>\u00d7</button>
+      </span>`,
+		)}
+    <input type="text" value=${input.value}
+      onInput=${(e) => {
+				input.value = e.target.value;
+			}}
+      onKeyDown=${onKeyDown}
+      placeholder=${value.length === 0 ? "Type a username and press Enter" : ""}
+      class="flex-1 bg-transparent text-[var(--text)] text-sm outline-none border-none"
+      style="min-width:80px;padding:2px 0;font-family:var(--font-body);" />
+  </div>`;
+}
+
 // ── Add channel modal ────────────────────────────────────────
 function AddChannelModal() {
 	var error = useSignal("");
 	var saving = useSignal(false);
 	var addModel = useSignal("");
+	var allowlistItems = useSignal([]);
 
 	function onSubmit(e) {
 		e.preventDefault();
@@ -207,19 +266,13 @@ function AddChannelModal() {
 			error.value = "Bot token is required.";
 			return;
 		}
-		var allowlist = form
-			.querySelector("[data-field=allowlist]")
-			.value.trim()
-			.split(/\n/)
-			.map((s) => s.trim())
-			.filter(Boolean);
 		error.value = "";
 		saving.value = true;
 		var addConfig = {
 			token: token,
 			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
 			mention_mode: form.querySelector("[data-field=mentionMode]").value,
-			allowlist: allowlist,
+			allowlist: allowlistItems.value,
 		};
 		if (addModel.value) {
 			addConfig.model = addModel.value;
@@ -235,6 +288,7 @@ function AddChannelModal() {
 			if (res?.ok) {
 				showAddModal.value = false;
 				addModel.value = "";
+				allowlistItems.value = [];
 				loadChannels();
 			} else {
 				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.";
@@ -285,9 +339,10 @@ function AddChannelModal() {
 					addModel.value = v;
 				}}
         placeholder=${defaultPlaceholder} />
-      <label class="text-xs text-[var(--muted)]">DM Allowlist (one username per line)</label>
-      <textarea data-field="allowlist" placeholder="user1\nuser2" rows="3"
-        style="font-family:var(--font-body);resize:vertical;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:.85rem;" />
+      <label class="text-xs text-[var(--muted)]">DM Allowlist</label>
+      <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
+				allowlistItems.value = v;
+			}} />
       ${error.value && html`<div class="text-xs text-[var(--error)] channel-error" style="display:block;">${error.value}</div>`}
       <button class="provider-btn"
         onClick=${onSubmit} disabled=${saving.value}>
@@ -303,8 +358,10 @@ function EditChannelModal() {
 	var error = useSignal("");
 	var saving = useSignal(false);
 	var editModel = useSignal("");
+	var allowlistItems = useSignal([]);
 	useEffect(() => {
 		editModel.value = ch?.config?.model || "";
+		allowlistItems.value = ch?.config?.allowlist || [];
 	}, [ch]);
 	if (!ch) return null;
 	var cfg = ch.config || {};
@@ -312,19 +369,13 @@ function EditChannelModal() {
 	function onSave(e) {
 		e.preventDefault();
 		var form = e.target.closest(".channel-form");
-		var allowlist = form
-			.querySelector("[data-field=allowlist]")
-			.value.trim()
-			.split(/\n/)
-			.map((s) => s.trim())
-			.filter(Boolean);
 		error.value = "";
 		saving.value = true;
 		var updateConfig = {
 			token: cfg.token || "",
 			dm_policy: form.querySelector("[data-field=dmPolicy]").value,
 			mention_mode: form.querySelector("[data-field=mentionMode]").value,
-			allowlist: allowlist,
+			allowlist: allowlistItems.value,
 		};
 		if (editModel.value) {
 			updateConfig.model = editModel.value;
@@ -376,9 +427,10 @@ function EditChannelModal() {
 					editModel.value = v;
 				}}
         placeholder=${defaultPlaceholder} />
-      <label class="text-xs text-[var(--muted)]">DM Allowlist (one username per line)</label>
-      <textarea data-field="allowlist" rows="3"
-        style="font-family:var(--font-body);resize:vertical;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:.85rem;">${(cfg.allowlist || []).join("\n")}</textarea>
+      <label class="text-xs text-[var(--muted)]">DM Allowlist</label>
+      <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
+				allowlistItems.value = v;
+			}} />
       ${error.value && html`<div class="text-xs text-[var(--error)] channel-error" style="display:block;">${error.value}</div>`}
       <button class="provider-btn"
         onClick=${onSave} disabled=${saving.value}>
@@ -396,7 +448,14 @@ function ChannelsPage() {
 		if (connected.value) loadChannels();
 
 		var unsub = onEvent("channel", (p) => {
-			if (p.kind === "inbound_message" && activeTab.value === "senders" && sendersAccount.value === p.account_id) {
+			if (p.kind === "otp_resolved") {
+				loadChannels();
+			}
+			if (
+				activeTab.value === "senders" &&
+				sendersAccount.value === p.account_id &&
+				(p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")
+			) {
 				loadSenders();
 			}
 		});

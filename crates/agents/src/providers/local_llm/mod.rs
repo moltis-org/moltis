@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod models;
+pub mod response_parser;
 pub mod system_info;
 
 use std::{path::PathBuf, pin::Pin};
@@ -18,7 +19,7 @@ use {
     tracing::info,
 };
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent};
+use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent};
 
 pub use {
     backend::{BackendType, LocalBackend},
@@ -109,7 +110,7 @@ impl LocalLlmProvider {
         let backend_type = self
             .config
             .backend
-            .unwrap_or_else(backend::detect_best_backend);
+            .unwrap_or_else(|| backend::detect_backend_for_model(&self.config.model_id));
         info!(
             model = %self.config.model_id,
             backend = ?backend_type,
@@ -149,7 +150,7 @@ impl LlmProvider for LocalLlmProvider {
 
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         _tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
@@ -161,7 +162,7 @@ impl LlmProvider for LocalLlmProvider {
 
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             if let Err(e) = self.ensure_loaded().await {

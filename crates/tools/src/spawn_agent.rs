@@ -210,7 +210,7 @@ impl AgentTool for SpawnAgentTool {
 mod tests {
     use {
         super::*,
-        moltis_agents::model::{CompletionResponse, StreamEvent, Usage},
+        moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage},
         std::pin::Pin,
         tokio_stream::Stream,
     };
@@ -233,7 +233,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             Ok(CompletionResponse {
@@ -248,7 +248,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }

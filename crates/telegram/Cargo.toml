@@ -5,11 +5,13 @@ version.workspace = true
 
 [dependencies]
 anyhow            = { workspace = true }
-async-trait       = "0.1"
+async-trait       = { workspace = true }
+base64            = { workspace = true }
 moltis-auto-reply = { workspace = true }
 moltis-channels   = { workspace = true }
 moltis-common     = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
+rand              = { workspace = true }
 reqwest           = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }

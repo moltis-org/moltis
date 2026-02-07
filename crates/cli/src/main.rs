@@ -1,4 +1,6 @@
 mod auth_commands;
+mod browser_commands;
+mod config_commands;
 mod db_commands;
 mod hooks_commands;
 mod sandbox_commands;
@@ -39,6 +41,10 @@ struct Cli {
     /// Custom data directory (overrides default data dir).
     #[arg(long, global = true, env = "MOLTIS_DATA_DIR")]
     data_dir: Option<std::path::PathBuf>,
+    /// Disable TLS (for cloud deployments where the provider handles TLS).
+    #[cfg(feature = "tls")]
+    #[arg(long, global = true, env = "MOLTIS_NO_TLS")]
+    no_tls: bool,
     /// Tailscale mode: off, serve, or funnel.
     #[cfg(feature = "tailscale")]
     #[arg(long, global = true, env = "MOLTIS_TAILSCALE")]
@@ -80,7 +86,7 @@ enum Commands {
     /// Configuration management.
     Config {
         #[command(subcommand)]
-        action: ConfigAction,
+        action: config_commands::ConfigAction,
     },
     /// List available models.
     Models,
@@ -107,6 +113,11 @@ enum Commands {
     Sandbox {
         #[command(subcommand)]
         action: sandbox_commands::SandboxAction,
+    },
+    /// Browser configuration management.
+    Browser {
+        #[command(subcommand)]
+        action: browser_commands::BrowserAction,
     },
     /// Database management (reset, clear, migrate).
     Db {
@@ -139,13 +150,6 @@ enum SessionAction {
 }
 
 #[derive(Subcommand)]
-enum ConfigAction {
-    Get { key: Option<String> },
-    Set { key: String, value: String },
-    Edit,
-}
-
-#[derive(Subcommand)]
 enum SkillAction {
     /// List all discovered skills.
     List,
@@ -169,8 +173,15 @@ enum SkillAction {
 /// Initialise tracing and optionally attach a [`LogBroadcastLayer`] that
 /// captures events into an in-memory ring buffer for the web UI.
 fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
-    let filter =
+    // Start with user-specified or default log level
+    let base_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+
+    // Suppress noisy chromiumoxide logs:
+    // - "WS Invalid message" warnings (Chrome sends CDP events the library doesn't recognize)
+    // - "WS Connection error" errors (normal when idle connections are closed)
+    // These are expected browser sandbox behavior, not actionable errors.
+    let filter = base_filter.add_directive("chromiumoxide=off".parse().unwrap());
 
     let registry = tracing_subscriber::registry().with(filter);
 
@@ -186,7 +197,7 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
         registry
             .with(
                 fmt::layer()
-                    .with_target(false)
+                    .with_target(true)
                     .with_thread_ids(false)
                     .with_ansi(true),
             )
@@ -286,23 +297,29 @@ async fn main() -> anyhow::Result<()> {
 
     info!(version = env!("CARGO_PKG_VERSION"), "moltis starting");
 
+    // Apply directory overrides before any command so all subcommands
+    // (config check, db, sandbox, etc.) respect --config-dir / --data-dir.
+    if let Some(ref dir) = cli.config_dir {
+        moltis_config::set_config_dir(dir.clone());
+    }
+    if let Some(ref dir) = cli.data_dir {
+        moltis_config::set_data_dir(dir.clone());
+    }
+
     match cli.command {
         // Default: start gateway when no subcommand is provided
         None | Some(Commands::Gateway) => {
-            // Apply directory overrides before loading config
-            if let Some(ref dir) = cli.config_dir {
-                moltis_config::set_config_dir(dir.clone());
-            }
-            if let Some(ref dir) = cli.data_dir {
-                moltis_config::set_data_dir(dir.clone());
-            }
-
             // Load config to get server settings
             let config = moltis_config::discover_and_load();
 
             // CLI args override config values
             let bind = cli.bind.unwrap_or(config.server.bind);
             let port = cli.port.unwrap_or(config.server.port);
+
+            #[cfg(feature = "tls")]
+            let no_tls = cli.no_tls;
+            #[cfg(not(feature = "tls"))]
+            let no_tls = false;
 
             #[cfg(feature = "tailscale")]
             let tailscale_opts = cli
@@ -317,6 +334,7 @@ async fn main() -> anyhow::Result<()> {
             moltis_gateway::server::start_gateway(
                 &bind,
                 port,
+                no_tls,
                 log_buffer,
                 cli.config_dir,
                 cli.data_dir,
@@ -333,10 +351,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
+        Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
         Some(Commands::Skills { action }) => handle_skills(action).await,
+        Some(Commands::Config { action }) => config_commands::handle_config(action).await,
         Some(Commands::Hooks { action }) => hooks_commands::handle_hooks(action).await,
         #[cfg(feature = "tls")]
         Some(Commands::TrustCa) => trust_ca().await,

@@ -263,7 +263,10 @@ export function showOAuthFlow(provider) {
 	connectBtn.addEventListener("click", () => {
 		connectBtn.disabled = true;
 		connectBtn.textContent = "Starting...";
-		sendRpc("providers.oauth.start", { provider: provider.name }).then((res) => {
+		sendRpc("providers.oauth.start", {
+			provider: provider.name,
+			redirectUri: `${window.location.origin}/auth/callback`,
+		}).then((res) => {
 			if (res?.ok && res.payload && res.payload.authUrl) {
 				window.open(res.payload.authUrl, "_blank");
 				connectBtn.textContent = "Waiting for auth...";

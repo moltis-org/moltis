@@ -55,6 +55,7 @@ async fn start_auth_server_impl(
         None,
         None,
         18789,
+        None,
         #[cfg(feature = "metrics")]
         None,
         #[cfg(feature = "metrics")]

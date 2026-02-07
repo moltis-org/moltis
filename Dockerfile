@@ -19,6 +19,11 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
+# Install build dependencies for llama-cpp-sys-2
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
+    rm -rf /var/lib/apt/lists/*
+
 # Build release binary
 RUN cargo build --release
 
@@ -31,6 +36,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        libgomp1 \
         docker.io && \
     rm -rf /var/lib/apt/lists/*
 

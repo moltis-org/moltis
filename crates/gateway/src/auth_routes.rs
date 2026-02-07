@@ -391,7 +391,7 @@ async fn rename_passkey_handler(
 /// Generate a random 6-digit numeric setup code.
 pub fn generate_setup_code() -> String {
     use rand::Rng;
-    rand::thread_rng().gen_range(100_000..1_000_000).to_string()
+    rand::rng().random_range(100_000..1_000_000).to_string()
 }
 
 fn session_response(token: String) -> axum::response::Response {

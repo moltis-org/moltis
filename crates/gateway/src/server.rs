@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
@@ -6,7 +6,7 @@ use secrecy::ExposeSecret;
 use std::path::PathBuf;
 
 #[cfg(feature = "web-ui")]
-use axum::response::Html;
+use axum::response::{Html, Redirect};
 use {
     axum::{
         Router,
@@ -25,7 +25,11 @@ use {moltis_channels::ChannelPlugin, moltis_protocol::TICK_INTERVAL_MS};
 
 use moltis_agents::providers::ProviderRegistry;
 
-use moltis_tools::{approval::ApprovalManager, exec::EnvVarProvider, image_cache::ImageBuilder};
+use moltis_tools::{
+    approval::{ApprovalManager, ApprovalMode, SecurityLevel},
+    exec::EnvVarProvider,
+    image_cache::ImageBuilder,
+};
 
 use {
     moltis_projects::ProjectStore,
@@ -64,6 +68,97 @@ pub struct TailscaleOpts {
     pub reset_on_exit: bool,
 }
 
+fn should_prebuild_sandbox_image(
+    mode: &moltis_tools::sandbox::SandboxMode,
+    packages: &[String],
+) -> bool {
+    !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
+}
+
+async fn ollama_has_model(base_url: &str, model: &str) -> bool {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let response = match reqwest::Client::new().get(url).send().await {
+        Ok(resp) => resp,
+        Err(_) => return false,
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let value: serde_json::Value = match response.json().await {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    value
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|models| {
+            models.iter().any(|m| {
+                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+                name == model || name.starts_with(&format!("{model}:"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+async fn ensure_ollama_model(base_url: &str, model: &str) {
+    if ollama_has_model(base_url, model).await {
+        return;
+    }
+
+    warn!(
+        model = %model,
+        base_url = %base_url,
+        "memory: missing Ollama embedding model, attempting auto-pull"
+    );
+
+    let url = format!("{}/api/pull", base_url.trim_end_matches('/'));
+    let pull = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({ "name": model, "stream": false }))
+        .send()
+        .await;
+
+    match pull {
+        Ok(resp) if resp.status().is_success() => {
+            info!(model = %model, "memory: Ollama model pull complete");
+        },
+        Ok(resp) => {
+            warn!(
+                model = %model,
+                status = %resp.status(),
+                "memory: Ollama model pull failed"
+            );
+        },
+        Err(e) => {
+            warn!(model = %model, error = %e, "memory: Ollama model pull request failed");
+        },
+    }
+}
+
+fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> ApprovalManager {
+    let mut manager = ApprovalManager::default();
+
+    manager.mode = ApprovalMode::parse(&config.tools.exec.approval_mode).unwrap_or_else(|| {
+        warn!(
+            value = %config.tools.exec.approval_mode,
+            "invalid tools.exec.approval_mode; falling back to 'on-miss'"
+        );
+        ApprovalMode::OnMiss
+    });
+
+    manager.security_level = SecurityLevel::parse(&config.tools.exec.security_level)
+        .unwrap_or_else(|| {
+            warn!(
+                value = %config.tools.exec.security_level,
+                "invalid tools.exec.security_level; falling back to 'allowlist'"
+            );
+            SecurityLevel::Allowlist
+        });
+
+    manager.allowlist = config.tools.exec.allowlist.clone();
+    manager
+}
+
 // ── Shared app state ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -75,6 +170,105 @@ pub struct AppState {
 }
 
 // ── Server startup ───────────────────────────────────────────────────────────
+
+/// Build the protected API routes (shared between both build_gateway_app versions).
+#[cfg(feature = "web-ui")]
+fn build_protected_api_routes() -> Router<AppState> {
+    let protected = Router::new()
+        .route("/api/bootstrap", get(api_bootstrap_handler))
+        .route("/api/gon", get(api_gon_handler))
+        .route("/api/skills", get(api_skills_handler))
+        .route("/api/skills/search", get(api_skills_search_handler))
+        .route("/api/mcp", get(api_mcp_handler))
+        .route("/api/hooks", get(api_hooks_handler))
+        .route("/api/plugins", get(api_plugins_handler))
+        .route("/api/plugins/search", get(api_plugins_search_handler))
+        .route(
+            "/api/images/cached",
+            get(api_cached_images_handler).delete(api_prune_cached_images_handler),
+        )
+        .route(
+            "/api/images/cached/{tag}",
+            axum::routing::delete(api_delete_cached_image_handler),
+        )
+        .route(
+            "/api/images/build",
+            axum::routing::post(api_build_image_handler),
+        )
+        .route(
+            "/api/images/check-packages",
+            axum::routing::post(api_check_packages_handler),
+        )
+        .route(
+            "/api/images/default",
+            get(api_get_default_image_handler).put(api_set_default_image_handler),
+        )
+        .route(
+            "/api/env",
+            get(crate::env_routes::env_list).post(crate::env_routes::env_set),
+        )
+        .route(
+            "/api/env/{id}",
+            axum::routing::delete(crate::env_routes::env_delete),
+        )
+        // Config editor routes (sensitive - requires auth)
+        .route(
+            "/api/config",
+            get(crate::tools_routes::config_get).post(crate::tools_routes::config_save),
+        )
+        .route(
+            "/api/config/validate",
+            axum::routing::post(crate::tools_routes::config_validate),
+        )
+        .route(
+            "/api/config/template",
+            get(crate::tools_routes::config_template),
+        )
+        .route(
+            "/api/restart",
+            axum::routing::post(crate::tools_routes::restart),
+        );
+
+    // Add metrics API routes (protected).
+    #[cfg(feature = "metrics")]
+    let protected = protected
+        .route(
+            "/api/metrics",
+            get(crate::metrics_routes::api_metrics_handler),
+        )
+        .route(
+            "/api/metrics/summary",
+            get(crate::metrics_routes::api_metrics_summary_handler),
+        )
+        .route(
+            "/api/metrics/history",
+            get(crate::metrics_routes::api_metrics_history_handler),
+        );
+
+    protected
+}
+
+/// Apply auth middleware and feature-specific routes to protected API routes.
+#[cfg(feature = "web-ui")]
+fn finalize_protected_routes(protected: Router<AppState>, app_state: AppState) -> Router<AppState> {
+    let protected = protected.layer(axum::middleware::from_fn_with_state(
+        app_state,
+        crate::auth_middleware::require_auth,
+    ));
+
+    // Mount tailscale routes (protected) when the feature is enabled.
+    #[cfg(feature = "tailscale")]
+    let protected = protected.nest(
+        "/api/tailscale",
+        crate::tailscale_routes::tailscale_router(),
+    );
+
+    // Mount push notification routes when the feature is enabled.
+    #[cfg(feature = "push-notifications")]
+    let protected = protected.nest("/api/push", crate::push_routes::push_router());
+
+    protected
+}
 
 /// Build the gateway router (shared between production startup and tests).
 #[cfg(feature = "push-notifications")]
@@ -105,71 +299,17 @@ pub fn build_gateway_app(
     let app_state = AppState {
         gateway: state,
         methods,
-        #[cfg(feature = "push-notifications")]
         push_service,
     };
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let mut protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            )
-            .layer(axum::middleware::from_fn_with_state(
-                app_state.clone(),
-                crate::auth_middleware::require_auth,
-            ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        {
-            protected = protected.nest(
-                "/api/tailscale",
-                crate::tailscale_routes::tailscale_router(),
-            );
-        }
-
-        // Mount push notification routes when the feature is enabled.
-        #[cfg(feature = "push-notifications")]
-        {
-            protected = protected.nest("/api/push", crate::push_routes::push_router());
-        }
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -219,74 +359,12 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 
     #[cfg(feature = "web-ui")]
     let router = {
-        // Protected API routes — require auth when credential store is configured.
-        let protected = Router::new()
-            .route("/api/bootstrap", get(api_bootstrap_handler))
-            .route("/api/gon", get(api_gon_handler))
-            .route("/api/skills", get(api_skills_handler))
-            .route("/api/skills/search", get(api_skills_search_handler))
-            .route("/api/mcp", get(api_mcp_handler))
-            .route("/api/plugins", get(api_plugins_handler))
-            .route("/api/plugins/search", get(api_plugins_search_handler))
-            .route(
-                "/api/images/cached",
-                get(api_cached_images_handler).delete(api_prune_cached_images_handler),
-            )
-            .route(
-                "/api/images/cached/{tag}",
-                axum::routing::delete(api_delete_cached_image_handler),
-            )
-            .route(
-                "/api/images/build",
-                axum::routing::post(api_build_image_handler),
-            )
-            .route(
-                "/api/images/check-packages",
-                axum::routing::post(api_check_packages_handler),
-            )
-            .route(
-                "/api/images/default",
-                get(api_get_default_image_handler).put(api_set_default_image_handler),
-            )
-            .route(
-                "/api/env",
-                get(crate::env_routes::env_list).post(crate::env_routes::env_set),
-            )
-            .route(
-                "/api/env/{id}",
-                axum::routing::delete(crate::env_routes::env_delete),
-            );
-
-        // Add metrics API routes (protected).
-        #[cfg(feature = "metrics")]
-        let protected = protected
-            .route(
-                "/api/metrics",
-                get(crate::metrics_routes::api_metrics_handler),
-            )
-            .route(
-                "/api/metrics/summary",
-                get(crate::metrics_routes::api_metrics_summary_handler),
-            )
-            .route(
-                "/api/metrics/history",
-                get(crate::metrics_routes::api_metrics_history_handler),
-            );
-
-        let protected = protected.layer(axum::middleware::from_fn_with_state(
-            app_state.clone(),
-            crate::auth_middleware::require_auth,
-        ));
-
-        // Mount tailscale routes (protected) when the feature is enabled.
-        #[cfg(feature = "tailscale")]
-        let protected = protected.nest(
-            "/api/tailscale",
-            crate::tailscale_routes::tailscale_router(),
-        );
+        let protected = build_protected_api_routes();
+        let protected = finalize_protected_routes(protected, app_state.clone());
 
         // Public routes (assets, PWA files, SPA fallback).
         router
+            .route("/auth/callback", get(oauth_callback_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -302,6 +380,7 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
 pub async fn start_gateway(
     bind: &str,
     port: u16,
+    no_tls: bool,
     log_buffer: Option<crate::logs::LogBuffer>,
     config_dir: Option<std::path::PathBuf>,
     data_dir: Option<std::path::PathBuf>,
@@ -318,10 +397,18 @@ pub async fn start_gateway(
     // Resolve auth from environment (MOLTIS_TOKEN / MOLTIS_PASSWORD).
     let token = std::env::var("MOLTIS_TOKEN").ok();
     let password = std::env::var("MOLTIS_PASSWORD").ok();
+
+    // Cloud deploy platform — hides local-only providers (local-llm, ollama).
+    let deploy_platform = std::env::var("MOLTIS_DEPLOY_PLATFORM").ok();
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
-    let config = moltis_config::discover_and_load();
+    let mut config = moltis_config::discover_and_load();
+
+    // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
+    if no_tls {
+        config.tls.enabled = false;
+    }
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
@@ -335,8 +422,8 @@ pub async fn start_gateway(
     ));
     let provider_summary = registry.read().await.provider_summary();
 
-    // Create shared approval manager.
-    let approval_manager = Arc::new(ApprovalManager::default());
+    // Create shared approval manager from config.
+    let approval_manager = Arc::new(approval_manager_from_config(&config));
 
     let mut services = GatewayServices::noop();
 
@@ -346,6 +433,11 @@ pub async fn start_gateway(
     }
 
     services.exec_approval = Arc::new(LiveExecApprovalService::new(Arc::clone(&approval_manager)));
+
+    // Wire browser service if enabled.
+    if let Some(browser_svc) = crate::services::RealBrowserService::from_config(&config) {
+        services.browser = Arc::new(browser_svc);
+    }
 
     // Wire live onboarding service.
     let onboarding_config_path = moltis_config::find_or_default_config_path();
@@ -357,6 +449,7 @@ pub async fn start_gateway(
     services.provider_setup = Arc::new(LiveProviderSetupService::new(
         Arc::clone(&registry),
         config.providers.clone(),
+        deploy_platform.clone(),
     ));
 
     // Wire live local-llm service when the feature is enabled.
@@ -724,7 +817,7 @@ pub async fn start_gateway(
             .clone()
             .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
 
-        if !packages.is_empty() {
+        if should_prebuild_sandbox_image(router.mode(), &packages) {
             let deferred_for_build = Arc::clone(&deferred_state);
             tokio::spawn(async move {
                 // Broadcast build start event.
@@ -793,6 +886,77 @@ pub async fn start_gateway(
                 }
             });
         }
+    }
+
+    // Pre-pull browser container image if browser is enabled and sandbox mode is available.
+    // Browser sandbox mode follows session sandbox mode, so we pre-pull if sandboxing is available.
+    // Don't pre-pull if sandbox is disabled (mode = Off).
+    if config.tools.browser.enabled
+        && !matches!(
+            sandbox_router.config().mode,
+            moltis_tools::sandbox::SandboxMode::Off
+        )
+    {
+        let sandbox_image = config.tools.browser.sandbox_image.clone();
+        let deferred_for_browser = Arc::clone(&deferred_state);
+        tokio::spawn(async move {
+            // Broadcast pull start event.
+            if let Some(state) = deferred_for_browser.get() {
+                crate::broadcast::broadcast(
+                    state,
+                    "browser.image.pull",
+                    serde_json::json!({
+                        "phase": "start",
+                        "image": sandbox_image,
+                    }),
+                    crate::broadcast::BroadcastOpts {
+                        drop_if_slow: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            }
+
+            match moltis_browser::container::ensure_image(&sandbox_image) {
+                Ok(()) => {
+                    info!(image = %sandbox_image, "browser container image ready");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "done",
+                                "image": sandbox_image,
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(image = %sandbox_image, error = %e, "browser container image pull failed");
+                    if let Some(state) = deferred_for_browser.get() {
+                        crate::broadcast::broadcast(
+                            state,
+                            "browser.image.pull",
+                            serde_json::json!({
+                                "phase": "error",
+                                "image": sandbox_image,
+                                "error": e.to_string(),
+                            }),
+                            crate::broadcast::BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
+                },
+            }
+        });
     }
 
     // Load any persisted sandbox overrides from session metadata.
@@ -892,56 +1056,11 @@ pub async fn start_gateway(
     services = services.with_session_store(Arc::clone(&session_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
-    let hook_registry = {
-        use moltis_plugins::{
-            hook_discovery::{FsHookDiscoverer, HookDiscoverer},
-            hook_eligibility::check_hook_eligibility,
-            shell_hook::ShellHookHandler,
-        };
-
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
-        let discovered = discoverer.discover().await.unwrap_or_default();
-
-        let mut registry = moltis_common::hooks::HookRegistry::new();
-
-        // Load shell hooks from discovered HOOK.md files.
-        for (parsed, source) in &discovered {
-            let meta = &parsed.metadata;
-            let elig = check_hook_eligibility(meta);
-            if !elig.eligible {
-                info!(
-                    hook = %meta.name,
-                    source = ?source,
-                    missing_os = elig.missing_os,
-                    missing_bins = ?elig.missing_bins,
-                    missing_env = ?elig.missing_env,
-                    "hook ineligible, skipping"
-                );
-                continue;
-            }
-            if let Some(ref command) = meta.command {
-                let handler = ShellHookHandler::new(
-                    meta.name.clone(),
-                    command.clone(),
-                    meta.events.clone(),
-                    std::time::Duration::from_secs(meta.timeout),
-                    meta.env.clone(),
-                );
-                registry.register(Arc::new(handler));
-            }
-        }
-
-        if !discovered.is_empty() {
-            info!(
-                "{} hook(s) discovered, {} registered",
-                discovered.len(),
-                registry.handler_names().len()
-            );
-        }
-
-        Some(Arc::new(registry))
-    };
+    seed_example_skill();
+    seed_example_hook();
+    let persisted_disabled = crate::methods::load_disabled_hooks();
+    let (hook_registry, discovered_hooks_info) =
+        discover_and_build_hooks(&persisted_disabled, Some(&session_store)).await;
 
     // Wire live session service with sandbox router, project store, and hooks.
     {
@@ -1009,6 +1128,10 @@ pub async fn start_gateway(
                             "ollama" => "http://localhost:11434".into(),
                             _ => "https://api.openai.com".into(),
                         });
+                    if provider_name == "ollama" {
+                        let model = mem_cfg.model.as_deref().unwrap_or("nomic-embed-text");
+                        ensure_ollama_model(&base_url, model).await;
+                    }
                     let api_key = mem_cfg
                         .api_key
                         .as_ref()
@@ -1039,6 +1162,7 @@ pub async fn start_gateway(
                 .await
                 .is_ok();
             if ollama_ok {
+                ensure_ollama_model("http://localhost:11434", "nomic-embed-text").await;
                 let e =
                     moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(String::new())
                         .with_base_url("http://localhost:11434".into())
@@ -1119,19 +1243,29 @@ pub async fn start_gateway(
                 } else {
                     // Scan the data directory for memory files written by the
                     // silent memory turn (MEMORY.md, memory/*.md).
-                    let data_memory_root = data_dir.clone();
+                    let data_memory_file = data_dir.join("MEMORY.md");
+                    let data_memory_file_lower = data_dir.join("memory.md");
                     let data_memory_sub = data_dir.join("memory");
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
-                        memory_dirs: vec![data_memory_root, data_memory_sub],
+                        memory_dirs: vec![
+                            data_memory_file,
+                            data_memory_file_lower,
+                            data_memory_sub,
+                        ],
                         ..Default::default()
                     };
 
                     let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
                         memory_pool,
                     ));
-                    let watch_dirs = config.memory_dirs.clone();
+                    let watch_dirs: Vec<_> = config
+                        .memory_dirs
+                        .iter()
+                        .filter(|p| p.is_dir())
+                        .cloned()
+                        .collect();
                     let manager = Arc::new(if let Some(embedder) = embedder {
                         moltis_memory::manager::MemoryManager::new(config, store, embedder)
                     } else {
@@ -1305,11 +1439,16 @@ pub async fn start_gateway(
         hook_registry.clone(),
         memory_manager.clone(),
         port,
+        deploy_platform.clone(),
         #[cfg(feature = "metrics")]
         metrics_handle,
         #[cfg(feature = "metrics")]
         metrics_store.clone(),
     );
+
+    // Store discovered hook info and disabled set in state for the web UI.
+    *state.discovered_hooks.write().await = discovered_hooks_info;
+    *state.disabled_hooks.write().await = persisted_disabled;
 
     // Generate a one-time setup code if setup is pending and auth is not disabled.
     let setup_code_display =
@@ -1375,6 +1514,9 @@ pub async fn start_gateway(
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
+            tool_registry.register(Box::new(t));
+        }
+        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
             tool_registry.register(Box::new(t));
         }
 
@@ -1473,7 +1615,7 @@ pub async fn start_gateway(
         .with_tools(Arc::clone(&shared_tool_registry))
         .with_failover(config.failover.clone());
 
-        if let Some(ref hooks) = state.hook_registry {
+        if let Some(ref hooks) = *state.hook_registry.read().await {
             chat_service = chat_service.with_hooks_arc(Arc::clone(hooks));
         }
 
@@ -1486,6 +1628,11 @@ pub async fn start_gateway(
             .set_tool_registry(Arc::clone(&shared_tool_registry))
             .await;
         crate::mcp_service::sync_mcp_tools(live_mcp.manager(), &shared_tool_registry).await;
+
+        // Log registered tools for debugging.
+        let schemas = shared_tool_registry.read().await.list_schemas();
+        let tool_names: Vec<&str> = schemas.iter().filter_map(|s| s["name"].as_str()).collect();
+        info!(tools = ?tool_names, "agent tools registered");
     }
 
     // Spawn skill file watcher for hot-reload.
@@ -1752,7 +1899,7 @@ pub async fn start_gateway(
     info!("└{}┘", "─".repeat(width));
 
     // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = state.hook_registry {
+    if let Some(ref hooks) = *state.hook_registry.read().await {
         let payload = moltis_common::hooks::HookPayload::GatewayStart {
             address: addr.to_string(),
         };
@@ -2189,10 +2336,69 @@ async fn ws_upgrade_handler(
         .get(axum::http::header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
+    let header_authenticated = websocket_header_authenticated(
+        &headers,
+        state.gateway.credential_store.as_ref(),
+        state.gateway.localhost_only,
+    )
+    .await;
     ws.on_upgrade(move |socket| {
-        handle_connection(socket, state.gateway, state.methods, addr, accept_language)
+        handle_connection(
+            socket,
+            state.gateway,
+            state.methods,
+            addr,
+            accept_language,
+            header_authenticated,
+        )
     })
     .into_response()
+}
+
+async fn websocket_header_authenticated(
+    headers: &axum::http::HeaderMap,
+    credential_store: Option<&Arc<crate::auth::CredentialStore>>,
+    localhost_only: bool,
+) -> bool {
+    let Some(store) = credential_store else {
+        return false;
+    };
+
+    if store.is_auth_disabled() {
+        return true;
+    }
+
+    if localhost_only && !store.has_password().await.unwrap_or(true) {
+        return true;
+    }
+
+    if let Some(token) = extract_ws_session_token(headers)
+        && store.validate_session(token).await.unwrap_or(false)
+    {
+        return true;
+    }
+
+    if let Some(api_key) = extract_ws_bearer_api_key(headers)
+        && store.verify_api_key(api_key).await.ok().flatten().is_some()
+    {
+        return true;
+    }
+
+    false
+}
+
+fn extract_ws_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let cookie_header = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())?;
+    crate::auth_middleware::parse_cookie(cookie_header, crate::auth_middleware::SESSION_COOKIE)
+}
+
+fn extract_ws_bearer_api_key(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
 }
 
 /// Check whether a WebSocket `Origin` header matches the request `Host`.
@@ -2272,6 +2478,9 @@ struct GonData {
     git_branch: Option<String>,
     /// Memory stats snapshot (process RSS + system available/total).
     mem: MemSnapshot,
+    /// Cloud deploy platform (e.g. "flyio"), `None` when running locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deploy_platform: Option<String>,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -2314,27 +2523,21 @@ fn collect_mem_snapshot() -> MemSnapshot {
 }
 
 /// Detect the current git branch, returning `None` for `main`/`master` or
-/// when not inside a git repository. The result is cached in a `OnceLock` so
-/// the `git` subprocess runs at most once per process.
+/// when not inside a git repository. The result is cached in a `OnceLock`.
 #[cfg(feature = "web-ui")]
 fn detect_git_branch() -> Option<String> {
     static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     BRANCH
         .get_or_init(|| {
-            let output = std::process::Command::new("git")
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .output()
-                .ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let raw = String::from_utf8(output.stdout).ok()?;
-            parse_git_branch(&raw)
+            let repo = gix::discover(".").ok()?;
+            let head = repo.head().ok()?;
+            let branch = head.referent_name()?.shorten().to_string();
+            parse_git_branch(&branch)
         })
         .clone()
 }
 
-/// Parse the raw output of `git rev-parse --abbrev-ref HEAD`, returning
+/// Parse a branch name, returning
 /// `None` for default branches (`main`/`master`) or empty/blank output.
 #[cfg(feature = "web-ui")]
 fn parse_git_branch(raw: &str) -> Option<String> {
@@ -2357,6 +2560,7 @@ struct NavCounts {
     skills: usize,
     mcp: usize,
     crons: usize,
+    hooks: usize,
 }
 
 #[cfg(feature = "web-ui")]
@@ -2404,6 +2608,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_runs,
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
+        deploy_platform: gw.deploy_platform.clone(),
     }
 }
 
@@ -2501,6 +2706,8 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
+    let hooks = gw.discovered_hooks.read().await.len();
+
     NavCounts {
         projects,
         providers,
@@ -2509,6 +2716,7 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         skills,
         mcp,
         crons,
+        hooks,
     }
 }
 
@@ -2518,10 +2726,66 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[cfg(feature = "web-ui")]
-async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> impl IntoResponse {
+async fn oauth_callback_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(code) = params.get("code") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing authorization code.</p>".to_string()),
+        )
+            .into_response();
+    };
+    let Some(oauth_state) = params.get("state") else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<h1>Authentication failed</h1><p>Missing OAuth state.</p>".to_string()),
+        )
+            .into_response();
+    };
+
+    match state
+        .gateway
+        .services
+        .provider_setup
+        .oauth_complete(serde_json::json!({
+            "code": code,
+            "state": oauth_state,
+        }))
+        .await
+    {
+        Ok(_) => Html(
+            "<h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script>"
+                .to_string(),
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "OAuth callback completion failed");
+            (
+                StatusCode::BAD_REQUEST,
+                Html("<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>".to_string()),
+            )
+                .into_response()
+        },
+    }
+}
+
+#[cfg(feature = "web-ui")]
+async fn spa_fallback(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+) -> impl IntoResponse {
     let path = uri.path();
     if path.starts_with("/assets/") || path.contains('.') {
         return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+
+    if let Some((setup_required, authenticated)) = auth_status_from_request(&state, &headers).await
+        && should_redirect_to_onboarding(path, setup_required, authenticated)
+    {
+        return Redirect::to("/onboarding").into_response();
     }
 
     let raw = read_asset("index.html")
@@ -2549,9 +2813,68 @@ async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> im
     // Inject gon data into <head> so it's available before any module scripts run.
     // An inline <script> in the <body> (right after the title elements) reads
     // window.__MOLTIS__.identity to set emoji/name before the first paint.
-    let body = body.replace("</head>", &format!("{gon_script}\n</head>"));
+    let mut head_injections = vec![gon_script];
+    if path == "/onboarding" {
+        head_injections.push(
+            "<style>
+body.onboarding-init header,
+body.onboarding-init #branchBanner,
+body.onboarding-init #authDisabledBanner,
+body.onboarding-init #navOverlay,
+body.onboarding-init #sessionsOverlay,
+body.onboarding-init #navPanel,
+body.onboarding-init #sessionsPanel,
+body.onboarding-init #burgerBtn,
+body.onboarding-init #sessionsToggle {
+  display: none !important;
+}
+body.onboarding-init #pageContent {
+  min-height: 100vh;
+}
+</style>"
+                .to_owned(),
+        );
+    }
+    let mut body = body.replace(
+        "</head>",
+        &format!("{}\n</head>", head_injections.join("\n")),
+    );
+    if path == "/onboarding" {
+        body = body.replacen("<body>", "<body class=\"onboarding-init\">", 1);
+    }
 
     ([("cache-control", "no-cache, no-store")], Html(body)).into_response()
+}
+
+#[cfg(feature = "web-ui")]
+async fn auth_status_from_request(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Option<(bool, bool)> {
+    let store = state.gateway.credential_store.as_ref()?;
+
+    let auth_disabled = store.is_auth_disabled();
+    let localhost_only = state.gateway.localhost_only;
+    let has_password = store.has_password().await.unwrap_or(false);
+    let auth_bypassed = auth_disabled || (localhost_only && !has_password);
+
+    let authenticated = if auth_bypassed {
+        true
+    } else if let Some(token) = extract_ws_session_token(headers) {
+        store.validate_session(token).await.unwrap_or(false)
+    } else if let Some(api_key) = extract_ws_bearer_api_key(headers) {
+        store.verify_api_key(api_key).await.ok().flatten().is_some()
+    } else {
+        false
+    };
+
+    let setup_required = !auth_bypassed && !store.is_setup_complete();
+    Some((setup_required, authenticated))
+}
+
+#[cfg(feature = "web-ui")]
+fn should_redirect_to_onboarding(path: &str, setup_required: bool, authenticated: bool) -> bool {
+    setup_required && !authenticated && path != "/onboarding"
 }
 
 #[cfg(feature = "web-ui")]
@@ -2610,6 +2933,13 @@ async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+/// Hooks list for the UI (HTTP endpoint for initial page load).
+#[cfg(feature = "web-ui")]
+async fn api_hooks_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let hooks = state.gateway.discovered_hooks.read().await;
+    axum::Json(serde_json::json!({ "hooks": *hooks }))
 }
 
 /// Lightweight skills overview: repo summaries + enabled skills only.
@@ -3166,22 +3496,536 @@ async fn service_worker_handler() -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 fn serve_asset(path: &str, cache_control: &'static str) -> axum::response::Response {
     match read_asset(path) {
-        Some(body) => (
-            StatusCode::OK,
-            [
-                ("content-type", mime_for_path(path)),
-                ("cache-control", cache_control),
-            ],
-            body,
-        )
-            .into_response(),
+        Some(body) => {
+            let mut response = (
+                StatusCode::OK,
+                [
+                    ("content-type", mime_for_path(path)),
+                    ("cache-control", cache_control),
+                    ("x-content-type-options", "nosniff"),
+                ],
+                body,
+            )
+                .into_response();
+
+            // Harden SVG delivery against script execution when user-controlled
+            // SVGs are ever introduced. Static first-party SVGs continue to render.
+            if path.rsplit('.').next().unwrap_or("") == "svg" {
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static(
+                        "default-src 'none'; img-src 'self' data:; style-src 'none'; script-src 'none'; object-src 'none'; frame-ancestors 'none'",
+                    ),
+                );
+            }
+
+            response
+        },
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }
 
+// ── Hook discovery helper ────────────────────────────────────────────────────
+
+/// Metadata for built-in hooks (compiled Rust, always active).
+/// Returns `(name, description, events, source_file)` tuples.
+fn builtin_hook_metadata() -> Vec<(
+    &'static str,
+    &'static str,
+    Vec<moltis_common::hooks::HookEvent>,
+    &'static str,
+)> {
+    use moltis_common::hooks::HookEvent;
+    vec![
+        (
+            "boot-md",
+            "Reads BOOT.md from the workspace on startup and injects its content as the initial user message to the agent.",
+            vec![HookEvent::GatewayStart],
+            "crates/plugins/src/bundled/boot_md.rs",
+        ),
+        (
+            "command-logger",
+            "Logs all slash-command invocations to a JSONL audit file at ~/.moltis/logs/commands.log.",
+            vec![HookEvent::Command],
+            "crates/plugins/src/bundled/command_logger.rs",
+        ),
+        (
+            "session-memory",
+            "Saves the conversation history to a markdown file in the memory directory when a session is reset or a new session is created, making it searchable for future sessions.",
+            vec![HookEvent::Command],
+            "crates/plugins/src/bundled/session_memory.rs",
+        ),
+    ]
+}
+
+/// Seed a skeleton example hook into `~/.moltis/hooks/example/` on first run.
+///
+/// The hook has no command, so it won't execute — it's a template showing
+/// users what's possible. If the directory already exists it's a no-op.
+fn seed_example_hook() {
+    let hook_dir = moltis_config::data_dir().join("hooks/example");
+    let hook_md = hook_dir.join("HOOK.md");
+    if hook_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&hook_dir) {
+        tracing::debug!("could not create example hook dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&hook_md, EXAMPLE_HOOK_MD) {
+        tracing::debug!("could not write example HOOK.md: {e}");
+    }
+}
+
+/// Seed a starter personal skill into `~/.moltis/skills/template-skill/`.
+///
+/// This is a safe template to help users author their own SKILL.md. Existing
+/// user content is never overwritten.
+fn seed_example_skill() {
+    let skill_dir = moltis_config::data_dir().join("skills/template-skill");
+    let skill_md = skill_dir.join("SKILL.md");
+    if skill_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+        tracing::debug!("could not create template skill dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&skill_md, EXAMPLE_SKILL_MD) {
+        tracing::debug!("could not write template SKILL.md: {e}");
+    }
+}
+
+/// Content for the skeleton example hook.
+const EXAMPLE_HOOK_MD: &str = r#"+++
+name = "example"
+description = "Skeleton hook — edit this to build your own"
+emoji = "🪝"
+events = ["BeforeToolCall"]
+# command = "./handler.sh"
+# timeout = 10
+# priority = 0
+
+# [requires]
+# os = ["darwin", "linux"]
+# bins = ["jq", "curl"]
+# env = ["SLACK_WEBHOOK_URL"]
++++
+
+# Example Hook
+
+This is a skeleton hook to help you get started. It subscribes to
+`BeforeToolCall` but has no `command`, so it won't execute anything.
+
+## Quick start
+
+1. Uncomment the `command` line above and point it at your script
+2. Create `handler.sh` (or any executable) in this directory
+3. Click **Reload** in the Hooks UI (or restart moltis)
+
+## How hooks work
+
+Your script receives the event payload as **JSON on stdin** and communicates
+its decision via **exit code** and **stdout**:
+
+| Exit code | Stdout | Action |
+|-----------|--------|--------|
+| 0 | *(empty)* | **Continue** — let the action proceed |
+| 0 | `{"action":"modify","data":{...}}` | **Modify** — alter the payload |
+| 1 | *(stderr used as reason)* | **Block** — prevent the action |
+
+## Example handler (bash)
+
+```bash
+#!/usr/bin/env bash
+# handler.sh — log every tool call to a file
+payload=$(cat)
+tool=$(echo "$payload" | jq -r '.tool_name // "unknown"')
+echo "$(date -Iseconds) tool=$tool" >> /tmp/moltis-hook.log
+# Exit 0 with no stdout = Continue
+```
+
+## Available events
+
+**Can modify or block (sequential dispatch):**
+- `BeforeAgentStart` — before a new agent run begins
+- `BeforeToolCall` — before executing a tool (inspect/modify arguments)
+- `BeforeCompaction` — before compacting chat history
+- `MessageSending` — before sending a message to the LLM
+- `ToolResultPersist` — before persisting a tool result
+
+**Read-only (parallel dispatch, Block/Modify ignored):**
+- `AgentEnd` — after an agent run completes
+- `AfterToolCall` — after a tool finishes (observe result)
+- `AfterCompaction` — after compaction completes
+- `MessageReceived` — after receiving an LLM response
+- `MessageSent` — after a message is sent
+- `SessionStart` / `SessionEnd` — session lifecycle
+- `GatewayStart` / `GatewayStop` — server lifecycle
+
+## Frontmatter reference
+
+```toml
+name = "my-hook"           # unique identifier
+description = "What it does"
+emoji = "🔧"               # optional, shown in UI
+events = ["BeforeToolCall"] # which events to subscribe to
+command = "./handler.sh"    # script to run (relative to this dir)
+timeout = 10                # seconds before kill (default: 10)
+priority = 0                # higher runs first (default: 0)
+
+[requires]
+os = ["darwin", "linux"]    # skip on other OSes
+bins = ["jq"]               # required binaries in PATH
+env = ["MY_API_KEY"]        # required environment variables
+```
+"#;
+
+/// Content for the starter example personal skill.
+const EXAMPLE_SKILL_MD: &str = r#"---
+name: template-skill
+description: Starter skill template (safe to copy and edit)
+---
+
+# Template Skill
+
+Use this as a starting point for your own skills.
+
+## How to use
+
+1. Copy this folder to a new skill name (or edit in place)
+2. Update `name` and `description` in frontmatter
+3. Replace this body with clear, specific instructions
+
+## Tips
+
+- Keep instructions explicit and task-focused
+- Avoid broad permissions unless required
+- Document required tools and expected inputs
+"#;
+
+/// Discover hooks from the filesystem, check eligibility, and build a
+/// [`HookRegistry`] plus a `Vec<DiscoveredHookInfo>` for the web UI.
+///
+/// Hooks whose names appear in `disabled` are still returned in the info list
+/// (with `enabled: false`) but are not registered in the registry.
+pub(crate) async fn discover_and_build_hooks(
+    disabled: &HashSet<String>,
+    session_store: Option<&Arc<moltis_sessions::store::SessionStore>>,
+) -> (
+    Option<Arc<moltis_common::hooks::HookRegistry>>,
+    Vec<crate::state::DiscoveredHookInfo>,
+) {
+    use moltis_plugins::{
+        bundled::{
+            boot_md::BootMdHook, command_logger::CommandLoggerHook,
+            session_memory::SessionMemoryHook,
+        },
+        hook_discovery::{FsHookDiscoverer, HookDiscoverer, HookSource},
+        hook_eligibility::check_hook_eligibility,
+        shell_hook::ShellHookHandler,
+    };
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let discoverer = FsHookDiscoverer::new(FsHookDiscoverer::default_paths(&cwd));
+    let discovered = discoverer.discover().await.unwrap_or_default();
+
+    let mut registry = moltis_common::hooks::HookRegistry::new();
+    let mut info_list = Vec::with_capacity(discovered.len());
+
+    for (parsed, source) in &discovered {
+        let meta = &parsed.metadata;
+        let elig = check_hook_eligibility(meta);
+        let is_disabled = disabled.contains(&meta.name);
+        let is_enabled = elig.eligible && !is_disabled;
+
+        if !elig.eligible {
+            info!(
+                hook = %meta.name,
+                source = ?source,
+                missing_os = elig.missing_os,
+                missing_bins = ?elig.missing_bins,
+                missing_env = ?elig.missing_env,
+                "hook ineligible, skipping"
+            );
+        }
+
+        // Read the raw HOOK.md content for the UI editor.
+        let raw_content =
+            std::fs::read_to_string(parsed.source_path.join("HOOK.md")).unwrap_or_default();
+
+        let source_str = match source {
+            HookSource::Project => "project",
+            HookSource::User => "user",
+            HookSource::Bundled => "bundled",
+        };
+
+        info_list.push(crate::state::DiscoveredHookInfo {
+            name: meta.name.clone(),
+            description: meta.description.clone(),
+            emoji: meta.emoji.clone(),
+            events: meta.events.iter().map(|e| e.to_string()).collect(),
+            command: meta.command.clone(),
+            timeout: meta.timeout,
+            priority: meta.priority,
+            source: source_str.to_string(),
+            source_path: parsed.source_path.display().to_string(),
+            eligible: elig.eligible,
+            missing_os: elig.missing_os,
+            missing_bins: elig.missing_bins.clone(),
+            missing_env: elig.missing_env.clone(),
+            enabled: is_enabled,
+            body: raw_content,
+            body_html: crate::services::markdown_to_html(&parsed.body),
+            call_count: 0,
+            failure_count: 0,
+            avg_latency_ms: 0,
+        });
+
+        // Only register eligible, non-disabled hooks.
+        if is_enabled && let Some(ref command) = meta.command {
+            let handler = ShellHookHandler::new(
+                meta.name.clone(),
+                command.clone(),
+                meta.events.clone(),
+                std::time::Duration::from_secs(meta.timeout),
+                meta.env.clone(),
+            );
+            registry.register(Arc::new(handler));
+        }
+    }
+
+    // ── Built-in hooks (compiled Rust, always active) ──────────────────
+    {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let data = moltis_config::data_dir();
+
+        // boot-md: inject BOOT.md content on GatewayStart.
+        let boot = BootMdHook::new(cwd.clone());
+        registry.register(Arc::new(boot));
+
+        // command-logger: append JSONL entries for every slash command.
+        let log_path =
+            CommandLoggerHook::default_path().unwrap_or_else(|| data.join("logs/commands.log"));
+        let logger = CommandLoggerHook::new(log_path);
+        registry.register(Arc::new(logger));
+
+        // session-memory: save conversation to memory on /new or /reset.
+        if let Some(store) = session_store {
+            let memory_hook = SessionMemoryHook::new(data.clone(), Arc::clone(store));
+            registry.register(Arc::new(memory_hook));
+        }
+    }
+
+    for (name, description, events, source_file) in builtin_hook_metadata() {
+        info_list.push(crate::state::DiscoveredHookInfo {
+            name: name.to_string(),
+            description: description.to_string(),
+            emoji: Some("\u{2699}\u{fe0f}".to_string()), // ⚙️
+            events: events.iter().map(|e| e.to_string()).collect(),
+            command: None,
+            timeout: 0,
+            priority: 0,
+            source: "builtin".to_string(),
+            source_path: source_file.to_string(),
+            eligible: true,
+            missing_os: false,
+            missing_bins: vec![],
+            missing_env: vec![],
+            enabled: true,
+            body: String::new(),
+            body_html: format!(
+                "<p><em>Built-in hook implemented in Rust.</em></p><p>{}</p>",
+                description
+            ),
+            call_count: 0,
+            failure_count: 0,
+            avg_latency_ms: 0,
+        });
+    }
+
+    if !info_list.is_empty() {
+        info!(
+            "{} hook(s) discovered ({} shell, {} built-in), {} registered",
+            info_list.len(),
+            discovered.len(),
+            info_list.len() - discovered.len(),
+            registry.handler_names().len()
+        );
+    }
+
+    (Some(Arc::new(registry)), info_list)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::collections::HashSet};
+
+    #[test]
+    fn approval_manager_uses_config_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "always".into();
+        cfg.tools.exec.security_level = "strict".into();
+        cfg.tools.exec.allowlist = vec!["git*".into()];
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::Always);
+        assert_eq!(manager.security_level, SecurityLevel::Deny);
+        assert_eq!(manager.allowlist, vec!["git*".to_string()]);
+    }
+
+    #[test]
+    fn approval_manager_falls_back_for_invalid_values() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.exec.approval_mode = "bogus".into();
+        cfg.tools.exec.security_level = "bogus".into();
+
+        let manager = approval_manager_from_config(&cfg);
+        assert_eq!(manager.mode, ApprovalMode::OnMiss);
+        assert_eq!(manager.security_level, SecurityLevel::Allowlist);
+    }
+
+    #[tokio::test]
+    async fn discover_hooks_registers_builtin_handlers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        let (registry, info) =
+            discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
+        let registry = registry.expect("expected hook registry to be created");
+        let handler_names = registry.handler_names();
+
+        assert!(handler_names.iter().any(|n| n == "boot-md"));
+        assert!(handler_names.iter().any(|n| n == "command-logger"));
+        assert!(handler_names.iter().any(|n| n == "session-memory"));
+
+        assert!(
+            info.iter()
+                .any(|h| h.name == "boot-md" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "command-logger" && h.source == "builtin")
+        );
+        assert!(
+            info.iter()
+                .any(|h| h.name == "session-memory" && h.source == "builtin")
+        );
+    }
+
+    #[tokio::test]
+    async fn command_hook_dispatch_saves_session_memory_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "user", "content": "Hello from smoke test"}),
+            )
+            .await
+            .unwrap();
+        session_store
+            .append(
+                "smoke-session",
+                &serde_json::json!({"role": "assistant", "content": "Hi there"}),
+            )
+            .await
+            .unwrap();
+
+        let mut registry = moltis_common::hooks::HookRegistry::new();
+        registry.register(Arc::new(
+            moltis_plugins::bundled::session_memory::SessionMemoryHook::new(
+                tmp.path().to_path_buf(),
+                Arc::clone(&session_store),
+            ),
+        ));
+
+        let payload = moltis_common::hooks::HookPayload::Command {
+            session_key: "smoke-session".into(),
+            action: "new".into(),
+            sender_id: None,
+        };
+        let result = registry.dispatch(&payload).await.unwrap();
+        assert!(matches!(result, moltis_common::hooks::HookAction::Continue));
+
+        let memory_dir = tmp.path().join("memory");
+        assert!(memory_dir.is_dir());
+
+        let files: Vec<_> = std::fs::read_dir(&memory_dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        assert!(content.contains("smoke-session"));
+        assert!(content.contains("Hello from smoke test"));
+        assert!(content.contains("Hi there"));
+    }
+
+    #[tokio::test]
+    async fn websocket_header_auth_accepts_valid_session_cookie() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let token = store.create_session().await.unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        let cookie = format!("{}={token}", crate::auth_middleware::SESSION_COOKIE);
+        headers.insert(axum::http::header::COOKIE, cookie.parse().unwrap());
+
+        assert!(websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[tokio::test]
+    async fn websocket_header_auth_accepts_valid_bearer_api_key() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let (_id, raw_key) = store.create_api_key("ws", None).await.unwrap();
+
+        let mut headers = axum::http::HeaderMap::new();
+        let auth_value = format!("Bearer {raw_key}");
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            auth_value.parse().unwrap(),
+        );
+
+        assert!(websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[tokio::test]
+    async fn websocket_header_auth_rejects_missing_credentials_when_setup_complete() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let headers = axum::http::HeaderMap::new();
+
+        assert!(!websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    #[test]
+    fn onboarding_redirect_only_when_setup_required_and_unauthenticated() {
+        assert!(should_redirect_to_onboarding("/", true, false));
+        assert!(should_redirect_to_onboarding("/chats", true, false));
+        assert!(!should_redirect_to_onboarding("/onboarding", true, false));
+        assert!(!should_redirect_to_onboarding("/", true, true));
+        assert!(!should_redirect_to_onboarding("/", false, false));
+    }
 
     #[test]
     fn same_origin_exact_match() {
@@ -3230,6 +4074,32 @@ mod tests {
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
     }
 
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn asset_serving_sets_nosniff_header() {
+        let response = serve_asset("style.css", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let nosniff = response
+            .headers()
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(nosniff, Some("nosniff"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn svg_assets_get_restrictive_csp_header() {
+        let response = serve_asset("icons/icon-base.svg", "no-cache");
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(csp.contains("script-src 'none'"));
+        assert!(csp.contains("object-src 'none'"));
+    }
+
     #[test]
     fn same_origin_moltis_localhost() {
         // moltis.localhost ↔ localhost loopback variants
@@ -3249,6 +4119,27 @@ mod tests {
         assert!(is_same_origin(
             "https://app.moltis.localhost:8080",
             "localhost:8080"
+        ));
+    }
+
+    #[test]
+    fn prebuild_runs_only_when_mode_enabled_and_packages_present() {
+        let packages = vec!["curl".to_string()];
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &packages
+        ));
+        assert!(should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::NonMain,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::Off,
+            &packages
+        ));
+        assert!(!should_prebuild_sandbox_image(
+            &moltis_tools::sandbox::SandboxMode::All,
+            &[]
         ));
     }
 

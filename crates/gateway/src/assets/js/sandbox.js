@@ -3,11 +3,58 @@
 import { sendRpc } from "./helpers.js";
 import * as S from "./state.js";
 
+var SANDBOX_DISABLED_HINT =
+	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
+
+function sandboxRuntimeAvailable() {
+	return (S.sandboxInfo?.backend || "none") !== "none";
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
+function applySandboxControlAvailability() {
+	var available = sandboxRuntimeAvailable();
+	var title = available ? null : SANDBOX_DISABLED_HINT;
+
+	if (S.sandboxToggleBtn) {
+		S.sandboxToggleBtn.disabled = !available;
+		S.sandboxToggleBtn.style.opacity = available ? "" : "0.55";
+		S.sandboxToggleBtn.style.cursor = available ? "pointer" : "not-allowed";
+		if (title) {
+			S.sandboxToggleBtn.title = title;
+		} else {
+			S.sandboxToggleBtn.title = "Toggle sandbox mode";
+		}
+	}
+
+	if (S.sandboxImageBtn) {
+		S.sandboxImageBtn.disabled = !available;
+		S.sandboxImageBtn.style.opacity = available ? "" : "0.55";
+		S.sandboxImageBtn.style.cursor = available ? "pointer" : "not-allowed";
+		if (title) {
+			S.sandboxImageBtn.title = title;
+		} else {
+			S.sandboxImageBtn.title = "Sandbox image";
+		}
+	}
+
+	if (!available && S.sandboxImageDropdown) {
+		S.sandboxImageDropdown.classList.add("hidden");
+	}
+
+	return available;
+}
+
 // ── Sandbox enabled/disabled toggle ─────────────────────────
 
 export function updateSandboxUI(enabled) {
 	S.setSessionSandboxEnabled(!!enabled);
 	if (!(S.sandboxLabel && S.sandboxToggleBtn)) return;
+	if (!applySandboxControlAvailability()) {
+		S.sandboxLabel.textContent = "disabled";
+		S.sandboxToggleBtn.style.borderColor = "";
+		S.sandboxToggleBtn.style.color = "var(--muted)";
+		return;
+	}
 	if (S.sessionSandboxEnabled) {
 		S.sandboxLabel.textContent = "sandboxed";
 		S.sandboxToggleBtn.style.borderColor = "var(--accent, #f59e0b)";
@@ -22,6 +69,7 @@ export function updateSandboxUI(enabled) {
 export function bindSandboxToggleEvents() {
 	if (!S.sandboxToggleBtn) return;
 	S.sandboxToggleBtn.addEventListener("click", () => {
+		if (!sandboxRuntimeAvailable()) return;
 		var newVal = !S.sessionSandboxEnabled;
 		sendRpc("sessions.patch", {
 			key: S.activeSessionKey,
@@ -43,6 +91,10 @@ var DEFAULT_IMAGE = "ubuntu:25.10";
 export function updateSandboxImageUI(image) {
 	S.setSessionSandboxImage(image || null);
 	if (!S.sandboxImageLabel) return;
+	if (!applySandboxControlAvailability()) {
+		S.sandboxImageLabel.textContent = "unavailable";
+		return;
+	}
 	S.sandboxImageLabel.textContent = image || DEFAULT_IMAGE;
 }
 
@@ -50,6 +102,7 @@ export function bindSandboxImageEvents() {
 	if (!S.sandboxImageBtn) return;
 
 	S.sandboxImageBtn.addEventListener("click", (e) => {
+		if (!sandboxRuntimeAvailable()) return;
 		e.stopPropagation();
 		toggleImageDropdown();
 	});

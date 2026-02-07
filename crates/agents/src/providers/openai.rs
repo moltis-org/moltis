@@ -4,7 +4,13 @@ use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_
 
 use tracing::{debug, trace, warn};
 
-use crate::model::{CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage};
+use {
+    super::openai_compat::{
+        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
+        process_openai_sse_line, to_openai_tools,
+    },
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+};
 
 pub struct OpenAiProvider {
     api_key: secrecy::Secret<String>,
@@ -41,45 +47,6 @@ impl OpenAiProvider {
     }
 }
 
-/// Convert tool schemas to OpenAI function-calling format.
-fn to_openai_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["parameters"],
-                }
-            })
-        })
-        .collect()
-}
-
-/// Parse tool_calls from an OpenAI response message.
-fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
-    message["tool_calls"]
-        .as_array()
-        .map(|tcs| {
-            tcs.iter()
-                .filter_map(|tc| {
-                    let id = tc["id"].as_str()?.to_string();
-                    let name = tc["function"]["name"].as_str()?.to_string();
-                    let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                    Some(ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     fn name(&self) -> &str {
@@ -98,14 +65,20 @@ impl LlmProvider for OpenAiProvider {
         super::context_window_for_model(&self.model)
     }
 
+    fn supports_vision(&self) -> bool {
+        super::supports_vision_for_model(&self.model)
+    }
+
     async fn complete(
         &self,
-        messages: &[serde_json::Value],
+        messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        let openai_messages: Vec<serde_json::Value> =
+            messages.iter().map(ChatMessage::to_openai_value).collect();
         let mut body = serde_json::json!({
             "model": self.model,
-            "messages": messages,
+            "messages": openai_messages,
         });
 
         if !tools.is_empty() {
@@ -162,7 +135,7 @@ impl LlmProvider for OpenAiProvider {
     #[allow(clippy::collapsible_if)]
     fn stream(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream_with_tools(messages, vec![])
     }
@@ -170,13 +143,15 @@ impl LlmProvider for OpenAiProvider {
     #[allow(clippy::collapsible_if)]
     fn stream_with_tools(
         &self,
-        messages: Vec<serde_json::Value>,
+        messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
+            let openai_messages: Vec<serde_json::Value> =
+                messages.iter().map(ChatMessage::to_openai_value).collect();
             let mut body = serde_json::json!({
                 "model": self.model,
-                "messages": messages,
+                "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
@@ -187,7 +162,7 @@ impl LlmProvider for OpenAiProvider {
 
             debug!(
                 model = %self.model,
-                messages_count = messages.len(),
+                messages_count = openai_messages.len(),
                 tools_count = tools.len(),
                 "openai stream_with_tools request"
             );
@@ -219,11 +194,7 @@ impl LlmProvider for OpenAiProvider {
 
             let mut byte_stream = resp.bytes_stream();
             let mut buf = String::new();
-            let mut input_tokens: u32 = 0;
-            let mut output_tokens: u32 = 0;
-
-            // Track which tool call indices we have already started.
-            let mut started_tool_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut state = StreamingToolState::default();
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -247,68 +218,19 @@ impl LlmProvider for OpenAiProvider {
                         continue;
                     };
 
-                    if data == "[DONE]" {
-                        yield StreamEvent::Done(Usage { input_tokens, output_tokens });
-                        return;
-                    }
-
-                    if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
-                        // Usage chunk (sent with stream_options.include_usage)
-                        if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
-                            input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-                            output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
+                    match process_openai_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_stream(&state) {
+                                yield event;
+                            }
+                            return;
                         }
-
-                        let delta = &evt["choices"][0]["delta"];
-
-                        // Text content delta.
-                        if let Some(text) = delta["content"].as_str() {
-                            if !text.is_empty() {
-                                yield StreamEvent::Delta(text.to_string());
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
                             }
                         }
-
-                        // Tool call deltas (OpenAI sends choices[0].delta.tool_calls array).
-                        if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                            for tc in tool_calls {
-                                let index = tc["index"].as_u64().unwrap_or(0) as usize;
-
-                                // First chunk for a given index carries id + function.name.
-                                if !started_tool_indices.contains(&index) {
-                                    if let Some(id) = tc["id"].as_str() {
-                                        let name = tc["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or("")
-                                            .to_string();
-                                        started_tool_indices.insert(index);
-                                        yield StreamEvent::ToolCallStart {
-                                            id: id.to_string(),
-                                            name,
-                                            index,
-                                        };
-                                    }
-                                }
-
-                                // Argument fragment.
-                                if let Some(args_delta) = tc["function"]["arguments"].as_str() {
-                                    if !args_delta.is_empty() {
-                                        yield StreamEvent::ToolCallArgumentsDelta {
-                                            index,
-                                            delta: args_delta.to_string(),
-                                        };
-                                    }
-                                }
-                            }
-                        }
-
-                        // finish_reason == "tool_calls" signals all tool calls are complete.
-                        if let Some(finish) = evt["choices"][0]["finish_reason"].as_str() {
-                            if finish == "tool_calls" {
-                                for &idx in &started_tool_indices {
-                                    yield StreamEvent::ToolCallComplete { index: idx };
-                                }
-                            }
-                        }
+                        SseLineResult::Skip => {}
                     }
                 }
             }
@@ -325,6 +247,8 @@ mod tests {
         secrecy::Secret,
         tokio_stream::StreamExt,
     };
+
+    use crate::model::ChatMessage;
 
     use super::*;
 
@@ -404,10 +328,7 @@ mod tests {
         let provider = test_provider(&base_url);
         let tools = sample_tools();
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            tools,
-        );
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], tools);
         while stream.next().await.is_some() {}
 
         let reqs = captured.lock().unwrap();
@@ -430,10 +351,7 @@ mod tests {
         let (base_url, captured) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            vec![],
-        );
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], vec![]);
         while stream.next().await.is_some() {}
 
         let reqs = captured.lock().unwrap();
@@ -466,10 +384,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
@@ -534,10 +450,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut events = Vec::new();
         while let Some(ev) = stream.next().await {
@@ -578,10 +492,8 @@ mod tests {
         let (base_url, _) = start_sse_mock(sse.to_string()).await;
         let provider = test_provider(&base_url);
 
-        let mut stream = provider.stream_with_tools(
-            vec![serde_json::json!({"role":"user","content":"test"})],
-            sample_tools(),
-        );
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
 
         let mut text_deltas = Vec::new();
         let mut tool_starts = Vec::new();

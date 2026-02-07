@@ -3,7 +3,7 @@
 //! Different LLM families use different prompt formats. This module provides
 //! template formatting for Llama3, ChatML (Qwen/Kimi), Mistral, and DeepSeek.
 
-use serde_json::Value;
+use crate::model::{ChatMessage, UserContent};
 
 /// Hint for which chat template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,11 +35,22 @@ impl ChatTemplateHint {
     }
 }
 
+/// Extract role and content strings from a `ChatMessage`.
+fn role_content(msg: &ChatMessage) -> (&str, &str) {
+    match msg {
+        ChatMessage::System { content } => ("system", content.as_str()),
+        ChatMessage::User { content } => match content {
+            UserContent::Text(text) => ("user", text.as_str()),
+            UserContent::Multimodal(_) => ("user", ""),
+        },
+        ChatMessage::Assistant { content, .. } => ("assistant", content.as_deref().unwrap_or("")),
+        ChatMessage::Tool { content, .. } => ("tool", content.as_str()),
+    }
+}
+
 /// Format messages using the specified chat template.
-///
-/// Messages should be JSON objects with "role" and "content" fields.
 #[must_use]
-pub fn format_messages(messages: &[Value], hint: ChatTemplateHint) -> String {
+pub fn format_messages(messages: &[ChatMessage], hint: ChatTemplateHint) -> String {
     match hint {
         ChatTemplateHint::Auto | ChatTemplateHint::ChatML => format_chatml(messages),
         ChatTemplateHint::Llama3 => format_llama3(messages),
@@ -57,12 +68,11 @@ pub fn format_messages(messages: &[Value], hint: ChatTemplateHint) -> String {
 /// {user_message}<|im_end|>
 /// <|im_start|>assistant
 /// ```
-fn format_chatml(messages: &[Value]) -> String {
+fn format_chatml(messages: &[ChatMessage]) -> String {
     let mut output = String::new();
 
     for msg in messages {
-        let role = msg["role"].as_str().unwrap_or("user");
-        let content = msg["content"].as_str().unwrap_or("");
+        let (role, content) = role_content(msg);
 
         output.push_str("<|im_start|>");
         output.push_str(role);
@@ -85,12 +95,11 @@ fn format_chatml(messages: &[Value]) -> String {
 ///
 /// {user_message}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 /// ```
-fn format_llama3(messages: &[Value]) -> String {
+fn format_llama3(messages: &[ChatMessage]) -> String {
     let mut output = String::from("<|begin_of_text|>");
 
     for msg in messages {
-        let role = msg["role"].as_str().unwrap_or("user");
-        let content = msg["content"].as_str().unwrap_or("");
+        let (role, content) = role_content(msg);
 
         output.push_str("<|start_header_id|>");
         output.push_str(role);
@@ -111,14 +120,13 @@ fn format_llama3(messages: &[Value]) -> String {
 ///
 /// {user_message} [/INST]
 /// ```
-fn format_mistral(messages: &[Value]) -> String {
+fn format_mistral(messages: &[ChatMessage]) -> String {
     let mut output = String::from("<s>");
     let mut in_inst = false;
     let mut system_content = String::new();
 
     for msg in messages {
-        let role = msg["role"].as_str().unwrap_or("user");
-        let content = msg["content"].as_str().unwrap_or("");
+        let (role, content) = role_content(msg);
 
         match role {
             "system" => {
@@ -158,12 +166,11 @@ fn format_mistral(messages: &[Value]) -> String {
 /// <|User|>{user_message}
 /// <|Assistant|>
 /// ```
-fn format_deepseek(messages: &[Value]) -> String {
+fn format_deepseek(messages: &[ChatMessage]) -> String {
     let mut output = String::from("<|begin▁of▁sentence|>");
 
     for msg in messages {
-        let role = msg["role"].as_str().unwrap_or("user");
-        let content = msg["content"].as_str().unwrap_or("");
+        let (role, content) = role_content(msg);
 
         match role {
             "system" => {
@@ -192,21 +199,21 @@ fn format_deepseek(messages: &[Value]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, serde_json::json};
+    use super::*;
 
-    fn simple_messages() -> Vec<Value> {
+    fn simple_messages() -> Vec<ChatMessage> {
         vec![
-            json!({"role": "system", "content": "You are a helpful assistant."}),
-            json!({"role": "user", "content": "Hello!"}),
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("Hello!"),
         ]
     }
 
-    fn multi_turn_messages() -> Vec<Value> {
+    fn multi_turn_messages() -> Vec<ChatMessage> {
         vec![
-            json!({"role": "system", "content": "You are a helpful assistant."}),
-            json!({"role": "user", "content": "What is 2+2?"}),
-            json!({"role": "assistant", "content": "4"}),
-            json!({"role": "user", "content": "And 3+3?"}),
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("What is 2+2?"),
+            ChatMessage::assistant("4"),
+            ChatMessage::user("And 3+3?"),
         ]
     }
 
@@ -308,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_empty_messages() {
-        let empty: Vec<Value> = vec![];
+        let empty: Vec<ChatMessage> = vec![];
         let result = format_chatml(&empty);
         assert!(result.ends_with("<|im_start|>assistant\n"));
 

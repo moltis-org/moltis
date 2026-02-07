@@ -1,46 +1,65 @@
 name: Update Homebrew Formula
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (for example v0.3.0)"
+        required: true
+        type: string
 
 permissions: {}
 
 jobs:
   update-formula:
     name: Update Homebrew tap
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Wait for release assets
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+
           for i in $(seq 1 30); do
-            COUNT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets | length')
+            COUNT=0
+            for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+              ASSET="moltis-${VERSION}-${target}.tar.gz"
+              URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+              if curl --silent --show-error --fail --location --head "$URL" >/dev/null; then
+                COUNT=$((COUNT + 1))
+              fi
+            done
+
             if [ "$COUNT" -ge 4 ]; then
               echo "All assets available ($COUNT)"
               exit 0
             fi
+
             echo "Waiting for assets... ($COUNT so far)"
             sleep 30
           done
+
           echo "Timed out waiting for release assets"
           exit 1
 
       - name: Download release assets and compute SHAs
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
           VERSION="${TAG#v}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
             ASSET="moltis-${VERSION}-${target}.tar.gz"
-            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET"
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+            curl --silent --show-error --fail --location "$URL" -o "$ASSET"
             SHA=$(sha256sum "$ASSET" | cut -d' ' -f1)
             VAR="SHA_$(echo "$target" | tr '-' '_')"
             echo "${VAR}=${SHA}" >> "$GITHUB_ENV"

@@ -12,7 +12,7 @@ use {
 };
 
 use crate::{
-    model::LlmProvider,
+    model::{ChatMessage, LlmProvider},
     runner::run_agent_loop,
     tool_registry::{AgentTool, ToolRegistry},
 };
@@ -127,7 +127,7 @@ impl AgentTool for MemoryWriteFileTool {
 /// Returns the list of file paths that were written.
 pub async fn run_silent_memory_turn(
     provider: Arc<dyn LlmProvider>,
-    conversation: &[serde_json::Value],
+    conversation: &[ChatMessage],
     workspace_dir: &Path,
 ) -> Result<Vec<PathBuf>> {
     let write_tool = Arc::new(MemoryWriteFileTool::new(workspace_dir.to_path_buf()));
@@ -160,11 +160,19 @@ pub async fn run_silent_memory_turn(
     // Format the conversation for the user message
     let mut conversation_text = String::new();
     for msg in conversation {
-        let role = msg
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let (role, content) = match msg {
+            ChatMessage::System { content } => ("system", content.as_str()),
+            ChatMessage::User {
+                content: crate::model::UserContent::Text(t),
+            } => ("user", t.as_str()),
+            ChatMessage::User {
+                content: crate::model::UserContent::Multimodal(_),
+            } => ("user", "[multimodal content]"),
+            ChatMessage::Assistant { content, .. } => {
+                ("assistant", content.as_deref().unwrap_or(""))
+            },
+            ChatMessage::Tool { content, .. } => ("tool", content.as_str()),
+        };
         // Skip very long messages (tool results, etc.)
         let truncated = if content.len() > 2000 {
             &content[..2000]
@@ -210,7 +218,7 @@ pub async fn run_silent_memory_turn(
 mod tests {
     use {
         super::*,
-        crate::model::{CompletionResponse, StreamEvent, ToolCall, Usage},
+        crate::model::{ChatMessage, CompletionResponse, StreamEvent, ToolCall, Usage},
         std::pin::Pin,
         tokio_stream::Stream,
     };
@@ -236,7 +244,7 @@ mod tests {
 
         async fn complete(
             &self,
-            _messages: &[serde_json::Value],
+            _messages: &[ChatMessage],
             _tools: &[serde_json::Value],
         ) -> Result<CompletionResponse> {
             let count = self
@@ -272,7 +280,7 @@ mod tests {
 
         fn stream(
             &self,
-            _messages: Vec<serde_json::Value>,
+            _messages: Vec<ChatMessage>,
         ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
@@ -286,8 +294,8 @@ mod tests {
         });
 
         let conversation = vec![
-            serde_json::json!({"role": "user", "content": "I prefer Rust over Python."}),
-            serde_json::json!({"role": "assistant", "content": "Noted! Rust is a great choice."}),
+            ChatMessage::user("I prefer Rust over Python."),
+            ChatMessage::assistant("Noted! Rust is a great choice."),
         ];
 
         let paths = run_silent_memory_turn(provider, &conversation, tmp.path())

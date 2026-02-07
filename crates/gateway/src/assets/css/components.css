@@ -146,7 +146,7 @@
 .provider-btn-danger {
   background: var(--error);
   color: #fff;
-  border: none;
+  border: 1px solid transparent;
 }
 
 .provider-btn-danger:hover {

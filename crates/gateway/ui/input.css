@@ -341,6 +341,153 @@
     font-size: 0.78rem;
     color: var(--error);
   }
+  /* Muted style for validation/retry errors (expected, not alarming) */
+  .exec-card.exec-retry {
+    opacity: 0.6;
+    border-left-color: var(--muted);
+  }
+  .exec-retry-detail {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+  /* Browser screenshot thumbnail */
+  .screenshot-container {
+    margin-top: 8px;
+    position: relative;
+  }
+  .screenshot-thumbnail {
+    max-width: 200px;
+    max-height: 150px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .screenshot-thumbnail:hover {
+    border-color: var(--accent);
+    transform: scale(1.02);
+  }
+  /* Fullscreen lightbox for screenshots */
+  .screenshot-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    z-index: 9999;
+    cursor: zoom-out;
+    padding: 20px;
+  }
+  .screenshot-lightbox-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 100%;
+    width: 100%;
+    max-height: 100%;
+    cursor: default;
+  }
+  .screenshot-lightbox-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    padding: 8px 0;
+  }
+  .screenshot-lightbox-close {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 1.25rem;
+    font-weight: 300;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .screenshot-lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .screenshot-lightbox-scroll {
+    flex: 1;
+    min-height: 0; /* Allow flex item to shrink below content size */
+    overflow: auto;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Don't stretch image vertically */
+    border-radius: var(--radius-md);
+    /* Visible scrollbar for long screenshots */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .screenshot-lightbox-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 4px;
+  }
+  .screenshot-lightbox-img {
+    /* Don't constrain height - allow scrolling for tall images */
+    /* Width is set by JS based on logical size, capped at viewport width */
+    display: block;
+    flex-shrink: 0; /* Prevent flex from shrinking the image */
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+  /* Download button in lightbox */
+  .screenshot-download-btn {
+    background: var(--accent-dim);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .screenshot-download-btn:hover {
+    background: var(--accent);
+  }
+  /* Small download button next to thumbnail */
+  .screenshot-download-btn-small {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 24px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .screenshot-container:hover .screenshot-download-btn-small {
+    opacity: 1;
+  }
+  .screenshot-download-btn-small:hover {
+    background: var(--accent-dim);
+    color: white;
+    border-color: var(--accent-dim);
+  }
   .msg code {
     background: var(--surface2);
     padding: 1px 6px;
@@ -1096,13 +1243,124 @@
   }
   .download-progress-bar {
     height: 100%;
+    width: 0;
     background: var(--accent);
     transition: width 0.3s ease;
+  }
+  .download-progress.indeterminate .download-progress-bar {
+    width: 40%;
+    animation: indeterminate-slide 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate-slide {
+    0% { margin-left: 0; }
+    50% { margin-left: 60%; }
+    100% { margin-left: 0; }
+  }
+
+  /* Download indicator in chat - use .msg.system.download-indicator for higher specificity */
+  .msg.system.download-indicator {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-width: 400px;
+    margin: 12px 0;
+    align-self: flex-start;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  .msg.system.download-indicator .download-status {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .msg.system.download-indicator .download-progress {
+    width: 100%;
+  }
+  .msg.system.download-indicator .download-progress-text {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
   }
 
   .provider-item-badge.local {
     background: rgba(168, 85, 247, 0.12);
     color: #a855f7;
+  }
+
+  /* Onboarding wizard */
+  .onboarding-card {
+    width: 100%;
+    max-width: 520px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 32px;
+    animation: msg-in 0.2s ease-out;
+  }
+  .onboarding-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  .onboarding-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .onboarding-step-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border: 2px solid var(--border);
+    color: var(--muted);
+    background: var(--surface);
+    transition: all 0.2s;
+  }
+  .onboarding-step-dot.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-subtle);
+  }
+  .onboarding-step-dot.completed {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: #fff;
+  }
+  .onboarding-step-line {
+    width: 32px;
+    height: 2px;
+    background: var(--border);
+    flex-shrink: 0;
+    margin: 0 4px;
+    margin-bottom: 20px;
+    transition: background 0.2s;
+  }
+  .onboarding-step-line.completed {
+    background: var(--accent-dim);
+  }
+  .onboarding-step-label {
+    font-size: 0.68rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .onboarding-step.active .onboarding-step-label {
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+  .onboarding-step.completed .onboarding-step-label {
+    color: var(--accent);
   }
 }
 

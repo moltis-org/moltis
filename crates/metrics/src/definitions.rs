@@ -447,6 +447,10 @@ pub mod telegram {
     pub const ACCESS_CONTROL_DENIALS_TOTAL: &str = "moltis_telegram_access_control_denials_total";
     /// Update polling duration
     pub const POLLING_DURATION_SECONDS: &str = "moltis_telegram_polling_duration_seconds";
+    /// OTP challenges issued to non-allowlisted users
+    pub const OTP_CHALLENGES_TOTAL: &str = "moltis_telegram_otp_challenges_total";
+    /// OTP verification attempts (labelled by result: approved, wrong_code, locked_out, expired)
+    pub const OTP_VERIFICATIONS_TOTAL: &str = "moltis_telegram_otp_verifications_total";
 }
 
 /// Config loading metrics

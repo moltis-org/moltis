@@ -126,7 +126,7 @@ pub fn discover_and_load() -> MoltisConfig {
 ///
 /// When a config dir override is set, only that directory is searched —
 /// project-local and user-global paths are skipped for isolation.
-fn find_config_file() -> Option<PathBuf> {
+pub fn find_config_file() -> Option<PathBuf> {
     if let Some(dir) = config_dir_override() {
         for name in CONFIG_FILENAMES {
             let p = dir.join(name);
@@ -241,6 +241,7 @@ fn save_config_inner(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
 
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
+/// Uses a comprehensive template with all options documented.
 fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
     let path = find_or_default_config_path();
     if path.exists() {
@@ -249,10 +250,10 @@ fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let toml_str =
-        toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
+    // Use the documented template instead of plain serialization
+    let toml_str = crate::template::default_config_template(config.server.port);
     std::fs::write(&path, &toml_str)?;
-    debug!(path = %path.display(), "wrote default config file");
+    debug!(path = %path.display(), "wrote default config file with template");
     Ok(())
 }
 

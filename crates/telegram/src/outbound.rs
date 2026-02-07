@@ -1,6 +1,7 @@
 use {
     anyhow::Result,
     async_trait::async_trait,
+    base64::Engine,
     teloxide::{
         payloads::SendMessageSetters,
         prelude::*,
@@ -64,42 +65,129 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
+    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
+        let bot = self.get_bot(account_id)?;
+        let chat_id = ChatId(to.parse::<i64>()?);
+
+        let html = markdown::markdown_to_telegram_html(text);
+        let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
+
+        for chunk in chunks {
+            bot.send_message(chat_id, &chunk)
+                .parse_mode(ParseMode::Html)
+                .disable_notification(true) // Silent - no sound/vibration
+                .await?;
+        }
+
+        Ok(())
+    }
+
     async fn send_media(&self, account_id: &str, to: &str, payload: &ReplyPayload) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
 
         if let Some(ref media) = payload.media {
-            let input = InputFile::url(media.url.parse()?);
+            // Handle base64 data URIs (e.g., "data:image/png;base64,...")
+            if media.url.starts_with("data:") {
+                // Parse data URI: data:<mime>;base64,<data>
+                let Some(comma_pos) = media.url.find(',') else {
+                    anyhow::bail!("invalid data URI: no comma separator");
+                };
+                let base64_data = &media.url[comma_pos + 1..];
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(base64_data)
+                    .map_err(|e| anyhow::anyhow!("failed to decode base64: {e}"))?;
 
-            match media.mime_type.as_str() {
-                t if t.starts_with("image/") => {
+                debug!(
+                    bytes = bytes.len(),
+                    mime_type = %media.mime_type,
+                    "sending base64 media to telegram"
+                );
+
+                // Determine file extension
+                let ext = match media.mime_type.as_str() {
+                    "image/png" => "png",
+                    "image/jpeg" | "image/jpg" => "jpg",
+                    "image/gif" => "gif",
+                    "image/webp" => "webp",
+                    _ => "bin",
+                };
+                let filename = format!("screenshot.{ext}");
+
+                // For images, try as photo first, fall back to document on dimension errors
+                if media.mime_type.starts_with("image/") {
+                    let input = InputFile::memory(bytes.clone()).file_name(filename.clone());
                     let mut req = bot.send_photo(chat_id, input);
                     if !payload.text.is_empty() {
                         req = req.caption(&payload.text);
                     }
-                    req.await?;
-                },
-                t if t.starts_with("audio/") => {
-                    let mut req = bot.send_audio(chat_id, input);
-                    if !payload.text.is_empty() {
-                        req = req.caption(&payload.text);
+
+                    match req.await {
+                        Ok(_) => return Ok(()),
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            // Retry as document if photo dimensions are invalid
+                            if err_str.contains("PHOTO_INVALID_DIMENSIONS")
+                                || err_str.contains("PHOTO_SAVE_FILE_INVALID")
+                            {
+                                debug!(
+                                    error = %err_str,
+                                    "photo rejected, retrying as document"
+                                );
+                                let input = InputFile::memory(bytes).file_name(filename);
+                                let mut req = bot.send_document(chat_id, input);
+                                if !payload.text.is_empty() {
+                                    req = req.caption(&payload.text);
+                                }
+                                req.await?;
+                                return Ok(());
+                            }
+                            return Err(e.into());
+                        },
                     }
-                    req.await?;
-                },
-                "audio/ogg" => {
-                    let mut req = bot.send_voice(chat_id, input);
-                    if !payload.text.is_empty() {
-                        req = req.caption(&payload.text);
-                    }
-                    req.await?;
-                },
-                _ => {
-                    let mut req = bot.send_document(chat_id, input);
-                    if !payload.text.is_empty() {
-                        req = req.caption(&payload.text);
-                    }
-                    req.await?;
-                },
+                }
+
+                // Non-image types: send as document
+                let input = InputFile::memory(bytes).file_name(filename);
+                let mut req = bot.send_document(chat_id, input);
+                if !payload.text.is_empty() {
+                    req = req.caption(&payload.text);
+                }
+                req.await?;
+            } else {
+                // URL-based media
+                let input = InputFile::url(media.url.parse()?);
+
+                match media.mime_type.as_str() {
+                    t if t.starts_with("image/") => {
+                        let mut req = bot.send_photo(chat_id, input);
+                        if !payload.text.is_empty() {
+                            req = req.caption(&payload.text);
+                        }
+                        req.await?;
+                    },
+                    t if t.starts_with("audio/") => {
+                        let mut req = bot.send_audio(chat_id, input);
+                        if !payload.text.is_empty() {
+                            req = req.caption(&payload.text);
+                        }
+                        req.await?;
+                    },
+                    "audio/ogg" => {
+                        let mut req = bot.send_voice(chat_id, input);
+                        if !payload.text.is_empty() {
+                            req = req.caption(&payload.text);
+                        }
+                        req.await?;
+                    },
+                    _ => {
+                        let mut req = bot.send_document(chat_id, input);
+                        if !payload.text.is_empty() {
+                            req = req.caption(&payload.text);
+                        }
+                        req.await?;
+                    },
+                }
             }
         } else if !payload.text.is_empty() {
             self.send_text(account_id, to, &payload.text).await?;
