@@ -1016,7 +1016,7 @@ function bufToB64(buf) {
 function ConfigSection() {
 	var [toml, setToml] = useState("");
 	var [configPath, setConfigPath] = useState("");
-	var [loading, setLoading] = useState(true);
+	var [configLoading, setConfigLoading] = useState(true);
 	var [saving, setSaving] = useState(false);
 	var [testing, setTesting] = useState(false);
 	var [resettingTemplate, setResettingTemplate] = useState(false);
@@ -1026,7 +1026,7 @@ function ConfigSection() {
 	var [warnings, setWarnings] = useState([]);
 
 	function fetchConfig() {
-		setLoading(true);
+		setConfigLoading(true);
 		rerender();
 		fetch("/api/config")
 			.then((r) => {
@@ -1051,7 +1051,7 @@ function ConfigSection() {
 					setConfigPath(d.path || "");
 					setErr(null);
 				}
-				setLoading(false);
+				setConfigLoading(false);
 				rerender();
 			})
 			.catch((fetchErr) => {
@@ -1061,7 +1061,7 @@ function ConfigSection() {
 					errMsg = "Failed to connect to server. Please check if moltis is running.";
 				}
 				setErr(errMsg);
-				setLoading(false);
+				setConfigLoading(false);
 				rerender();
 			});
 	}
@@ -1239,7 +1239,7 @@ function ConfigSection() {
 			});
 	}
 
-	if (loading) {
+	if (configLoading) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
 			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>

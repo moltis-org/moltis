@@ -154,6 +154,7 @@ function appendToolResult(toolCard, result) {
 	}
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
 function handleChatToolCallEnd(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
@@ -408,6 +409,7 @@ function handleBrowserImagePull(payload) {
 // Track download indicator element
 var downloadIndicatorEl = null;
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Download progress UI with multiple states
 function handleLocalLlmDownload(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
@@ -420,7 +422,7 @@ function handleLocalLlmDownload(payload) {
 			downloadIndicatorEl.remove();
 			downloadIndicatorEl = null;
 		}
-		chatAddMsg("error", "Failed to download " + modelName + ": " + payload.error);
+		chatAddMsg("error", `Failed to download ${modelName}: ${payload.error}`);
 		return;
 	}
 
@@ -430,7 +432,7 @@ function handleLocalLlmDownload(payload) {
 			downloadIndicatorEl.remove();
 			downloadIndicatorEl = null;
 		}
-		chatAddMsg("system", modelName + " ready");
+		chatAddMsg("system", `${modelName} ready`);
 		return;
 	}
 
@@ -441,7 +443,7 @@ function handleLocalLlmDownload(payload) {
 
 		var status = document.createElement("div");
 		status.className = "download-status";
-		status.textContent = "Downloading " + modelName + "\u2026";
+		status.textContent = `Downloading ${modelName}\u2026`;
 		downloadIndicatorEl.appendChild(status);
 
 		var progressContainer = document.createElement("div");
@@ -462,29 +464,29 @@ function handleLocalLlmDownload(payload) {
 	}
 
 	// Update progress bar
-	var progressBar = downloadIndicatorEl.querySelector(".download-progress-bar");
-	var progressText = downloadIndicatorEl.querySelector(".download-progress-text");
-	var progressContainer = downloadIndicatorEl.querySelector(".download-progress");
+	var barEl = downloadIndicatorEl.querySelector(".download-progress-bar");
+	var textEl = downloadIndicatorEl.querySelector(".download-progress-text");
+	var containerEl = downloadIndicatorEl.querySelector(".download-progress");
 
-	if (progressBar && progressContainer) {
+	if (barEl && containerEl) {
 		if (payload.progress != null) {
 			// Determinate progress - show actual percentage
-			progressContainer.classList.remove("indeterminate");
-			progressBar.style.width = payload.progress.toFixed(1) + "%";
+			containerEl.classList.remove("indeterminate");
+			barEl.style.width = `${payload.progress.toFixed(1)}%`;
 		} else if (payload.total == null && payload.downloaded != null) {
 			// Indeterminate progress - CSS handles the animation
-			progressContainer.classList.add("indeterminate");
-			progressBar.style.width = ""; // Let CSS control width
+			containerEl.classList.add("indeterminate");
+			barEl.style.width = ""; // Let CSS control width
 		}
 	}
 
-	if (payload.downloaded != null && progressText) {
+	if (payload.downloaded != null && textEl) {
 		var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
 		if (payload.total != null) {
 			var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
-			progressText.textContent = downloadedMb + " / " + totalMb + " MB";
+			textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
 		} else {
-			progressText.textContent = downloadedMb + " MB";
+			textEl.textContent = `${downloadedMb} MB`;
 		}
 	}
 }
