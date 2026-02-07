@@ -166,21 +166,37 @@ run_check() {
   local start
   local end
   local duration
+  local log_file
 
   start="$(date +%s)"
   set_status pending "$context" "Running locally"
-  bash -lc "$cmd" &
+
+  if [[ "$context" == "local/test" && -z "${LOCAL_VALIDATE_TEST_VERBOSE:-}" ]]; then
+    log_file="$(mktemp -t local-validate-test.XXXXXX.log)"
+    bash -lc "$cmd" >"$log_file" 2>&1 &
+  else
+    bash -lc "$cmd" &
+  fi
+
   CURRENT_PID="$!"
   if wait "$CURRENT_PID"; then
     end="$(date +%s)"
     duration="$((end - start))"
     CURRENT_PID=""
+    if [[ -n "$log_file" ]]; then
+      rm -f "$log_file"
+    fi
     set_status success "$context" "Passed locally"
     echo "[$context] passed in ${duration}s"
   else
     end="$(date +%s)"
     duration="$((end - start))"
     CURRENT_PID=""
+    if [[ -n "$log_file" ]]; then
+      echo "[$context] failed; showing captured output:" >&2
+      cat "$log_file" >&2
+      rm -f "$log_file"
+    fi
     set_status failure "$context" "Failed locally"
     echo "[$context] failed in ${duration}s" >&2
     return 1
