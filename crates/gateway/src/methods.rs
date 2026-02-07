@@ -1551,6 +1551,21 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let config = ctx.state.heartbeat_config.read().await.clone();
+                    let heartbeat_path = moltis_config::heartbeat_path();
+                    let heartbeat_file_exists = heartbeat_path.exists();
+                    let heartbeat_md = moltis_config::load_heartbeat_md();
+                    let (_, prompt_source) = moltis_cron::heartbeat::resolve_heartbeat_prompt(
+                        config.prompt.as_deref(),
+                        heartbeat_md.as_deref(),
+                    );
+                    let has_prompt_override = config
+                        .prompt
+                        .as_deref()
+                        .is_some_and(|p| !p.trim().is_empty());
+                    let heartbeat_file_effectively_empty =
+                        heartbeat_file_exists && heartbeat_md.is_none();
+                    let skip_llm_when_empty =
+                        heartbeat_file_effectively_empty && !has_prompt_override;
                     // Find the heartbeat job to get its state.
                     let jobs_val = ctx
                         .state
@@ -1565,6 +1580,10 @@ impl MethodRegistry {
                     Ok(serde_json::json!({
                         "config": config,
                         "job": hb_job,
+                        "promptSource": prompt_source.as_str(),
+                        "heartbeatFileExists": heartbeat_file_exists,
+                        "heartbeatFileEffectivelyEmpty": heartbeat_file_effectively_empty,
+                        "skipLlmWhenEmpty": skip_llm_when_empty,
                     }))
                 })
             }),
@@ -1602,9 +1621,26 @@ impl MethodRegistry {
                     if let Some(hb_job) = jobs.iter().find(|j| j.name == "__heartbeat__") {
                         let interval_ms = moltis_cron::heartbeat::parse_interval_ms(&patch.every)
                             .unwrap_or(moltis_cron::heartbeat::DEFAULT_INTERVAL_MS);
-                        let prompt = moltis_cron::heartbeat::resolve_heartbeat_prompt(
-                            patch.prompt.as_deref(),
-                        );
+                        let heartbeat_md = moltis_config::load_heartbeat_md();
+                        let (prompt, prompt_source) =
+                            moltis_cron::heartbeat::resolve_heartbeat_prompt(
+                                patch.prompt.as_deref(),
+                                heartbeat_md.as_deref(),
+                            );
+                        if prompt_source
+                            == moltis_cron::heartbeat::HeartbeatPromptSource::HeartbeatMd
+                        {
+                            tracing::info!("loaded heartbeat prompt from HEARTBEAT.md");
+                        }
+                        if patch.prompt.as_deref().is_some_and(|p| !p.trim().is_empty())
+                            && heartbeat_md.as_deref().is_some_and(|p| !p.trim().is_empty())
+                            && prompt_source
+                                == moltis_cron::heartbeat::HeartbeatPromptSource::Config
+                        {
+                            tracing::warn!(
+                                "heartbeat prompt source conflict: config heartbeat.prompt overrides HEARTBEAT.md"
+                            );
+                        }
                         let job_patch = moltis_cron::types::CronJobPatch {
                             schedule: Some(moltis_cron::types::CronSchedule::Every {
                                 every_ms: interval_ms,

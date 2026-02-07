@@ -7,7 +7,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, creature, vibe, soul).
+/// Agent identity (name, emoji, creature, vibe).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
@@ -15,8 +15,6 @@ pub struct AgentIdentity {
     pub emoji: Option<String>,
     pub creature: Option<String>,
     pub vibe: Option<String>,
-    /// Freeform personality / soul text injected into the system prompt.
-    pub soul: Option<String>,
 }
 
 /// User profile collected during onboarding.
@@ -46,7 +44,7 @@ impl ResolvedIdentity {
             emoji: cfg.identity.emoji.clone(),
             creature: cfg.identity.creature.clone(),
             vibe: cfg.identity.vibe.clone(),
-            soul: cfg.identity.soul.clone(),
+            soul: None,
             user_name: cfg.user.name.clone(),
         }
     }

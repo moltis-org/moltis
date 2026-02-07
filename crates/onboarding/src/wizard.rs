@@ -11,14 +11,30 @@ pub async fn run_onboarding() -> anyhow::Result<()> {
     let config_path = find_or_default_config_path();
 
     // Check if already onboarded.
+    let mut identity_name: Option<String> = None;
+    let mut user_name: Option<String> = None;
     if config_path.exists()
         && let Ok(cfg) = moltis_config::loader::load_config(&config_path)
-        && cfg.is_onboarded()
     {
+        identity_name = cfg.identity.name;
+        user_name = cfg.user.name;
+    }
+    if let Some(id) = moltis_config::load_identity()
+        && id.name.is_some()
+    {
+        identity_name = id.name;
+    }
+    if let Some(user) = moltis_config::load_user()
+        && user.name.is_some()
+    {
+        user_name = user.name;
+    }
+
+    if identity_name.is_some() && user_name.is_some() {
         println!(
             "Already onboarded as {} with agent {}.",
-            cfg.user.name.as_deref().unwrap_or("?"),
-            cfg.identity.name.as_deref().unwrap_or("?"),
+            user_name.as_deref().unwrap_or("?"),
+            identity_name.as_deref().unwrap_or("?"),
         );
         return Ok(());
     }
@@ -46,6 +62,8 @@ pub async fn run_onboarding() -> anyhow::Result<()> {
     config.user = state.user;
 
     let path = save_config(&config)?;
+    moltis_config::save_identity(&config.identity)?;
+    moltis_config::save_user(&config.user)?;
     println!("Config saved to {}", path.display());
     println!("Onboarding complete!");
     Ok(())

@@ -265,7 +265,7 @@ impl AgentTool for ExecTool {
                 if is_sandboxed {
                     Some(PathBuf::from("/"))
                 } else {
-                    std::env::current_dir().ok()
+                    Some(moltis_config::data_dir())
                 }
             });
 
