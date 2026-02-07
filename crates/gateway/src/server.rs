@@ -184,8 +184,6 @@ fn build_protected_api_routes() -> Router<AppState> {
         .route("/api/skills/search", get(api_skills_search_handler))
         .route("/api/mcp", get(api_mcp_handler))
         .route("/api/hooks", get(api_hooks_handler))
-        .route("/api/plugins", get(api_plugins_handler))
-        .route("/api/plugins/search", get(api_plugins_search_handler))
         .route(
             "/api/images/cached",
             get(api_cached_images_handler).delete(api_prune_cached_images_handler),
@@ -546,6 +544,9 @@ pub async fn start_gateway(
     crate::run_migrations(&db_pool)
         .await
         .expect("failed to run gateway migrations");
+
+    // Migrate plugins data into unified skills system (idempotent, non-fatal).
+    moltis_skills::migration::migrate_plugins_to_skills(&data_dir).await;
 
     // Initialize credential store (auth tables).
     let credential_store = Arc::new(
@@ -2616,7 +2617,6 @@ struct NavCounts {
     projects: usize,
     providers: usize,
     channels: usize,
-    plugins: usize,
     skills: usize,
     mcp: usize,
     crons: usize,
@@ -2726,20 +2726,6 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         }
     }
 
-    // Count enabled plugins from plugins manifest.
-    let mut plugins = 0usize;
-    if let Ok(path) = moltis_plugins::install::default_manifest_path() {
-        let store = moltis_skills::manifest::ManifestStore::new(path);
-        if let Ok(m) = store.load() {
-            plugins = m
-                .repos
-                .iter()
-                .flat_map(|r| &r.skills)
-                .filter(|s| s.enabled)
-                .count();
-        }
-    }
-
     let mcp = mcp
         .ok()
         .and_then(|v| {
@@ -2773,7 +2759,6 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         projects,
         providers,
         channels,
-        plugins,
         skills,
         mcp,
         crons,
@@ -3082,24 +3067,6 @@ async fn api_skills_handler(State(state): State<AppState>) -> impl IntoResponse 
     Json(serde_json::json!({ "skills": skills, "repos": repos }))
 }
 
-/// Plugins endpoint: repos and enabled skills from the plugins manifest only.
-#[cfg(feature = "web-ui")]
-async fn api_plugins_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let repos = state
-        .gateway
-        .services
-        .plugins
-        .repos_list()
-        .await
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-
-    let skills = enabled_from_manifest(moltis_plugins::install::default_manifest_path());
-
-    Json(serde_json::json!({ "skills": skills, "repos": repos }))
-}
-
 /// Search skills within a specific repo. Query params: source, q (optional).
 #[cfg(feature = "web-ui")]
 async fn api_search_handler(
@@ -3157,25 +3124,6 @@ async fn api_skills_search_handler(
         .gateway
         .services
         .skills
-        .repos_list_full()
-        .await
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-    api_search_handler(repos, &source, &query).await
-}
-
-#[cfg(feature = "web-ui")]
-async fn api_plugins_search_handler(
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let source = params.get("source").cloned().unwrap_or_default();
-    let query = params.get("q").cloned().unwrap_or_default();
-    let repos = state
-        .gateway
-        .services
-        .plugins
         .repos_list_full()
         .await
         .ok()

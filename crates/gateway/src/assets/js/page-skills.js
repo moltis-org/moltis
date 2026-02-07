@@ -56,7 +56,7 @@ function showToast(message, type) {
 }
 
 function emergencyDisableAllSkills() {
-	requestConfirm("Disable all third-party skills and plugins now?", {
+	requestConfirm("Disable all third-party skills now?", {
 		confirmLabel: "Disable All",
 		danger: true,
 	}).then((yes) => {
@@ -67,7 +67,7 @@ function emergencyDisableAllSkills() {
 				return;
 			}
 			var p = res.payload || {};
-			showToast(`Disabled ${p.skills_disabled || 0} skills and ${p.plugins_disabled || 0} plugins`, "success");
+			showToast(`Disabled ${p.skills_disabled || 0} skills`, "success");
 			fetchAll();
 		});
 	});

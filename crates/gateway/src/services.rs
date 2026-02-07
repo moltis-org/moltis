@@ -602,22 +602,6 @@ pub trait SkillsService: Send + Sync {
     async fn security_scan(&self) -> ServiceResult;
 }
 
-// ── Plugins ─────────────────────────────────────────────────────────────────
-
-#[async_trait]
-pub trait PluginsService: Send + Sync {
-    async fn install(&self, params: Value) -> ServiceResult;
-    async fn remove(&self, params: Value) -> ServiceResult;
-    async fn repos_list(&self) -> ServiceResult;
-    /// Full repos list with per-skill details (for search). Heavyweight.
-    async fn repos_list_full(&self) -> ServiceResult;
-    async fn repos_remove(&self, params: Value) -> ServiceResult;
-    async fn skill_enable(&self, params: Value) -> ServiceResult;
-    async fn skill_disable(&self, params: Value) -> ServiceResult;
-    async fn skill_trust(&self, params: Value) -> ServiceResult;
-    async fn skill_detail(&self, params: Value) -> ServiceResult;
-}
-
 pub struct NoopSkillsService;
 
 #[async_trait]
@@ -735,9 +719,9 @@ impl SkillsService for NoopSkillsService {
             .map(|repo| {
                 let enabled = repo.skills.iter().filter(|s| s.enabled).count();
                 // Re-detect format for repos that predate the formats module
-                let format = if repo.format == moltis_plugins::formats::PluginFormat::Skill {
+                let format = if repo.format == moltis_skills::formats::PluginFormat::Skill {
                     let repo_dir = install_dir.join(&repo.repo_name);
-                    moltis_plugins::formats::detect_format(&repo_dir)
+                    moltis_skills::formats::detect_format(&repo_dir)
                 } else {
                     repo.format
                 };
@@ -765,7 +749,7 @@ impl SkillsService for NoopSkillsService {
                 if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
                     continue;
                 }
-                let format = moltis_plugins::formats::detect_format(&path);
+                let format = moltis_skills::formats::detect_format(&path);
                 repos.push(serde_json::json!({
                     "source": format!("orphan:{repo_name}"),
                     "repo_name": repo_name,
@@ -802,59 +786,88 @@ impl SkillsService for NoopSkillsService {
             .repos
             .iter()
             .map(|repo| {
+                let repo_dir = install_dir.join(&repo.repo_name);
+                // Re-detect format for repos that predate the formats module
+                let format = if repo.format == moltis_skills::formats::PluginFormat::Skill {
+                    moltis_skills::formats::detect_format(&repo_dir)
+                } else {
+                    repo.format
+                };
+
+                // For non-SKILL.md formats, scan with adapter to get enriched metadata.
+                let adapter_entries = match format {
+                    moltis_skills::formats::PluginFormat::Skill => None,
+                    _ => moltis_skills::formats::scan_with_adapter(&repo_dir, format)
+                        .and_then(|r| r.ok()),
+                };
+
                 let skills: Vec<_> = repo
                     .skills
                     .iter()
                     .map(|s| {
-                        let skill_dir = install_dir.join(&s.relative_path);
-                        let skill_md = skill_dir.join("SKILL.md");
-                        let meta_json = moltis_skills::parse::read_meta_json(&skill_dir);
-                        let (description, display_name, elig) =
-                            if let Ok(content) = std::fs::read_to_string(&skill_md) {
-                                if let Ok(meta) =
-                                    moltis_skills::parse::parse_metadata(&content, &skill_dir)
-                                {
-                                    let e = check_requirements(&meta);
-                                    let desc = if meta.description.is_empty() {
-                                        meta_json
+                        // If we have adapter entries, match by name for enriched data.
+                        if let Some(ref entries) = adapter_entries {
+                            let entry = entries.iter().find(|e| e.metadata.name == s.name);
+                            serde_json::json!({
+                                "name": s.name,
+                                "description": entry.map(|e| e.metadata.description.as_str()).unwrap_or(""),
+                                "display_name": entry.and_then(|e| e.display_name.as_deref()),
+                                "relative_path": s.relative_path,
+                                "trusted": s.trusted,
+                                "enabled": s.enabled,
+                                "drifted": drifted_sources.contains(&repo.source),
+                                "eligible": true,
+                                "missing_bins": [],
+                            })
+                        } else {
+                            // SKILL.md format: parse from disk.
+                            let skill_dir = install_dir.join(&s.relative_path);
+                            let skill_md = skill_dir.join("SKILL.md");
+                            let meta_json = moltis_skills::parse::read_meta_json(&skill_dir);
+                            let (description, display_name, elig) =
+                                if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                                    if let Ok(meta) = moltis_skills::parse::parse_metadata(
+                                        &content, &skill_dir,
+                                    ) {
+                                        let e = check_requirements(&meta);
+                                        let desc = if meta.description.is_empty() {
+                                            meta_json
+                                                .as_ref()
+                                                .and_then(|m| m.display_name.clone())
+                                                .unwrap_or_default()
+                                        } else {
+                                            meta.description
+                                        };
+                                        let dn = meta_json
                                             .as_ref()
-                                            .and_then(|m| m.display_name.clone())
-                                            .unwrap_or_default()
+                                            .and_then(|m| m.display_name.clone());
+                                        (desc, dn, Some(e))
                                     } else {
-                                        meta.description
-                                    };
-                                    let dn =
-                                        meta_json.as_ref().and_then(|m| m.display_name.clone());
-                                    (desc, dn, Some(e))
+                                        let dn = meta_json
+                                            .as_ref()
+                                            .and_then(|m| m.display_name.clone());
+                                        (dn.clone().unwrap_or_default(), dn, None)
+                                    }
                                 } else {
                                     let dn =
                                         meta_json.as_ref().and_then(|m| m.display_name.clone());
                                     (dn.clone().unwrap_or_default(), dn, None)
-                                }
-                            } else {
-                                let dn = meta_json.as_ref().and_then(|m| m.display_name.clone());
-                                (dn.clone().unwrap_or_default(), dn, None)
-                            };
-                        serde_json::json!({
-                            "name": s.name,
-                            "description": description,
-                            "display_name": display_name,
-                            "relative_path": s.relative_path,
-                            "trusted": s.trusted,
-                            "enabled": s.enabled,
-                            "drifted": drifted_sources.contains(&repo.source),
-                            "eligible": elig.as_ref().map(|e| e.eligible).unwrap_or(true),
-                            "missing_bins": elig.as_ref().map(|e| e.missing_bins.clone()).unwrap_or_default(),
-                        })
+                                };
+                            serde_json::json!({
+                                "name": s.name,
+                                "description": description,
+                                "display_name": display_name,
+                                "relative_path": s.relative_path,
+                                "trusted": s.trusted,
+                                "enabled": s.enabled,
+                                "drifted": drifted_sources.contains(&repo.source),
+                                "eligible": elig.as_ref().map(|e| e.eligible).unwrap_or(true),
+                                "missing_bins": elig.as_ref().map(|e| e.missing_bins.clone()).unwrap_or_default(),
+                            })
+                        }
                     })
                     .collect();
-                // Re-detect format for repos that predate the formats module
-                let format = if repo.format == moltis_plugins::formats::PluginFormat::Skill {
-                    let repo_dir = install_dir.join(&repo.repo_name);
-                    moltis_plugins::formats::detect_format(&repo_dir)
-                } else {
-                    repo.format
-                };
+
                 serde_json::json!({
                     "source": repo.source,
                     "repo_name": repo.repo_name,
@@ -878,7 +891,7 @@ impl SkillsService for NoopSkillsService {
                 if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
                     continue;
                 }
-                let format = moltis_plugins::formats::detect_format(&path);
+                let format = moltis_skills::formats::detect_format(&path);
                 repos.push(serde_json::json!({
                     "source": format!("orphan:{repo_name}"),
                     "repo_name": repo_name,
@@ -930,54 +943,28 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn emergency_disable(&self) -> ServiceResult {
-        let skills_manifest_path =
+        let manifest_path =
             moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
-        let skills_store = moltis_skills::manifest::ManifestStore::new(skills_manifest_path);
-        let mut skills_manifest = skills_store.load().map_err(|e| e.to_string())?;
+        let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
+        let mut manifest = store.load().map_err(|e| e.to_string())?;
 
-        let mut skills_disabled = 0_u64;
-        for repo in &mut skills_manifest.repos {
+        let mut disabled = 0_u64;
+        for repo in &mut manifest.repos {
             for skill in &mut repo.skills {
                 if skill.enabled {
-                    skills_disabled += 1;
+                    disabled += 1;
                 }
                 skill.enabled = false;
             }
         }
-        skills_store
-            .save(&skills_manifest)
-            .map_err(|e| e.to_string())?;
-
-        let plugins_manifest_path =
-            moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-        let plugins_store = moltis_skills::manifest::ManifestStore::new(plugins_manifest_path);
-        let mut plugins_manifest = plugins_store.load().map_err(|e| e.to_string())?;
-
-        let mut plugins_disabled = 0_u64;
-        for repo in &mut plugins_manifest.repos {
-            for skill in &mut repo.skills {
-                if skill.enabled {
-                    plugins_disabled += 1;
-                }
-                skill.enabled = false;
-            }
-        }
-        plugins_store
-            .save(&plugins_manifest)
-            .map_err(|e| e.to_string())?;
+        store.save(&manifest).map_err(|e| e.to_string())?;
 
         security_audit(
             "skills.emergency_disable",
-            serde_json::json!({
-                "skills_disabled": skills_disabled,
-                "plugins_disabled": plugins_disabled,
-            }),
+            serde_json::json!({ "disabled": disabled }),
         );
 
-        Ok(serde_json::json!({
-            "skills_disabled": skills_disabled,
-            "plugins_disabled": plugins_disabled,
-        }))
+        Ok(serde_json::json!({ "disabled": disabled }))
     }
 
     async fn skill_enable(&self, params: Value) -> ServiceResult {
@@ -1039,75 +1026,121 @@ impl SkillsService for NoopSkillsService {
             .find(|s| s.name == skill_name)
             .ok_or_else(|| format!("skill '{skill_name}' not found in repo '{source}'"))?;
 
-        let skill_dir = install_dir.join(&skill_state.relative_path);
         let repo_dir = install_dir.join(&repo.repo_name);
-        let skill_md = skill_dir.join("SKILL.md");
-        let raw = std::fs::read_to_string(&skill_md)
-            .map_err(|e| format!("failed to read SKILL.md: {e}"))?;
-
-        let content = moltis_skills::parse::parse_skill(&raw, &skill_dir)
-            .map_err(|e| format!("failed to parse SKILL.md: {e}"))?;
-
-        let elig = check_requirements(&content.metadata);
-        let meta_json = moltis_skills::parse::read_meta_json(&skill_dir);
-        let display_name = meta_json.as_ref().and_then(|m| m.display_name.clone());
-        let author = meta_json.as_ref().and_then(|m| m.owner.clone());
-        let version = meta_json
-            .as_ref()
-            .and_then(|m| m.latest.as_ref())
-            .and_then(|l| l.version.clone());
         let commit_sha = repo.commit_sha.clone();
         let commit_url = commit_sha
             .as_ref()
             .and_then(|sha| commit_url_for_source(source, sha));
-        let license_url = license_url_for_source(source, content.metadata.license.as_deref());
         let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
 
-        // Build a direct link to the skill source on GitHub
-        let source_url: Option<String> = {
-            let rel = &skill_state.relative_path;
-            // relative_path starts with repo_name/, strip it to get path within repo
-            rel.strip_prefix(&repo.repo_name)
-                .and_then(|p| p.strip_prefix('/'))
-                .map(|path_in_repo| {
+        // Route by format: SKILL.md repos parse the file; others use format adapters.
+        match repo.format {
+            moltis_skills::formats::PluginFormat::Skill => {
+                let skill_dir = install_dir.join(&skill_state.relative_path);
+                let skill_md = skill_dir.join("SKILL.md");
+                let raw = std::fs::read_to_string(&skill_md)
+                    .map_err(|e| format!("failed to read SKILL.md: {e}"))?;
+                let content = moltis_skills::parse::parse_skill(&raw, &skill_dir)
+                    .map_err(|e| format!("failed to parse SKILL.md: {e}"))?;
+                let elig = check_requirements(&content.metadata);
+                let meta_json = moltis_skills::parse::read_meta_json(&skill_dir);
+                let display_name = meta_json.as_ref().and_then(|m| m.display_name.clone());
+                let author = meta_json.as_ref().and_then(|m| m.owner.clone());
+                let version = meta_json
+                    .as_ref()
+                    .and_then(|m| m.latest.as_ref())
+                    .and_then(|l| l.version.clone());
+                let license_url =
+                    license_url_for_source(source, content.metadata.license.as_deref());
+                let source_url: Option<String> = {
+                    let rel = &skill_state.relative_path;
+                    rel.strip_prefix(&repo.repo_name)
+                        .and_then(|p| p.strip_prefix('/'))
+                        .map(|path_in_repo| {
+                            if source.starts_with("https://") || source.starts_with("http://") {
+                                format!(
+                                    "{}/tree/main/{}",
+                                    source.trim_end_matches('/'),
+                                    path_in_repo
+                                )
+                            } else {
+                                format!("https://github.com/{}/tree/main/{}", source, path_in_repo)
+                            }
+                        })
+                };
+                Ok(serde_json::json!({
+                    "name": content.metadata.name,
+                    "display_name": display_name,
+                    "description": content.metadata.description,
+                    "author": author,
+                    "homepage": content.metadata.homepage,
+                    "version": version,
+                    "license": content.metadata.license,
+                    "license_url": license_url,
+                    "compatibility": content.metadata.compatibility,
+                    "allowed_tools": content.metadata.allowed_tools,
+                    "requires": content.metadata.requires,
+                    "eligible": elig.eligible,
+                    "missing_bins": elig.missing_bins,
+                    "install_options": elig.install_options,
+                    "trusted": skill_state.trusted,
+                    "enabled": skill_state.enabled,
+                    "drifted": drifted_sources.contains(source),
+                    "commit_sha": commit_sha,
+                    "commit_url": commit_url,
+                    "commit_age_days": commit_age_days,
+                    "source_url": source_url,
+                    "body": content.body,
+                    "body_html": markdown_to_html(&content.body),
+                    "source": source,
+                }))
+            },
+            format => {
+                // Non-SKILL.md format: use adapter to scan for skill body + metadata.
+                let entries = moltis_skills::formats::scan_with_adapter(&repo_dir, format)
+                    .ok_or_else(|| format!("no adapter for format '{format}'"))?
+                    .map_err(|e| format!("scan error: {e}"))?;
+                let entry = entries
+                    .into_iter()
+                    .find(|e| e.metadata.name == skill_name)
+                    .ok_or_else(|| format!("skill '{skill_name}' not found on disk"))?;
+                let source_url: Option<String> = entry.source_file.as_ref().map(|file| {
                     if source.starts_with("https://") || source.starts_with("http://") {
-                        format!(
-                            "{}/tree/main/{}",
-                            source.trim_end_matches('/'),
-                            path_in_repo
-                        )
+                        format!("{}/blob/main/{}", source.trim_end_matches('/'), file)
                     } else {
-                        format!("https://github.com/{}/tree/main/{}", source, path_in_repo)
+                        format!("https://github.com/{}/blob/main/{}", source, file)
                     }
-                })
-        };
-
-        Ok(serde_json::json!({
-            "name": content.metadata.name,
-            "display_name": display_name,
-            "description": content.metadata.description,
-            "author": author,
-            "homepage": content.metadata.homepage,
-            "version": version,
-            "license": content.metadata.license,
-            "license_url": license_url,
-            "compatibility": content.metadata.compatibility,
-            "allowed_tools": content.metadata.allowed_tools,
-            "requires": content.metadata.requires,
-            "eligible": elig.eligible,
-            "missing_bins": elig.missing_bins,
-            "install_options": elig.install_options,
-            "trusted": skill_state.trusted,
-            "enabled": skill_state.enabled,
-            "drifted": drifted_sources.contains(source),
-            "commit_sha": commit_sha,
-            "commit_url": commit_url,
-            "commit_age_days": commit_age_days,
-            "source_url": source_url,
-            "body": content.body,
-            "body_html": markdown_to_html(&content.body),
-            "source": source,
-        }))
+                });
+                let license_url = license_url_for_source(source, entry.metadata.license.as_deref());
+                let empty: Vec<String> = Vec::new();
+                Ok(serde_json::json!({
+                    "name": entry.metadata.name,
+                    "display_name": entry.display_name,
+                    "description": entry.metadata.description,
+                    "author": entry.author,
+                    "homepage": entry.metadata.homepage,
+                    "version": null,
+                    "license": entry.metadata.license,
+                    "license_url": license_url,
+                    "compatibility": entry.metadata.compatibility,
+                    "allowed_tools": entry.metadata.allowed_tools,
+                    "requires": entry.metadata.requires,
+                    "eligible": true,
+                    "missing_bins": empty,
+                    "install_options": empty,
+                    "trusted": skill_state.trusted,
+                    "enabled": skill_state.enabled,
+                    "drifted": drifted_sources.contains(source),
+                    "commit_sha": commit_sha,
+                    "commit_url": commit_url,
+                    "commit_age_days": commit_age_days,
+                    "source_url": source_url,
+                    "body": entry.body,
+                    "body_html": markdown_to_html(&entry.body),
+                    "source": source,
+                }))
+            },
+        }
     }
 
     async fn install_dep(&self, params: Value) -> ServiceResult {
@@ -1283,334 +1316,6 @@ impl SkillsService for NoopSkillsService {
     }
 }
 
-pub struct NoopPluginsService;
-
-#[async_trait]
-impl PluginsService for NoopPluginsService {
-    async fn install(&self, params: Value) -> ServiceResult {
-        let source = params
-            .get("source")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'source' parameter (owner/repo format)".to_string())?;
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-        let skills = moltis_plugins::install::install_plugin(source, &install_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-        let installed: Vec<_> = skills
-            .iter()
-            .map(|m| {
-                serde_json::json!({
-                    "name": m.name,
-                    "description": m.description,
-                    "path": m.path.to_string_lossy(),
-                })
-            })
-            .collect();
-        security_audit(
-            "plugins.install",
-            serde_json::json!({
-                "source": source,
-                "installed_count": installed.len(),
-            }),
-        );
-        Ok(serde_json::json!({ "installed": installed }))
-    }
-
-    async fn remove(&self, params: Value) -> ServiceResult {
-        let source = params
-            .get("source")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'source' parameter".to_string())?;
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-        moltis_plugins::install::remove_plugin(source, &install_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-        security_audit("plugins.remove", serde_json::json!({ "source": source }));
-        Ok(serde_json::json!({ "removed": source }))
-    }
-
-    async fn repos_list(&self) -> ServiceResult {
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-        let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
-        let (drift_changed, drifted_sources) =
-            detect_and_mark_repo_drift(&mut manifest, &install_dir);
-        if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
-        }
-
-        let repos: Vec<_> = manifest
-            .repos
-            .iter()
-            .map(|repo| {
-                let enabled = repo.skills.iter().filter(|s| s.enabled).count();
-                let format = {
-                    let repo_dir = install_dir.join(&repo.repo_name);
-                    moltis_plugins::formats::detect_format(&repo_dir)
-                };
-                serde_json::json!({
-                    "source": repo.source,
-                    "repo_name": repo.repo_name,
-                    "installed_at_ms": repo.installed_at_ms,
-                    "commit_sha": repo.commit_sha,
-                    "drifted": drifted_sources.contains(&repo.source),
-                    "format": format,
-                    "skill_count": repo.skills.len(),
-                    "enabled_count": enabled,
-                })
-            })
-            .collect();
-
-        let mut repos = repos;
-        if let Ok(entries) = std::fs::read_dir(&install_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let repo_name = entry.file_name().to_string_lossy().to_string();
-                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
-                    continue;
-                }
-                let format = moltis_plugins::formats::detect_format(&path);
-                repos.push(serde_json::json!({
-                    "source": format!("orphan:{repo_name}"),
-                    "repo_name": repo_name,
-                    "installed_at_ms": 0,
-                    "commit_sha": null,
-                    "drifted": false,
-                    "orphaned": true,
-                    "format": format,
-                    "skill_count": 0,
-                    "enabled_count": 0,
-                }));
-            }
-        }
-
-        Ok(serde_json::json!(repos))
-    }
-
-    async fn repos_list_full(&self) -> ServiceResult {
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-        let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
-        let (drift_changed, drifted_sources) =
-            detect_and_mark_repo_drift(&mut manifest, &install_dir);
-        if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
-        }
-
-        let repos: Vec<_> = manifest
-            .repos
-            .iter()
-            .map(|repo| {
-                let repo_dir = install_dir.join(&repo.repo_name);
-                let format = moltis_plugins::formats::detect_format(&repo_dir);
-
-                // Scan adapter to get enriched metadata (display_name, description).
-                let entries = moltis_plugins::formats::scan_with_adapter(&repo_dir, format)
-                    .and_then(|r| r.ok())
-                    .unwrap_or_default();
-
-                let skills: Vec<_> = repo
-                    .skills
-                    .iter()
-                    .map(|s| {
-                        // Find the matching adapter entry for extra info.
-                        let entry = entries.iter().find(|e| e.metadata.name == s.name);
-                        serde_json::json!({
-                            "name": s.name,
-                            "description": entry.map(|e| e.metadata.description.as_str()).unwrap_or(""),
-                            "display_name": entry.and_then(|e| e.display_name.as_deref()),
-                            "relative_path": s.relative_path,
-                            "trusted": s.trusted,
-                            "enabled": s.enabled,
-                            "drifted": drifted_sources.contains(&repo.source),
-                            "eligible": true,
-                            "missing_bins": [],
-                        })
-                    })
-                    .collect();
-
-                serde_json::json!({
-                    "source": repo.source,
-                    "repo_name": repo.repo_name,
-                    "installed_at_ms": repo.installed_at_ms,
-                    "commit_sha": repo.commit_sha,
-                    "drifted": drifted_sources.contains(&repo.source),
-                    "format": format,
-                    "skills": skills,
-                })
-            })
-            .collect();
-
-        let mut repos = repos;
-        if let Ok(entries) = std::fs::read_dir(&install_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let repo_name = entry.file_name().to_string_lossy().to_string();
-                if manifest.repos.iter().any(|r| r.repo_name == repo_name) {
-                    continue;
-                }
-                let format = moltis_plugins::formats::detect_format(&path);
-                repos.push(serde_json::json!({
-                    "source": format!("orphan:{repo_name}"),
-                    "repo_name": repo_name,
-                    "installed_at_ms": 0,
-                    "commit_sha": null,
-                    "drifted": false,
-                    "orphaned": true,
-                    "format": format,
-                    "skills": [],
-                }));
-            }
-        }
-
-        Ok(serde_json::json!(repos))
-    }
-
-    async fn repos_remove(&self, params: Value) -> ServiceResult {
-        let source = params
-            .get("source")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'source' parameter".to_string())?;
-        if let Some(repo_name) = source.strip_prefix("orphan:") {
-            let install_dir =
-                moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-            let dir = install_dir.join(repo_name);
-            if dir.exists() {
-                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-            }
-            security_audit(
-                "plugins.orphan.remove",
-                serde_json::json!({ "source": source, "repo_name": repo_name }),
-            );
-            return Ok(serde_json::json!({ "removed": source }));
-        }
-        self.remove(params).await
-    }
-
-    async fn skill_enable(&self, params: Value) -> ServiceResult {
-        toggle_plugin_skill(&params, true)
-    }
-
-    async fn skill_disable(&self, params: Value) -> ServiceResult {
-        let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
-
-        // Personal/project skills live as files — delete the directory to disable.
-        if source == "personal" || source == "project" {
-            return delete_discovered_skill(source, &params);
-        }
-
-        toggle_plugin_skill(&params, false)
-    }
-
-    async fn skill_trust(&self, params: Value) -> ServiceResult {
-        set_plugin_skill_trusted(&params, true)
-    }
-
-    async fn skill_detail(&self, params: Value) -> ServiceResult {
-        let source = params
-            .get("source")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'source' parameter".to_string())?;
-        let skill_name = params
-            .get("skill")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'skill' parameter".to_string())?;
-
-        let install_dir =
-            moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-        let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
-        let (drift_changed, drifted_sources) =
-            detect_and_mark_repo_drift(&mut manifest, &install_dir);
-        if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
-        }
-
-        let repo = manifest
-            .repos
-            .iter()
-            .find(|r| r.source == source)
-            .ok_or_else(|| format!("plugin repo '{source}' not found"))?;
-        let skill_state = repo
-            .skills
-            .iter()
-            .find(|s| s.name == skill_name)
-            .ok_or_else(|| format!("skill '{skill_name}' not found in plugin repo '{source}'"))?;
-
-        // For plugin skills, re-scan the adapter to get the body + extra info.
-        let repo_dir = install_dir.join(&repo.repo_name);
-        let format = moltis_plugins::formats::detect_format(&repo_dir);
-        let entries = moltis_plugins::formats::scan_with_adapter(&repo_dir, format)
-            .ok_or_else(|| format!("no adapter for format '{format}'"))?
-            .map_err(|e| format!("scan error: {e}"))?;
-
-        let entry = entries
-            .into_iter()
-            .find(|e| e.metadata.name == skill_name)
-            .ok_or_else(|| format!("skill '{skill_name}' not found on disk"))?;
-
-        // Build a direct link to the source file on GitHub.
-        // source_file is already relative to the repo root.
-        let source_url: Option<String> = entry.source_file.as_ref().map(|file| {
-            if source.starts_with("https://") || source.starts_with("http://") {
-                format!("{}/blob/main/{}", source.trim_end_matches('/'), file)
-            } else {
-                format!("https://github.com/{}/blob/main/{}", source, file)
-            }
-        });
-        let commit_sha = repo.commit_sha.clone();
-        let commit_url = commit_sha
-            .as_ref()
-            .and_then(|sha| commit_url_for_source(source, sha));
-        let license_url = license_url_for_source(source, entry.metadata.license.as_deref());
-        let commit_age_days = commit_age_days(local_repo_head_timestamp_ms(&repo_dir));
-
-        let empty: Vec<String> = Vec::new();
-        Ok(serde_json::json!({
-            "name": entry.metadata.name,
-            "display_name": entry.display_name,
-            "description": entry.metadata.description,
-            "author": entry.author,
-            "homepage": entry.metadata.homepage,
-            "version": null,
-            "license": entry.metadata.license,
-            "license_url": license_url,
-            "compatibility": entry.metadata.compatibility,
-            "allowed_tools": entry.metadata.allowed_tools,
-            "requires": entry.metadata.requires,
-            "eligible": true,
-            "missing_bins": empty,
-            "install_options": empty,
-            "trusted": skill_state.trusted,
-            "enabled": skill_state.enabled,
-            "drifted": drifted_sources.contains(source),
-            "commit_sha": commit_sha,
-            "commit_url": commit_url,
-            "commit_age_days": commit_age_days,
-            "source_url": source_url,
-            "body": entry.body,
-            "body_html": markdown_to_html(&entry.body),
-            "source": source,
-        }))
-    }
-}
-
 fn local_repo_head_sha(repo_dir: &Path) -> Option<String> {
     let repo = gix::open(repo_dir).ok()?;
     let obj = repo.rev_parse_single("HEAD").ok()?;
@@ -1653,102 +1358,6 @@ fn detect_and_mark_repo_drift(
     }
 
     (changed, drifted)
-}
-
-fn toggle_plugin_skill(params: &Value, enabled: bool) -> ServiceResult {
-    let source = params
-        .get("source")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing 'source' parameter".to_string())?;
-    let skill_name = params
-        .get("skill")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
-
-    let manifest_path =
-        moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-    let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-    let mut manifest = store.load().map_err(|e| e.to_string())?;
-
-    let install_dir = moltis_plugins::install::default_plugins_dir().map_err(|e| e.to_string())?;
-    let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
-    if drift_changed {
-        store.save(&manifest).map_err(|e| e.to_string())?;
-    }
-
-    if enabled {
-        if drifted_sources.contains(source) {
-            return Err(format!(
-                "skill '{skill_name}' source changed since it was last trusted. Review and run plugins.skill.trust before enabling"
-            ));
-        }
-
-        let trusted = manifest
-            .find_repo(source)
-            .and_then(|r| r.skills.iter().find(|s| s.name == skill_name))
-            .map(|s| s.trusted)
-            .ok_or_else(|| format!("skill '{skill_name}' not found in plugin repo '{source}'"))?;
-        if !trusted {
-            return Err(format!(
-                "skill '{skill_name}' is not trusted. Review it and run plugins.skill.trust before enabling"
-            ));
-        }
-    }
-
-    if !manifest.set_skill_enabled(source, skill_name, enabled) {
-        return Err(format!(
-            "skill '{skill_name}' not found in plugin repo '{source}'"
-        ));
-    }
-    store.save(&manifest).map_err(|e| e.to_string())?;
-
-    security_audit(
-        "plugins.skill.toggle",
-        serde_json::json!({
-            "source": source,
-            "skill": skill_name,
-            "enabled": enabled,
-        }),
-    );
-
-    Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
-}
-
-fn set_plugin_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
-    let source = params
-        .get("source")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing 'source' parameter".to_string())?;
-    let skill_name = params
-        .get("skill")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
-
-    let manifest_path =
-        moltis_plugins::install::default_manifest_path().map_err(|e| e.to_string())?;
-    let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-    let mut manifest = store.load().map_err(|e| e.to_string())?;
-
-    if !manifest.set_skill_trusted(source, skill_name, trusted) {
-        return Err(format!(
-            "skill '{skill_name}' not found in plugin repo '{source}'"
-        ));
-    }
-
-    if !trusted {
-        let _ = manifest.set_skill_enabled(source, skill_name, false);
-    }
-
-    store.save(&manifest).map_err(|e| e.to_string())?;
-    security_audit(
-        "plugins.skill.trust",
-        serde_json::json!({
-            "source": source,
-            "skill": skill_name,
-            "trusted": trusted,
-        }),
-    );
-    Ok(serde_json::json!({ "source": source, "skill": skill_name, "trusted": trusted }))
 }
 
 /// Delete a personal or project skill directory to disable it.
@@ -2371,7 +1980,6 @@ pub struct GatewayServices {
     pub tts: Arc<dyn TtsService>,
     pub skills: Arc<dyn SkillsService>,
     pub mcp: Arc<dyn McpService>,
-    pub plugins: Arc<dyn PluginsService>,
     pub browser: Arc<dyn BrowserService>,
     pub usage: Arc<dyn UsageService>,
     pub exec_approval: Arc<dyn ExecApprovalService>,
@@ -2434,7 +2042,6 @@ impl GatewayServices {
             tts: Arc::new(NoopTtsService),
             skills: Arc::new(NoopSkillsService),
             mcp: Arc::new(NoopMcpService),
-            plugins: Arc::new(NoopPluginsService),
             browser: Arc::new(NoopBrowserService),
             usage: Arc::new(NoopUsageService),
             exec_approval: Arc::new(NoopExecApprovalService),
