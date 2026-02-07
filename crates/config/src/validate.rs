@@ -180,6 +180,7 @@ fn build_schema_map() -> KnownKeys {
             ("headless", Leaf),
             ("viewport_width", Leaf),
             ("viewport_height", Leaf),
+            ("device_scale_factor", Leaf),
             ("max_instances", Leaf),
             ("idle_timeout_secs", Leaf),
             ("navigation_timeout_ms", Leaf),

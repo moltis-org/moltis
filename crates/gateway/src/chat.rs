@@ -542,7 +542,11 @@ impl ChatService for LiveChatService {
             // Only echo to channel if this is the active session for this chat.
             let is_active = self
                 .session_metadata
-                .get_active_session(&target.channel_type, &target.account_id, &target.chat_id)
+                .get_active_session(
+                    target.channel_type.as_str(),
+                    &target.account_id,
+                    &target.chat_id,
+                )
                 .await
                 .map(|k| k == session_key)
                 .unwrap_or(true);
@@ -2173,8 +2177,8 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
         let outbound = Arc::clone(&outbound);
         let text = text.clone();
         tokio::spawn(async move {
-            match target.channel_type.as_str() {
-                "telegram" => {
+            match target.channel_type {
+                moltis_channels::ChannelType::Telegram => {
                     if let Err(e) = outbound
                         .send_text(&target.account_id, &target.chat_id, &text)
                         .await
@@ -2185,9 +2189,6 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
                             "failed to send channel reply: {e}"
                         );
                     }
-                },
-                other => {
-                    warn!(channel_type = other, "unsupported channel type for reply");
                 },
             }
         });
@@ -2227,8 +2228,8 @@ async fn send_screenshot_to_channels(
         let outbound = Arc::clone(&outbound);
         let payload = payload.clone();
         tokio::spawn(async move {
-            match target.channel_type.as_str() {
-                "telegram" => {
+            match target.channel_type {
+                moltis_channels::ChannelType::Telegram => {
                     if let Err(e) = outbound
                         .send_media(&target.account_id, &target.chat_id, &payload)
                         .await
@@ -2245,9 +2246,6 @@ async fn send_screenshot_to_channels(
                             "sent screenshot to telegram"
                         );
                     }
-                },
-                _ => {
-                    // Other channel types don't support media yet
                 },
             }
         });

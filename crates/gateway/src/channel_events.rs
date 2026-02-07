@@ -33,7 +33,11 @@ async fn resolve_channel_session(
     metadata: &SqliteSessionMetadata,
 ) -> String {
     if let Some(key) = metadata
-        .get_active_session(&target.channel_type, &target.account_id, &target.chat_id)
+        .get_active_session(
+            target.channel_type.as_str(),
+            &target.account_id,
+            &target.chat_id,
+        )
         .await
     {
         return key;
@@ -125,7 +129,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 {
                     let existing = session_meta
                         .list_channel_sessions(
-                            &reply_to.channel_type,
+                            reply_to.channel_type.as_str(),
                             &reply_to.account_id,
                             &reply_to.chat_id,
                         )
@@ -287,8 +291,15 @@ impl ChannelEventSink for GatewayChannelEventSink {
             // cancel itself after this call returns.
 
             // Broadcast an event so the UI can update.
+            let channel_type: moltis_channels::ChannelType = match channel_type.parse() {
+                Ok(ct) => ct,
+                Err(e) => {
+                    warn!("request_disable_account: {e}");
+                    return;
+                },
+            };
             let event = ChannelEvent::AccountDisabled {
-                channel_type: channel_type.to_string(),
+                channel_type,
                 account_id: account_id.to_string(),
                 reason: reason.to_string(),
             };
@@ -369,7 +380,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // Sequential label: count existing sessions for this chat.
                 let existing = session_metadata
                     .list_channel_sessions(
-                        &reply_to.channel_type,
+                        reply_to.channel_type.as_str(),
                         &reply_to.account_id,
                         &reply_to.chat_id,
                     )
@@ -400,7 +411,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // Update forward mapping.
                 session_metadata
                     .set_active_session(
-                        &reply_to.channel_type,
+                        reply_to.channel_type.as_str(),
                         &reply_to.account_id,
                         &reply_to.chat_id,
                         &new_key,
@@ -564,7 +575,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
             "sessions" => {
                 let sessions = session_metadata
                     .list_channel_sessions(
-                        &reply_to.channel_type,
+                        reply_to.channel_type.as_str(),
                         &reply_to.account_id,
                         &reply_to.chat_id,
                     )
@@ -607,7 +618,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     // Update forward mapping.
                     session_metadata
                         .set_active_session(
-                            &reply_to.channel_type,
+                            reply_to.channel_type.as_str(),
                             &reply_to.account_id,
                             &reply_to.chat_id,
                             &target_session.key,
@@ -928,12 +939,12 @@ fn format_model_list(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, moltis_channels::ChannelType};
 
     #[test]
     fn channel_event_serialization() {
         let event = ChannelEvent::InboundMessage {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             peer_id: "123".into(),
             username: Some("alice".into()),
@@ -955,7 +966,7 @@ mod tests {
     #[test]
     fn channel_session_key_format() {
         let target = ChannelReplyTarget {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "12345".into(),
         };
@@ -965,7 +976,7 @@ mod tests {
     #[test]
     fn channel_session_key_group() {
         let target = ChannelReplyTarget {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
         };
@@ -978,7 +989,7 @@ mod tests {
     #[test]
     fn channel_event_serialization_nulls() {
         let event = ChannelEvent::InboundMessage {
-            channel_type: "telegram".into(),
+            channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             peer_id: "123".into(),
             username: None,
