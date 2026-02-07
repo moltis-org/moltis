@@ -8,8 +8,13 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 if [[ -z "${GH_TOKEN:-}" ]]; then
-  echo "GH_TOKEN is required (repo:status or equivalent access)" >&2
-  exit 1
+  if GH_TOKEN="$(gh auth token 2>/dev/null)"; then
+    export GH_TOKEN
+  else
+    echo "GH_TOKEN is required (repo:status or equivalent access)" >&2
+    echo "Tip: run 'gh auth login' or export GH_TOKEN with proper scopes." >&2
+    exit 1
+  fi
 fi
 
 PR_NUMBER="${1:-}"
@@ -48,6 +53,10 @@ Check that your token can write commit statuses for that repository.
 Expected token access:
 - classic PAT: repo:status (or repo)
 - fine-grained PAT: Commit statuses (Read and write)
+
+If this is an org with SSO enforcement, authorize the token for the org.
+If GH_TOKEN is set in your shell, try unsetting it to use your gh auth token:
+  unset GH_TOKEN
 EOF
     return 1
   fi
