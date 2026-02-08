@@ -103,7 +103,7 @@ jobs:
     name: Rust CI (clippy + test)
     if: ${{ github.event_name != 'pull_request' }}
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     container:
@@ -148,8 +148,15 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy --workspace --all-features -- -D warnings
-      - run: cargo test --all-features
+      - run: cargo clippy -Z unstable-options --workspace --all-features --timings -- -D warnings
+      - run: cargo test -Z unstable-options --all-features --timings
+      - name: Upload cargo timing reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-rust-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats
@@ -159,7 +166,7 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     container:
@@ -204,7 +211,14 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy -Z unstable-options --all-features --all-targets --timings -- -D warnings
+      - name: Upload cargo timing reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-rust-full-targets-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats
