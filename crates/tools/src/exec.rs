@@ -249,10 +249,8 @@ impl AgentTool for ExecTool {
         let session_key = params.get("_session_key").and_then(|v| v.as_str());
         let is_sandboxed = if let Some(ref router) = self.sandbox_router {
             router.is_sandboxed(session_key.unwrap_or("main")).await
-        } else if self.sandbox_id.is_some() {
-            true
         } else {
-            false
+            self.sandbox_id.is_some()
         };
 
         // Resolve working directory.  When sandboxed the host CWD doesn't exist
@@ -527,8 +525,10 @@ mod tests {
     #[tokio::test]
     async fn test_exec_tool() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut tool = ExecTool::default();
-        tool.working_dir = Some(temp_dir.path().to_path_buf());
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
         let result = tool
             .execute(serde_json::json!({ "command": "echo hello" }))
             .await
@@ -540,8 +540,10 @@ mod tests {
     #[tokio::test]
     async fn test_exec_tool_empty_working_dir() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut tool = ExecTool::default();
-        tool.working_dir = Some(temp_dir.path().to_path_buf());
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
         let result = tool
             .execute(serde_json::json!({ "command": "pwd", "working_dir": "" }))
             .await
