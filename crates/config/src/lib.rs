@@ -22,7 +22,8 @@ pub use {
     },
     schema::{
         AgentIdentity, AuthConfig, ChatConfig, MessageQueueMode, MoltisConfig, ResolvedIdentity,
-        UserProfile,
+        UserProfile, VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig, VoiceSttConfig,
+        VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

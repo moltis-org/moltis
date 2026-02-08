@@ -1985,6 +1985,7 @@ pub struct GatewayServices {
     pub cron: Arc<dyn CronService>,
     pub chat: Arc<dyn ChatService>,
     pub tts: Arc<dyn TtsService>,
+    pub stt: Arc<dyn crate::voice::SttService>,
     pub skills: Arc<dyn SkillsService>,
     pub mcp: Arc<dyn McpService>,
     pub browser: Arc<dyn BrowserService>,
@@ -2047,6 +2048,7 @@ impl GatewayServices {
             cron: Arc::new(NoopCronService),
             chat: Arc::new(NoopChatService),
             tts: Arc::new(NoopTtsService),
+            stt: Arc::new(crate::voice::NoopSttService),
             skills: Arc::new(NoopSkillsService),
             mcp: Arc::new(NoopMcpService),
             browser: Arc::new(NoopBrowserService),
@@ -2092,6 +2094,16 @@ impl GatewayServices {
 
     pub fn with_session_store(mut self, store: Arc<moltis_sessions::store::SessionStore>) -> Self {
         self.session_store = Some(store);
+        self
+    }
+
+    pub fn with_tts(mut self, tts: Arc<dyn TtsService>) -> Self {
+        self.tts = tts;
+        self
+    }
+
+    pub fn with_stt(mut self, stt: Arc<dyn crate::voice::SttService>) -> Self {
+        self.stt = stt;
         self
     }
 }

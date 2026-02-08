@@ -120,6 +120,37 @@ pub trait ChannelEventSink: Send + Sync {
         _identifier: &str,
     ) {
     }
+
+    /// Transcribe voice audio to text using the configured STT provider.
+    ///
+    /// Returns the transcribed text, or an error if transcription fails.
+    /// The audio format is specified (e.g., "ogg", "mp3", "webm").
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+        let _ = (audio_data, format);
+        Err(anyhow::anyhow!("voice transcription not available"))
+    }
+
+    /// Whether voice STT is configured and available for channel audio messages.
+    async fn voice_stt_available(&self) -> bool {
+        true
+    }
+
+    /// Dispatch an inbound message with attachments (images, files) to the chat session.
+    ///
+    /// This is used when a channel message contains both text and media (e.g., a
+    /// Telegram photo with a caption). The attachments are sent to the LLM as
+    /// multimodal content.
+    async fn dispatch_to_chat_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<ChannelAttachment>,
+        reply_to: ChannelReplyTarget,
+        meta: ChannelMessageMeta,
+    ) {
+        // Default implementation ignores attachments and just sends text.
+        let _ = attachments;
+        self.dispatch_to_chat(text, reply_to, meta).await;
+    }
 }
 
 /// Metadata about a channel message, used for UI display.
@@ -128,9 +159,34 @@ pub struct ChannelMessageMeta {
     pub channel_type: ChannelType,
     pub sender_name: Option<String>,
     pub username: Option<String>,
+    /// Original inbound message media kind (voice, audio, photo, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_kind: Option<ChannelMessageKind>,
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// Inbound channel message media kind.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelMessageKind {
+    Text,
+    Voice,
+    Audio,
+    Photo,
+    Document,
+    Video,
+    Other,
+}
+
+/// An attachment (image, file) from a channel message.
+#[derive(Debug, Clone)]
+pub struct ChannelAttachment {
+    /// MIME type of the attachment (e.g., "image/jpeg", "image/png").
+    pub media_type: String,
+    /// Raw binary data of the attachment.
+    pub data: Vec<u8>,
 }
 
 /// Where to send the LLM response back.
@@ -215,4 +271,46 @@ pub type StreamSender = mpsc::Sender<StreamEvent>;
 pub trait ChannelStreamOutbound: Send + Sync {
     /// Send a streaming response that updates a message in place.
     async fn send_stream(&self, account_id: &str, to: &str, stream: StreamReceiver) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummySink;
+
+    #[async_trait]
+    impl ChannelEventSink for DummySink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
+
+    #[tokio::test]
+    async fn default_voice_stt_available_is_true() {
+        let sink = DummySink;
+        assert!(sink.voice_stt_available().await);
+    }
 }

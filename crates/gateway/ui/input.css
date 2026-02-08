@@ -756,6 +756,97 @@
     padding: 8px 0;
   }
 
+  /* Voice recording hint */
+  .voice-recording-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--error);
+    font-size: 0.75rem;
+    color: var(--text);
+  }
+  .voice-recording-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--error);
+    border-radius: 50%;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Voice transcription result */
+  .voice-transcription-result {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--accent-subtle);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent);
+  }
+  /* Voice success result (TTS) */
+  .voice-success-result {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: var(--accent-subtle);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent);
+    font-size: 0.75rem;
+    color: var(--accent);
+  }
+  .voice-transcription-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+  }
+  .voice-transcription-text {
+    font-size: 0.8rem;
+    color: var(--text);
+    font-style: italic;
+  }
+
+  /* Voice transcribing indicator in chat */
+  .msg.voice-transcribing {
+    align-self: flex-end;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--user-bg);
+    border: 1px solid var(--user-border);
+    border-radius: var(--radius);
+    animation: msg-in 0.15s ease-out;
+  }
+  .voice-transcribing-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .voice-transcribing-text {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
   /* Navigation panel */
   .nav-panel {
     width: 180px;

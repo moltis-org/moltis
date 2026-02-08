@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kimi Code provider authentication compatibility**: `kimi-code` is now API-key-first in the web UI (`KIMI_API_KEY`, default base URL `https://api.moonshot.ai/v1`), while still honoring previously stored OAuth tokens for backward compatibility. Provider errors now include a targeted hint to switch to API-key auth when Kimi returns `access_terminated_error`.
 - **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive “configured” state.
 
+## [0.2.9] - 2026-02-08
+
+### Added
+
+- **Voice provider policy controls**: Added provider-list allowlists so config templates and runtime voice setup can explicitly limit shown/allowed TTS and STT providers.
+- **Typed voice provider metadata**: Expanded voice provider metadata and preference handling to use typed flows across gateway and UI paths.
+
+### Changed
+
+- **Reply medium preference handling**: Chat now prefers the same reply medium when possible and falls back to text when a medium cannot be preserved.
+
+### Fixed
+
+- **Chat UI reply badge visibility**: Assistant footer now reliably shows the selected reply medium badge.
+- **Voice UX polish**: Improved microphone timing behavior and preserved settings scroll state in voice configuration views.
 ## [0.2.8] - 2026-02-07
 
 ### Changed
@@ -35,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory. The `/plugins` page has been removed — everything is accessible from the
   `/skills` page. A one-time startup migration automatically moves data from the old
   plugins manifest and directory into the new unified location.
+- **Default config template voice list narrowed**: New generated configs now include a
+  `[voice]` section with provider-list allowlists limited to ElevenLabs for TTS and
+  Mistral + ElevenLabs for STT.
 
 ### Fixed
 
@@ -56,6 +74,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restricting tools based on discovered skill metadata.
 
 ### Added
+
+- **Voice Provider Management UI**: Configure TTS and STT providers from Settings > Voice
+  - Auto-detection of API keys from environment variables and LLM provider configs
+  - Toggle switches to enable/disable providers without removing configuration
+  - Local binary detection for whisper.cpp, piper, and sherpa-onnx
+  - Server availability checks for Coqui TTS and Voxtral Local
+  - Setup instructions modal for local provider installation
+  - Shared Google Cloud API key between TTS and STT
+- **Voice provider UI allowlists**: Added `voice.tts.providers` and `voice.stt.providers`
+  config lists to control which TTS/STT providers are shown in the Settings UI.
+  Empty lists keep current behavior and show all providers.
+
+- **New TTS Providers**:
+  - Google Cloud Text-to-Speech (380+ voices, 50+ languages)
+  - Piper (fast local neural TTS, runs offline)
+  - Coqui TTS (high-quality neural TTS with voice cloning)
+
+- **New STT Providers**:
+  - ElevenLabs Scribe (90+ languages, word timestamps, speaker diarization)
+  - Mistral AI Voxtral (cloud-based, 13 languages)
+  - Voxtral Local via vLLM (self-hosted with OpenAI-compatible API)
 
 - **Browser Sandbox Mode**: Run browser in isolated Docker containers for security
   - Automatic container lifecycle management
@@ -375,6 +414,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Added voice.md with TTS/STT provider documentation and setup guides
 - Added mobile-pwa.md with PWA installation and push notification documentation
 - Updated CLAUDE.md with cargo feature policy (features enabled by default)
 - Updated browser-automation.md with browser detection, screenshot display, and

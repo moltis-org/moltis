@@ -13,6 +13,7 @@ import {
 	updateChatSessionHeader,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
 var slashCommands = [
@@ -700,6 +701,10 @@ var chatPageHTML =
 	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
 	'<textarea id="chatInput" placeholder="Type a message..." rows="1" ' +
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
+	'<button id="micBtn" disabled title="Click to start recording" ' +
+	'class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>' +
+	"</button>" +
 	'<button id="sendBtn" disabled ' +
 	'class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button>' +
 	"</div></div>";
@@ -817,9 +822,13 @@ registerPrefix(
 
 		S.chatMsgBox.addEventListener("copy", handleChatCopy);
 
+		// Initialize voice input
+		initVoiceInput(S.$("micBtn"));
+
 		S.chatInput.focus();
 	},
 	function teardownChat() {
+		teardownVoiceInput();
 		slashHideMenu();
 		S.setChatMsgBox(null);
 		S.setChatInput(null);

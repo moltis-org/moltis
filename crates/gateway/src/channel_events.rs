@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use {
-    anyhow::anyhow,
+    anyhow::{Result, anyhow},
     async_trait::async_trait,
     moltis_tools::image_cache::ImageBuilder,
     tracing::{debug, error, info, warn},
 };
 
 use {
-    moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget},
+    moltis_channels::{
+        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
+    },
     moltis_sessions::metadata::SqliteSessionMetadata,
 };
 
@@ -374,6 +376,275 @@ impl ChannelEventSink for GatewayChannelEventSink {
             }
         } else {
             warn!("request_sender_approval: gateway not ready");
+        }
+    }
+
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+        let state = self
+            .state
+            .get()
+            .ok_or_else(|| anyhow!("gateway not ready"))?;
+
+        // Encode audio as base64 for the STT service
+        let audio_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, audio_data);
+
+        let params = serde_json::json!({
+            "audio": audio_base64,
+            "format": format,
+        });
+
+        let result = state
+            .services
+            .stt
+            .transcribe(params)
+            .await
+            .map_err(|e| anyhow!("transcription failed: {}", e))?;
+
+        let text = result
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("transcription result missing text"))?;
+
+        Ok(text.to_string())
+    }
+
+    async fn voice_stt_available(&self) -> bool {
+        let Some(state) = self.state.get() else {
+            return false;
+        };
+
+        match state.services.stt.status().await {
+            Ok(status) => status
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    }
+
+    async fn dispatch_to_chat_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<ChannelAttachment>,
+        reply_to: ChannelReplyTarget,
+        meta: ChannelMessageMeta,
+    ) {
+        if attachments.is_empty() {
+            // No attachments, use the regular dispatch
+            self.dispatch_to_chat(text, reply_to, meta).await;
+            return;
+        }
+
+        let Some(state) = self.state.get() else {
+            warn!("channel dispatch_to_chat_with_attachments: gateway not ready");
+            return;
+        };
+
+        let session_key = if let Some(ref sm) = state.services.session_metadata {
+            resolve_channel_session(&reply_to, sm).await
+        } else {
+            default_channel_session_key(&reply_to)
+        };
+
+        // Build multimodal content array (OpenAI format)
+        let mut content_parts: Vec<serde_json::Value> = Vec::new();
+
+        // Add text part if not empty
+        if !text.is_empty() {
+            content_parts.push(serde_json::json!({
+                "type": "text",
+                "text": text,
+            }));
+        }
+
+        // Add image parts
+        for attachment in &attachments {
+            let base64_data = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &attachment.data,
+            );
+            let data_uri = format!("data:{};base64,{}", attachment.media_type, base64_data);
+            content_parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": data_uri,
+                },
+            }));
+        }
+
+        debug!(
+            session_key = %session_key,
+            text_len = text.len(),
+            attachment_count = attachments.len(),
+            "dispatching multimodal message to chat"
+        );
+
+        // Broadcast a "chat" event so the web UI shows the user message
+        let msg_index = if let Some(ref store) = state.services.session_store {
+            store.count(&session_key).await.unwrap_or(0)
+        } else {
+            0
+        };
+
+        // For the broadcast, just show the text portion
+        let payload = serde_json::json!({
+            "state": "channel_user",
+            "text": if text.is_empty() { "[Image]" } else { text },
+            "channel": &meta,
+            "sessionKey": &session_key,
+            "messageIndex": msg_index,
+            "hasAttachments": true,
+        });
+        broadcast(state, "chat", payload, BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        })
+        .await;
+
+        // Register the reply target
+        state
+            .push_channel_reply(&session_key, reply_to.clone())
+            .await;
+
+        // Persist channel binding
+        if let Ok(binding_json) = serde_json::to_string(&reply_to)
+            && let Some(ref session_meta) = state.services.session_metadata
+        {
+            if let Some(entry) = session_meta.get(&session_key).await
+                && entry.channel_binding.is_none()
+            {
+                let existing = session_meta
+                    .list_channel_sessions(
+                        reply_to.channel_type.as_str(),
+                        &reply_to.account_id,
+                        &reply_to.chat_id,
+                    )
+                    .await;
+                let n = existing.len() + 1;
+                let _ = session_meta
+                    .upsert(&session_key, Some(format!("Telegram {n}")))
+                    .await;
+            }
+            session_meta
+                .set_channel_binding(&session_key, Some(binding_json))
+                .await;
+        }
+
+        let chat = state.chat().await;
+        let mut params = serde_json::json!({
+            "content": content_parts,
+            "channel": &meta,
+            "_session_key": &session_key,
+        });
+
+        // Forward the channel's default model if configured
+        if let Some(ref model) = meta.model {
+            params["model"] = serde_json::json!(model);
+
+            let session_has_model = if let Some(ref sm) = state.services.session_metadata {
+                sm.get(&session_key).await.and_then(|e| e.model).is_some()
+            } else {
+                false
+            };
+            if !session_has_model {
+                let _ = state
+                    .services
+                    .session
+                    .patch(serde_json::json!({
+                        "key": &session_key,
+                        "model": model,
+                    }))
+                    .await;
+
+                let display: String = if let Ok(models_val) = state.services.model.list().await
+                    && let Some(models) = models_val.as_array()
+                {
+                    models
+                        .iter()
+                        .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(model))
+                        .and_then(|m| m.get("displayName").and_then(|v| v.as_str()))
+                        .unwrap_or(model)
+                        .to_string()
+                } else {
+                    model.clone()
+                };
+                if let Some(outbound) = state.services.channel_outbound_arc() {
+                    let msg = format!("Using *{display}*. Use /model to change.");
+                    let _ = outbound
+                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .await;
+                }
+            }
+        } else {
+            let session_has_model = if let Some(ref sm) = state.services.session_metadata {
+                sm.get(&session_key).await.and_then(|e| e.model).is_some()
+            } else {
+                false
+            };
+            if !session_has_model
+                && let Ok(models_val) = state.services.model.list().await
+                && let Some(models) = models_val.as_array()
+                && let Some(first) = models.first()
+                && let Some(id) = first.get("id").and_then(|v| v.as_str())
+            {
+                params["model"] = serde_json::json!(id);
+                let _ = state
+                    .services
+                    .session
+                    .patch(serde_json::json!({
+                        "key": &session_key,
+                        "model": id,
+                    }))
+                    .await;
+
+                let display = first
+                    .get("displayName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(id);
+                if let Some(outbound) = state.services.channel_outbound_arc() {
+                    let msg = format!("Using *{display}*. Use /model to change.");
+                    let _ = outbound
+                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .await;
+                }
+            }
+        }
+
+        // Send typing indicator and dispatch to chat
+        let send_result = if let Some(outbound) = state.services.channel_outbound_arc() {
+            let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+            let account_id = reply_to.account_id.clone();
+            let chat_id = reply_to.chat_id.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Err(e) = outbound.send_typing(&account_id, &chat_id).await {
+                        debug!(account_id, chat_id, "typing indicator failed: {e}");
+                    }
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {},
+                        _ = &mut done_rx => break,
+                    }
+                }
+            });
+            let result = chat.send(params).await;
+            let _ = done_tx.send(());
+            result
+        } else {
+            chat.send(params).await
+        };
+
+        if let Err(e) = send_result {
+            error!("channel dispatch_to_chat_with_attachments failed: {e}");
+            if let Some(outbound) = state.services.channel_outbound_arc() {
+                let error_msg = format!("⚠️ {e}");
+                if let Err(send_err) = outbound
+                    .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg)
+                    .await
+                {
+                    warn!("failed to send error back to channel: {send_err}");
+                }
+            }
         }
     }
 
