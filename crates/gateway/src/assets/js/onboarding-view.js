@@ -1,7 +1,7 @@
 // ── Onboarding wizard ──────────────────────────────────────
 //
 // Multi-step setup page shown to first-time users.
-// Steps: Auth (conditional) → Identity → Provider → Channel
+// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) → Channel
 // No new Rust code — all existing RPC methods and REST endpoints.
 
 import { html } from "htm/preact";
@@ -15,7 +15,8 @@ import { validateProviderConnection } from "./provider-validation.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
-var STEP_LABELS = ["Security", "Identity", "Provider", "Channel"];
+var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel"];
+var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -625,6 +626,494 @@ function ProviderStep({ onNext, onBack }) {
 	</div>`;
 }
 
+// ── Voice helpers ────────────────────────────────────────────
+
+function decodeBase64Safe(input) {
+	if (!input) return new Uint8Array();
+	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+	while (normalized.length % 4) normalized += "=";
+	var binary = "";
+	try {
+		binary = atob(normalized);
+	} catch (_err) {
+		throw new Error("Invalid base64 audio payload");
+	}
+	var bytes = new Uint8Array(binary.length);
+	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+	return bytes;
+}
+
+function encodeBase64Safe(bytes) {
+	var chunk = 0x8000;
+	var str = "";
+	for (var i = 0; i < bytes.length; i += chunk) {
+		str += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(str);
+}
+
+// ── Voice provider row for onboarding ────────────────────────
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config form and test state
+function OnboardingVoiceRow({
+	provider,
+	type,
+	configuring,
+	apiKey,
+	setApiKey,
+	saving,
+	error,
+	onSaveKey,
+	onStartConfigure,
+	onCancelConfigure,
+	onTest,
+	voiceTesting,
+	voiceTestResult,
+}) {
+	var isConfiguring = configuring === provider.id;
+	var keySourceLabel =
+		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
+
+	// Test button state
+	var testState = voiceTesting?.id === provider.id && voiceTesting?.type === type ? voiceTesting : null;
+	var showTestBtn = provider.available;
+	var testBtnText = "Test";
+	var testBtnDisabled = false;
+	if (testState) {
+		if (testState.phase === "recording") {
+			testBtnText = "Stop";
+		} else {
+			testBtnText = "Testing\u2026";
+			testBtnDisabled = true;
+		}
+	}
+
+	return html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
+		<div class="flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex flex-col gap-0.5">
+				<div class="flex items-center gap-2 flex-wrap">
+					<span class="text-sm font-medium text-[var(--text-strong)]">${provider.name}</span>
+					${provider.available ? html`<span class="provider-item-badge configured">configured</span>` : html`<span class="provider-item-badge">needs key</span>`}
+					${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
+				</div>
+				${provider.description ? html`<span class="text-xs text-[var(--muted)]">${provider.description}</span>` : null}
+			</div>
+			<div class="shrink-0 flex items-center gap-2">
+				${
+					isConfiguring
+						? null
+						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${() => onStartConfigure(provider.id)}>Configure</button>`
+				}
+				${
+					showTestBtn
+						? html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${onTest} disabled=${testBtnDisabled}
+						title=${type === "tts" ? "Test voice output" : "Test voice input"}>
+						${testBtnText}
+					</button>`
+						: null
+				}
+			</div>
+		</div>
+		${
+			testState?.phase === "recording"
+				? html`<div class="voice-recording-hint mt-2">
+				<span class="voice-recording-dot"></span>
+				<span>Speak now, then click Stop when finished</span>
+			</div>`
+				: null
+		}
+		${testState?.phase === "transcribing" ? html`<span class="text-xs text-[var(--muted)] mt-1 block">Transcribing\u2026</span>` : null}
+		${testState?.phase === "testing" && type === "tts" ? html`<span class="text-xs text-[var(--muted)] mt-1 block">Playing audio\u2026</span>` : null}
+		${
+			voiceTestResult?.text
+				? html`<div class="voice-transcription-result mt-2">
+				<span class="voice-transcription-label">Transcribed:</span>
+				<span class="voice-transcription-text">"${voiceTestResult.text}"</span>
+			</div>`
+				: null
+		}
+		${
+			voiceTestResult?.success === true
+				? html`<div class="voice-success-result mt-2">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<span>Audio played successfully</span>
+			</div>`
+				: null
+		}
+		${voiceTestResult?.error ? html`<span class="text-xs text-[var(--error)] mt-1 block">${voiceTestResult.error}</span>` : null}
+		${
+			isConfiguring
+				? html`<form onSubmit=${onSaveKey} class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
+						placeholder=${provider.keyPlaceholder || "API key"} autofocus />
+				</div>
+				${
+					provider.keyUrl
+						? html`<div class="text-xs text-[var(--muted)]">
+					Get your key at <a href=${provider.keyUrl} target="_blank" class="text-[var(--accent)] underline">${provider.keyUrlLabel || provider.keyUrl}</a>
+				</div>`
+						: null
+				}
+				${provider.hint ? html`<div class="text-xs text-[var(--accent)]">${provider.hint}</div>` : null}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<div class="flex items-center gap-2 mt-1">
+					<button type="submit" class="provider-btn provider-btn-sm" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure}>Cancel</button>
+				</div>
+			</form>`
+				: null
+		}
+	</div>`;
+}
+
+// ── Voice step ──────────────────────────────────────────────
+
+function VoiceStep({ onNext, onBack }) {
+	var [loading, setLoading] = useState(true);
+	var [allProviders, setAllProviders] = useState({ tts: [], stt: [] });
+	var [configuring, setConfiguring] = useState(null); // provider id with open key form
+	var [apiKey, setApiKey] = useState("");
+	var [saving, setSaving] = useState(false);
+	var [error, setError] = useState(null);
+	var [voiceTesting, setVoiceTesting] = useState(null); // { id, type, phase }
+	var [voiceTestResults, setVoiceTestResults] = useState({});
+	var [activeRecorder, setActiveRecorder] = useState(null);
+	var [enableSaving, setEnableSaving] = useState(false);
+
+	function fetchProviders() {
+		return sendRpc("voice.providers.all", {}).then((res) => {
+			if (res?.ok) {
+				setAllProviders(res.payload || { tts: [], stt: [] });
+			}
+			return res;
+		});
+	}
+
+	useEffect(() => {
+		var cancelled = false;
+		var attempts = 0;
+
+		function load() {
+			if (cancelled) return;
+			sendRpc("voice.providers.all", {}).then((res) => {
+				if (cancelled) return;
+				if (res?.ok) {
+					setAllProviders(res.payload || { tts: [], stt: [] });
+					setLoading(false);
+					return;
+				}
+				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+					attempts += 1;
+					window.setTimeout(load, 200);
+					return;
+				}
+				// Voice not compiled → skip
+				onNext();
+			});
+		}
+
+		load();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	// Cloud providers only (filter out local for onboarding)
+	var cloudStt = allProviders.stt.filter((p) => p.category === "cloud");
+	var cloudTts = allProviders.tts.filter((p) => p.category === "cloud");
+
+	// Auto-detected: available via LLM provider key, not yet enabled.
+	// Only show providers whose key came from an LLM provider (not directly configured).
+	var autoDetected = [...allProviders.stt, ...allProviders.tts].filter(
+		(p) => p.available && p.keySource === "llm_provider" && !p.enabled && p.category === "cloud",
+	);
+	var hasAutoDetected = autoDetected.length > 0;
+
+	function enableAutoDetected() {
+		setEnableSaving(true);
+		setError(null);
+		var firstStt = allProviders.stt.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
+		var firstTts = allProviders.tts.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
+		var toggles = [];
+		if (firstStt) toggles.push(sendRpc("voice.provider.toggle", { provider: firstStt.id, enabled: true, type: "stt" }));
+		if (firstTts) toggles.push(sendRpc("voice.provider.toggle", { provider: firstTts.id, enabled: true, type: "tts" }));
+		if (toggles.length === 0) {
+			setEnableSaving(false);
+			return;
+		}
+		Promise.all(toggles).then((results) => {
+			setEnableSaving(false);
+			var failed = results.find((r) => !r?.ok);
+			if (failed) {
+				setError(failed?.error?.message || "Failed to enable voice provider");
+				return;
+			}
+			fetchProviders();
+		});
+	}
+
+	function onStartConfigure(providerId) {
+		setConfiguring(providerId);
+		setApiKey("");
+		setError(null);
+	}
+
+	function onCancelConfigure() {
+		setConfiguring(null);
+		setApiKey("");
+		setError(null);
+	}
+
+	function onSaveKey(e) {
+		e.preventDefault();
+		if (!apiKey.trim()) {
+			setError("API key is required.");
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		var providerId = configuring;
+		sendRpc("voice.config.save_key", { provider: providerId, api_key: apiKey.trim() }).then(async (res) => {
+			if (res?.ok) {
+				// Auto-enable in onboarding: toggle on for each type this provider appears in
+				var toggles = [];
+				if (allProviders.stt.some((p) => p.id === providerId)) {
+					toggles.push(sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: "stt" }));
+				}
+				if (allProviders.tts.some((p) => p.id === providerId)) {
+					toggles.push(sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: "tts" }));
+				}
+				await Promise.all(toggles);
+				setSaving(false);
+				setConfiguring(null);
+				setApiKey("");
+				fetchProviders();
+			} else {
+				setSaving(false);
+				setError(res?.error?.message || "Failed to save");
+			}
+		});
+	}
+
+	// Stop active STT recording
+	function stopSttRecording() {
+		if (activeRecorder) {
+			activeRecorder.stop();
+		}
+	}
+
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: test function handles TTS playback and STT mic recording flows
+	async function testVoiceProvider(providerId, type) {
+		// If already recording for this provider, stop it
+		if (voiceTesting?.id === providerId && voiceTesting?.type === "stt" && voiceTesting?.phase === "recording") {
+			stopSttRecording();
+			return;
+		}
+
+		setError(null);
+		setVoiceTesting({ id: providerId, type, phase: "testing" });
+
+		// Auto-enable the provider if it's available but not yet enabled
+		var prov = (type === "stt" ? allProviders.stt : allProviders.tts).find((p) => p.id === providerId);
+		if (prov?.available && !prov?.enabled) {
+			var toggleRes = await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type });
+			if (!toggleRes?.ok) {
+				setVoiceTestResults((prev) => ({
+					...prev,
+					[providerId]: { success: false, error: toggleRes?.error?.message || "Failed to enable provider" },
+				}));
+				setVoiceTesting(null);
+				return;
+			}
+			// Refresh provider list in background
+			fetchProviders();
+		}
+
+		if (type === "tts") {
+			try {
+				var res = await sendRpc("tts.convert", {
+					text: "Hello! This is a test of the text to speech system.",
+					provider: providerId,
+				});
+				if (res?.ok && res.payload?.audio) {
+					var bytes = decodeBase64Safe(res.payload.audio);
+					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
+					var url = URL.createObjectURL(blob);
+					var audio = new Audio(url);
+					audio.onended = () => URL.revokeObjectURL(url);
+					audio.play().catch(() => undefined);
+					setVoiceTestResults((prev) => ({ ...prev, [providerId]: { success: true, error: null } }));
+				} else {
+					setVoiceTestResults((prev) => ({
+						...prev,
+						[providerId]: { success: false, error: res?.error?.message || "TTS test failed" },
+					}));
+				}
+			} catch (err) {
+				setVoiceTestResults((prev) => ({
+					...prev,
+					[providerId]: { success: false, error: err.message || "TTS test failed" },
+				}));
+			}
+			setVoiceTesting(null);
+		} else {
+			// STT: record then transcribe
+			try {
+				var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+					? "audio/webm;codecs=opus"
+					: "audio/webm";
+				var mediaRecorder = new MediaRecorder(stream, { mimeType });
+				var audioChunks = [];
+
+				mediaRecorder.ondataavailable = (e) => {
+					if (e.data.size > 0) audioChunks.push(e.data);
+				};
+
+				mediaRecorder.start();
+				setActiveRecorder(mediaRecorder);
+				setVoiceTesting({ id: providerId, type, phase: "recording" });
+
+				mediaRecorder.onstop = async () => {
+					setActiveRecorder(null);
+					for (var track of stream.getTracks()) track.stop();
+					setVoiceTesting({ id: providerId, type, phase: "transcribing" });
+
+					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+					var buffer = await audioBlob.arrayBuffer();
+					var base64 = encodeBase64Safe(new Uint8Array(buffer));
+
+					var sttRes = await sendRpc("stt.transcribe", {
+						audio: base64,
+						format: "webm",
+						provider: providerId,
+					});
+
+					if (sttRes?.ok && sttRes.payload?.text) {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: sttRes.payload.text, error: null },
+						}));
+					} else {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: null, error: sttRes?.error?.message || "STT test failed" },
+						}));
+					}
+					setVoiceTesting(null);
+				};
+			} catch (err) {
+				if (err.name === "NotAllowedError") {
+					setError("Microphone permission denied");
+				} else if (err.name === "NotFoundError") {
+					setError("No microphone found");
+				} else {
+					setError(err.message || "STT test failed");
+				}
+				setVoiceTesting(null);
+			}
+		}
+	}
+
+	// ── Render ────────────────────────────────────────────────
+
+	if (loading) {
+		return html`<div class="text-sm text-[var(--muted)]">Checking voice providers\u2026</div>`;
+	}
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice (optional)</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">
+			Enable voice input (speech-to-text) and output (text-to-speech) for your agent.
+			You can configure this later in Settings.
+		</p>
+
+		${
+			hasAutoDetected
+				? html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
+				<div class="text-xs text-[var(--muted)]">Auto-detected from your LLM provider</div>
+				<div class="flex flex-wrap gap-2">
+					${autoDetected.map((p) => html`<span key=${p.id} class="provider-item-badge configured">${p.name}</span>`)}
+				</div>
+				<button class="provider-btn self-start" disabled=${enableSaving} onClick=${enableAutoDetected}>
+					${enableSaving ? "Enabling\u2026" : "Enable voice"}
+				</button>
+			</div>`
+				: null
+		}
+
+		${
+			cloudStt.length > 0
+				? html`<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Speech-to-Text</h3>
+				<div class="flex flex-col gap-2">
+					${cloudStt.map(
+						(prov) => html`<${OnboardingVoiceRow}
+						key=${prov.id}
+						provider=${prov}
+						type="stt"
+						configuring=${configuring}
+						apiKey=${apiKey}
+						setApiKey=${setApiKey}
+						saving=${saving}
+						error=${configuring === prov.id ? error : null}
+						onSaveKey=${onSaveKey}
+						onStartConfigure=${onStartConfigure}
+						onCancelConfigure=${onCancelConfigure}
+						onTest=${() => testVoiceProvider(prov.id, "stt")}
+						voiceTesting=${voiceTesting}
+						voiceTestResult=${voiceTestResults[prov.id] || null}
+					/>`,
+					)}
+				</div>
+			</div>`
+				: null
+		}
+
+		${
+			cloudTts.length > 0
+				? html`<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Text-to-Speech</h3>
+				<div class="flex flex-col gap-2">
+					${cloudTts.map(
+						(prov) => html`<${OnboardingVoiceRow}
+						key=${prov.id}
+						provider=${prov}
+						type="tts"
+						configuring=${configuring}
+						apiKey=${apiKey}
+						setApiKey=${setApiKey}
+						saving=${saving}
+						error=${configuring === prov.id ? error : null}
+						onSaveKey=${onSaveKey}
+						onStartConfigure=${onStartConfigure}
+						onCancelConfigure=${onCancelConfigure}
+						onTest=${() => testVoiceProvider(prov.id, "tts")}
+						voiceTesting=${voiceTesting}
+						voiceTestResult=${voiceTestResults[prov.id] || null}
+					/>`,
+					)}
+				</div>
+			</div>`
+				: null
+		}
+
+		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
+		<div class="flex items-center gap-3 mt-1">
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<button class="provider-btn" onClick=${onNext}>Continue</button>
+			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
+		</div>
+	</div>`;
+}
+
 // ── Channel step ────────────────────────────────────────────
 
 function ChannelStep({ onNext, onBack }) {
@@ -735,6 +1224,7 @@ function OnboardingPage() {
 	var [step, setStep] = useState(-1); // -1 = checking
 	var [authNeeded, setAuthNeeded] = useState(false);
 	var [authSkippable, setAuthSkippable] = useState(false);
+	var [voiceAvailable, setVoiceAvailable] = useState(false);
 	var [finished, setFinished] = useState(false);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
@@ -775,19 +1265,46 @@ function OnboardingPage() {
 			.then((r) => (r.ok ? r.json() : null))
 			.then((auth) => {
 				if (auth?.setup_required || (auth?.auth_disabled && !auth?.localhost_only)) {
-					// Show auth step: either first-run setup or remote with auth disabled
 					setAuthNeeded(true);
 					setAuthSkippable(!auth.setup_required);
 					setStep(0);
 				} else {
 					setAuthNeeded(false);
-					setStep(1); // skip auth, go straight to identity
+					setStep(1);
 				}
 			})
 			.catch(() => {
 				setAuthNeeded(false);
 				setStep(1);
 			});
+	}, []);
+
+	// Probe voice feature availability
+	useEffect(() => {
+		var cancelled = false;
+		var attempts = 0;
+
+		function probe() {
+			if (cancelled) return;
+			sendRpc("voice.providers.all", {}).then((res) => {
+				if (cancelled) return;
+				if (res?.ok) {
+					setVoiceAvailable(true);
+					return;
+				}
+				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
+					attempts += 1;
+					window.setTimeout(probe, 200);
+					return;
+				}
+				// Voice not compiled or other error — leave false
+			});
+		}
+
+		probe();
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	if (step === -1) {
@@ -800,12 +1317,14 @@ function OnboardingPage() {
 		return html`<div class="onboarding-card"><${FinishStep} /></div>`;
 	}
 
-	// Build step list (auth may be removed)
-	var steps = authNeeded ? STEP_LABELS : STEP_LABELS.slice(1);
+	// Build step list dynamically based on auth + voice availability
+	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
+	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
+	var lastStep = voiceAvailable ? 4 : 3;
 
 	function goNext() {
-		if (step === 3) {
+		if (step === lastStep) {
 			setFinished(true);
 		} else {
 			setStep(step + 1);
@@ -820,13 +1339,18 @@ function OnboardingPage() {
 		}
 	}
 
+	// Determine which component to show for steps 3 and 4
+	var channelStep = voiceAvailable ? 4 : 3;
+	var voiceStep = voiceAvailable ? 3 : -1;
+
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
 			${step === 1 && html`<${IdentityStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
 			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
-			${step === 3 && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
 		</div>
 	</div>`;
 }

@@ -1646,141 +1646,6 @@ function TailscaleSection() {
 
 // ── Voice section ────────────────────────────────────────────
 
-// Provider metadata for the add modal
-var VOICE_PROVIDERS = {
-	// STT Cloud
-	whisper: {
-		id: "whisper",
-		name: "OpenAI Whisper",
-		type: "stt",
-		category: "cloud",
-		description: "Best accuracy, handles accents and background noise",
-		keyPlaceholder: "sk-...",
-		keyUrl: "https://platform.openai.com/api-keys",
-		keyUrlLabel: "platform.openai.com/api-keys",
-	},
-	groq: {
-		id: "groq",
-		name: "Groq",
-		type: "stt",
-		category: "cloud",
-		description: "Ultra-fast Whisper inference on Groq hardware",
-		keyPlaceholder: "gsk_...",
-		keyUrl: "https://console.groq.com/keys",
-		keyUrlLabel: "console.groq.com/keys",
-	},
-	deepgram: {
-		id: "deepgram",
-		name: "Deepgram",
-		type: "stt",
-		category: "cloud",
-		description: "Fast and accurate with Nova-3 model",
-		keyPlaceholder: "API key",
-		keyUrl: "https://console.deepgram.com/api-keys",
-		keyUrlLabel: "console.deepgram.com",
-	},
-	google: {
-		id: "google",
-		name: "Google Cloud",
-		type: "stt",
-		category: "cloud",
-		description: "Supports 125+ languages with Google Speech-to-Text",
-		keyPlaceholder: "API key",
-		keyUrl: "https://console.cloud.google.com/apis/credentials",
-		keyUrlLabel: "console.cloud.google.com",
-	},
-	mistral: {
-		id: "mistral",
-		name: "Mistral AI",
-		type: "stt",
-		category: "cloud",
-		description: "Fast Voxtral transcription with 13 language support",
-		keyPlaceholder: "API key",
-		keyUrl: "https://console.mistral.ai/api-keys",
-		keyUrlLabel: "console.mistral.ai",
-	},
-	"elevenlabs-stt": {
-		id: "elevenlabs-stt",
-		name: "ElevenLabs Scribe",
-		type: "stt",
-		category: "cloud",
-		description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
-		keyPlaceholder: "API key",
-		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
-		keyUrlLabel: "elevenlabs.io",
-		hint: "If you already have ElevenLabs TTS configured, use the same API key here.",
-	},
-	// STT Local
-	"whisper-cli": {
-		id: "whisper-cli",
-		name: "whisper.cpp",
-		type: "stt",
-		category: "local",
-		description: "Local Whisper inference via whisper-cli",
-	},
-	"sherpa-onnx": {
-		id: "sherpa-onnx",
-		name: "sherpa-onnx",
-		type: "stt",
-		category: "local",
-		description: "Local offline speech recognition via ONNX runtime",
-	},
-	"voxtral-local": {
-		id: "voxtral-local",
-		name: "Voxtral (Local)",
-		type: "stt",
-		category: "local",
-		description: "Run Mistral's Voxtral model locally via vLLM server",
-	},
-	// TTS Cloud
-	elevenlabs: {
-		id: "elevenlabs",
-		name: "ElevenLabs",
-		type: "tts",
-		category: "cloud",
-		description: "Lowest latency (~75ms), natural voices. Same key enables Scribe STT",
-		keyPlaceholder: "API key",
-		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
-		keyUrlLabel: "elevenlabs.io",
-		hint: "This API key also enables ElevenLabs Scribe for speech-to-text.",
-	},
-	openai: {
-		id: "openai",
-		name: "OpenAI TTS",
-		type: "tts",
-		category: "cloud",
-		description: "Good quality, shares API key with Whisper STT",
-		keyPlaceholder: "sk-...",
-		keyUrl: "https://platform.openai.com/api-keys",
-		keyUrlLabel: "platform.openai.com/api-keys",
-	},
-	"google-tts": {
-		id: "google",
-		name: "Google Cloud TTS",
-		type: "tts",
-		category: "cloud",
-		description: "220+ voices, 40+ languages, WaveNet and Neural2 voices",
-		keyPlaceholder: "API key",
-		keyUrl: "https://console.cloud.google.com/apis/credentials",
-		keyUrlLabel: "console.cloud.google.com",
-	},
-	// TTS Local
-	piper: {
-		id: "piper",
-		name: "Piper",
-		type: "tts",
-		category: "local",
-		description: "Fast local TTS, commonly used in Home Assistant",
-	},
-	coqui: {
-		id: "coqui",
-		name: "Coqui TTS",
-		type: "tts",
-		category: "local",
-		description: "Open-source deep learning TTS with many voice models",
-	},
-};
-
 // Voice section signals
 var voiceShowAddModal = signal(false);
 var voiceSelectedProvider = signal(null);
@@ -1854,8 +1719,7 @@ function VoiceSection() {
 	}
 
 	function getUnconfiguredProviders() {
-		var allIds = new Set([...allProviders.tts.map((p) => p.id), ...allProviders.stt.map((p) => p.id)]);
-		return Object.values(VOICE_PROVIDERS).filter((p) => !allIds.has(p.id));
+		return [...allProviders.stt, ...allProviders.tts].filter((p) => !p.available);
 	}
 
 	// Stop active STT recording
@@ -1995,7 +1859,7 @@ function VoiceSection() {
 				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Speech-to-Text (Voice Input)</h3>
 				<div class="flex flex-col gap-2">
 					${allProviders.stt.map((prov) => {
-						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var meta = prov;
 						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
 						var testResult = voiceTestResults[prov.id] || null;
 						return html`<${VoiceProviderRow}
@@ -2018,7 +1882,7 @@ function VoiceSection() {
 				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Text-to-Speech (Audio Responses)</h3>
 				<div class="flex flex-col gap-2">
 					${allProviders.tts.map((prov) => {
-						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var meta = prov;
 						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;
 						var testResult = voiceTestResults[prov.id] || null;
 						return html`<${VoiceProviderRow}
@@ -2220,7 +2084,9 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 	var [error, setError] = useState("");
 
 	var selectedProvider = voiceSelectedProvider.value;
-	var providerMeta = selectedProvider ? VOICE_PROVIDERS[selectedProvider] : null;
+	var providerMeta = selectedProvider
+		? unconfiguredProviders.find((p) => p.id === selectedProvider) || voiceSelectedProviderData.value
+		: null;
 	var isElevenLabsProvider = selectedProvider === "elevenlabs" || selectedProvider === "elevenlabs-stt";
 	var supportsTtsVoiceSettings = providerMeta?.type === "tts";
 

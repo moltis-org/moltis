@@ -4119,7 +4119,126 @@ enum VoiceProviderId {
     SherpaOnnx,
 }
 
+/// Static UI metadata for a voice provider (description, key hints, URLs).
+struct VoiceProviderMeta {
+    description: &'static str,
+    key_placeholder: Option<&'static str>,
+    key_url: Option<&'static str>,
+    key_url_label: Option<&'static str>,
+    hint: Option<&'static str>,
+}
+
 impl VoiceProviderId {
+    fn meta(self) -> VoiceProviderMeta {
+        match self {
+            // TTS Cloud
+            Self::Elevenlabs => VoiceProviderMeta {
+                description: "Lowest latency (~75ms), natural voices. Same key enables Scribe STT",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://elevenlabs.io/app/settings/api-keys"),
+                key_url_label: Some("elevenlabs.io"),
+                hint: Some(
+                    "This API key also enables ElevenLabs Scribe for speech-to-text.",
+                ),
+            },
+            Self::OpenaiTts => VoiceProviderMeta {
+                description: "Good quality, shares API key with Whisper STT",
+                key_placeholder: Some("sk-..."),
+                key_url: Some("https://platform.openai.com/api-keys"),
+                key_url_label: Some("platform.openai.com/api-keys"),
+                hint: None,
+            },
+            Self::GoogleTts => VoiceProviderMeta {
+                description: "220+ voices, 40+ languages, WaveNet and Neural2 voices",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.cloud.google.com/apis/credentials"),
+                key_url_label: Some("console.cloud.google.com"),
+                hint: None,
+            },
+            Self::Piper => VoiceProviderMeta {
+                description: "Fast local TTS, commonly used in Home Assistant",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::Coqui => VoiceProviderMeta {
+                description: "Open-source deep learning TTS with many voice models",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            // STT Cloud
+            Self::Whisper => VoiceProviderMeta {
+                description: "Best accuracy, handles accents and background noise",
+                key_placeholder: Some("sk-..."),
+                key_url: Some("https://platform.openai.com/api-keys"),
+                key_url_label: Some("platform.openai.com/api-keys"),
+                hint: None,
+            },
+            Self::Groq => VoiceProviderMeta {
+                description: "Ultra-fast Whisper inference on Groq hardware",
+                key_placeholder: Some("gsk_..."),
+                key_url: Some("https://console.groq.com/keys"),
+                key_url_label: Some("console.groq.com/keys"),
+                hint: None,
+            },
+            Self::Deepgram => VoiceProviderMeta {
+                description: "Fast and accurate with Nova-3 model",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.deepgram.com/api-keys"),
+                key_url_label: Some("console.deepgram.com"),
+                hint: None,
+            },
+            Self::Google => VoiceProviderMeta {
+                description: "Supports 125+ languages with Google Speech-to-Text",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.cloud.google.com/apis/credentials"),
+                key_url_label: Some("console.cloud.google.com"),
+                hint: None,
+            },
+            Self::Mistral => VoiceProviderMeta {
+                description: "Fast Voxtral transcription with 13 language support",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.mistral.ai/api-keys"),
+                key_url_label: Some("console.mistral.ai"),
+                hint: None,
+            },
+            Self::ElevenlabsStt => VoiceProviderMeta {
+                description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://elevenlabs.io/app/settings/api-keys"),
+                key_url_label: Some("elevenlabs.io"),
+                hint: Some(
+                    "If you already have ElevenLabs TTS configured, use the same API key here.",
+                ),
+            },
+            // STT Local
+            Self::WhisperCli => VoiceProviderMeta {
+                description: "Local Whisper inference via whisper-cli",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::SherpaOnnx => VoiceProviderMeta {
+                description: "Local offline speech recognition via ONNX runtime",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::VoxtralLocal => VoiceProviderMeta {
+                description: "Run Mistral's Voxtral model locally via vLLM server",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+        }
+    }
+
     fn parse_tts_list_id(id: &str) -> Option<Self> {
         match id {
             "elevenlabs" => Some(Self::Elevenlabs),
@@ -4155,10 +4274,19 @@ struct VoiceProviderInfo {
     #[serde(rename = "type")]
     provider_type: String,
     category: String,
+    description: String,
     available: bool,
     enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     key_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_url_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     binary_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4732,14 +4860,20 @@ fn build_provider_info(
     binary_path: Option<String>,
     status_message: Option<&str>,
 ) -> VoiceProviderInfo {
+    let meta = id.meta();
     VoiceProviderInfo {
         id,
         name: name.to_string(),
         provider_type: provider_type.to_string(),
         category: category.to_string(),
+        description: meta.description.to_string(),
         available,
         enabled,
         key_source: key_source.map(str::to_string),
+        key_placeholder: meta.key_placeholder.map(str::to_string),
+        key_url: meta.key_url.map(str::to_string),
+        key_url_label: meta.key_url_label.map(str::to_string),
+        hint: meta.hint.map(str::to_string),
         binary_path,
         status_message: status_message.map(str::to_string),
         capabilities: serde_json::json!({}),
@@ -4964,14 +5098,20 @@ mod tests {
     }
 
     fn test_voice_provider(id: VoiceProviderId) -> VoiceProviderInfo {
+        let meta = id.meta();
         VoiceProviderInfo {
             id,
             name: String::new(),
             provider_type: String::new(),
             category: String::new(),
+            description: meta.description.to_string(),
             available: false,
             enabled: false,
             key_source: None,
+            key_placeholder: meta.key_placeholder.map(str::to_string),
+            key_url: meta.key_url.map(str::to_string),
+            key_url_label: meta.key_url_label.map(str::to_string),
+            hint: meta.hint.map(str::to_string),
             binary_path: None,
             status_message: None,
             capabilities: serde_json::json!({}),
