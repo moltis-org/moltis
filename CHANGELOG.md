@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Update checker repository detection**: The gateway crate now inherits workspace
+  package repository metadata, and the update checker also supports an explicit
+  `server.update_repository_url` override in `moltis.toml` for custom builds.
 - **Mistral and other providers rejecting requests with HTTP 422**: Session metadata fields
   (`created_at`, `model`, `provider`, `inputTokens`, `outputTokens`) were leaking into
   provider API request bodies. Mistral's strict validation rejected the extra `created_at`
