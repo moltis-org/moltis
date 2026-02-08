@@ -12,6 +12,7 @@ import { sendRpc } from "./helpers.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
 import { navigate, registerPrefix } from "./router.js";
+import { connected } from "./signals.js";
 import * as S from "./state.js";
 import { Modal } from "./ui.js";
 
@@ -1767,6 +1768,9 @@ function VoiceSection() {
 	var [savingProvider, setSavingProvider] = useState(null);
 	var [voiceMsg, setVoiceMsg] = useState(null);
 	var [voiceErr, setVoiceErr] = useState(null);
+	var [voiceTesting, setVoiceTesting] = useState(null); // { id, type, phase } of provider being tested
+	var [activeRecorder, setActiveRecorder] = useState(null); // MediaRecorder for STT stop functionality
+	var [voiceTestResults, setVoiceTestResults] = useState({}); // { providerId: { text, error } }
 
 	function fetchVoiceStatus() {
 		setVoiceLoading(true);
@@ -1785,8 +1789,8 @@ function VoiceSection() {
 	}
 
 	useEffect(() => {
-		fetchVoiceStatus();
-	}, []);
+		if (connected.value) fetchVoiceStatus();
+	}, [connected.value]);
 
 	function onToggleProvider(provider, enabled, providerType) {
 		setVoiceErr(null);
@@ -1826,10 +1830,129 @@ function VoiceSection() {
 		return Object.values(VOICE_PROVIDERS).filter((p) => !allIds.has(p.id));
 	}
 
-	if (voiceLoading) {
+	// Stop active STT recording
+	function stopSttRecording() {
+		if (activeRecorder) {
+			activeRecorder.stop();
+		}
+	}
+
+	// Test a voice provider (TTS or STT)
+	async function testVoiceProvider(providerId, type) {
+		// If already recording for this provider, stop it
+		if (voiceTesting?.id === providerId && voiceTesting?.type === "stt" && voiceTesting?.phase === "recording") {
+			stopSttRecording();
+			return;
+		}
+
+		setVoiceErr(null);
+		setVoiceMsg(null);
+		setVoiceTesting({ id: providerId, type, phase: "testing" });
+		rerender();
+
+		if (type === "tts") {
+			// Test TTS by converting sample text to audio and playing it
+			try {
+				var res = await sendRpc("tts.convert", {
+					text: "Hello! This is a test of the text to speech system.",
+					provider: providerId,
+				});
+				if (res?.ok && res.payload?.audio) {
+					// Decode base64 audio and play it
+					var audioData = atob(res.payload.audio);
+					var bytes = new Uint8Array(audioData.length);
+					for (var i = 0; i < audioData.length; i++) {
+						bytes[i] = audioData.charCodeAt(i);
+					}
+					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
+					var url = URL.createObjectURL(blob);
+					var audio = new Audio(url);
+					audio.onended = () => URL.revokeObjectURL(url);
+					audio.play();
+					setVoiceTestResults((prev) => ({
+						...prev,
+						[providerId]: { success: true, error: null },
+					}));
+				} else {
+					setVoiceTestResults((prev) => ({
+						...prev,
+						[providerId]: { success: false, error: res?.error?.message || "TTS test failed" },
+					}));
+				}
+			} catch (err) {
+				setVoiceTestResults((prev) => ({
+					...prev,
+					[providerId]: { success: false, error: err.message || "TTS test failed" },
+				}));
+			}
+			setVoiceTesting(null);
+		} else {
+			// Test STT by recording audio and transcribing
+			try {
+				var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+					? "audio/webm;codecs=opus"
+					: "audio/webm";
+				var mediaRecorder = new MediaRecorder(stream, { mimeType });
+				var audioChunks = [];
+
+				mediaRecorder.ondataavailable = (e) => {
+					if (e.data.size > 0) audioChunks.push(e.data);
+				};
+
+				mediaRecorder.start();
+				setActiveRecorder(mediaRecorder);
+				setVoiceTesting({ id: providerId, type, phase: "recording" });
+				rerender();
+
+				mediaRecorder.onstop = async () => {
+					setActiveRecorder(null);
+					for (var track of stream.getTracks()) track.stop();
+					setVoiceTesting({ id: providerId, type, phase: "transcribing" });
+					rerender();
+
+					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+					var buffer = await audioBlob.arrayBuffer();
+					var base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+
+					var sttRes = await sendRpc("stt.transcribe", {
+						audio: base64,
+						format: "webm",
+						provider: providerId,
+					});
+
+					if (sttRes?.ok && sttRes.payload?.text) {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: sttRes.payload.text, error: null },
+						}));
+					} else {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: null, error: sttRes?.error?.message || "STT test failed" },
+						}));
+					}
+					setVoiceTesting(null);
+					rerender();
+				};
+			} catch (err) {
+				if (err.name === "NotAllowedError") {
+					setVoiceErr("Microphone permission denied");
+				} else if (err.name === "NotFoundError") {
+					setVoiceErr("No microphone found");
+				} else {
+					setVoiceErr(err.message || "STT test failed");
+				}
+				setVoiceTesting(null);
+			}
+		}
+		rerender();
+	}
+
+	if (voiceLoading || !connected.value) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
-			<div class="text-xs text-[var(--muted)]">Loading\u2026</div>
+			<div class="text-xs text-[var(--muted)]">${connected.value ? "Loading\u2026" : "Connecting\u2026"}</div>
 		</div>`;
 	}
 
@@ -1839,8 +1962,8 @@ function VoiceSection() {
 			Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in chat to record voice input. TTS lets you hear responses as audio.
 		</p>
 
-		${voiceMsg ? html`<div class="text-xs" style="color:var(--accent);">${voiceMsg}</div>` : null}
-		${voiceErr ? html`<div class="text-xs" style="color:var(--error);">${voiceErr}</div>` : null}
+		${voiceMsg ? html`<div class="text-xs text-[var(--accent)]">${voiceMsg}</div>` : null}
+		${voiceErr ? html`<div class="text-xs text-[var(--error)]">${voiceErr}</div>` : null}
 
 		<div style="max-width:700px;display:flex;flex-direction:column;gap:24px;">
 			<!-- STT Providers -->
@@ -1849,12 +1972,18 @@ function VoiceSection() {
 				<div class="flex flex-col gap-2">
 					${allProviders.stt.map((prov) => {
 						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
+						var testResult = voiceTestResults[prov.id] || null;
 						return html`<${VoiceProviderRow}
 							provider=${prov}
 							meta=${meta}
+							type="stt"
 							saving=${savingProvider === prov.id}
+							testState=${testState}
+							testResult=${testResult}
 							onToggle=${(enabled) => onToggleProvider(prov, enabled, "stt")}
 							onConfigure=${() => onConfigureProvider(prov.id)}
+							onTest=${() => testVoiceProvider(prov.id, "stt")}
 						/>`;
 					})}
 				</div>
@@ -1866,12 +1995,18 @@ function VoiceSection() {
 				<div class="flex flex-col gap-2">
 					${allProviders.tts.map((prov) => {
 						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;
+						var testResult = voiceTestResults[prov.id] || null;
 						return html`<${VoiceProviderRow}
 							provider=${prov}
 							meta=${meta}
+							type="tts"
 							saving=${savingProvider === prov.id}
+							testState=${testState}
+							testResult=${testResult}
 							onToggle=${(enabled) => onToggleProvider(prov, enabled, "tts")}
 							onConfigure=${() => onConfigureProvider(prov.id)}
+							onTest=${() => testVoiceProvider(prov.id, "tts")}
 						/>`;
 					})}
 				</div>
@@ -1891,10 +2026,26 @@ function VoiceSection() {
 }
 
 // Individual provider row with enable toggle
-function VoiceProviderRow({ provider, meta, saving, onToggle, onConfigure }) {
+function VoiceProviderRow({ provider, meta, type, saving, testState, testResult, onToggle, onConfigure, onTest }) {
 	var canEnable = provider.available;
 	var keySourceLabel =
 		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
+	var showTestBtn = canEnable && provider.enabled;
+
+	// Determine button text based on test state
+	var buttonText = "Test";
+	var buttonDisabled = false;
+	if (testState) {
+		if (testState.phase === "recording") {
+			buttonText = "Stop";
+		} else if (testState.phase === "transcribing") {
+			buttonText = "Testing…";
+			buttonDisabled = true;
+		} else {
+			buttonText = "Testing…";
+			buttonDisabled = true;
+		}
+	}
 
 	return html`<div class="provider-card" style="padding:10px 14px;border-radius:8px;display:flex;align-items:center;gap:12px;">
 		<div style="flex:1;display:flex;flex-direction:column;gap:2px;">
@@ -1905,27 +2056,70 @@ function VoiceProviderRow({ provider, meta, saving, onToggle, onConfigure }) {
 			</div>
 			<span class="text-xs text-[var(--muted)]">${meta.description}</span>
 			${provider.binaryPath ? html`<span class="text-xs text-[var(--muted)]">Found at: ${provider.binaryPath}</span>` : null}
-			${!canEnable && provider.statusMessage ? html`<span class="text-xs text-[var(--error)]">${provider.statusMessage}</span>` : null}
+			${!canEnable && provider.statusMessage ? html`<span class="text-xs text-[var(--muted)]">${provider.statusMessage}</span>` : null}
+			${
+				testState?.phase === "recording"
+					? html`<div class="voice-recording-hint">
+				<span class="voice-recording-dot"></span>
+				<span>Speak now, then click Stop when finished</span>
+			</div>`
+					: null
+			}
+			${testState?.phase === "transcribing" ? html`<span class="text-xs text-[var(--muted)]">Transcribing...</span>` : null}
+			${testState?.phase === "testing" && type === "tts" ? html`<span class="text-xs text-[var(--muted)]">Playing audio...</span>` : null}
+			${
+				testResult?.text
+					? html`<div class="voice-transcription-result">
+				<span class="voice-transcription-label">Transcribed:</span>
+				<span class="voice-transcription-text">"${testResult.text}"</span>
+			</div>`
+					: null
+			}
+			${
+				testResult?.success === true
+					? html`<div class="voice-success-result">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<span>Audio played successfully</span>
+			</div>`
+					: null
+			}
+			${testResult?.error ? html`<span class="text-xs text-[var(--error)]">${testResult.error}</span>` : null}
 		</div>
-		${
-			canEnable
-				? html`<label class="toggle-switch">
-					<input type="checkbox"
-						checked=${provider.enabled}
-						disabled=${saving}
-						onChange=${(e) => onToggle(e.target.checked)} />
-					<span class="toggle-slider"></span>
-				</label>`
-				: provider.category === "local"
-					? html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
-						onClick=${onConfigure}>
-						Setup
+		<div style="display:flex;align-items:center;gap:8px;">
+			${
+				showTestBtn
+					? html`<button
+						class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${onTest}
+						disabled=${buttonDisabled}
+						title=${type === "tts" ? "Test voice output" : "Test voice input"}>
+						${buttonText}
 					</button>`
-					: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
-						onClick=${onConfigure}>
-						Configure
-					</button>`
-		}
+					: null
+			}
+			${
+				canEnable
+					? html`<label class="toggle-switch">
+						<input type="checkbox"
+							checked=${provider.enabled}
+							disabled=${saving}
+							onChange=${(e) => onToggle(e.target.checked)} />
+						<span class="toggle-slider"></span>
+					</label>`
+					: provider.category === "local"
+						? html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${onConfigure}
+							title="View installation instructions">
+							Install
+						</button>`
+						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${onConfigure}>
+							Configure
+						</button>`
+			}
+		</div>
 	</div>`;
 }
 

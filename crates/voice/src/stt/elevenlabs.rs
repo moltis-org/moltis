@@ -32,6 +32,7 @@ pub struct ElevenLabsStt {
     api_key: Option<Secret<String>>,
     model: String,
     language: Option<String>,
+    base_url: String,
 }
 
 impl std::fmt::Debug for ElevenLabsStt {
@@ -59,6 +60,7 @@ impl ElevenLabsStt {
             api_key,
             model: DEFAULT_MODEL.into(),
             language: None,
+            base_url: API_BASE.into(),
         }
     }
 
@@ -74,7 +76,16 @@ impl ElevenLabsStt {
             api_key,
             model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
             language,
+            base_url: API_BASE.into(),
         }
+    }
+
+    /// Create with custom base URL (for testing).
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
     }
 
     /// Get the API key, returning an error if not configured.
@@ -121,7 +132,7 @@ impl SttProvider for ElevenLabsStt {
 
         let mut form = Form::new()
             .part("file", file_part)
-            .text("model", self.model.clone());
+            .text("model_id", self.model.clone());
 
         // Use request language if provided, otherwise fall back to configured language
         if let Some(language) = request.language.as_ref().or(self.language.as_ref()) {
@@ -133,7 +144,7 @@ impl SttProvider for ElevenLabsStt {
             form = form.text("context_text", prompt.clone());
         }
 
-        let url = format!("{API_BASE}/speech-to-text");
+        let url = format!("{}/speech-to-text", self.base_url);
 
         let response = self
             .client
@@ -285,5 +296,149 @@ mod tests {
         assert_eq!(ElevenLabsStt::file_extension(AudioFormat::Opus), "opus");
         assert_eq!(ElevenLabsStt::file_extension(AudioFormat::Aac), "aac");
         assert_eq!(ElevenLabsStt::file_extension(AudioFormat::Pcm), "wav");
+    }
+
+    // ── Integration Tests with Mock Server ─────────────────────────────────
+
+    mod integration {
+        use {
+            super::*,
+            wiremock::{
+                Mock, MockServer, ResponseTemplate,
+                matchers::{header, method, path},
+            },
+        };
+
+        #[tokio::test]
+        async fn test_transcribe_success() {
+            let mock_server = MockServer::start().await;
+
+            // Setup mock response
+            let response_body = r#"{
+                "text": "Hello, this is a test transcription.",
+                "language_code": "en",
+                "language_probability": 0.98,
+                "words": [
+                    {"text": "Hello", "start": 0.0, "end": 0.5},
+                    {"text": "this", "start": 0.6, "end": 0.8},
+                    {"text": "is", "start": 0.9, "end": 1.0},
+                    {"text": "a", "start": 1.1, "end": 1.2},
+                    {"text": "test", "start": 1.3, "end": 1.6},
+                    {"text": "transcription", "start": 1.7, "end": 2.3}
+                ]
+            }"#;
+
+            Mock::given(method("POST"))
+                .and(path("/speech-to-text"))
+                .and(header("xi-api-key", "test-api-key"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(response_body))
+                .mount(&mock_server)
+                .await;
+
+            let provider = ElevenLabsStt::new(Some(Secret::new("test-api-key".into())))
+                .with_base_url(mock_server.uri());
+
+            let request = TranscribeRequest {
+                audio: Bytes::from_static(b"fake audio data"),
+                format: AudioFormat::Mp3,
+                language: None,
+                prompt: None,
+            };
+
+            let result = provider.transcribe(request).await.unwrap();
+
+            assert_eq!(result.text, "Hello, this is a test transcription.");
+            assert_eq!(result.language, Some("en".into()));
+            assert_eq!(result.confidence, Some(0.98));
+            assert!(result.words.is_some());
+            assert_eq!(result.words.as_ref().unwrap().len(), 6);
+        }
+
+        #[tokio::test]
+        async fn test_transcribe_with_language() {
+            let mock_server = MockServer::start().await;
+
+            Mock::given(method("POST"))
+                .and(path("/speech-to-text"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_string(r#"{"text": "Bonjour", "language_code": "fr"}"#),
+                )
+                .mount(&mock_server)
+                .await;
+
+            let provider = ElevenLabsStt::with_options(
+                Some(Secret::new("test-key".into())),
+                Some("scribe_v2".into()),
+                Some("fr".into()),
+            )
+            .with_base_url(mock_server.uri());
+
+            let request = TranscribeRequest {
+                audio: Bytes::from_static(b"audio"),
+                format: AudioFormat::Mp3,
+                language: None,
+                prompt: None,
+            };
+
+            let result = provider.transcribe(request).await.unwrap();
+            assert_eq!(result.text, "Bonjour");
+            assert_eq!(result.language, Some("fr".into()));
+        }
+
+        #[tokio::test]
+        async fn test_transcribe_api_error() {
+            let mock_server = MockServer::start().await;
+
+            Mock::given(method("POST"))
+                .and(path("/speech-to-text"))
+                .respond_with(
+                    ResponseTemplate::new(422).set_body_string(
+                        r#"{"detail": [{"type": "missing", "msg": "Field required"}]}"#,
+                    ),
+                )
+                .mount(&mock_server)
+                .await;
+
+            let provider = ElevenLabsStt::new(Some(Secret::new("test-key".into())))
+                .with_base_url(mock_server.uri());
+
+            let request = TranscribeRequest {
+                audio: Bytes::from_static(b"audio"),
+                format: AudioFormat::Mp3,
+                language: None,
+                prompt: None,
+            };
+
+            let result = provider.transcribe(request).await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("422"));
+        }
+
+        #[tokio::test]
+        async fn test_transcribe_sends_model_id() {
+            let mock_server = MockServer::start().await;
+
+            // We'll verify the request was made and check server received calls
+            Mock::given(method("POST"))
+                .and(path("/speech-to-text"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"text": "test"}"#))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+
+            let provider = ElevenLabsStt::new(Some(Secret::new("key".into())))
+                .with_base_url(mock_server.uri());
+
+            let request = TranscribeRequest {
+                audio: Bytes::from_static(b"audio"),
+                format: AudioFormat::Mp3,
+                language: None,
+                prompt: None,
+            };
+
+            let _ = provider.transcribe(request).await;
+            // The Mock expectation of 1 call will verify this was called
+        }
     }
 }

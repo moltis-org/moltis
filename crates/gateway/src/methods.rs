@@ -3918,9 +3918,13 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             None,
             piper_available.clone(),
             if piper_available.is_none() {
-                Some("piper binary not found")
+                Some(
+                    "piper binary not found. Install from https://github.com/rhasspy/piper/releases",
+                )
             } else if config.voice.tts.piper.model_path.is_none() {
-                Some("model not configured")
+                Some(
+                    "model not configured - download voice models from https://rhasspy.github.io/piper-samples/",
+                )
             } else {
                 None
             },
@@ -4069,9 +4073,13 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             None,
             whisper_cli_available.clone(),
             if whisper_cli_available.is_none() {
-                Some("whisper-cpp binary not found")
+                Some(
+                    "whisper-cpp binary not found. Install with: brew install whisper-cpp (macOS) or build from https://github.com/ggerganov/whisper.cpp",
+                )
             } else if config.voice.stt.whisper_cli.model_path.is_none() {
-                Some("model not configured")
+                Some(
+                    "model not configured - download a GGML model from https://huggingface.co/ggerganov/whisper.cpp",
+                )
             } else {
                 None
             },
@@ -4086,9 +4094,13 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             None,
             sherpa_onnx_available.clone(),
             if sherpa_onnx_available.is_none() {
-                Some("sherpa-onnx binary not found")
+                Some(
+                    "sherpa-onnx binary not found. Download from https://github.com/k2-fsa/sherpa-onnx/releases",
+                )
             } else if config.voice.stt.sherpa_onnx.model_dir.is_none() {
-                Some("model not configured")
+                Some(
+                    "model not configured - download models from https://github.com/k2-fsa/sherpa-onnx/releases",
+                )
             } else {
                 None
             },

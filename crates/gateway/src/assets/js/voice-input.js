@@ -40,7 +40,7 @@ function updateMicButton() {
 	micBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
 	// Disable only when not connected (button is only visible when STT configured)
 	micBtn.disabled = !S.connected;
-	micBtn.title = "Record voice (hold to record)";
+	micBtn.title = isRecording ? "Click to stop and send" : "Click to start recording";
 }
 
 /** Start recording audio from the microphone. */
@@ -74,6 +74,7 @@ async function startRecording() {
 		isRecording = true;
 		micBtn.classList.add("recording");
 		micBtn.setAttribute("aria-pressed", "true");
+		micBtn.title = "Click to stop and send";
 	} catch (err) {
 		console.error("Failed to start recording:", err);
 		// Show user-friendly error
@@ -93,6 +94,7 @@ function stopRecording() {
 	micBtn.classList.remove("recording");
 	micBtn.setAttribute("aria-pressed", "false");
 	micBtn.classList.add("transcribing");
+	micBtn.title = "Transcribing...";
 
 	// Stop the recorder, which triggers onstop -> transcribeAudio
 	mediaRecorder.stop();
@@ -102,6 +104,7 @@ function stopRecording() {
 async function transcribeAudio() {
 	if (audioChunks.length === 0) {
 		micBtn.classList.remove("transcribing");
+		micBtn.title = "Click to start recording";
 		return;
 	}
 
@@ -119,6 +122,7 @@ async function transcribeAudio() {
 		});
 
 		micBtn.classList.remove("transcribing");
+		micBtn.title = "Click to start recording";
 
 		if (res?.ok && res.payload?.text) {
 			// Insert transcribed text into chat input
@@ -137,19 +141,18 @@ async function transcribeAudio() {
 	} catch (err) {
 		console.error("Transcription error:", err);
 		micBtn.classList.remove("transcribing");
+		micBtn.title = "Click to start recording";
 	}
 }
 
-/** Handle mouse/touch start on mic button. */
-function onMicDown(e) {
+/** Handle click on mic button - toggle recording. */
+function onMicClick(e) {
 	e.preventDefault();
-	startRecording();
-}
-
-/** Handle mouse/touch end on mic button. */
-function onMicUp(e) {
-	e.preventDefault();
-	stopRecording();
+	if (isRecording) {
+		stopRecording();
+	} else {
+		startRecording();
+	}
 }
 
 /** Initialize voice input with the mic button element. */
@@ -161,23 +164,14 @@ export function initVoiceInput(btn) {
 	// Check STT status on init
 	checkSttStatus();
 
-	// Set up press-and-hold recording
-	micBtn.addEventListener("mousedown", onMicDown);
-	micBtn.addEventListener("mouseup", onMicUp);
-	micBtn.addEventListener("mouseleave", onMicUp);
-	micBtn.addEventListener("touchstart", onMicDown, { passive: false });
-	micBtn.addEventListener("touchend", onMicUp, { passive: false });
-	micBtn.addEventListener("touchcancel", onMicUp, { passive: false });
+	// Click to toggle recording (start on first click, stop on second)
+	micBtn.addEventListener("click", onMicClick);
 
 	// Keyboard accessibility: Space/Enter to toggle
 	micBtn.addEventListener("keydown", (e) => {
 		if (e.key === " " || e.key === "Enter") {
 			e.preventDefault();
-			if (isRecording) {
-				stopRecording();
-			} else {
-				startRecording();
-			}
+			onMicClick(e);
 		}
 	});
 

@@ -3,7 +3,174 @@
 use {
     secrecy::Secret,
     serde::{Deserialize, Serialize},
+    std::fmt,
 };
+
+// ── Provider ID Enums ───────────────────────────────────────────────────────
+
+/// Text-to-Speech provider identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TtsProviderId {
+    #[serde(rename = "elevenlabs")]
+    ElevenLabs,
+    #[serde(rename = "openai")]
+    OpenAi,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "piper")]
+    Piper,
+    #[serde(rename = "coqui")]
+    Coqui,
+}
+
+impl Default for TtsProviderId {
+    fn default() -> Self {
+        Self::ElevenLabs
+    }
+}
+
+impl fmt::Display for TtsProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ElevenLabs => write!(f, "elevenlabs"),
+            Self::OpenAi => write!(f, "openai"),
+            Self::Google => write!(f, "google"),
+            Self::Piper => write!(f, "piper"),
+            Self::Coqui => write!(f, "coqui"),
+        }
+    }
+}
+
+impl TtsProviderId {
+    /// Parse from string (for API compatibility).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "elevenlabs" => Some(Self::ElevenLabs),
+            "openai" => Some(Self::OpenAi),
+            "google" => Some(Self::Google),
+            "piper" => Some(Self::Piper),
+            "coqui" => Some(Self::Coqui),
+            _ => None,
+        }
+    }
+
+    /// Get human-readable name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ElevenLabs => "ElevenLabs",
+            Self::OpenAi => "OpenAI TTS",
+            Self::Google => "Google Cloud TTS",
+            Self::Piper => "Piper",
+            Self::Coqui => "Coqui TTS",
+        }
+    }
+
+    /// All TTS provider IDs.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::ElevenLabs,
+            Self::OpenAi,
+            Self::Google,
+            Self::Piper,
+            Self::Coqui,
+        ]
+    }
+}
+
+/// Speech-to-Text provider identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SttProviderId {
+    #[serde(rename = "whisper")]
+    Whisper,
+    #[serde(rename = "groq")]
+    Groq,
+    #[serde(rename = "deepgram")]
+    Deepgram,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "mistral")]
+    Mistral,
+    #[serde(rename = "voxtral-local")]
+    VoxtralLocal,
+    #[serde(rename = "whisper-cli")]
+    WhisperCli,
+    #[serde(rename = "sherpa-onnx")]
+    SherpaOnnx,
+    #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
+    ElevenLabs,
+}
+
+impl Default for SttProviderId {
+    fn default() -> Self {
+        Self::Whisper
+    }
+}
+
+impl fmt::Display for SttProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Whisper => write!(f, "whisper"),
+            Self::Groq => write!(f, "groq"),
+            Self::Deepgram => write!(f, "deepgram"),
+            Self::Google => write!(f, "google"),
+            Self::Mistral => write!(f, "mistral"),
+            Self::VoxtralLocal => write!(f, "voxtral-local"),
+            Self::WhisperCli => write!(f, "whisper-cli"),
+            Self::SherpaOnnx => write!(f, "sherpa-onnx"),
+            Self::ElevenLabs => write!(f, "elevenlabs-stt"),
+        }
+    }
+}
+
+impl SttProviderId {
+    /// Parse from string (for API compatibility).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "whisper" => Some(Self::Whisper),
+            "groq" => Some(Self::Groq),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            "mistral" => Some(Self::Mistral),
+            "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-cli" => Some(Self::WhisperCli),
+            "sherpa-onnx" => Some(Self::SherpaOnnx),
+            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
+            _ => None,
+        }
+    }
+
+    /// Get human-readable name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Whisper => "OpenAI Whisper",
+            Self::Groq => "Groq",
+            Self::Deepgram => "Deepgram",
+            Self::Google => "Google Cloud",
+            Self::Mistral => "Mistral AI",
+            Self::VoxtralLocal => "Voxtral (Local)",
+            Self::WhisperCli => "whisper.cpp",
+            Self::SherpaOnnx => "sherpa-onnx",
+            Self::ElevenLabs => "ElevenLabs Scribe",
+        }
+    }
+
+    /// All STT provider IDs.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Whisper,
+            Self::Groq,
+            Self::Deepgram,
+            Self::Google,
+            Self::Mistral,
+            Self::VoxtralLocal,
+            Self::WhisperCli,
+            Self::SherpaOnnx,
+            Self::ElevenLabs,
+        ]
+    }
+}
+
+// ── Configuration Structs ───────────────────────────────────────────────────
 
 /// Top-level voice configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

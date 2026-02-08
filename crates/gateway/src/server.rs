@@ -466,6 +466,17 @@ pub async fn start_gateway(
     // When local-llm feature is disabled, this variable is not needed since
     // the only usage is also feature-gated.
 
+    // Wire live voice services when the feature is enabled.
+    #[cfg(feature = "voice")]
+    {
+        use crate::voice::{LiveSttService, LiveTtsService, SttServiceConfig};
+
+        // Services read fresh config from disk on each operation,
+        // so we just need to create the instances here.
+        services.tts = Arc::new(LiveTtsService::new(moltis_voice::TtsConfig::default()));
+        services.stt = Arc::new(LiveSttService::new(SttServiceConfig::default()));
+    }
+
     if !registry.read().await.is_empty() {
         services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
     }
