@@ -496,17 +496,16 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged.servers.insert(
-                    name.clone(),
-                    moltis_mcp::McpServerConfig {
+                merged
+                    .servers
+                    .insert(name.clone(), moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    },
-                );
+                    });
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -2069,15 +2068,10 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(
-                            &update_state,
-                            "update.available",
-                            payload,
-                            BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            },
-                        )
+                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
                         .await;
                     }
                 },
@@ -2133,15 +2127,12 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (
-                                name.clone(),
-                                moltis_metrics::ProviderTokens {
-                                    input_tokens: metrics.input_tokens,
-                                    output_tokens: metrics.output_tokens,
-                                    completions: metrics.completions,
-                                    errors: metrics.errors,
-                                },
-                            )
+                            (name.clone(), moltis_metrics::ProviderTokens {
+                                input_tokens: metrics.input_tokens,
+                                output_tokens: metrics.output_tokens,
+                                completions: metrics.completions,
+                                errors: metrics.errors,
+                            })
                         })
                         .collect();
 

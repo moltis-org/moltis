@@ -86,14 +86,11 @@ impl KeyStore {
             return old_format
                 .into_iter()
                 .map(|(k, v)| {
-                    (
-                        k,
-                        ProviderConfig {
-                            api_key: Some(v),
-                            base_url: None,
-                            model: None,
-                        },
-                    )
+                    (k, ProviderConfig {
+                        api_key: Some(v),
+                        base_url: None,
+                        model: None,
+                    })
                 })
                 .collect();
         }
@@ -1204,13 +1201,10 @@ mod tests {
         store.save("anthropic", "sk-saved").unwrap();
 
         let mut base = ProvidersConfig::default();
-        base.providers.insert(
-            "anthropic".into(),
-            ProviderEntry {
-                api_key: Some(Secret::new("sk-config".into())),
-                ..Default::default()
-            },
-        );
+        base.providers.insert("anthropic".into(), ProviderEntry {
+            api_key: Some(Secret::new("sk-config".into())),
+            ..Default::default()
+        });
         let merged = config_with_saved_keys(&base, &store);
         let entry = merged.get("anthropic").unwrap();
         // Config key takes precedence over saved key.

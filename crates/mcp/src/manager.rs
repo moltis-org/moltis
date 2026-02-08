@@ -313,13 +313,10 @@ mod tests {
     #[tokio::test]
     async fn test_status_shows_stopped_for_configured_but_not_started() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "test".into(),
-            McpServerConfig {
-                command: "echo".into(),
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("test".into(), McpServerConfig {
+            command: "echo".into(),
+            ..Default::default()
+        });
         let mgr = McpManager::new(reg);
 
         let statuses = mgr.status_all().await;

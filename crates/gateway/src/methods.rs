@@ -618,14 +618,11 @@ impl MethodRegistry {
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     {
                         let mut invokes = ctx.state.pending_invokes.write().await;
-                        invokes.insert(
-                            invoke_id.clone(),
-                            crate::state::PendingInvoke {
-                                request_id: ctx.request_id.clone(),
-                                sender: tx,
-                                created_at: std::time::Instant::now(),
-                            },
-                        );
+                        invokes.insert(invoke_id.clone(), crate::state::PendingInvoke {
+                            request_id: ctx.request_id.clone(),
+                            sender: tx,
+                            created_at: std::time::Instant::now(),
+                        });
                     }
 
                     // Wait for result with 30s timeout.
@@ -4948,10 +4945,10 @@ mod tests {
             VoiceProviderId::parse_tts_list_id,
         );
         let ids: Vec<_> = filtered.into_iter().map(|p| p.id).collect();
-        assert_eq!(
-            ids,
-            vec![VoiceProviderId::OpenaiTts, VoiceProviderId::Piper]
-        );
+        assert_eq!(ids, vec![
+            VoiceProviderId::OpenaiTts,
+            VoiceProviderId::Piper
+        ]);
     }
 
     #[test]

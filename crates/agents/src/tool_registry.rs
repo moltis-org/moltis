@@ -52,25 +52,19 @@ impl ToolRegistry {
     /// Register a built-in tool.
     pub fn register(&mut self, tool: Box<dyn AgentTool>) {
         let name = tool.name().to_string();
-        self.tools.insert(
-            name,
-            ToolEntry {
-                tool: Arc::from(tool),
-                source: ToolSource::Builtin,
-            },
-        );
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Builtin,
+        });
     }
 
     /// Register a tool from an MCP server.
     pub fn register_mcp(&mut self, tool: Box<dyn AgentTool>, server: String) {
         let name = tool.name().to_string();
-        self.tools.insert(
-            name,
-            ToolEntry {
-                tool: Arc::from(tool),
-                source: ToolSource::Mcp { server },
-            },
-        );
+        self.tools.insert(name, ToolEntry {
+            tool: Arc::from(tool),
+            source: ToolSource::Mcp { server },
+        });
     }
 
     pub fn unregister(&mut self, name: &str) -> bool {
@@ -124,13 +118,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| !name.starts_with(prefix))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -143,13 +134,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(_, entry)| !matches!(entry.source, ToolSource::Mcp { .. }))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -162,13 +150,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| !exclude.contains(&name.as_str()))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }
@@ -184,13 +169,10 @@ impl ToolRegistry {
             .iter()
             .filter(|(name, _)| predicate(name))
             .map(|(name, entry)| {
-                (
-                    name.clone(),
-                    ToolEntry {
-                        tool: Arc::clone(&entry.tool),
-                        source: entry.source.clone(),
-                    },
-                )
+                (name.clone(), ToolEntry {
+                    tool: Arc::clone(&entry.tool),
+                    source: entry.source.clone(),
+                })
             })
             .collect();
         ToolRegistry { tools }

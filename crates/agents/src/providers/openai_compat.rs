@@ -599,10 +599,9 @@ mod tests {
 
         let events = finalize_stream(&state);
         assert_eq!(events.len(), 2);
-        assert!(matches!(
-            &events[0],
-            StreamEvent::ToolCallComplete { index: 0 }
-        ));
+        assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
+            index: 0
+        }));
         assert!(matches!(
             &events[1],
             StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5
