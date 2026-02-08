@@ -346,11 +346,29 @@ impl LiveChatService {
 #[async_trait]
 impl ChatService for LiveChatService {
     async fn send(&self, params: Value) -> ServiceResult {
-        let text = params
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'text' parameter".to_string())?
-            .to_string();
+        // Support both text-only and multimodal content.
+        // - "text": string → plain text message
+        // - "content": array → multimodal content (text + images)
+        let (text, user_content) = if let Some(content) = params.get("content") {
+            // Multimodal content - extract text for logging/hooks, keep full content for LLM
+            let text_part = content
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"))
+                        .and_then(|block| block.get("text").and_then(|t| t.as_str()))
+                })
+                .unwrap_or("[Image]")
+                .to_string();
+            (text_part, content.clone())
+        } else {
+            let text = params
+                .get("text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing 'text' or 'content' parameter".to_string())?
+                .to_string();
+            (text.clone(), serde_json::json!(text))
+        };
 
         let conn_id = params
             .get("_conn_id")
@@ -534,9 +552,10 @@ impl ChatService for LiveChatService {
         }
 
         // Persist the user message (with optional channel metadata for UI display).
+        // Use multimodal content if available, otherwise plain text.
         let channel_meta = params.get("channel").cloned();
         let mut user_msg =
-            serde_json::json!({"role": "user", "content": &text, "created_at": now_ms()});
+            serde_json::json!({"role": "user", "content": &user_content, "created_at": now_ms()});
         if let Some(ch) = &channel_meta {
             user_msg["channel"] = ch.clone();
         }

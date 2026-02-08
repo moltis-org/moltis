@@ -14,8 +14,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelEvent, ChannelMessageMeta, ChannelOutbound, ChannelReplyTarget, ChannelType,
-        message_log::MessageLogEntry,
+        ChannelAttachment, ChannelEvent, ChannelMessageMeta, ChannelOutbound, ChannelReplyTarget,
+        ChannelType, message_log::MessageLogEntry,
     },
     moltis_common::types::ChatType,
 };
@@ -195,7 +195,7 @@ pub async fn handle_message_direct(
     debug!(account_id, "handler: access granted");
 
     // Check for voice/audio messages and transcribe them
-    let body = if let Some(voice_file) = extract_voice_file(&msg) {
+    let (body, attachments) = if let Some(voice_file) = extract_voice_file(&msg) {
         // Try to transcribe the voice message
         if let Some(ref sink) = event_sink {
             match download_telegram_file(bot, &voice_file.file_id).await {
@@ -216,27 +216,67 @@ pub async fn handle_message_direct(
                             );
                             // Combine with any caption if present
                             let caption = text.clone().unwrap_or_default();
-                            if caption.is_empty() {
+                            let body = if caption.is_empty() {
                                 transcribed
                             } else {
                                 format!("{}\n\n[Voice message]: {}", caption, transcribed)
-                            }
+                            };
+                            (body, Vec::new())
                         },
                         Err(e) => {
                             warn!(account_id, error = %e, "voice transcription failed");
                             // Fall back to caption or indicate transcription failed
-                            text.clone().unwrap_or_else(|| "[Voice message - transcription unavailable]".to_string())
+                            (
+                                text.clone().unwrap_or_else(|| {
+                                    "[Voice message - transcription unavailable]".to_string()
+                                }),
+                                Vec::new(),
+                            )
                         },
                     }
                 },
                 Err(e) => {
                     warn!(account_id, error = %e, "failed to download voice file");
-                    text.clone().unwrap_or_else(|| "[Voice message - download failed]".to_string())
+                    (
+                        text.clone()
+                            .unwrap_or_else(|| "[Voice message - download failed]".to_string()),
+                        Vec::new(),
+                    )
                 },
             }
         } else {
             // No event sink, can't transcribe
-            text.clone().unwrap_or_else(|| "[Voice message]".to_string())
+            (
+                text.clone().unwrap_or_else(|| "[Voice message]".to_string()),
+                Vec::new(),
+            )
+        }
+    } else if let Some(photo_file) = extract_photo_file(&msg) {
+        // Handle photo messages - download and send as multimodal content
+        match download_telegram_file(bot, &photo_file.file_id).await {
+            Ok(image_data) => {
+                debug!(
+                    account_id,
+                    file_id = %photo_file.file_id,
+                    size = image_data.len(),
+                    "downloaded photo"
+                );
+                let attachment = ChannelAttachment {
+                    media_type: photo_file.media_type,
+                    data: image_data,
+                };
+                // Use caption as text, or empty string if no caption
+                let caption = text.clone().unwrap_or_default();
+                (caption, vec![attachment])
+            },
+            Err(e) => {
+                warn!(account_id, error = %e, "failed to download photo");
+                (
+                    text.clone()
+                        .unwrap_or_else(|| "[Photo - download failed]".to_string()),
+                    Vec::new(),
+                )
+            },
         }
     } else {
         // Log unhandled media types so we know when users are sending attachments we don't process
@@ -248,13 +288,14 @@ pub async fn handle_message_direct(
                 "received unhandled attachment type"
             );
         }
-        text.unwrap_or_default()
+        (text.unwrap_or_default(), Vec::new())
     };
 
     // Dispatch to the chat session (per-channel session key derived by the sink).
     // The reply target tells the gateway where to send the LLM response back.
+    let has_content = !body.is_empty() || !attachments.is_empty();
     if let Some(ref sink) = event_sink
-        && !body.is_empty()
+        && has_content
     {
         let reply_target = ChannelReplyTarget {
             channel_type: ChannelType::Telegram,
@@ -403,7 +444,13 @@ pub async fn handle_message_direct(
             username: username.clone(),
             model: config.model.clone(),
         };
-        sink.dispatch_to_chat(&body, reply_target, meta).await;
+
+        if attachments.is_empty() {
+            sink.dispatch_to_chat(&body, reply_target, meta).await;
+        } else {
+            sink.dispatch_to_chat_with_attachments(&body, attachments, reply_target, meta)
+                .await;
+        }
     }
 
     #[cfg(feature = "metrics")]
@@ -1076,6 +1123,31 @@ fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
                 Some(VoiceFileInfo {
                     file_id: a.audio.file.id.clone(),
                     format,
+                })
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Photo file info for vision.
+struct PhotoFileInfo {
+    file_id: String,
+    /// MIME type for the image (e.g., "image/jpeg").
+    media_type: String,
+}
+
+/// Extract photo file info from a message.
+/// Returns the largest photo size for best quality.
+fn extract_photo_file(msg: &Message) -> Option<PhotoFileInfo> {
+    match &msg.kind {
+        MessageKind::Common(common) => match &common.media_kind {
+            MediaKind::Photo(p) => {
+                // Get the largest photo size (last in the array)
+                p.photo.last().map(|ps| PhotoFileInfo {
+                    file_id: ps.file.id.clone(),
+                    media_type: "image/jpeg".to_string(), // Telegram photos are JPEG
                 })
             },
             _ => None,

@@ -129,6 +129,23 @@ pub trait ChannelEventSink: Send + Sync {
         let _ = (audio_data, format);
         Err(anyhow::anyhow!("voice transcription not available"))
     }
+
+    /// Dispatch an inbound message with attachments (images, files) to the chat session.
+    ///
+    /// This is used when a channel message contains both text and media (e.g., a
+    /// Telegram photo with a caption). The attachments are sent to the LLM as
+    /// multimodal content.
+    async fn dispatch_to_chat_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<ChannelAttachment>,
+        reply_to: ChannelReplyTarget,
+        meta: ChannelMessageMeta,
+    ) {
+        // Default implementation ignores attachments and just sends text.
+        let _ = attachments;
+        self.dispatch_to_chat(text, reply_to, meta).await;
+    }
 }
 
 /// Metadata about a channel message, used for UI display.
@@ -140,6 +157,15 @@ pub struct ChannelMessageMeta {
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// An attachment (image, file) from a channel message.
+#[derive(Debug, Clone)]
+pub struct ChannelAttachment {
+    /// MIME type of the attachment (e.g., "image/jpeg", "image/png").
+    pub media_type: String,
+    /// Raw binary data of the attachment.
+    pub data: Vec<u8>,
 }
 
 /// Where to send the LLM response back.
