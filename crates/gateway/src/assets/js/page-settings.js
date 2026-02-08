@@ -14,6 +14,7 @@ import { isStandalone } from "./pwa.js";
 import { navigate, registerPrefix } from "./router.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
+import { fetchPhrase } from "./tts-phrases.js";
 import { Modal } from "./ui.js";
 
 var identity = signal(null);
@@ -1185,10 +1186,23 @@ function ConfigSection() {
 		rerender();
 
 		fetch("/api/restart", { method: "POST" })
-			.then((r) => r.json())
-			.then(() => {
-				// Server will restart, wait a bit then start polling for reconnection
-				setTimeout(waitForRestart, 1000);
+			.then((r) =>
+				r
+					.json()
+					.catch(() => ({}))
+					.then((d) => ({ status: r.status, data: d })),
+			)
+			.then(({ status, data }) => {
+				if (status >= 400 && data.error) {
+					// Server refused the restart (e.g. invalid config)
+					setRestarting(false);
+					setErr(data.error);
+					setMsg(null);
+					rerender();
+				} else {
+					// Server will restart, wait a bit then start polling for reconnection
+					setTimeout(waitForRestart, 1000);
+				}
 			})
 			.catch(() => {
 				// Expected - server restarted before response
@@ -1748,14 +1762,7 @@ function VoiceSection() {
 				var id = gon.get("identity");
 				var user = id?.user_name || "friend";
 				var bot = id?.name || "Moltis";
-				var phrases = [
-					`Hey ${user}! It's ${bot}. My voice is working perfectly. Try not to get too attached, okay?`,
-					`${user}, ${bot} reporting for duty. Voice systems are online and I sound fantastic, if I do say so myself.`,
-					`Is this thing on? Oh hi ${user}! ${bot} here, live and in stereo. Well, mono. Let's not oversell it.`,
-					`Good news, ${user}. I, ${bot}, can now talk. Bad news? You can't mute me. Just kidding. Please don't mute me.`,
-					`${bot} speaking! ${user}, if you can hear this, my voice works. If you can't, well, we have a problem.`,
-				];
-				var ttsText = phrases[Math.floor(Math.random() * phrases.length)];
+				var ttsText = await fetchPhrase("settings", user, bot);
 				var res = await sendRpc("tts.convert", {
 					text: ttsText,
 					provider: providerId,
