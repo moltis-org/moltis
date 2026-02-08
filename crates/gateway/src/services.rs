@@ -83,7 +83,7 @@ async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<serde_json::Value>
 }
 
 fn is_protected_discovered_skill(name: &str) -> bool {
-    matches!(name, "template-skill" | "template")
+    matches!(name, "template-skill" | "template" | "tmux")
 }
 
 fn commit_url_for_source(source: &str, sha: &str) -> Option<String> {
