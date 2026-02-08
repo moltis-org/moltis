@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use moltis_metrics::{counter, histogram, skills as skills_metrics};
 
 use crate::{
+    formats::{PluginFormat, detect_format, scan_with_adapter},
     manifest::ManifestStore,
     parse,
     types::{RepoEntry, SkillMetadata, SkillState},
@@ -11,12 +12,9 @@ use crate::{
 
 /// Install a skill repo from GitHub into the target directory.
 ///
-/// Clones the entire repo to `install_dir/<repo>/` (kept intact), scans for
-/// `SKILL.md` files, and records the repo + skills in the manifest with all
-/// skills enabled by default.
-///
-/// Only handles native `SKILL.md` format repos. For multi-format plugin repos,
-/// use `moltis_plugins::install::install_plugin` instead.
+/// Downloads the repo to `install_dir/<owner>-<repo>/`, auto-detects its format
+/// (SKILL.md, Claude Code `.claude-plugin/`, etc.), scans for skills using the
+/// appropriate adapter, and records the repo + skills in the manifest.
 pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<Vec<SkillMetadata>> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
@@ -48,13 +46,41 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
     counter!("moltis_skills_git_clone_fallback_total").increment(1);
     let commit_sha = install_via_http(&owner, &repo, &target).await?;
 
-    // Scan for SKILL.md files only.
-    let (skills_meta, skill_states) = scan_repo_skills(&target, install_dir).await?;
+    // Auto-detect repo format and scan accordingly.
+    let format = detect_format(&target);
+    let (skills_meta, skill_states) = match format {
+        PluginFormat::Skill => scan_repo_skills(&target, install_dir).await?,
+        _ => match scan_with_adapter(&target, format) {
+            Some(result) => {
+                let entries = result?;
+                let relative = target
+                    .strip_prefix(install_dir)
+                    .unwrap_or(&target)
+                    .to_string_lossy()
+                    .to_string();
+                let meta: Vec<SkillMetadata> = entries.iter().map(|e| e.metadata.clone()).collect();
+                let states: Vec<SkillState> = entries
+                    .iter()
+                    .map(|e| SkillState {
+                        name: e.metadata.name.clone(),
+                        relative_path: relative.clone(),
+                        trusted: false,
+                        enabled: false,
+                    })
+                    .collect();
+                (meta, states)
+            },
+            None => {
+                let _ = tokio::fs::remove_dir_all(&target).await;
+                anyhow::bail!("no adapter available for format '{format}' in repo '{source}'");
+            },
+        },
+    };
 
     if skills_meta.is_empty() {
         let _ = tokio::fs::remove_dir_all(&target).await;
         anyhow::bail!(
-            "repository contains no SKILL.md files (checked {})",
+            "repository contains no skills (checked {})",
             target.display()
         );
     }
@@ -74,7 +100,7 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
         repo_name: dir_name,
         installed_at_ms: now,
         commit_sha,
-        format: Default::default(),
+        format,
         skills: skill_states,
     });
     store.save(&manifest)?;
@@ -399,6 +425,52 @@ mod tests {
         assert_eq!(states.len(), 1);
         assert!(!states[0].enabled);
         assert_eq!(states[0].relative_path, "my-repo");
+    }
+
+    #[test]
+    fn test_detect_format_routes_claude_code() {
+        use crate::formats::{PluginFormat, detect_format, scan_with_adapter};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Create Claude Code plugin structure
+        std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            root.join(".claude-plugin/plugin.json"),
+            r#"{"name":"test-plugin","description":"A test plugin","author":"test-author"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("agents")).unwrap();
+        std::fs::write(
+            root.join("agents/helper.md"),
+            "Use this agent to help with tasks.\n\nDetailed instructions.",
+        )
+        .unwrap();
+
+        let format = detect_format(root);
+        assert_eq!(format, PluginFormat::ClaudeCode);
+
+        // scan_with_adapter should return Some for ClaudeCode
+        let result = scan_with_adapter(root, format);
+        assert!(result.is_some());
+        let entries = result.unwrap().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].metadata.name, "test-plugin:helper");
+
+        // Convert to skill states (same logic as install_skill)
+        let states: Vec<SkillState> = entries
+            .iter()
+            .map(|e| SkillState {
+                name: e.metadata.name.clone(),
+                relative_path: "test-owner-test-repo".into(),
+                trusted: false,
+                enabled: false,
+            })
+            .collect();
+        assert_eq!(states.len(), 1);
+        assert!(!states[0].enabled);
+        assert!(!states[0].trusted);
     }
 
     #[tokio::test]

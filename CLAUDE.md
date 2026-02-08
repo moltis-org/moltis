@@ -39,6 +39,11 @@ each crate's `Cargo.toml`. Never add a version directly in a crate's
 `Cargo.toml` — centralising versions in the workspace avoids duplicate
 versions in the lock file and makes upgrades easier.
 
+When adding or upgrading dependencies, prefer the **latest stable crates.io
+version** whenever possible (unless there is a concrete compatibility or MSRV
+constraint). Before adding any new crate, check crates.io first and pin the
+current latest stable release in `[workspace.dependencies]`.
+
 ```toml
 # Root Cargo.toml
 [workspace.dependencies]
@@ -629,6 +634,10 @@ Moltis uses two directories, **never** the current working directory:
 - **Never use `std::env::current_dir()`** to resolve paths for persistent
   storage (databases, memory files, config). Always use `data_dir()` or
   `config_dir()`. Writing to cwd leaks files into the user's repo.
+- **Workspace root is `data_dir()`**. Any workspace-scoped markdown files
+  (for example `BOOT.md`, `HEARTBEAT.md`, `TOOLS.md`, `IDENTITY.md`,
+  `USER.md`, `SOUL.md`, `MEMORY.md`, `memory/*.md`, `.moltis/*`) must be
+  resolved relative to `moltis_config::data_dir()`, never cwd.
 - When a function needs a storage path, pass `data_dir` explicitly or call
   `moltis_config::data_dir()`. Don't assume the process was started from a
   specific directory.
@@ -765,9 +774,27 @@ and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
 integrate them together so nothing is lost.
 
-**Local validation:** Run `./scripts/local-validate.sh` to check fmt, lint, and
-tests locally. When pushing code to an open pull request, pass the PR number
-(e.g. `./scripts/local-validate.sh 63`) to also publish commit statuses.
+**Local validation:** When a PR exists, **always** run
+`./scripts/local-validate.sh <PR_NUMBER>` (e.g. `./scripts/local-validate.sh 63`)
+to check fmt, lint, and tests locally and publish commit statuses to the PR.
+Running the script without a PR number is useless — it skips status publishing.
+
+**PR description quality:** Every pull request must include a clear, reviewer-friendly
+description with at least these sections:
+- `## Summary` (what changed and why)
+- `## Validation` using checkboxes (not plain bullets), split into:
+  - `### Completed` — checked items for commands that passed
+  - `### Remaining` — unchecked items for follow-up work (or a single checked
+    `- [x] None` if nothing remains)
+  Include exact commands (fmt/lint/tests) in the checkbox items.
+- `## Manual QA` (UI/manual checks performed, or explicitly say `None`)
+
+Do not leave PR bodies as a raw commit dump. Keep them concise and actionable.
+
+**PR descriptions must include test TODOs.** Every pull request description
+must include a dedicated checklist-style testing section (manual and/or
+automated) so reviewers can validate behavior without guessing. Keep the steps
+concrete (commands to run, UI paths to click, and expected results).
 
 ## Code Quality Checklist
 
@@ -776,8 +803,8 @@ tests locally. When pushing code to an open pull request, pass the PR number
 - [ ] **No secrets or private tokens are included** (CRITICAL)
 - [ ] `taplo fmt` (when TOML files were modified)
 - [ ] `biome check --write` (when JS files were modified; CI runs `biome ci`)
-- [ ] Code is formatted (`just format-check` passes)
-- [ ] Code passes clippy linting (`just lint` passes)
+- [ ] Code is formatted (`cargo +nightly fmt --all` / `just format-check` passes)
+- [ ] Code passes clippy linting (`cargo +nightly clippy --workspace --all-targets --all-features` / `just lint` passes)
 - [ ] All tests pass (`cargo test`)
 - [ ] Commit message follows conventional commit format
 - [ ] Changes are logically grouped in the commit

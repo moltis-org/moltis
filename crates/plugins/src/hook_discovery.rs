@@ -3,7 +3,7 @@
 //! Scans configured directories for hook definitions (`HOOK.md` files)
 //! and produces [`ParsedHook`] entries.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use {async_trait::async_trait, tracing::warn};
 
@@ -36,9 +36,12 @@ impl FsHookDiscoverer {
     }
 
     /// Build the default search paths for hook discovery.
-    pub fn default_paths(cwd: &Path) -> Vec<(PathBuf, HookSource)> {
+    ///
+    /// Workspace root is always the configured data directory.
+    pub fn default_paths() -> Vec<(PathBuf, HookSource)> {
+        let workspace_root = moltis_config::data_dir();
         vec![
-            (cwd.join(".moltis/hooks"), HookSource::Project),
+            (workspace_root.join(".moltis/hooks"), HookSource::Project),
             (moltis_config::data_dir().join("hooks"), HookSource::User),
         ]
     }

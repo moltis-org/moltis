@@ -133,12 +133,6 @@ const WRITE_METHODS: &[&str] = &[
     "skills.skill.enable",
     "skills.skill.disable",
     "skills.install_dep",
-    "plugins.install",
-    "plugins.remove",
-    "plugins.repos.remove",
-    "plugins.skill.trust",
-    "plugins.skill.enable",
-    "plugins.skill.disable",
     "mcp.add",
     "mcp.remove",
     "mcp.enable",
@@ -1557,6 +1551,21 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let config = ctx.state.heartbeat_config.read().await.clone();
+                    let heartbeat_path = moltis_config::heartbeat_path();
+                    let heartbeat_file_exists = heartbeat_path.exists();
+                    let heartbeat_md = moltis_config::load_heartbeat_md();
+                    let (_, prompt_source) = moltis_cron::heartbeat::resolve_heartbeat_prompt(
+                        config.prompt.as_deref(),
+                        heartbeat_md.as_deref(),
+                    );
+                    let has_prompt_override = config
+                        .prompt
+                        .as_deref()
+                        .is_some_and(|p| !p.trim().is_empty());
+                    let heartbeat_file_effectively_empty =
+                        heartbeat_file_exists && heartbeat_md.is_none();
+                    let skip_llm_when_empty =
+                        heartbeat_file_effectively_empty && !has_prompt_override;
                     // Find the heartbeat job to get its state.
                     let jobs_val = ctx
                         .state
@@ -1571,6 +1580,10 @@ impl MethodRegistry {
                     Ok(serde_json::json!({
                         "config": config,
                         "job": hb_job,
+                        "promptSource": prompt_source.as_str(),
+                        "heartbeatFileExists": heartbeat_file_exists,
+                        "heartbeatFileEffectivelyEmpty": heartbeat_file_effectively_empty,
+                        "skipLlmWhenEmpty": skip_llm_when_empty,
                     }))
                 })
             }),
@@ -1608,9 +1621,26 @@ impl MethodRegistry {
                     if let Some(hb_job) = jobs.iter().find(|j| j.name == "__heartbeat__") {
                         let interval_ms = moltis_cron::heartbeat::parse_interval_ms(&patch.every)
                             .unwrap_or(moltis_cron::heartbeat::DEFAULT_INTERVAL_MS);
-                        let prompt = moltis_cron::heartbeat::resolve_heartbeat_prompt(
-                            patch.prompt.as_deref(),
-                        );
+                        let heartbeat_md = moltis_config::load_heartbeat_md();
+                        let (prompt, prompt_source) =
+                            moltis_cron::heartbeat::resolve_heartbeat_prompt(
+                                patch.prompt.as_deref(),
+                                heartbeat_md.as_deref(),
+                            );
+                        if prompt_source
+                            == moltis_cron::heartbeat::HeartbeatPromptSource::HeartbeatMd
+                        {
+                            tracing::info!("loaded heartbeat prompt from HEARTBEAT.md");
+                        }
+                        if patch.prompt.as_deref().is_some_and(|p| !p.trim().is_empty())
+                            && heartbeat_md.as_deref().is_some_and(|p| !p.trim().is_empty())
+                            && prompt_source
+                                == moltis_cron::heartbeat::HeartbeatPromptSource::Config
+                        {
+                            tracing::warn!(
+                                "heartbeat prompt source conflict: config heartbeat.prompt overrides HEARTBEAT.md"
+                            );
+                        }
                         let job_patch = moltis_cron::types::CronJobPatch {
                             schedule: Some(moltis_cron::types::CronSchedule::Every {
                                 every_ms: interval_ms,
@@ -2291,112 +2321,6 @@ impl MethodRegistry {
                         .services
                         .skills
                         .install_dep(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-
-        // Plugins
-        self.register(
-            "plugins.install",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .install(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.remove",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .remove(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.repos.list",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .repos_list()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.repos.remove",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .repos_remove(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.trust",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_trust(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.enable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_enable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.disable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_disable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "plugins.skill.detail",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .plugins
-                        .skill_detail(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

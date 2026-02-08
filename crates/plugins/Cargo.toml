@@ -6,18 +6,12 @@ version.workspace = true
 [dependencies]
 anyhow          = { workspace = true }
 async-trait     = { workspace = true }
-flate2          = { workspace = true }
-moltis-agents   = { workspace = true }
-moltis-channels = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
 moltis-sessions = { workspace = true }
-moltis-skills   = { workspace = true }
-reqwest         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
-tar             = { workspace = true }
 time            = { workspace = true }
 tokio           = { workspace = true }
 toml            = { workspace = true }

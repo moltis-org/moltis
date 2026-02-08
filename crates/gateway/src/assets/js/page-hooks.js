@@ -74,7 +74,7 @@ function SourceBadge({ source }) {
 
 // Safe: body_html is server-rendered trusted HTML produced by the Rust gateway
 // (pulldown-cmark), NOT user-supplied browser input. Same pattern as page-skills.js
-// and page-plugins.js which also render server-produced HTML.
+// and page-skills.js which also render server-produced HTML.
 function MarkdownPreview({ html: serverHtml }) {
 	var divRef = useRef(null);
 	useEffect(() => {

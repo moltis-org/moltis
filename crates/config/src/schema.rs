@@ -7,7 +7,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, creature, vibe, soul).
+/// Agent identity (name, emoji, creature, vibe).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
@@ -15,8 +15,6 @@ pub struct AgentIdentity {
     pub emoji: Option<String>,
     pub creature: Option<String>,
     pub vibe: Option<String>,
-    /// Freeform personality / soul text injected into the system prompt.
-    pub soul: Option<String>,
 }
 
 /// User profile collected during onboarding.
@@ -46,7 +44,7 @@ impl ResolvedIdentity {
             emoji: cfg.identity.emoji.clone(),
             creature: cfg.identity.creature.clone(),
             vibe: cfg.identity.vibe.clone(),
-            soul: cfg.identity.soul.clone(),
+            soul: None,
             user_name: cfg.user.name.clone(),
         }
     }
@@ -98,6 +96,10 @@ pub struct ServerConfig {
     /// Port to listen on. When a new config is created, a random available port
     /// is generated so each installation gets a unique port.
     pub port: u16,
+    /// Optional GitHub repository URL used by the update checker.
+    ///
+    /// When unset, Moltis falls back to the package repository metadata.
+    pub update_repository_url: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -105,6 +107,7 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1".into(),
             port: 0, // Will be replaced with a random port when config is created
+            update_repository_url: None,
         }
     }
 }

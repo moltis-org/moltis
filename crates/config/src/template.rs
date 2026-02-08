@@ -23,6 +23,7 @@ pub fn default_config_template(port: u16) -> String {
 [server]
 bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interfaces)
 port = {port}                           # Port number (auto-generated for this installation)
+update_repository_url = "https://github.com/moltis-org/moltis"    # GitHub repo used for update checks (comment out to disable)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTHENTICATION

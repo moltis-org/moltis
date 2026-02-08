@@ -1,7 +1,8 @@
 [package]
-edition.workspace = true
-name              = "moltis-gateway"
-version.workspace = true
+edition.workspace    = true
+name                 = "moltis-gateway"
+repository.workspace = true
+version.workspace    = true
 
 [dependencies]
 anyhow             = { workspace = true }
@@ -53,6 +54,7 @@ serde_json         = { workspace = true }
 sha2               = { workspace = true }
 sqlx               = { workspace = true }
 sysinfo            = { workspace = true }
+thiserror          = { workspace = true }
 time               = { optional = true, workspace = true }
 tokio              = { workspace = true }
 tokio-rustls       = { optional = true, workspace = true }
