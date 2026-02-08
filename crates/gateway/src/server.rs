@@ -3427,7 +3427,7 @@ async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl In
     let pkg_list = packages.join(" ");
     let dockerfile_contents = format!(
         "FROM {base}\n\
-RUN apt-get update && apt-get install -y {pkg_list} && rm -rf /var/lib/apt/lists/*\n\
+RUN apt-get update && apt-get install -y {pkg_list}\n\
 RUN mkdir -p /home/sandbox\n\
 ENV HOME=/home/sandbox\n\
 WORKDIR /home/sandbox\n"
