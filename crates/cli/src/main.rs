@@ -8,9 +8,10 @@ mod sandbox_commands;
 mod tailscale_commands;
 
 use {
+    anyhow::anyhow,
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{LogBroadcastLayer, LogBuffer},
-    tracing::{info, warn},
+    tracing::info,
     tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
 
@@ -306,13 +307,24 @@ async fn main() -> anyhow::Result<()> {
         moltis_config::set_data_dir(dir.clone());
     }
 
-    // Ensure the data directory exists for every command path. This prevents
-    // downstream components from failing on first run when data_dir() points
-    // to a non-existent location.
+    // Ensure config/data directories exist for every command path. This is a
+    // hard requirement for startup; fail fast if directory initialization fails.
+    let config_dir =
+        moltis_config::config_dir().ok_or_else(|| anyhow!("unable to resolve config directory"))?;
+    std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create config directory {}: {e}",
+            config_dir.display()
+        )
+    });
+
     let data_dir = moltis_config::data_dir();
-    if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        warn!(path = %data_dir.display(), error = %e, "failed to create data directory");
-    }
+    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create data directory {}: {e}",
+            data_dir.display()
+        )
+    });
 
     match cli.command {
         // Default: start gateway when no subcommand is provided

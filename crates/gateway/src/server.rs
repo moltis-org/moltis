@@ -518,7 +518,21 @@ pub async fn start_gateway(
 
     // Initialize data directory and SQLite database.
     let data_dir = data_dir.unwrap_or_else(moltis_config::data_dir);
-    std::fs::create_dir_all(&data_dir).ok();
+    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create data directory {}: {e}",
+            data_dir.display()
+        )
+    });
+
+    let config_dir =
+        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create config directory {}: {e}",
+            config_dir.display()
+        )
+    });
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
