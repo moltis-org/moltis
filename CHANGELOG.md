@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Runtime host+sandbox prompt context**: Chat system prompts now include a
+  `## Runtime` section with host details (hostname, OS, arch, shell, provider,
+  model, session, sudo non-interactive capability) and `exec` sandbox details
+  (enabled state, mode, backend, scope, image, workspace mount, network policy,
+  session override). Tool-mode prompts also add routing guidance so the agent
+  asks before requesting host installs or changing sandbox mode.
+
 ## [0.2.9] - 2026-02-08
 
 ### Added

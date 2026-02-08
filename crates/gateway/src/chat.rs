@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     path::PathBuf,
+    process::Stdio,
     sync::Arc,
 };
 
@@ -22,7 +24,10 @@ use {
     moltis_agents::{
         AgentRunError, ChatMessage,
         model::{StreamEvent, values_to_chat_messages},
-        prompt::{build_system_prompt_minimal, build_system_prompt_with_session},
+        prompt::{
+            PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
+            build_system_prompt_minimal_runtime, build_system_prompt_with_session_runtime,
+        },
         providers::ProviderRegistry,
         runner::{RunnerEvent, run_agent_loop_streaming},
         tool_registry::ToolRegistry,
@@ -32,7 +37,10 @@ use {
         store::SessionStore,
     },
     moltis_skills::discover::SkillDiscoverer,
-    moltis_tools::policy::{ToolPolicy, profile_tools},
+    moltis_tools::{
+        policy::{ToolPolicy, profile_tools},
+        sandbox::{SandboxMode, SandboxScope, WorkspaceMount},
+    },
 };
 
 use crate::{
@@ -143,6 +151,146 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     }
 
     ReplyMedium::Text
+}
+
+fn detect_runtime_shell() -> Option<String> {
+    let candidate = std::env::var("SHELL")
+        .ok()
+        .or_else(|| std::env::var("COMSPEC").ok())?;
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let name = std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(trimmed)
+        .trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) {
+    #[cfg(not(unix))]
+    {
+        return (None, Some("unsupported".to_string()));
+    }
+
+    #[cfg(unix)]
+    {
+        let output = tokio::process::Command::new("sudo")
+            .arg("-n")
+            .arg("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => (Some(true), Some("passwordless".to_string())),
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+                if stderr.contains("a password is required") {
+                    (Some(false), Some("requires_password".to_string()))
+                } else if stderr.contains("not in the sudoers")
+                    || stderr.contains("is not in the sudoers")
+                    || stderr.contains("is not allowed to run sudo")
+                    || stderr.contains("may not run sudo")
+                {
+                    (Some(false), Some("denied".to_string()))
+                } else {
+                    (None, Some("unknown".to_string()))
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                (None, Some("not_installed".to_string()))
+            },
+            Err(_) => (None, Some("unknown".to_string())),
+        }
+    }
+}
+
+fn sandbox_mode_str(mode: &SandboxMode) -> &'static str {
+    match mode {
+        SandboxMode::Off => "off",
+        SandboxMode::NonMain => "non-main",
+        SandboxMode::All => "all",
+    }
+}
+
+fn sandbox_scope_str(scope: &SandboxScope) -> &'static str {
+    match scope {
+        SandboxScope::Session => "session",
+        SandboxScope::Agent => "agent",
+        SandboxScope::Shared => "shared",
+    }
+}
+
+fn workspace_mount_str(mount: &WorkspaceMount) -> &'static str {
+    match mount {
+        WorkspaceMount::None => "none",
+        WorkspaceMount::Ro => "ro",
+        WorkspaceMount::Rw => "rw",
+    }
+}
+
+async fn build_prompt_runtime_context(
+    state: &Arc<GatewayState>,
+    provider: &Arc<dyn moltis_agents::model::LlmProvider>,
+    session_key: &str,
+    session_entry: Option<&moltis_sessions::metadata::SessionEntry>,
+) -> PromptRuntimeContext {
+    let sudo_fut = detect_host_sudo_access();
+    let sandbox_fut = async {
+        if let Some(ref router) = state.sandbox_router {
+            let is_sandboxed = router.is_sandboxed(session_key).await;
+            let config = router.config();
+            Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: is_sandboxed,
+                mode: Some(sandbox_mode_str(&config.mode).to_string()),
+                backend: Some(router.backend_name().to_string()),
+                scope: Some(sandbox_scope_str(&config.scope).to_string()),
+                image: Some(router.resolve_image(session_key, None).await),
+                workspace_mount: Some(workspace_mount_str(&config.workspace_mount).to_string()),
+                no_network: Some(config.no_network),
+                session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
+            })
+        } else {
+            Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: false,
+                mode: Some("off".to_string()),
+                backend: Some("none".to_string()),
+                scope: None,
+                image: None,
+                workspace_mount: None,
+                no_network: None,
+                session_override: None,
+            })
+        }
+    };
+
+    let ((sudo_non_interactive, sudo_status), sandbox_ctx) = tokio::join!(sudo_fut, sandbox_fut);
+
+    let host_ctx = PromptHostRuntimeContext {
+        host: Some(state.hostname.clone()),
+        os: Some(std::env::consts::OS.to_string()),
+        arch: Some(std::env::consts::ARCH.to_string()),
+        shell: detect_runtime_shell(),
+        provider: Some(provider.name().to_string()),
+        model: Some(provider.id().to_string()),
+        session_key: Some(session_key.to_string()),
+        sudo_non_interactive,
+        sudo_status,
+    };
+
+    PromptRuntimeContext {
+        host: host_ctx,
+        sandbox: sandbox_ctx,
+    }
 }
 
 fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
@@ -755,13 +903,20 @@ impl ChatService for LiveChatService {
             },
         };
 
-        // Check if MCP tools are disabled for this session.
-        let mcp_disabled = self
-            .session_metadata
-            .get(&session_key)
-            .await
-            .and_then(|e| e.mcp_disabled)
+        // Check if MCP tools are disabled for this session and capture
+        // per-session sandbox override details for prompt runtime context.
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
 
         let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
@@ -967,6 +1122,7 @@ impl ChatService for LiveChatService {
                         stats_ref,
                         user_message_index,
                         &discovered_skills,
+                        Some(&runtime_context),
                     )
                     .await
                 } else {
@@ -982,6 +1138,7 @@ impl ChatService for LiveChatService {
                         desired_reply_medium,
                         ctx_ref,
                         stats_ref,
+                        Some(&runtime_context),
                         user_message_index,
                         &discovered_skills,
                         hook_registry,
@@ -1150,6 +1307,14 @@ impl ChatService for LiveChatService {
         // Ensure this session appears in the sessions list.
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
 
         // Load conversation history (excluding the message we just appended).
         let mut history = self
@@ -1193,6 +1358,7 @@ impl ChatService for LiveChatService {
                 None,
                 user_message_index,
                 &[],
+                Some(&runtime_context),
             )
             .await
         } else {
@@ -1208,6 +1374,7 @@ impl ChatService for LiveChatService {
                 desired_reply_medium,
                 None,
                 None,
+                Some(&runtime_context),
                 user_message_index,
                 &[],
                 hook_registry,
@@ -1737,6 +1904,7 @@ async fn run_with_tools(
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     session_context: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
     user_message_index: usize,
     skills: &[moltis_skills::types::SkillMetadata],
     hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
@@ -1788,7 +1956,7 @@ async fn run_with_tools(
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        build_system_prompt_with_session(
+        build_system_prompt_with_session_runtime(
             &filtered_registry,
             native_tools,
             project_context,
@@ -1799,10 +1967,11 @@ async fn run_with_tools(
             soul_text.as_deref(),
             agents_text.as_deref(),
             tools_text.as_deref(),
+            runtime_context,
         )
     } else {
         // Minimal prompt without tools for local LLMs
-        build_system_prompt_minimal(
+        build_system_prompt_minimal_runtime(
             project_context,
             session_context,
             Some(&identity),
@@ -1810,6 +1979,7 @@ async fn run_with_tools(
             soul_text.as_deref(),
             agents_text.as_deref(),
             tools_text.as_deref(),
+            runtime_context,
         )
     };
 
@@ -2246,21 +2416,53 @@ async fn run_streaming(
     project_context: Option<&str>,
     session_context: Option<&str>,
     user_message_index: usize,
-    skills: &[moltis_skills::types::SkillMetadata],
+    _skills: &[moltis_skills::types::SkillMetadata],
+    runtime_context: Option<&PromptRuntimeContext>,
 ) -> Option<(String, u32, u32)> {
+    // Keep identity/user/soul/workspace context consistent with tool mode so
+    // stream-only runs still get the same runtime constraints and persona.
+    let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity() {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
+        }
+    }
+    let mut user = config.user.clone();
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    let soul_text = moltis_config::load_soul();
+    let agents_text = moltis_config::load_agents_md();
+    let tools_text = moltis_config::load_tools_md();
+
+    let system_prompt = build_system_prompt_minimal_runtime(
+        project_context,
+        session_context,
+        Some(&identity),
+        Some(&user),
+        soul_text.as_deref(),
+        agents_text.as_deref(),
+        tools_text.as_deref(),
+        runtime_context,
+    );
+
     let mut messages: Vec<ChatMessage> = Vec::new();
-    // Prepend session + project context as system messages.
-    if let Some(ctx) = session_context {
-        messages.push(ChatMessage::system(format!("## Current Session\n\n{ctx}")));
-    }
-    if let Some(ctx) = project_context {
-        messages.push(ChatMessage::system(ctx));
-    }
-    // Inject skills into the system prompt for streaming mode too.
-    if !skills.is_empty() {
-        let skills_block = moltis_skills::prompt_gen::generate_skills_prompt(skills);
-        messages.push(ChatMessage::system(skills_block));
-    }
+    messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
     messages.extend(values_to_chat_messages(history_raw));
     messages.push(ChatMessage::user(text));

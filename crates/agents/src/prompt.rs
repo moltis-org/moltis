@@ -4,6 +4,41 @@ use {
     moltis_skills::types::SkillMetadata,
 };
 
+/// Runtime context for the host process running the current agent turn.
+#[derive(Debug, Clone, Default)]
+pub struct PromptHostRuntimeContext {
+    pub host: Option<String>,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    pub shell: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub session_key: Option<String>,
+    pub sudo_non_interactive: Option<bool>,
+    pub sudo_status: Option<String>,
+}
+
+/// Runtime context for sandbox execution routing used by the `exec` tool.
+#[derive(Debug, Clone, Default)]
+pub struct PromptSandboxRuntimeContext {
+    pub exec_sandboxed: bool,
+    pub mode: Option<String>,
+    pub backend: Option<String>,
+    pub scope: Option<String>,
+    pub image: Option<String>,
+    pub workspace_mount: Option<String>,
+    pub no_network: Option<bool>,
+    /// Per-session override for sandbox enablement.
+    pub session_override: Option<bool>,
+}
+
+/// Combined runtime context injected into the system prompt.
+#[derive(Debug, Clone, Default)]
+pub struct PromptRuntimeContext {
+    pub host: PromptHostRuntimeContext,
+    pub sandbox: Option<PromptSandboxRuntimeContext>,
+}
+
 /// Default soul text used when the user hasn't written their own.
 pub const DEFAULT_SOUL: &str = "\
 Be genuinely helpful, not performatively helpful. Skip the filler words — just help.\n\
@@ -25,12 +60,13 @@ pub fn build_system_prompt(
     native_tools: bool,
     project_context: Option<&str>,
 ) -> String {
-    build_system_prompt_with_session(
+    build_system_prompt_with_session_runtime(
         tools,
         native_tools,
         project_context,
         None,
         &[],
+        None,
         None,
         None,
         None,
@@ -56,6 +92,35 @@ pub fn build_system_prompt_with_session(
     agents_text: Option<&str>,
     tools_text: Option<&str>,
 ) -> String {
+    build_system_prompt_with_session_runtime(
+        tools,
+        native_tools,
+        project_context,
+        session_context,
+        skills,
+        identity,
+        user,
+        soul_text,
+        agents_text,
+        tools_text,
+        None,
+    )
+}
+
+/// Build the system prompt with explicit runtime context.
+pub fn build_system_prompt_with_session_runtime(
+    tools: &ToolRegistry,
+    native_tools: bool,
+    project_context: Option<&str>,
+    session_context: Option<&str>,
+    skills: &[SkillMetadata],
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    agents_text: Option<&str>,
+    tools_text: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
+) -> String {
     build_system_prompt_full(
         tools,
         native_tools,
@@ -67,6 +132,7 @@ pub fn build_system_prompt_with_session(
         soul_text,
         agents_text,
         tools_text,
+        runtime_context,
         true, // include_tools
     )
 }
@@ -81,6 +147,29 @@ pub fn build_system_prompt_minimal(
     agents_text: Option<&str>,
     tools_text: Option<&str>,
 ) -> String {
+    build_system_prompt_minimal_runtime(
+        project_context,
+        session_context,
+        identity,
+        user,
+        soul_text,
+        agents_text,
+        tools_text,
+        None,
+    )
+}
+
+/// Build a minimal system prompt with explicit runtime context.
+pub fn build_system_prompt_minimal_runtime(
+    project_context: Option<&str>,
+    session_context: Option<&str>,
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+    agents_text: Option<&str>,
+    tools_text: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
+) -> String {
     build_system_prompt_full(
         &ToolRegistry::new(),
         true,
@@ -92,6 +181,7 @@ pub fn build_system_prompt_minimal(
         soul_text,
         agents_text,
         tools_text,
+        runtime_context,
         false, // include_tools
     )
 }
@@ -108,6 +198,7 @@ fn build_system_prompt_full(
     soul_text: Option<&str>,
     agents_text: Option<&str>,
     tools_text: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
     include_tools: bool,
 ) -> String {
     let tool_schemas = if include_tools {
@@ -170,6 +261,33 @@ fn build_system_prompt_full(
         prompt.push_str("\n\n");
     }
 
+    if let Some(runtime) = runtime_context {
+        let host_line = format_host_runtime_line(&runtime.host);
+        let sandbox_line = runtime.sandbox.as_ref().map(format_sandbox_runtime_line);
+        if host_line.is_some() || sandbox_line.is_some() {
+            prompt.push_str("## Runtime\n\n");
+            if let Some(line) = host_line {
+                prompt.push_str(&line);
+                prompt.push('\n');
+            }
+            if let Some(line) = sandbox_line {
+                prompt.push_str(&line);
+                prompt.push('\n');
+            }
+            if include_tools {
+                prompt.push_str(
+                    "Execution routing:\n\
+- `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
+- When sandbox is disabled, `exec` runs on the host and may require approval.\n\
+- `Host: sudo_non_interactive=true` means non-interactive sudo is available for host installs; otherwise ask the user before host package installation.\n\
+- If sandbox is missing required tools/packages and host installation is needed, ask the user before requesting host install or changing sandbox mode.\n\n",
+                );
+            } else {
+                prompt.push('\n');
+            }
+        }
+    }
+
     // Inject available skills so the LLM knows what skills can be activated.
     // Skip for minimal prompts since skills require tool calling.
     if include_tools && !skills.is_empty() {
@@ -206,14 +324,30 @@ fn build_system_prompt_full(
 
     if !tool_schemas.is_empty() {
         prompt.push_str("## Available Tools\n\n");
-        for schema in &tool_schemas {
-            let name = schema["name"].as_str().unwrap_or("unknown");
-            let desc = schema["description"].as_str().unwrap_or("");
-            let params = &schema["parameters"];
-            prompt.push_str(&format!(
-                "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
-                serde_json::to_string_pretty(params).unwrap_or_default()
-            ));
+        if native_tools {
+            // Native tool-calling providers already receive full schemas via API.
+            // Keep this section compact so we don't duplicate large JSON payloads.
+            for schema in &tool_schemas {
+                let name = schema["name"].as_str().unwrap_or("unknown");
+                let desc = schema["description"].as_str().unwrap_or("");
+                let compact_desc = truncate_prompt_text(desc, 160);
+                if compact_desc.is_empty() {
+                    prompt.push_str(&format!("- `{name}`\n"));
+                } else {
+                    prompt.push_str(&format!("- `{name}`: {compact_desc}\n"));
+                }
+            }
+            prompt.push('\n');
+        } else {
+            for schema in &tool_schemas {
+                let name = schema["name"].as_str().unwrap_or("unknown");
+                let desc = schema["description"].as_str().unwrap_or("");
+                let params = &schema["parameters"];
+                prompt.push_str(&format!(
+                    "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
+                    serde_json::to_string_pretty(params).unwrap_or_default()
+                ));
+            }
         }
     }
 
@@ -251,6 +385,117 @@ fn build_system_prompt_full(
     }
 
     prompt
+}
+
+fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(v) = host.host.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("host={v}"));
+    }
+    if let Some(v) = host.os.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("os={v}"));
+    }
+    if let Some(v) = host.arch.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("arch={v}"));
+    }
+    if let Some(v) = host.shell.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("shell={v}"));
+    }
+    if let Some(v) = host.provider.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("provider={v}"));
+    }
+    if let Some(v) = host.model.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("model={v}"));
+    }
+    if let Some(v) = host.session_key.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("session={v}"));
+    }
+    if let Some(v) = host.sudo_non_interactive {
+        parts.push(format!("sudo_non_interactive={v}"));
+    }
+    if let Some(v) = host.sudo_status.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("sudo_status={v}"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("Host: {}", parts.join(" | ")))
+    }
+}
+
+fn truncate_prompt_text(text: &str, max_chars: usize) -> String {
+    if text.is_empty() || max_chars == 0 {
+        return String::new();
+    }
+    let mut iter = text.chars();
+    let taken: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{taken}...")
+    } else {
+        taken
+    }
+}
+
+fn format_sandbox_runtime_line(sandbox: &PromptSandboxRuntimeContext) -> String {
+    let mut parts = vec![format!("enabled={}", sandbox.exec_sandboxed)];
+
+    if let Some(v) = sandbox.mode.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("mode={v}"));
+    }
+    if let Some(v) = sandbox.backend.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("backend={v}"));
+    }
+    if let Some(v) = sandbox.scope.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("scope={v}"));
+    }
+    if let Some(v) = sandbox.image.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("image={v}"));
+    }
+    if let Some(v) = sandbox.workspace_mount.as_deref()
+        && !v.is_empty()
+    {
+        parts.push(format!("workspace_mount={v}"));
+    }
+    if let Some(v) = sandbox.no_network {
+        parts.push(format!(
+            "network={}",
+            if v {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        ));
+    }
+    if let Some(v) = sandbox.session_override {
+        parts.push(format!("session_override={v}"));
+    }
+
+    format!("Sandbox(exec): {}", parts.join(" | "))
 }
 
 #[cfg(test)]
@@ -291,6 +536,36 @@ mod tests {
         let prompt = build_system_prompt(&tools, false, None);
         assert!(prompt.contains("```tool_call"));
         assert!(prompt.contains("### test"));
+    }
+
+    #[test]
+    fn test_native_prompt_uses_compact_tool_list() {
+        let mut tools = ToolRegistry::new();
+        struct Dummy;
+        #[async_trait::async_trait]
+        impl crate::tool_registry::AgentTool for Dummy {
+            fn name(&self) -> &str {
+                "test"
+            }
+
+            fn description(&self) -> &str {
+                "A test tool"
+            }
+
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({"type": "object", "properties": {"cmd": {"type": "string"}}})
+            }
+
+            async fn execute(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(serde_json::json!({}))
+            }
+        }
+        tools.register(Box::new(Dummy));
+
+        let prompt = build_system_prompt(&tools, true, None);
+        assert!(prompt.contains("## Available Tools"));
+        assert!(prompt.contains("- `test`: A test tool"));
+        assert!(!prompt.contains("Parameters:"));
     }
 
     #[test]
@@ -341,7 +616,6 @@ mod tests {
             emoji: Some("🦜".into()),
             creature: Some("parrot".into()),
             vibe: Some("cheerful and curious".into()),
-            ..Default::default()
         };
         let user = UserProfile {
             name: Some("Alice".into()),
@@ -432,5 +706,88 @@ mod tests {
         assert!(prompt.contains("Follow workspace agent instructions."));
         assert!(prompt.contains("### TOOLS.md (workspace)"));
         assert!(prompt.contains("Prefer read-only tools first."));
+    }
+
+    #[test]
+    fn test_runtime_context_injected_when_provided() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("moltis-devbox".into()),
+                os: Some("macos".into()),
+                arch: Some("aarch64".into()),
+                shell: Some("zsh".into()),
+                provider: Some("openai".into()),
+                model: Some("gpt-5".into()),
+                session_key: Some("main".into()),
+                sudo_non_interactive: Some(true),
+                sudo_status: Some("passwordless".into()),
+            },
+            sandbox: Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: true,
+                mode: Some("all".into()),
+                backend: Some("docker".into()),
+                scope: Some("session".into()),
+                image: Some("moltis-sandbox:abc123".into()),
+                workspace_mount: Some("ro".into()),
+                no_network: Some(true),
+                session_override: Some(true),
+            }),
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(prompt.contains("## Runtime"));
+        assert!(prompt.contains("Host: host=moltis-devbox"));
+        assert!(prompt.contains("provider=openai"));
+        assert!(prompt.contains("model=gpt-5"));
+        assert!(prompt.contains("sudo_non_interactive=true"));
+        assert!(prompt.contains("sudo_status=passwordless"));
+        assert!(prompt.contains("Sandbox(exec): enabled=true"));
+        assert!(prompt.contains("backend=docker"));
+        assert!(prompt.contains("network=disabled"));
+        assert!(prompt.contains("Execution routing:"));
+    }
+
+    #[test]
+    fn test_minimal_prompt_runtime_does_not_add_exec_routing_block() {
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("moltis-devbox".into()),
+                ..Default::default()
+            },
+            sandbox: Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: false,
+                ..Default::default()
+            }),
+        };
+
+        let prompt = build_system_prompt_minimal_runtime(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(prompt.contains("## Runtime"));
+        assert!(prompt.contains("Host: host=moltis-devbox"));
+        assert!(prompt.contains("Sandbox(exec): enabled=false"));
+        assert!(!prompt.contains("Execution routing:"));
     }
 }
