@@ -159,10 +159,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_CACHE_SIZE: "2G"
     steps:
       - name: Free disk space
         run: |
@@ -180,7 +176,6 @@ jobs:
         with:
           toolchain: nightly
           components: llvm-tools-preview
-      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
         with:
           shared-key: coverage-v1
@@ -202,16 +197,13 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --exclude moltis-tools --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
-      - name: Show sccache stats
-        if: always()
-        run: sccache --show-stats
 
   rust-full-targets:
     name: Rust Full Targets (scheduled)
