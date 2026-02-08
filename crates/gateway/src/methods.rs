@@ -3200,51 +3200,79 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing api_key")
                             })?;
 
-                        moltis_config::update_config(|cfg| match provider {
-                            // TTS providers
-                            "elevenlabs" => {
-                                cfg.voice.tts.elevenlabs.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "openai" | "openai-tts" => {
-                                cfg.voice.tts.openai.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "google-tts" => {
-                                // Google API key is shared - set both TTS and STT
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.tts.google.api_key = Some(key.clone());
-                                cfg.voice.stt.google.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            // STT providers
-                            "whisper" => {
-                                cfg.voice.stt.whisper.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "groq" => {
-                                cfg.voice.stt.groq.api_key = Some(Secret::new(api_key.to_string()));
-                            },
-                            "deepgram" => {
-                                cfg.voice.stt.deepgram.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "google" => {
-                                // Google STT key - also set TTS since they share the same key
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.stt.google.api_key = Some(key.clone());
-                                cfg.voice.tts.google.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "mistral" => {
-                                cfg.voice.stt.mistral.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            "elevenlabs-stt" => {
-                                cfg.voice.stt.elevenlabs.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                            },
-                            _ => {},
+                        moltis_config::update_config(|cfg| {
+                            match provider {
+                                // TTS providers
+                                "elevenlabs" => {
+                                    // ElevenLabs shares key between TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.tts.elevenlabs.api_key = Some(key.clone());
+                                    cfg.voice.stt.elevenlabs.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable TTS
+                                    cfg.voice.tts.provider = "elevenlabs".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                "openai" | "openai-tts" => {
+                                    cfg.voice.tts.openai.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.tts.provider = "openai".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                "google-tts" => {
+                                    // Google API key is shared - set both TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.tts.google.api_key = Some(key.clone());
+                                    cfg.voice.stt.google.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.tts.provider = "google".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                // STT providers
+                                "whisper" => {
+                                    cfg.voice.stt.whisper.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "whisper".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "groq" => {
+                                    cfg.voice.stt.groq.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "groq".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "deepgram" => {
+                                    cfg.voice.stt.deepgram.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "deepgram".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "google" => {
+                                    // Google STT key - also set TTS since they share the same key
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.stt.google.api_key = Some(key.clone());
+                                    cfg.voice.tts.google.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "google".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "mistral" => {
+                                    cfg.voice.stt.mistral.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "mistral".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "elevenlabs-stt" => {
+                                    // ElevenLabs shares key between TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.stt.elevenlabs.api_key = Some(key.clone());
+                                    cfg.voice.tts.elevenlabs.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = "elevenlabs".to_string();
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                _ => {},
+                            }
                         })
                         .map_err(|e| {
                             ErrorShape::new(
