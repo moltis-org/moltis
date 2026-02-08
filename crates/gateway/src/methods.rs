@@ -2,8 +2,10 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Durat
 
 use tracing::{debug, warn};
 
-use moltis_protocol::{ErrorShape, ResponseFrame, error_codes};
-use moltis_config::VoiceSttProvider;
+use {
+    moltis_config::VoiceSttProvider,
+    moltis_protocol::{ErrorShape, ResponseFrame, error_codes},
+};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -4060,8 +4062,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "local",
             voxtral_server_running,
-            config.voice.stt.provider == VoiceSttProvider::VoxtralLocal
-                && config.voice.stt.enabled,
+            config.voice.stt.provider == VoiceSttProvider::VoxtralLocal && config.voice.stt.enabled,
             None,
             None,
             if !voxtral_server_running {
@@ -4097,8 +4098,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "local",
             sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::SherpaOnnx
-                && config.voice.stt.enabled,
+            config.voice.stt.provider == VoiceSttProvider::SherpaOnnx && config.voice.stt.enabled,
             None,
             sherpa_onnx_available.clone(),
             if sherpa_onnx_available.is_none() {
@@ -4235,7 +4235,8 @@ fn toggle_voice_provider(
                         cfg.voice.stt.provider = provider_id;
                         cfg.voice.stt.enabled = true;
                     }
-                } else if stt_provider.is_some_and(|provider_id| cfg.voice.stt.provider == provider_id)
+                } else if stt_provider
+                    .is_some_and(|provider_id| cfg.voice.stt.provider == provider_id)
                 {
                     cfg.voice.stt.enabled = false;
                 }

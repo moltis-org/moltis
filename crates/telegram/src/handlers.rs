@@ -1287,27 +1287,25 @@ fn build_session_key(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
+    use {
+        super::*,
+        std::{
+            collections::HashMap,
+            sync::{Arc, Mutex},
+        },
     };
 
-    use anyhow::Result;
-    use async_trait::async_trait;
-    use axum::{
-        Json, Router,
-        body::Bytes,
-        extract::State,
-        http::Uri,
-        routing::post,
+    use {
+        anyhow::Result,
+        async_trait::async_trait,
+        axum::{Json, Router, body::Bytes, extract::State, http::Uri, routing::post},
+        moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget},
+        secrecy::Secret,
+        serde::{Deserialize, Serialize},
+        serde_json::json,
+        tokio::sync::oneshot,
+        tokio_util::sync::CancellationToken,
     };
-    use moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget};
-    use secrecy::Secret;
-    use serde::{Deserialize, Serialize};
-    use serde_json::json;
-    use tokio::sync::oneshot;
-    use tokio_util::sync::CancellationToken;
 
     use crate::{
         config::TelegramAccountConfig,
@@ -1403,32 +1401,19 @@ mod tests {
             TelegramApiMethod::SendMessage => {
                 match serde_json::from_slice::<SendMessageRequest>(&body) {
                     Ok(req) => CapturedTelegramRequest::SendMessage(req),
-                    Err(_) => CapturedTelegramRequest::Other {
-                        method,
-                        raw_body,
-                    },
+                    Err(_) => CapturedTelegramRequest::Other { method, raw_body },
                 }
             },
             TelegramApiMethod::SendChatAction => {
                 match serde_json::from_slice::<SendChatActionRequest>(&body) {
                     Ok(req) => CapturedTelegramRequest::SendChatAction(req),
-                    Err(_) => CapturedTelegramRequest::Other {
-                        method,
-                        raw_body,
-                    },
+                    Err(_) => CapturedTelegramRequest::Other { method, raw_body },
                 }
             },
-            TelegramApiMethod::Other(_) => CapturedTelegramRequest::Other {
-                method,
-                raw_body,
-            },
+            TelegramApiMethod::Other(_) => CapturedTelegramRequest::Other { method, raw_body },
         };
 
-        state
-            .requests
-            .lock()
-            .expect("lock requests")
-            .push(captured);
+        state.requests.lock().expect("lock requests").push(captured);
 
         match TelegramApiMethod::from_path(uri.path()) {
             TelegramApiMethod::SendMessage => Json(TelegramApiResponse {
@@ -1479,10 +1464,18 @@ mod tests {
             Ok(String::new())
         }
 
-        async fn request_disable_account(&self, _channel_type: &str, _account_id: &str, _reason: &str) {}
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
 
         async fn transcribe_voice(&self, _audio_data: &[u8], _format: &str) -> Result<String> {
-            Err(anyhow::anyhow!("transcribe should not be called when STT unavailable"))
+            Err(anyhow::anyhow!(
+                "transcribe should not be called when STT unavailable"
+            ))
         }
 
         async fn voice_stt_available(&self) -> bool {
@@ -1570,23 +1563,20 @@ mod tests {
 
         {
             let mut map = accounts.write().expect("accounts write lock");
-            map.insert(
-                account_id.to_string(),
-                AccountState {
-                    bot: bot.clone(),
-                    bot_username: Some("test_bot".into()),
-                    account_id: account_id.to_string(),
-                    config: TelegramAccountConfig {
-                        token: Secret::new("test-token".to_string()),
-                        ..Default::default()
-                    },
-                    outbound: Arc::clone(&outbound),
-                    cancel: CancellationToken::new(),
-                    message_log: None,
-                    event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
-                    otp: std::sync::Mutex::new(OtpState::new(300)),
+            map.insert(account_id.to_string(), AccountState {
+                bot: bot.clone(),
+                bot_username: Some("test_bot".into()),
+                account_id: account_id.to_string(),
+                config: TelegramAccountConfig {
+                    token: Secret::new("test-token".to_string()),
+                    ..Default::default()
                 },
-            );
+                outbound: Arc::clone(&outbound),
+                cancel: CancellationToken::new(),
+                message_log: None,
+                event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
+                otp: std::sync::Mutex::new(OtpState::new(300)),
+            });
         }
 
         let msg: Message = serde_json::from_value(json!({
@@ -1608,7 +1598,10 @@ mod tests {
             }
         }))
         .expect("deserialize voice message");
-        assert!(extract_voice_file(&msg).is_some(), "message should contain voice media");
+        assert!(
+            extract_voice_file(&msg).is_some(),
+            "message should contain voice media"
+        );
 
         handle_message_direct(msg, &bot, account_id, &accounts)
             .await
@@ -1616,19 +1609,17 @@ mod tests {
 
         let requests = recorded_requests.lock().expect("requests lock");
         assert!(
-            requests
-                .iter()
-                .any(|request| {
-                    if let CapturedTelegramRequest::SendMessage(body) = request {
-                        body.chat_id == 42
-                            && body.parse_mode.as_deref() == Some("HTML")
-                            && body
-                                .text
-                                .contains("I can't understand voice, you did not configure it")
-                    } else {
-                        false
-                    }
-                }),
+            requests.iter().any(|request| {
+                if let CapturedTelegramRequest::SendMessage(body) = request {
+                    body.chat_id == 42
+                        && body.parse_mode.as_deref() == Some("HTML")
+                        && body
+                            .text
+                            .contains("I can't understand voice, you did not configure it")
+                } else {
+                    false
+                }
+            }),
             "expected voice setup hint to be sent, requests={requests:?}"
         );
         assert!(
@@ -1644,8 +1635,10 @@ mod tests {
         assert!(
             requests.iter().all(|request| {
                 if let CapturedTelegramRequest::Other { method, raw_body } = request {
-                    !matches!(method, TelegramApiMethod::SendMessage | TelegramApiMethod::SendChatAction)
-                        || raw_body.is_empty()
+                    !matches!(
+                        method,
+                        TelegramApiMethod::SendMessage | TelegramApiMethod::SendChatAction
+                    ) || raw_body.is_empty()
                 } else {
                     true
                 }
@@ -1653,7 +1646,8 @@ mod tests {
             "unexpected untyped request capture for known method, requests={requests:?}"
         );
         assert_eq!(
-            sink.dispatch_calls.load(std::sync::atomic::Ordering::Relaxed),
+            sink.dispatch_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
             0,
             "voice message should not be dispatched to chat when STT is unavailable"
         );
