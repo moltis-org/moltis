@@ -12,6 +12,7 @@ var mediaRecorder = null;
 var audioChunks = [];
 var sttConfigured = false;
 var isRecording = false;
+var isStarting = false;
 var transcribingEl = null;
 
 /** Check if voice feature is enabled. */
@@ -43,16 +44,37 @@ function updateMicButton() {
 	micBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
 	// Disable only when not connected (button is only visible when STT configured)
 	micBtn.disabled = !S.connected;
-	micBtn.title = isRecording ? "Click to stop and send" : "Click to start recording";
+	micBtn.title = isStarting
+		? "Starting microphone..."
+		: isRecording
+			? "Click to stop and send"
+			: "Click to start recording";
 }
 
 /** Start recording audio from the microphone. */
 async function startRecording() {
-	if (isRecording || !sttConfigured) return;
+	if (isRecording || isStarting || !sttConfigured) return;
+
+	isStarting = true;
+	micBtn.classList.add("starting");
+	micBtn.setAttribute("aria-busy", "true");
+	micBtn.title = "Starting microphone...";
 
 	try {
 		var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 		audioChunks = [];
+		var recordingUiShown = false;
+
+		function showRecordingUi() {
+			if (recordingUiShown || !micBtn) return;
+			recordingUiShown = true;
+			isStarting = false;
+			micBtn.classList.remove("starting");
+			micBtn.removeAttribute("aria-busy");
+			micBtn.classList.add("recording");
+			micBtn.setAttribute("aria-pressed", "true");
+			micBtn.title = "Click to stop and send";
+		}
 
 		// Use webm/opus if available, fall back to audio/webm
 		var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
@@ -62,16 +84,21 @@ async function startRecording() {
 		mediaRecorder.ondataavailable = (e) => {
 			if (e.data.size > 0) {
 				audioChunks.push(e.data);
+				showRecordingUi();
 			}
 		};
 
-		// Only show recording indicator when actually recording
+		// Recorder start means stop is now valid; visual indicator waits for actual audio data.
 		mediaRecorder.onstart = () => {
 			isRecording = true;
-			micBtn.classList.add("recording");
-			micBtn.setAttribute("aria-pressed", "true");
-			micBtn.title = "Click to stop and send";
 		};
+
+		var audioTrack = stream.getAudioTracks()[0];
+		if (audioTrack && !audioTrack.muted) {
+			setTimeout(showRecordingUi, 150);
+		} else if (audioTrack) {
+			audioTrack.addEventListener("unmute", showRecordingUi, { once: true });
+		}
 
 		mediaRecorder.onstop = async () => {
 			// Stop all tracks to release the microphone
@@ -81,8 +108,16 @@ async function startRecording() {
 			await transcribeAudio();
 		};
 
-		mediaRecorder.start();
+		mediaRecorder.start(250);
 	} catch (err) {
+		isStarting = false;
+		isRecording = false;
+		if (micBtn) {
+			micBtn.classList.remove("starting");
+			micBtn.removeAttribute("aria-busy");
+			micBtn.setAttribute("aria-pressed", "false");
+			micBtn.title = "Click to start recording";
+		}
 		console.error("Failed to start recording:", err);
 		// Show user-friendly error
 		if (err.name === "NotAllowedError") {
@@ -97,7 +132,10 @@ async function startRecording() {
 function stopRecording() {
 	if (!(isRecording && mediaRecorder)) return;
 
+	isStarting = false;
 	isRecording = false;
+	micBtn.classList.remove("starting");
+	micBtn.removeAttribute("aria-busy");
 	micBtn.classList.remove("recording");
 	micBtn.setAttribute("aria-pressed", "false");
 	micBtn.classList.add("transcribing");
@@ -149,6 +187,9 @@ function showTemporaryMessage(message, isError, delayMs) {
 
 /** Remove transcribing indicator and reset mic button state. */
 function cleanupTranscribingState() {
+	isStarting = false;
+	micBtn.classList.remove("starting");
+	micBtn.removeAttribute("aria-busy");
 	micBtn.classList.remove("transcribing");
 	micBtn.title = "Click to start recording";
 	if (transcribingEl) {

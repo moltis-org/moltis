@@ -1067,6 +1067,11 @@
   animation: mic-pulse 1s infinite;
 }
 
+.mic-btn.starting {
+  opacity: 0.85;
+  cursor: progress;
+}
+
 .mic-btn.transcribing {
   opacity: 0.7;
   cursor: wait;

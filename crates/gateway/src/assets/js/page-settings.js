@@ -1772,18 +1772,20 @@ function VoiceSection() {
 	var [activeRecorder, setActiveRecorder] = useState(null); // MediaRecorder for STT stop functionality
 	var [voiceTestResults, setVoiceTestResults] = useState({}); // { providerId: { text, error } }
 
-	function fetchVoiceStatus() {
-		setVoiceLoading(true);
-		rerender();
+	function fetchVoiceStatus(options) {
+		if (!options?.silent) {
+			setVoiceLoading(true);
+			rerender();
+		}
 		Promise.all([sendRpc("voice.providers.all", {}), sendRpc("voice.config.voxtral_requirements", {})])
 			.then(([providers, voxtral]) => {
 				if (providers?.ok) setAllProviders(providers.payload || { tts: [], stt: [] });
 				if (voxtral?.ok) setVoxtralReqs(voxtral.payload);
-				setVoiceLoading(false);
+				if (!options?.silent) setVoiceLoading(false);
 				rerender();
 			})
 			.catch(() => {
-				setVoiceLoading(false);
+				if (!options?.silent) setVoiceLoading(false);
 				rerender();
 			});
 	}
@@ -1807,7 +1809,7 @@ function VoiceSection() {
 						setVoiceMsg(null);
 						rerender();
 					}, 2000);
-					fetchVoiceStatus();
+					fetchVoiceStatus({ silent: true });
 				} else {
 					setVoiceErr(res?.error?.message || "Failed to toggle provider");
 				}
