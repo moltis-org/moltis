@@ -397,7 +397,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
 	var msgEl = resolveFinalMessageEl(p);
-	if (msgEl && p.text) {
+	if (msgEl && p.text && p.replyMedium === "voice") {
 		appendAssistantVoiceIfEnabled(msgEl, p.text)
 			.catch((err) => {
 				console.warn("Web UI TTS playback failed:", err);

@@ -204,7 +204,7 @@ function sendTranscribedMessage(text) {
 	chatAddMsg("user", renderMarkdown(text), true);
 
 	// Send the message
-	var chatParams = { text: text };
+	var chatParams = { text: text, _input_medium: "voice" };
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
 		chatParams.model = selectedModel;
@@ -216,6 +216,15 @@ function sendTranscribedMessage(text) {
 			chatAddMsg("error", sendRes.error.message || "Request failed");
 		}
 	});
+}
+
+function encodeBase64Safe(bytes) {
+	var chunk = 0x8000;
+	var str = "";
+	for (var i = 0; i < bytes.length; i += chunk) {
+		str += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(str);
 }
 
 /** Send recorded audio to STT service for transcription. */
@@ -238,7 +247,7 @@ async function transcribeAudio() {
 
 		// Convert to base64
 		var buffer = await blob.arrayBuffer();
-		var base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+		var base64 = encodeBase64Safe(new Uint8Array(buffer));
 
 		var res = await sendRpc("stt.transcribe", { audio: base64, format: "webm" });
 

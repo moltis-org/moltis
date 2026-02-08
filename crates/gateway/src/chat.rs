@@ -42,11 +42,107 @@ use crate::{
     state::GatewayState,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ReplyMedium {
+    Text,
+    Voice,
+}
+
+#[derive(Debug, Deserialize)]
+struct InputChannelMeta {
+    #[serde(default)]
+    message_kind: Option<InputMessageKind>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum InputMessageKind {
+    Text,
+    Voice,
+    Audio,
+    Photo,
+    Document,
+    Video,
+    Other,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum InputMediumParam {
+    Text,
+    Voice,
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn parse_input_medium(params: &Value) -> Option<ReplyMedium> {
+    match params
+        .get("_input_medium")
+        .cloned()
+        .and_then(|v| serde_json::from_value::<InputMediumParam>(v).ok())
+    {
+        Some(InputMediumParam::Voice) => Some(ReplyMedium::Voice),
+        Some(InputMediumParam::Text) => Some(ReplyMedium::Text),
+        _ => None,
+    }
+}
+
+fn explicit_reply_medium_override(text: &str) -> Option<ReplyMedium> {
+    let lower = text.to_lowercase();
+    let voice_markers = [
+        "talk to me",
+        "say it",
+        "say this",
+        "speak",
+        "voice message",
+        "respond with voice",
+        "reply with voice",
+        "audio reply",
+    ];
+    if voice_markers.iter().any(|m| lower.contains(m)) {
+        return Some(ReplyMedium::Voice);
+    }
+
+    let text_markers = [
+        "text only",
+        "reply in text",
+        "respond in text",
+        "don't use voice",
+        "do not use voice",
+        "no audio",
+    ];
+    if text_markers.iter().any(|m| lower.contains(m)) {
+        return Some(ReplyMedium::Text);
+    }
+
+    None
+}
+
+fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
+    if let Some(explicit) = explicit_reply_medium_override(text) {
+        return explicit;
+    }
+
+    if let Some(input_medium) = parse_input_medium(params) {
+        return input_medium;
+    }
+
+    if let Some(channel) = params
+        .get("channel")
+        .cloned()
+        .and_then(|v| serde_json::from_value::<InputChannelMeta>(v).ok())
+        && channel.message_kind == Some(InputMessageKind::Voice)
+    {
+        return ReplyMedium::Voice;
+    }
+
+    ReplyMedium::Text
 }
 
 fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
@@ -399,6 +495,7 @@ impl ChatService for LiveChatService {
                 .to_string();
             (text.clone(), MessageContent::Text(text))
         };
+        let desired_reply_medium = infer_reply_medium(&params, &text);
 
         let conn_id = params
             .get("_conn_id")
@@ -690,6 +787,7 @@ impl ChatService for LiveChatService {
             model = provider.id(),
             stream_only,
             session = %session_key,
+            reply_medium = ?desired_reply_medium,
             "chat.send"
         );
 
@@ -864,6 +962,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        desired_reply_medium,
                         ctx_ref,
                         stats_ref,
                         user_message_index,
@@ -880,6 +979,7 @@ impl ChatService for LiveChatService {
                         &provider_name,
                         &history,
                         &session_key_clone,
+                        desired_reply_medium,
                         ctx_ref,
                         stats_ref,
                         user_message_index,
@@ -1011,6 +1111,7 @@ impl ChatService for LiveChatService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'text' parameter".to_string())?
             .to_string();
+        let desired_reply_medium = infer_reply_medium(&params, &text);
 
         let explicit_model = params.get("model").and_then(|v| v.as_str());
         let stream_only = !self.has_tools_sync();
@@ -1074,6 +1175,7 @@ impl ChatService for LiveChatService {
             model = %model_id,
             stream_only,
             session = %session_key,
+            reply_medium = ?desired_reply_medium,
             "chat.send_sync"
         );
 
@@ -1086,6 +1188,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                desired_reply_medium,
                 None,
                 None,
                 user_message_index,
@@ -1102,6 +1205,7 @@ impl ChatService for LiveChatService {
                 &provider_name,
                 &history,
                 &session_key,
+                desired_reply_medium,
                 None,
                 None,
                 user_message_index,
@@ -1630,6 +1734,7 @@ async fn run_with_tools(
     provider_name: &str,
     history_raw: &[serde_json::Value],
     session_key: &str,
+    desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     session_context: Option<&str>,
     user_message_index: usize,
@@ -2019,6 +2124,7 @@ async fn run_with_tools(
                     "inputTokens": result.usage.input_tokens,
                     "outputTokens": result.usage.output_tokens,
                     "messageIndex": assistant_message_index,
+                    "replyMedium": desired_reply_medium,
                 }),
                 BroadcastOpts::default(),
             )
@@ -2029,7 +2135,7 @@ async fn run_with_tools(
                 tracing::info!("push: checking push notification (agent mode)");
                 send_chat_push_notification(state, session_key, &result.text).await;
             }
-            deliver_channel_replies(state, session_key, &result.text).await;
+            deliver_channel_replies(state, session_key, &result.text, desired_reply_medium).await;
             Some((
                 result.text,
                 result.usage.input_tokens,
@@ -2136,6 +2242,7 @@ async fn run_streaming(
     provider_name: &str,
     history_raw: &[serde_json::Value],
     session_key: &str,
+    desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
     session_context: Option<&str>,
     user_message_index: usize,
@@ -2199,6 +2306,7 @@ async fn run_streaming(
                         "inputTokens": usage.input_tokens,
                         "outputTokens": usage.output_tokens,
                         "messageIndex": assistant_message_index,
+                        "replyMedium": desired_reply_medium,
                     }),
                     BroadcastOpts::default(),
                 )
@@ -2209,7 +2317,8 @@ async fn run_streaming(
                     tracing::info!("push: checking push notification");
                     send_chat_push_notification(state, session_key, &accumulated).await;
                 }
-                deliver_channel_replies(state, session_key, &accumulated).await;
+                deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
+                    .await;
                 return Some((accumulated, usage.input_tokens, usage.output_tokens));
             },
             StreamEvent::Error(msg) => {
@@ -2296,7 +2405,12 @@ async fn send_chat_push_notification(state: &Arc<GatewayState>, session_key: &st
 /// response text back to each originating channel via outbound.
 /// Each delivery runs in its own spawned task so slow network calls
 /// don't block each other or the chat pipeline.
-async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, text: &str) {
+async fn deliver_channel_replies(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    text: &str,
+    desired_reply_medium: ReplyMedium,
+) {
     let targets = state.drain_channel_replies(session_key).await;
     if targets.is_empty() || text.is_empty() {
         return;
@@ -2305,8 +2419,15 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
         Some(o) => o,
         None => return,
     };
-    deliver_channel_replies_to_targets(outbound, targets, session_key, text, Arc::clone(state))
-        .await;
+    deliver_channel_replies_to_targets(
+        outbound,
+        targets,
+        session_key,
+        text,
+        Arc::clone(state),
+        desired_reply_medium,
+    )
+    .await;
 }
 
 async fn deliver_channel_replies_to_targets(
@@ -2315,6 +2436,7 @@ async fn deliver_channel_replies_to_targets(
     session_key: &str,
     text: &str,
     state: Arc<GatewayState>,
+    desired_reply_medium: ReplyMedium,
 ) {
     let session_key = session_key.to_string();
     let text = text.to_string();
@@ -2325,7 +2447,10 @@ async fn deliver_channel_replies_to_targets(
         let session_key = session_key.clone();
         let text = text.clone();
         tasks.push(tokio::spawn(async move {
-            let tts_payload = build_tts_payload(&state, &session_key, &target, &text).await;
+            let tts_payload = match desired_reply_medium {
+                ReplyMedium::Voice => build_tts_payload(&state, &session_key, &target, &text).await,
+                ReplyMedium::Text => None,
+            };
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => match tts_payload {
                     Some(payload) => {
@@ -2760,7 +2885,15 @@ mod tests {
         );
 
         let start = Instant::now();
-        deliver_channel_replies_to_targets(outbound, targets, "session:test", "hello", state).await;
+        deliver_channel_replies_to_targets(
+            outbound,
+            targets,
+            "session:test",
+            "hello",
+            state,
+            ReplyMedium::Text,
+        )
+        .await;
 
         assert!(
             start.elapsed() >= Duration::from_millis(45),
