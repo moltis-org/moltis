@@ -4547,13 +4547,15 @@ async fn fetch_elevenlabs_catalog(config: &moltis_config::MoltisConfig) -> serde
     let (voices_res, models_res) = tokio::join!(voices_req, models_req);
 
     let voices = match voices_res {
-        Ok(resp) if resp.status().is_success() => match resp.json::<ElevenLabsVoiceListResponse>().await {
-            Ok(body) => body
-                .voices
-                .into_iter()
-                .map(|v| serde_json::json!({ "id": v.voice_id, "name": v.name }))
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<ElevenLabsVoiceListResponse>().await {
+                Ok(body) => body
+                    .voices
+                    .into_iter()
+                    .map(|v| serde_json::json!({ "id": v.voice_id, "name": v.name }))
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            }
         },
         _ => Vec::new(),
     };
@@ -4566,7 +4568,11 @@ async fn fetch_elevenlabs_catalog(config: &moltis_config::MoltisConfig) -> serde
                     .filter(|m| m.can_do_text_to_speech.unwrap_or(true))
                     .map(|m| serde_json::json!({ "id": m.model_id, "name": m.name }))
                     .collect();
-                if parsed.is_empty() { fallback_models.clone() } else { parsed }
+                if parsed.is_empty() {
+                    fallback_models.clone()
+                } else {
+                    parsed
+                }
             },
             Err(_) => fallback_models.clone(),
         },

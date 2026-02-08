@@ -381,6 +381,12 @@ function appendFinalFooter(msgEl, p) {
 		footerText += ` \u00b7 ${formatTokens(p.inputTokens || 0)} in / ${formatTokens(p.outputTokens || 0)} out`;
 	}
 	footer.textContent = footerText;
+	if (p.replyMedium === "voice" || p.replyMedium === "text") {
+		var badge = document.createElement("span");
+		badge.className = "reply-medium-badge";
+		badge.textContent = p.replyMedium;
+		footer.appendChild(badge);
+	}
 	msgEl.appendChild(footer);
 }
 
