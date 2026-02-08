@@ -1566,7 +1566,11 @@ pub async fn start_gateway(
         let cron_tool = moltis_tools::cron_tool::CronTool::new(Arc::clone(&cron_service));
 
         let mut tool_registry = moltis_agents::tool_registry::ToolRegistry::new();
+        let process_tool = moltis_tools::process::ProcessTool::new()
+            .with_sandbox_router(Arc::clone(&sandbox_router));
+
         tool_registry.register(Box::new(exec_tool));
+        tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(cron_tool));
         if let Some(t) =
             moltis_tools::web_search::WebSearchTool::from_config(&config.tools.web.search)
@@ -3426,7 +3430,11 @@ async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl In
 
     let pkg_list = packages.join(" ");
     let dockerfile_contents = format!(
-        "FROM {base}\nRUN apt-get update && apt-get install -y {pkg_list} && rm -rf /var/lib/apt/lists/*\n"
+        "FROM {base}\n\
+RUN apt-get update && apt-get install -y {pkg_list}\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+WORKDIR /home/sandbox\n"
     );
 
     let tmp_dir = std::env::temp_dir().join(format!("moltis-build-{}", uuid::Uuid::new_v4()));
@@ -3672,22 +3680,29 @@ fn seed_example_hook() {
     }
 }
 
-/// Seed a starter personal skill into `~/.moltis/skills/template-skill/`.
+/// Seed built-in personal skills into `~/.moltis/skills/`.
 ///
-/// This is a safe template to help users author their own SKILL.md. Existing
-/// user content is never overwritten.
+/// These are safe defaults shipped with the binary. Existing user content
+/// is never overwritten.
 fn seed_example_skill() {
-    let skill_dir = moltis_config::data_dir().join("skills/template-skill");
+    seed_skill_if_missing("template-skill", EXAMPLE_SKILL_MD);
+    seed_skill_if_missing("tmux", TMUX_SKILL_MD);
+}
+
+/// Write a skill's `SKILL.md` into `<data_dir>/skills/<name>/` if it doesn't
+/// already exist.
+fn seed_skill_if_missing(name: &str, content: &str) {
+    let skill_dir = moltis_config::data_dir().join(format!("skills/{name}"));
     let skill_md = skill_dir.join("SKILL.md");
     if skill_md.exists() {
         return;
     }
     if let Err(e) = std::fs::create_dir_all(&skill_dir) {
-        tracing::debug!("could not create template skill dir: {e}");
+        tracing::debug!("could not create {name} skill dir: {e}");
         return;
     }
-    if let Err(e) = std::fs::write(&skill_md, EXAMPLE_SKILL_MD) {
-        tracing::debug!("could not write template SKILL.md: {e}");
+    if let Err(e) = std::fs::write(&skill_md, content) {
+        tracing::debug!("could not write {name} SKILL.md: {e}");
     }
 }
 
@@ -3815,6 +3830,123 @@ Use this as a starting point for your own skills.
 - Keep instructions explicit and task-focused
 - Avoid broad permissions unless required
 - Document required tools and expected inputs
+"#;
+
+/// Content for the built-in tmux skill (interactive terminal processes).
+const TMUX_SKILL_MD: &str = r#"---
+name: tmux
+description: Run and interact with terminal applications (htop, vim, etc.) using tmux sessions in the sandbox
+allowed-tools: process
+---
+
+# tmux — Interactive Terminal Sessions
+
+Use the `process` tool to run and interact with interactive or long-running
+programs inside the sandbox. Every command runs in a named **tmux session**,
+giving you full control over TUI apps, REPLs, and background processes.
+
+## When to use this skill
+
+- **TUI / ncurses apps**: htop, vim, nano, less, top, iftop
+- **Interactive REPLs**: python3, node, irb, psql, sqlite3
+- **Long-running commands**: tail -f, watch, servers, builds
+- **Programs that need keyboard input**: anything that waits for keypresses
+
+For simple one-shot commands (ls, cat, echo), use `exec` instead.
+
+## Workflow
+
+1. **Start** a session with a command
+2. **Poll** to see the current terminal output
+3. **Send keys** or **paste text** to interact
+4. **Poll** again to see the result
+5. **Kill** when done
+
+Always poll after sending keys — the terminal updates asynchronously.
+
+## Actions
+
+### start — Launch a program
+
+```json
+{"action": "start", "command": "htop", "session_name": "my-htop"}
+```
+
+- `session_name` is optional (auto-generated if omitted)
+- The command runs in a 200x50 terminal
+
+### poll — Read terminal output
+
+```json
+{"action": "poll", "session_name": "my-htop"}
+```
+
+Returns the visible pane content (what a user would see on screen).
+
+### send_keys — Send keystrokes
+
+```json
+{"action": "send_keys", "session_name": "my-htop", "keys": "q"}
+```
+
+Common key names:
+- `Enter`, `Escape`, `Tab`, `Space`
+- `Up`, `Down`, `Left`, `Right`
+- `C-c` (Ctrl+C), `C-d` (Ctrl+D), `C-z` (Ctrl+Z)
+- `C-l` (clear screen), `C-a` / `C-e` (line start/end)
+- Single characters: `q`, `y`, `n`, `/`
+
+### paste — Insert text
+
+```json
+{"action": "paste", "session_name": "repl", "text": "print('hello world')\n"}
+```
+
+Use paste for multi-character input (code, file content). For single
+keystrokes, prefer `send_keys`.
+
+### kill — End a session
+
+```json
+{"action": "kill", "session_name": "my-htop"}
+```
+
+### list — Show active sessions
+
+```json
+{"action": "list"}
+```
+
+## Examples
+
+### Run htop and report system load
+
+1. `start` with `"command": "htop"`
+2. `poll` to capture the htop display
+3. Summarize CPU/memory usage from the output
+4. `send_keys` with `"keys": "q"` to quit
+5. `kill` the session
+
+### Interactive Python REPL
+
+1. `start` with `"command": "python3"`
+2. `paste` with `"text": "2 + 2\n"`
+3. `poll` to see the result
+4. `send_keys` with `"keys": "C-d"` to exit
+
+### Watch a log file
+
+1. `start` with `"command": "tail -f /var/log/syslog"`, `"session_name": "logs"`
+2. `poll` periodically to read new lines
+3. `send_keys` with `"keys": "C-c"` when done
+4. `kill` the session
+
+## Tips
+
+- Session names must be `[a-zA-Z0-9_-]` only (no spaces or special chars)
+- Always `kill` sessions when done to free resources
+- If a program is unresponsive, `send_keys` with `C-c` or `C-\` first
+- Poll output is a snapshot; poll again for updates after sending input
 "#;
 
 /// Default BOOT.md content seeded into workspace root.

@@ -79,6 +79,7 @@ const READ_METHODS: &[&str] = &[
     "node.describe",
     "chat.history",
     "chat.context",
+    "chat.raw_prompt",
     "providers.available",
     "providers.oauth.status",
     "providers.local.system_info",
@@ -1879,6 +1880,22 @@ impl MethodRegistry {
                         .chat()
                         .await
                         .context(params)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        self.register(
+            "chat.raw_prompt",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let mut params = ctx.params.clone();
+                    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    ctx.state
+                        .chat()
+                        .await
+                        .raw_prompt(params)
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
