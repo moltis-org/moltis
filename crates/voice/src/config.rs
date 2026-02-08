@@ -9,8 +9,9 @@ use {
 // ── Provider ID Enums ───────────────────────────────────────────────────────
 
 /// Text-to-Speech provider identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum TtsProviderId {
+    #[default]
     #[serde(rename = "elevenlabs")]
     ElevenLabs,
     #[serde(rename = "openai")]
@@ -21,12 +22,6 @@ pub enum TtsProviderId {
     Piper,
     #[serde(rename = "coqui")]
     Coqui,
-}
-
-impl Default for TtsProviderId {
-    fn default() -> Self {
-        Self::ElevenLabs
-    }
 }
 
 impl fmt::Display for TtsProviderId {
@@ -78,8 +73,9 @@ impl TtsProviderId {
 }
 
 /// Speech-to-Text provider identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum SttProviderId {
+    #[default]
     #[serde(rename = "whisper")]
     Whisper,
     #[serde(rename = "groq")]
@@ -98,12 +94,6 @@ pub enum SttProviderId {
     SherpaOnnx,
     #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
     ElevenLabs,
-}
-
-impl Default for SttProviderId {
-    fn default() -> Self {
-        Self::Whisper
-    }
 }
 
 impl fmt::Display for SttProviderId {
