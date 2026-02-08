@@ -1,7 +1,8 @@
 [package]
-edition.workspace = true
-name              = "moltis-gateway"
-version.workspace = true
+edition.workspace    = true
+name                 = "moltis-gateway"
+repository.workspace = true
+version.workspace    = true
 
 [dependencies]
 anyhow             = { workspace = true }

@@ -25,6 +25,14 @@ struct GithubLatestRelease {
 
 pub const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
+#[must_use]
+pub fn resolve_repository_url(configured: Option<&str>) -> Option<String> {
+    configured
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_owned)
+}
+
 pub fn github_latest_release_api_url(repository_url: &str) -> Result<String, UpdateCheckError> {
     let slug = github_repo_slug(repository_url)
         .ok_or_else(|| UpdateCheckError::UnsupportedRepository(repository_url.to_owned()))?;
@@ -146,6 +154,20 @@ mod tests {
         assert!(!is_newer_version("0.2.5", "0.2.5"));
         assert!(!is_newer_version("0.2.4", "0.2.5"));
         assert!(!is_newer_version("latest", "0.2.5"));
+    }
+
+    #[test]
+    fn resolves_repository_url_with_config_override() {
+        assert_eq!(
+            resolve_repository_url(Some(" https://github.com/example/custom-repo ")),
+            Some("https://github.com/example/custom-repo".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolves_repository_url_none_when_missing_or_blank() {
+        assert_eq!(resolve_repository_url(Some("   ")), None);
+        assert_eq!(resolve_repository_url(None), None);
     }
 
     #[test]

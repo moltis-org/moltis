@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: biomejs/setup-biome@b2d22cfd9a11c0950398a316e08e17cf3891e85c # v2.7.0
+      - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
         with:
           version: "2.3.13"
       - run: biome ci crates/gateway/src/assets/js/
@@ -103,7 +103,7 @@ jobs:
     name: Rust CI (clippy + test)
     if: ${{ github.event_name != 'pull_request' }}
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     container:
@@ -112,6 +112,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_CACHE_SIZE: "5G"
+      LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_CUDA_COMPILER_LAUNCHER: sccache
@@ -131,7 +132,7 @@ jobs:
           toolchain: nightly
           components: clippy
       - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: rust-ci-cuda-v1
           cache-all-crates: true
@@ -148,8 +149,15 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy --workspace --all-features -- -D warnings
-      - run: cargo test --all-features
+      - run: cargo clippy -Z unstable-options --workspace --all-features --timings -- -D warnings
+      - run: cargo test -Z unstable-options --all-features --timings
+      - name: Upload cargo timing reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cargo-timings-rust-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats
@@ -159,7 +167,7 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     continue-on-error: true
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
     container:
@@ -168,6 +176,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_CACHE_SIZE: "5G"
+      LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_CUDA_COMPILER_LAUNCHER: sccache
@@ -187,7 +196,7 @@ jobs:
           toolchain: nightly
           components: clippy
       - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: rust-ci-cuda-v1
           cache-all-crates: true
@@ -204,7 +213,14 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy --all-features --all-targets -- -D warnings
+      - run: cargo clippy -Z unstable-options --all-features --all-targets --timings -- -D warnings
+      - name: Upload cargo timing reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cargo-timings-rust-full-targets-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats

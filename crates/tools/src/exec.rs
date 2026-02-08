@@ -250,24 +250,37 @@ impl AgentTool for ExecTool {
         let is_sandboxed = if let Some(ref router) = self.sandbox_router {
             router.is_sandboxed(session_key.unwrap_or("main")).await
         } else {
-            false
+            self.sandbox_id.is_some()
         };
 
         // Resolve working directory.  When sandboxed the host CWD doesn't exist
         // inside the container, so default to "/" instead.
-        let working_dir = params
+        let explicit_working_dir = params
             .get("working_dir")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .or_else(|| self.working_dir.clone())
-            .or_else(|| {
-                if is_sandboxed {
-                    Some(PathBuf::from("/"))
-                } else {
-                    Some(moltis_config::data_dir())
-                }
-            });
+            .or_else(|| self.working_dir.clone());
+
+        let using_default_working_dir = explicit_working_dir.is_none();
+        let mut working_dir = explicit_working_dir.or_else(|| {
+            if is_sandboxed {
+                Some(PathBuf::from("/"))
+            } else {
+                Some(moltis_config::data_dir())
+            }
+        });
+
+        // Ensure default host working directory exists so command spawning does
+        // not fail on fresh machines where ~/.moltis has not been created yet.
+        if !is_sandboxed
+            && using_default_working_dir
+            && let Some(dir) = working_dir.as_ref()
+            && let Err(e) = tokio::fs::create_dir_all(dir).await
+        {
+            warn!(path = %dir.display(), error = %e, "failed to create default working dir, falling back to process cwd");
+            working_dir = None;
+        }
 
         info!(
             command,
@@ -511,7 +524,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_tool() {
-        let tool = ExecTool::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
         let result = tool
             .execute(serde_json::json!({ "command": "echo hello" }))
             .await
@@ -522,7 +539,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_tool_empty_working_dir() {
-        let tool = ExecTool::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
         let result = tool
             .execute(serde_json::json!({ "command": "pwd", "working_dir": "" }))
             .await
@@ -536,7 +557,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo safe" }))
             .await
@@ -550,7 +573,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
 
         let mgr2 = Arc::clone(&mgr);
         let handle = tokio::spawn(async move {
@@ -578,7 +603,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
 
         let mgr2 = Arc::clone(&mgr);
         tokio::spawn(async move {
@@ -604,7 +631,9 @@ mod tests {
             scope: SandboxScope::Session,
             key: "test-session".into(),
         };
-        let tool = ExecTool::default().with_sandbox(sandbox, id);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox(sandbox, id);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo sandboxed" }))
             .await
@@ -647,7 +676,9 @@ mod tests {
     #[tokio::test]
     async fn test_exec_tool_with_env_provider() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo $TEST_INJECTED" }))
             .await
@@ -659,7 +690,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_base64_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo $TEST_INJECTED | base64" }))
             .await
@@ -674,7 +707,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_hex_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "printf '%s' \"$TEST_INJECTED\" | xxd -p" }))
             .await
@@ -689,7 +724,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_file_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({
                 "command": "f=$(mktemp); echo $TEST_INJECTED > $f; cat $f; rm $f"
@@ -719,7 +756,9 @@ mod tests {
             SandboxConfig::default(),
             Arc::new(NoSandbox),
         ));
-        let tool = ExecTool::default().with_sandbox_router(router);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox_router(router);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         // No session key → defaults to "main", mode=Off → direct exec.
         let result = tool
             .execute(serde_json::json!({ "command": "echo direct" }))
@@ -738,7 +777,9 @@ mod tests {
         ));
         // Override to enable sandbox for this session (NoSandbox backend → still executes directly).
         router.set_override("session:abc", true).await;
-        let tool = ExecTool::default().with_sandbox_router(router);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox_router(router);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({
                 "command": "echo routed",

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use secrecy::{ExposeSecret, Secret};
 
@@ -32,6 +36,11 @@ pub(crate) struct ProviderConfig {
 /// Stores per-provider configuration including API keys, base URLs, and models.
 #[derive(Debug, Clone)]
 pub(crate) struct KeyStore {
+    inner: Arc<Mutex<KeyStoreInner>>,
+}
+
+#[derive(Debug)]
+struct KeyStoreInner {
     path: PathBuf,
 }
 
@@ -44,17 +53,25 @@ impl KeyStore {
             .join(".config")
             .join("moltis")
             .join("provider_keys.json");
-        Self { path }
+        Self {
+            inner: Arc::new(Mutex::new(KeyStoreInner { path })),
+        }
     }
 
     #[cfg(test)]
     fn with_path(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            inner: Arc::new(Mutex::new(KeyStoreInner { path })),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, KeyStoreInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Load all provider configs. Handles migration from old format (string values).
-    fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
-        let content = match std::fs::read_to_string(&self.path) {
+    fn load_all_configs_from_path(path: &PathBuf) -> HashMap<String, ProviderConfig> {
+        let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => return HashMap::new(),
         };
@@ -81,18 +98,37 @@ impl KeyStore {
         HashMap::new()
     }
 
+    fn load_all_configs(&self) -> HashMap<String, ProviderConfig> {
+        let guard = self.lock();
+        Self::load_all_configs_from_path(&guard.path)
+    }
+
     /// Save all provider configs to disk.
-    fn save_all_configs(&self, configs: &HashMap<String, ProviderConfig>) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
+    fn save_all_configs_to_path(
+        path: &PathBuf,
+        configs: &HashMap<String, ProviderConfig>,
+    ) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let data = serde_json::to_string_pretty(configs).map_err(|e| e.to_string())?;
-        std::fs::write(&self.path, &data).map_err(|e| e.to_string())?;
+
+        // Write atomically via temp file + rename so readers never observe
+        // partially-written JSON.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_path = path.with_extension(format!("json.tmp.{nanos}"));
+        std::fs::write(&temp_path, &data).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
         }
+
+        std::fs::rename(&temp_path, path).map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
@@ -119,9 +155,10 @@ impl KeyStore {
 
     /// Remove a provider's configuration.
     fn remove(&self, provider: &str) -> Result<(), String> {
-        let mut configs = self.load_all_configs();
+        let guard = self.lock();
+        let mut configs = Self::load_all_configs_from_path(&guard.path);
         configs.remove(provider);
-        self.save_all_configs(&configs)
+        Self::save_all_configs_to_path(&guard.path, &configs)
     }
 
     /// Save a provider's API key (simple interface, used in tests).
@@ -143,7 +180,8 @@ impl KeyStore {
         base_url: Option<String>,
         model: Option<String>,
     ) -> Result<(), String> {
-        let mut configs = self.load_all_configs();
+        let guard = self.lock();
+        let mut configs = Self::load_all_configs_from_path(&guard.path);
         let entry = configs.entry(provider.to_string()).or_default();
 
         // Only update fields that are provided (Some), preserve existing for None
@@ -165,7 +203,7 @@ impl KeyStore {
             };
         }
 
-        self.save_all_configs(&configs)
+        Self::save_all_configs_to_path(&guard.path, &configs)
     }
 }
 
@@ -965,6 +1003,85 @@ mod tests {
             Some("https://custom.api.com/v1")
         ); // preserved
         assert_eq!(config.model.as_deref(), Some("gpt-4o-mini")); // updated
+    }
+
+    #[test]
+    fn key_store_save_config_preserves_other_providers() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KeyStore::with_path(dir.path().join("keys.json"));
+
+        store
+            .save_config(
+                "anthropic",
+                Some("sk-anthropic".into()),
+                Some("https://api.anthropic.com".into()),
+                Some("claude-sonnet-4".into()),
+            )
+            .unwrap();
+
+        store
+            .save_config(
+                "openai",
+                Some("sk-openai".into()),
+                Some("https://api.openai.com/v1".into()),
+                Some("gpt-4o".into()),
+            )
+            .unwrap();
+
+        // Update only OpenAI model, Anthropic should remain unchanged.
+        store
+            .save_config("openai", None, None, Some("gpt-5".into()))
+            .unwrap();
+
+        let anthropic = store.load_config("anthropic").unwrap();
+        assert_eq!(anthropic.api_key.as_deref(), Some("sk-anthropic"));
+        assert_eq!(
+            anthropic.base_url.as_deref(),
+            Some("https://api.anthropic.com")
+        );
+        assert_eq!(anthropic.model.as_deref(), Some("claude-sonnet-4"));
+
+        let openai = store.load_config("openai").unwrap();
+        assert_eq!(openai.api_key.as_deref(), Some("sk-openai"));
+        assert_eq!(
+            openai.base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(openai.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn key_store_concurrent_writes_do_not_drop_provider_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KeyStore::with_path(dir.path().join("keys.json"));
+
+        let mut handles = Vec::new();
+        for (provider, key, model) in [
+            ("openai", "sk-openai", "gpt-5"),
+            ("anthropic", "sk-anthropic", "claude-sonnet-4"),
+        ] {
+            let store = store.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    store
+                        .save_config(
+                            provider,
+                            Some(key.to_string()),
+                            None,
+                            Some(model.to_string()),
+                        )
+                        .unwrap();
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let all = store.load_all_configs();
+        assert!(all.contains_key("openai"));
+        assert!(all.contains_key("anthropic"));
     }
 
     #[test]

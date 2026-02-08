@@ -505,6 +505,10 @@ pub struct ServerConfig {
     /// Port to listen on. When a new config is created, a random available port
     /// is generated so each installation gets a unique port.
     pub port: u16,
+    /// Optional GitHub repository URL used by the update checker.
+    ///
+    /// When unset, Moltis falls back to the package repository metadata.
+    pub update_repository_url: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -512,6 +516,7 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1".into(),
             port: 0, // Will be replaced with a random port when config is created
+            update_repository_url: None,
         }
     }
 }

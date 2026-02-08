@@ -134,6 +134,10 @@ logging, or display. Keep the core logic type-safe.
   result.
 - Never use `block_on` or any blocking call inside an async context (see
   "Async all the way down" below).
+- **Code smell (forbidden): `Mutex<()>` / `Arc<Mutex<()>>` as a lock token.**
+  The mutex must guard the actual state/resource being synchronized (e.g. a
+  `struct` containing the config/file path/cache), not unit `()` sentinels.
+  This keeps locking intent explicit and avoids lock/data drift over time.
 
 ### Error handling
 

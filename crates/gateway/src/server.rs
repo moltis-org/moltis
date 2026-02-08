@@ -52,6 +52,7 @@ use crate::{
     state::GatewayState,
     update_check::{
         UPDATE_CHECK_INTERVAL, fetch_update_availability, github_latest_release_api_url,
+        resolve_repository_url,
     },
     ws::handle_connection,
 };
@@ -528,7 +529,21 @@ pub async fn start_gateway(
 
     // Initialize data directory and SQLite database.
     let data_dir = data_dir.unwrap_or_else(moltis_config::data_dir);
-    std::fs::create_dir_all(&data_dir).ok();
+    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create data directory {}: {e}",
+            data_dir.display()
+        )
+    });
+
+    let config_dir =
+        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create config directory {}: {e}",
+            config_dir.display()
+        )
+    });
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
@@ -1999,15 +2014,22 @@ pub async fn start_gateway(
 
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
+    let update_repository_url =
+        resolve_repository_url(config.server.update_repository_url.as_deref());
     tokio::spawn(async move {
-        let latest_release_api_url =
-            match github_latest_release_api_url(env!("CARGO_PKG_REPOSITORY")) {
+        let latest_release_api_url = match update_repository_url {
+            Some(repository_url) => match github_latest_release_api_url(&repository_url) {
                 Ok(url) => url,
                 Err(e) => {
                     warn!("update checker disabled: {e}");
                     return;
                 },
-            };
+            },
+            None => {
+                info!("update checker disabled: server.update_repository_url is not configured");
+                return;
+            },
+        };
 
         let client = match reqwest::Client::builder()
             .user_agent(format!("moltis-gateway/{}", update_state.version))
