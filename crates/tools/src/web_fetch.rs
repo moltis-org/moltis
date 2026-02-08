@@ -65,10 +65,13 @@ impl WebFetchTool {
                 let now = Instant::now();
                 cache.retain(|_, e| e.expires_at > now);
             }
-            cache.insert(key, CacheEntry {
-                value,
-                expires_at: Instant::now() + self.cache_ttl,
-            });
+            cache.insert(
+                key,
+                CacheEntry {
+                    value,
+                    expires_at: Instant::now() + self.cache_ttl,
+                },
+            );
         }
     }
 
