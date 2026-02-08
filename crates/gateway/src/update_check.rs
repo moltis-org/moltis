@@ -26,12 +26,11 @@ struct GithubLatestRelease {
 pub const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[must_use]
-pub fn resolve_repository_url(configured: Option<&str>, package_repository: &str) -> String {
+pub fn resolve_repository_url(configured: Option<&str>) -> Option<String> {
     configured
         .map(str::trim)
         .filter(|url| !url.is_empty())
-        .unwrap_or(package_repository)
-        .to_owned()
+        .map(str::to_owned)
 }
 
 pub fn github_latest_release_api_url(repository_url: &str) -> Result<String, UpdateCheckError> {
@@ -160,24 +159,15 @@ mod tests {
     #[test]
     fn resolves_repository_url_with_config_override() {
         assert_eq!(
-            resolve_repository_url(
-                Some(" https://github.com/example/custom-repo "),
-                "https://github.com/moltis-org/moltis"
-            ),
-            "https://github.com/example/custom-repo"
+            resolve_repository_url(Some(" https://github.com/example/custom-repo ")),
+            Some("https://github.com/example/custom-repo".to_owned())
         );
     }
 
     #[test]
-    fn resolves_repository_url_falls_back_to_package_metadata() {
-        assert_eq!(
-            resolve_repository_url(Some("   "), "https://github.com/moltis-org/moltis"),
-            "https://github.com/moltis-org/moltis"
-        );
-        assert_eq!(
-            resolve_repository_url(None, "https://github.com/moltis-org/moltis"),
-            "https://github.com/moltis-org/moltis"
-        );
+    fn resolves_repository_url_none_when_missing_or_blank() {
+        assert_eq!(resolve_repository_url(Some("   ")), None);
+        assert_eq!(resolve_repository_url(None), None);
     }
 
     #[test]

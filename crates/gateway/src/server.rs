@@ -1989,15 +1989,19 @@ pub async fn start_gateway(
 
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
-    let update_repository_url = resolve_repository_url(
-        config.server.update_repository_url.as_deref(),
-        env!("CARGO_PKG_REPOSITORY"),
-    );
+    let update_repository_url =
+        resolve_repository_url(config.server.update_repository_url.as_deref());
     tokio::spawn(async move {
-        let latest_release_api_url = match github_latest_release_api_url(&update_repository_url) {
-            Ok(url) => url,
-            Err(e) => {
-                warn!("update checker disabled: {e}");
+        let latest_release_api_url = match update_repository_url {
+            Some(repository_url) => match github_latest_release_api_url(&repository_url) {
+                Ok(url) => url,
+                Err(e) => {
+                    warn!("update checker disabled: {e}");
+                    return;
+                },
+            },
+            None => {
+                info!("update checker disabled: server.update_repository_url is not configured");
                 return;
             },
         };
