@@ -624,13 +624,6 @@ impl LiveChatService {
         } else {
             None
         };
-        let project_id = project_id.or_else(|| {
-            // Use block_in_place would be wrong here; session_metadata.get is async
-            // but we're already in an async context, so we need a different approach.
-            // Actually this is called from an async fn so we can just return None
-            // and check below.
-            None
-        });
         // Also check session metadata for project binding (async path).
         let project_id = match project_id {
             Some(pid) => Some(pid),
