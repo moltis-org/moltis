@@ -534,15 +534,8 @@ impl Sandbox for DockerSandbox {
             anyhow::bail!("docker run failed: {}", stderr.trim());
         }
 
-        // Ensure /home/sandbox exists — some runtimes set HOME=/home/sandbox
-        // but don't create the directory.
-        let _ = tokio::process::Command::new("docker")
-            .args(["exec", &name, "mkdir", "-p", "/home/sandbox"])
-            .output()
-            .await;
-
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
@@ -949,15 +942,8 @@ impl Sandbox for AppleContainerSandbox {
 
         info!(name, image, "apple container created and running");
 
-        // Ensure /home/sandbox exists — Apple Container sets HOME=/home/sandbox
-        // but the directory may not exist in the image.
-        let _ = tokio::process::Command::new("container")
-            .args(["exec", &name, "mkdir", "-p", "/home/sandbox"])
-            .output()
-            .await;
-
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("container", &name, &self.config.packages).await?;
