@@ -52,6 +52,7 @@ use crate::{
     state::GatewayState,
     update_check::{
         UPDATE_CHECK_INTERVAL, fetch_update_availability, github_latest_release_api_url,
+        resolve_repository_url,
     },
     ws::handle_connection,
 };
@@ -1988,15 +1989,22 @@ pub async fn start_gateway(
 
     // Spawn periodic update check against latest GitHub release.
     let update_state = Arc::clone(&state);
+    let update_repository_url =
+        resolve_repository_url(config.server.update_repository_url.as_deref());
     tokio::spawn(async move {
-        let latest_release_api_url =
-            match github_latest_release_api_url(env!("CARGO_PKG_REPOSITORY")) {
+        let latest_release_api_url = match update_repository_url {
+            Some(repository_url) => match github_latest_release_api_url(&repository_url) {
                 Ok(url) => url,
                 Err(e) => {
                     warn!("update checker disabled: {e}");
                     return;
                 },
-            };
+            },
+            None => {
+                info!("update checker disabled: server.update_repository_url is not configured");
+                return;
+            },
+        };
 
         let client = match reqwest::Client::builder()
             .user_agent(format!("moltis-gateway/{}", update_state.version))

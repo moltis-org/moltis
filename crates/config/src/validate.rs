@@ -260,7 +260,11 @@ fn build_schema_map() -> KnownKeys {
     Struct(HashMap::from([
         (
             "server",
-            Struct(HashMap::from([("bind", Leaf), ("port", Leaf)])),
+            Struct(HashMap::from([
+                ("bind", Leaf),
+                ("port", Leaf),
+                ("update_repository_url", Leaf),
+            ])),
         ),
         ("providers", Map(Box::new(provider_entry()))),
         (

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Update checker repository configuration**: The update checker now reads
+  `server.update_repository_url` from `moltis.toml`, defaults new configs to
+  `https://github.com/moltis-org/moltis`, and treats an omitted/commented value
+  as explicitly disabled.
 - **Mistral and other providers rejecting requests with HTTP 422**: Session metadata fields
   (`created_at`, `model`, `provider`, `inputTokens`, `outputTokens`) were leaking into
   provider API request bodies. Mistral's strict validation rejected the extra `created_at`
