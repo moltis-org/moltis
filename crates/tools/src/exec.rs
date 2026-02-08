@@ -526,7 +526,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_tool() {
-        let tool = ExecTool::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default();
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo hello" }))
             .await
@@ -537,7 +539,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_tool_empty_working_dir() {
-        let tool = ExecTool::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default();
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "pwd", "working_dir": "" }))
             .await
@@ -551,7 +555,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo safe" }))
             .await
@@ -565,7 +571,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
 
         let mgr2 = Arc::clone(&mgr);
         let handle = tokio::spawn(async move {
@@ -593,7 +601,9 @@ mod tests {
         let mgr = Arc::new(ApprovalManager::default());
         let bc = Arc::new(TestBroadcaster::new());
         let bc_dyn: Arc<dyn ApprovalBroadcaster> = Arc::clone(&bc) as _;
-        let tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_approval(Arc::clone(&mgr), bc_dyn);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
 
         let mgr2 = Arc::clone(&mgr);
         tokio::spawn(async move {
@@ -619,7 +629,9 @@ mod tests {
             scope: SandboxScope::Session,
             key: "test-session".into(),
         };
-        let tool = ExecTool::default().with_sandbox(sandbox, id);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox(sandbox, id);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo sandboxed" }))
             .await
@@ -662,7 +674,9 @@ mod tests {
     #[tokio::test]
     async fn test_exec_tool_with_env_provider() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo $TEST_INJECTED" }))
             .await
@@ -674,7 +688,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_base64_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "echo $TEST_INJECTED | base64" }))
             .await
@@ -689,7 +705,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_hex_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({ "command": "printf '%s' \"$TEST_INJECTED\" | xxd -p" }))
             .await
@@ -704,7 +722,9 @@ mod tests {
     #[tokio::test]
     async fn test_env_var_redaction_file_exfiltration() {
         let provider: Arc<dyn EnvVarProvider> = Arc::new(TestEnvProvider);
-        let tool = ExecTool::default().with_env_provider(provider);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_env_provider(provider);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({
                 "command": "f=$(mktemp); echo $TEST_INJECTED > $f; cat $f; rm $f"
@@ -734,7 +754,9 @@ mod tests {
             SandboxConfig::default(),
             Arc::new(NoSandbox),
         ));
-        let tool = ExecTool::default().with_sandbox_router(router);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox_router(router);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         // No session key → defaults to "main", mode=Off → direct exec.
         let result = tool
             .execute(serde_json::json!({ "command": "echo direct" }))
@@ -753,7 +775,9 @@ mod tests {
         ));
         // Override to enable sandbox for this session (NoSandbox backend → still executes directly).
         router.set_override("session:abc", true).await;
-        let tool = ExecTool::default().with_sandbox_router(router);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_sandbox_router(router);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
         let result = tool
             .execute(serde_json::json!({
                 "command": "echo routed",

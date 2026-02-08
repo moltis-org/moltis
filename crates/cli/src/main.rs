@@ -10,7 +10,7 @@ mod tailscale_commands;
 use {
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{LogBroadcastLayer, LogBuffer},
-    tracing::info,
+    tracing::{info, warn},
     tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
 
@@ -304,6 +304,14 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(ref dir) = cli.data_dir {
         moltis_config::set_data_dir(dir.clone());
+    }
+
+    // Ensure the data directory exists for every command path. This prevents
+    // downstream components from failing on first run when data_dir() points
+    // to a non-existent location.
+    let data_dir = moltis_config::data_dir();
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        warn!(path = %data_dir.display(), error = %e, "failed to create data directory");
     }
 
     match cli.command {
