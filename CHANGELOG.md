@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-02-08
+
+### Added
+
+- **Voice provider policy controls**: Added provider-list allowlists so config templates and runtime voice setup can explicitly limit shown/allowed TTS and STT providers.
+- **Typed voice provider metadata**: Expanded voice provider metadata and preference handling to use typed flows across gateway and UI paths.
+
+### Changed
+
+- **Reply medium preference handling**: Chat now prefers the same reply medium when possible and falls back to text when a medium cannot be preserved.
+
+### Fixed
+
+- **Chat UI reply badge visibility**: Assistant footer now reliably shows the selected reply medium badge.
+- **Voice UX polish**: Improved microphone timing behavior and preserved settings scroll state in voice configuration views.
+
 ## [0.2.8] - 2026-02-07
 
 ### Changed
