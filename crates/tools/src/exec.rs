@@ -249,25 +249,40 @@ impl AgentTool for ExecTool {
         let session_key = params.get("_session_key").and_then(|v| v.as_str());
         let is_sandboxed = if let Some(ref router) = self.sandbox_router {
             router.is_sandboxed(session_key.unwrap_or("main")).await
+        } else if self.sandbox_id.is_some() {
+            true
         } else {
             false
         };
 
         // Resolve working directory.  When sandboxed the host CWD doesn't exist
         // inside the container, so default to "/" instead.
-        let working_dir = params
+        let explicit_working_dir = params
             .get("working_dir")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .or_else(|| self.working_dir.clone())
-            .or_else(|| {
-                if is_sandboxed {
-                    Some(PathBuf::from("/"))
-                } else {
-                    Some(moltis_config::data_dir())
-                }
-            });
+            .or_else(|| self.working_dir.clone());
+
+        let using_default_working_dir = explicit_working_dir.is_none();
+        let mut working_dir = explicit_working_dir.or_else(|| {
+            if is_sandboxed {
+                Some(PathBuf::from("/"))
+            } else {
+                Some(moltis_config::data_dir())
+            }
+        });
+
+        // Ensure default host working directory exists so command spawning does
+        // not fail on fresh machines where ~/.moltis has not been created yet.
+        if !is_sandboxed
+            && using_default_working_dir
+            && let Some(dir) = working_dir.as_ref()
+            && let Err(e) = tokio::fs::create_dir_all(dir).await
+        {
+            warn!(path = %dir.display(), error = %e, "failed to create default working dir, falling back to process cwd");
+            working_dir = None;
+        }
 
         info!(
             command,

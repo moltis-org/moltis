@@ -330,7 +330,12 @@ fn current_value(ws: &WizardState) -> Option<&str> {
 mod tests {
     use {super::*, std::io::Write};
 
-    static DATA_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    struct TestDataDirState {
+        _data_dir: Option<PathBuf>,
+    }
+
+    static DATA_DIR_TEST_LOCK: std::sync::Mutex<TestDataDirState> =
+        std::sync::Mutex::new(TestDataDirState { _data_dir: None });
 
     #[test]
     fn wizard_round_trip() {

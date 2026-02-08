@@ -498,17 +498,25 @@ pub fn find_or_default_config_path() -> PathBuf {
 }
 
 /// Lock guarding config read-modify-write cycles.
-static CONFIG_SAVE_LOCK: Mutex<()> = Mutex::new(());
+struct ConfigSaveState {
+    target_path: Option<PathBuf>,
+}
+
+/// Lock guarding config read-modify-write cycles and the target config path
+/// being synchronized.
+static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { target_path: None });
 
 /// Atomically load the current config, apply `f`, and save.
 ///
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
 pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBuf> {
-    let _guard = CONFIG_SAVE_LOCK.lock().unwrap();
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+    let target_path = find_or_default_config_path();
+    guard.target_path = Some(target_path.clone());
     let mut config = discover_and_load();
     f(&mut config);
-    save_config_inner(&config)
+    save_config_to_path(&target_path, &config)
 }
 
 /// Serialize `config` to TOML and write it to the user-global config path.
@@ -517,20 +525,21 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBu
 ///
 /// Prefer [`update_config`] for read-modify-write cycles to avoid races.
 pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
-    let _guard = CONFIG_SAVE_LOCK.lock().unwrap();
-    save_config_inner(config)
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+    let target_path = find_or_default_config_path();
+    guard.target_path = Some(target_path.clone());
+    save_config_to_path(&target_path, config)
 }
 
-fn save_config_inner(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
-    let path = find_or_default_config_path();
+fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let toml_str =
         toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
-    std::fs::write(&path, toml_str)?;
+    std::fs::write(path, toml_str)?;
     debug!(path = %path.display(), "saved config");
-    Ok(path)
+    Ok(path.to_path_buf())
 }
 
 /// Write the default config file to the user-global config path.
@@ -701,7 +710,12 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
 mod tests {
     use super::*;
 
-    static DATA_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    struct TestDataDirState {
+        _data_dir: Option<PathBuf>,
+    }
+
+    static DATA_DIR_TEST_LOCK: std::sync::Mutex<TestDataDirState> =
+        std::sync::Mutex::new(TestDataDirState { _data_dir: None });
 
     #[test]
     fn parse_env_value_bool() {
