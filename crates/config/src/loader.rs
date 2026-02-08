@@ -182,6 +182,15 @@ pub fn user_global_config_dir() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".config").join("moltis"))
 }
 
+/// Returns the user-global config directory only when it differs from the
+/// active config directory (i.e. when `MOLTIS_CONFIG_DIR` or `--config-dir`
+/// is overriding the default). Returns `None` when they are the same path.
+pub fn user_global_config_dir_if_different() -> Option<PathBuf> {
+    let home = user_global_config_dir()?;
+    let current = config_dir()?;
+    if home == current { None } else { Some(home) }
+}
+
 /// Finds a config file in the user-global config directory only.
 pub fn find_user_global_config_file() -> Option<PathBuf> {
     let dir = user_global_config_dir()?;

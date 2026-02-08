@@ -186,7 +186,7 @@ Deploy the pre-built Docker image to your favorite cloud provider:
 |----------|--------|
 | DigitalOcean | [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main) |
 | Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/moltis-org/moltis) |
-| Railway | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?repo=moltis-org/moltis) |
+| Railway | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?repo=moltis-org/moltis) |
 
 **Fly.io** (CLI):
 

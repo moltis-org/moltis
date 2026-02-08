@@ -11,7 +11,7 @@ import {
 	updateTokenBar,
 } from "./chat-ui.js";
 import { eventListeners } from "./events.js";
-import { formatTokens, nextId, renderMarkdown, sendRpc } from "./helpers.js";
+import { formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
@@ -27,6 +27,7 @@ import {
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { connectWs, forceReconnect } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
@@ -660,112 +661,58 @@ var eventHandlers = {
 };
 
 function dispatchFrame(frame) {
-	if (frame.type === "res") {
-		var cb = S.pending[frame.id];
-		if (cb) {
-			delete S.pending[frame.id];
-			cb(frame);
-		}
-		return;
-	}
-	if (frame.type === "event") {
-		var listeners = eventListeners[frame.event] || [];
-		listeners.forEach((h) => {
-			h(frame.payload || {});
-		});
-		var handler = eventHandlers[frame.event];
-		if (handler) handler(frame.payload || {});
-	}
+	if (frame.type !== "event") return;
+	var listeners = eventListeners[frame.event] || [];
+	listeners.forEach((h) => {
+		h(frame.payload || {});
+	});
+	var handler = eventHandlers[frame.event];
+	if (handler) handler(frame.payload || {});
 }
 
-export function connect() {
-	setStatus("connecting", "connecting...");
-	var proto = location.protocol === "https:" ? "wss:" : "ws:";
-	S.setWs(new WebSocket(`${proto}//${location.host}/ws`));
-
-	S.ws.onopen = () => {
-		var id = nextId();
-		S.ws.send(
-			JSON.stringify({
-				type: "req",
-				id: id,
-				method: "connect",
-				params: {
-					minProtocol: 3,
-					maxProtocol: 3,
-					client: {
-						id: "web-chat-ui",
-						version: "0.1.0",
-						platform: "browser",
-						mode: "operator",
-					},
-				},
-			}),
-		);
-		S.pending[id] = (frame) => {
-			var hello = frame.ok && frame.payload;
-			if (hello && hello.type === "hello-ok") {
-				S.setConnected(true);
-				S.setReconnectDelay(1000);
-				setStatus("connected", "live");
-				var now = new Date();
-				var ts = now.toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				});
-				chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
-				fetchModels();
-				fetchSessions();
-				fetchProjects();
-				prefetchChannels();
-				sendRpc("logs.status", {}).then((res) => {
-					if (res?.ok) {
-						var p = res.payload || {};
-						S.setUnseenErrors(p.unseen_errors || 0);
-						S.setUnseenWarns(p.unseen_warns || 0);
-						if (currentPage === "/logs") clearLogsAlert();
-						else updateLogsAlert();
-					}
-				});
-				if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage);
-			} else {
-				setStatus("", "handshake failed");
-				var reason = frame.error?.message || "unknown error";
-				chatAddMsg("error", `Handshake failed: ${reason}`);
+var connectOpts = {
+	onFrame: dispatchFrame,
+	onConnected: (hello) => {
+		setStatus("connected", "live");
+		var now = new Date();
+		var ts = now.toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
+		chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
+		fetchModels();
+		fetchSessions();
+		fetchProjects();
+		prefetchChannels();
+		sendRpc("logs.status", {}).then((res) => {
+			if (res?.ok) {
+				var p = res.payload || {};
+				S.setUnseenErrors(p.unseen_errors || 0);
+				S.setUnseenWarns(p.unseen_warns || 0);
+				if (currentPage === "/logs") clearLogsAlert();
+				else updateLogsAlert();
 			}
-		};
-	};
-
-	S.ws.onmessage = (evt) => {
-		var frame;
-		try {
-			frame = JSON.parse(evt.data);
-		} catch (_e) {
-			return;
-		}
-		dispatchFrame(frame);
-	};
-
-	S.ws.onclose = () => {
-		var wasConnected = S.connected;
-		S.setConnected(false);
+		});
+		if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage);
+	},
+	onHandshakeFailed: (frame) => {
+		setStatus("", "handshake failed");
+		var reason = frame.error?.message || "unknown error";
+		chatAddMsg("error", `Handshake failed: ${reason}`);
+	},
+	onDisconnected: (wasConnected) => {
 		if (wasConnected) {
 			setStatus("", "disconnected \u2014 reconnecting\u2026");
 		}
 		S.setStreamEl(null);
 		S.setStreamText("");
-		// Reject all pending RPC callbacks so callers don't hang forever.
-		for (var id in S.pending) {
-			S.pending[id]({ ok: false, error: { message: "WebSocket disconnected" } });
-			delete S.pending[id];
-		}
-		scheduleReconnect();
-	};
+	},
+};
 
-	S.ws.onerror = () => {
-		/* handled by onclose */
-	};
+export function connect() {
+	setStatus("connecting", "connecting...");
+	connectWs(connectOpts);
 }
 
 function setStatus(state, text) {
@@ -778,22 +725,8 @@ function setStatus(state, text) {
 	if (sendBtn) sendBtn.disabled = state !== "connected";
 }
 
-var reconnectTimer = null;
-
-function scheduleReconnect() {
-	if (reconnectTimer) return;
-	reconnectTimer = setTimeout(() => {
-		reconnectTimer = null;
-		S.setReconnectDelay(Math.min(S.reconnectDelay * 1.5, 5000));
-		connect();
-	}, S.reconnectDelay);
-}
-
 document.addEventListener("visibilitychange", () => {
 	if (!(document.hidden || S.connected)) {
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
-		S.setReconnectDelay(1000);
-		connect();
+		forceReconnect(connectOpts);
 	}
 });

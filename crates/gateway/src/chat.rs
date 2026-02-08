@@ -200,6 +200,172 @@ impl ProbeProviderLimiter {
         provider_sem.acquire_owned().await
     }
 }
+
+#[derive(Debug)]
+enum ProbeStatus {
+    Supported,
+    Unsupported { detail: String, provider: String },
+    Error { message: String },
+}
+
+#[derive(Debug)]
+struct ProbeOutcome {
+    model_id: String,
+    display_name: String,
+    provider_name: String,
+    status: ProbeStatus,
+}
+
+/// Run a single model probe: acquire concurrency permits, respect rate-limit
+/// backoff, send a "ping" completion, and classify the result.
+async fn run_single_probe(
+    model_id: String,
+    display_name: String,
+    provider_name: String,
+    provider: Arc<dyn moltis_agents::model::LlmProvider>,
+    limiter: Arc<Semaphore>,
+    provider_limiter: Arc<ProbeProviderLimiter>,
+    rate_limiter: Arc<ProbeRateLimiter>,
+) -> ProbeOutcome {
+    let _permit = match limiter.acquire_owned().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return ProbeOutcome {
+                model_id,
+                display_name,
+                provider_name,
+                status: ProbeStatus::Error {
+                    message: "probe limiter closed".to_string(),
+                },
+            };
+        },
+    };
+    let _provider_permit = match provider_limiter.acquire(&provider_name).await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return ProbeOutcome {
+                model_id,
+                display_name,
+                provider_name,
+                status: ProbeStatus::Error {
+                    message: "provider probe limiter closed".to_string(),
+                },
+            };
+        },
+    };
+
+    if let Some(wait_for) = rate_limiter.remaining_backoff(&provider_name).await {
+        debug!(
+            provider = %provider_name,
+            model = %model_id,
+            wait_ms = wait_for.as_millis() as u64,
+            "skipping model probe while provider is in rate-limit backoff"
+        );
+        return ProbeOutcome {
+            model_id,
+            display_name,
+            provider_name,
+            status: ProbeStatus::Error {
+                message: format!(
+                    "probe skipped due provider backoff ({}ms remaining)",
+                    wait_for.as_millis()
+                ),
+            },
+        };
+    }
+
+    let probe = [ChatMessage::user("ping")];
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        provider.complete(&probe, &[]),
+    )
+    .await;
+
+    match completion {
+        Ok(Ok(_)) => {
+            rate_limiter.clear(&provider_name).await;
+            ProbeOutcome {
+                model_id,
+                display_name,
+                provider_name,
+                status: ProbeStatus::Supported,
+            }
+        },
+        Ok(Err(err)) => {
+            let error_text = err.to_string();
+            let error_obj =
+                crate::chat_error::parse_chat_error(&error_text, Some(provider_name.as_str()));
+            if is_probe_rate_limited_error(&error_obj, &error_text) {
+                let backoff = rate_limiter.mark_rate_limited(&provider_name).await;
+                let detail = error_obj
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Too many requests while probing model support");
+                warn!(
+                    provider = %provider_name,
+                    model = %model_id,
+                    backoff_ms = backoff.as_millis() as u64,
+                    "model probe rate limited, applying provider backoff"
+                );
+                return ProbeOutcome {
+                    model_id,
+                    display_name,
+                    provider_name,
+                    status: ProbeStatus::Error {
+                        message: format!(
+                            "{detail} (probe backoff {}ms)",
+                            backoff.as_millis()
+                        ),
+                    },
+                };
+            }
+
+            rate_limiter.clear(&provider_name).await;
+            let is_unsupported = error_obj.get("type").and_then(|v| v.as_str())
+                == Some("unsupported_model");
+
+            if is_unsupported {
+                let detail = error_obj
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Model is not supported for this account/provider")
+                    .to_string();
+                let parsed_provider = error_obj
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(provider_name.as_str())
+                    .to_string();
+                ProbeOutcome {
+                    model_id,
+                    display_name,
+                    provider_name,
+                    status: ProbeStatus::Unsupported {
+                        detail,
+                        provider: parsed_provider,
+                    },
+                }
+            } else {
+                ProbeOutcome {
+                    model_id,
+                    display_name,
+                    provider_name,
+                    status: ProbeStatus::Error {
+                        message: error_text,
+                    },
+                }
+            }
+        },
+        Err(_) => ProbeOutcome {
+            model_id,
+            display_name,
+            provider_name,
+            status: ProbeStatus::Error {
+                message: "probe timeout after 20s".to_string(),
+            },
+        },
+    }
+}
+
 fn parse_input_medium(params: &Value) -> Option<ReplyMedium> {
     match params
         .get("_input_medium")
@@ -263,6 +429,7 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
 
     ReplyMedium::Text
 }
+
 fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
     let mut effective = ToolPolicy::default();
     if let Some(profile) = config.tools.policy.profile.as_deref()
@@ -573,23 +740,23 @@ impl ModelService for LiveModelService {
         }))
     }
 
-    async fn detect_supported(&self, _params: Value) -> ServiceResult {
-        let background = _params
+    async fn detect_supported(&self, params: Value) -> ServiceResult {
+        let background = params
             .get("background")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let reason = _params
+        let reason = params
             .get("reason")
             .and_then(|v| v.as_str())
             .unwrap_or("manual")
             .to_string();
-        let max_parallel = _params
+        let max_parallel = params
             .get("maxParallel")
             .and_then(|v| v.as_u64())
             .map(|v| v.clamp(1, 32) as usize)
             .unwrap_or(8);
-        let max_parallel_per_provider = probe_max_parallel_per_provider(&_params);
-        let provider_filter = provider_filter_from_params(&_params);
+        let max_parallel_per_provider = probe_max_parallel_per_provider(&params);
+        let provider_filter = provider_filter_from_params(&params);
 
         let _run_permit: OwnedSemaphorePermit = if background {
             match Arc::clone(&self.detect_gate).try_acquire_owned() {
@@ -671,21 +838,6 @@ impl ModelService for LiveModelService {
             .await;
         }
 
-        #[derive(Debug)]
-        enum ProbeStatus {
-            Supported,
-            Unsupported { detail: String, provider: String },
-            Error { message: String },
-        }
-
-        #[derive(Debug)]
-        struct ProbeOutcome {
-            model_id: String,
-            display_name: String,
-            provider_name: String,
-            status: ProbeStatus,
-        }
-
         let limiter = Arc::new(Semaphore::new(max_parallel));
         let provider_limiter = Arc::new(ProbeProviderLimiter::new(max_parallel_per_provider));
         let rate_limiter = Arc::new(ProbeRateLimiter::default());
@@ -694,144 +846,15 @@ impl ModelService for LiveModelService {
             let limiter = Arc::clone(&limiter);
             let provider_limiter = Arc::clone(&provider_limiter);
             let rate_limiter = Arc::clone(&rate_limiter);
-            tasks.push(tokio::spawn(async move {
-                let _permit = match limiter.acquire_owned().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        return ProbeOutcome {
-                            model_id,
-                            display_name,
-                            provider_name,
-                            status: ProbeStatus::Error {
-                                message: "probe limiter closed".to_string(),
-                            },
-                        };
-                    },
-                };
-                let _provider_permit = match provider_limiter.acquire(&provider_name).await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        return ProbeOutcome {
-                            model_id,
-                            display_name,
-                            provider_name,
-                            status: ProbeStatus::Error {
-                                message: "provider probe limiter closed".to_string(),
-                            },
-                        };
-                    },
-                };
-
-                if let Some(wait_for) = rate_limiter.remaining_backoff(&provider_name).await {
-                    debug!(
-                        provider = %provider_name,
-                        model = %model_id,
-                        wait_ms = wait_for.as_millis() as u64,
-                        "skipping model probe while provider is in rate-limit backoff"
-                    );
-                    return ProbeOutcome {
-                        model_id,
-                        display_name,
-                        provider_name,
-                        status: ProbeStatus::Error {
-                            message: format!(
-                                "probe skipped due provider backoff ({}ms remaining)",
-                                wait_for.as_millis()
-                            ),
-                        },
-                    };
-                }
-
-                let probe = [ChatMessage::user("ping")];
-                let completion = tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
-                    provider.complete(&probe, &[]),
-                )
-                .await;
-
-                match completion {
-                    Ok(Ok(_)) => {
-                        rate_limiter.clear(&provider_name).await;
-                        ProbeOutcome {
-                            model_id,
-                            display_name,
-                            provider_name,
-                            status: ProbeStatus::Supported,
-                        }
-                    },
-                    Ok(Err(err)) => {
-                        let error_text = err.to_string();
-                        let error_obj = parse_chat_error(&error_text, Some(provider_name.as_str()));
-                        if is_probe_rate_limited_error(&error_obj, &error_text) {
-                            let backoff = rate_limiter.mark_rate_limited(&provider_name).await;
-                            let detail = error_obj
-                                .get("detail")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Too many requests while probing model support");
-                            warn!(
-                                provider = %provider_name,
-                                model = %model_id,
-                                backoff_ms = backoff.as_millis() as u64,
-                                "model probe rate limited, applying provider backoff"
-                            );
-                            return ProbeOutcome {
-                                model_id,
-                                display_name,
-                                provider_name,
-                                status: ProbeStatus::Error {
-                                    message: format!(
-                                        "{detail} (probe backoff {}ms)",
-                                        backoff.as_millis()
-                                    ),
-                                },
-                            };
-                        }
-
-                        rate_limiter.clear(&provider_name).await;
-                        let is_unsupported = error_obj.get("type").and_then(|v| v.as_str())
-                            == Some("unsupported_model");
-
-                        if is_unsupported {
-                            let detail = error_obj
-                                .get("detail")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Model is not supported for this account/provider")
-                                .to_string();
-                            let parsed_provider = error_obj
-                                .get("provider")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(provider_name.as_str())
-                                .to_string();
-                            ProbeOutcome {
-                                model_id,
-                                display_name,
-                                provider_name,
-                                status: ProbeStatus::Unsupported {
-                                    detail,
-                                    provider: parsed_provider,
-                                },
-                            }
-                        } else {
-                            ProbeOutcome {
-                                model_id,
-                                display_name,
-                                provider_name,
-                                status: ProbeStatus::Error {
-                                    message: error_text,
-                                },
-                            }
-                        }
-                    },
-                    Err(_) => ProbeOutcome {
-                        model_id,
-                        display_name,
-                        provider_name,
-                        status: ProbeStatus::Error {
-                            message: "probe timeout after 20s".to_string(),
-                        },
-                    },
-                }
-            }));
+            tasks.push(tokio::spawn(run_single_probe(
+                model_id,
+                display_name,
+                provider_name,
+                provider,
+                limiter,
+                provider_limiter,
+                rate_limiter,
+            )));
         }
 
         let mut results = Vec::with_capacity(total);
@@ -1004,12 +1027,12 @@ impl ModelService for LiveModelService {
             "probeWord": "ping",
             "background": background,
             "reason": reason,
-                    "provider": provider_filter.as_deref(),
-                    "maxParallel": max_parallel,
-                    "maxParallelPerProvider": max_parallel_per_provider,
-                    "total": total,
-                    "checked": checked,
-                    "supported": supported,
+            "provider": provider_filter.as_deref(),
+            "maxParallel": max_parallel,
+            "maxParallelPerProvider": max_parallel_per_provider,
+            "total": total,
+            "checked": checked,
+            "supported": supported,
             "unsupported": unsupported,
             "flagged": flagged,
             "cleared": cleared,

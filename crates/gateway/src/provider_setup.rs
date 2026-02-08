@@ -485,13 +485,7 @@ fn current_config_dir() -> PathBuf {
 }
 
 fn home_config_dir_if_different() -> Option<PathBuf> {
-    let home = moltis_config::user_global_config_dir()?;
-    let current = current_config_dir();
-    if home == current {
-        None
-    } else {
-        Some(home)
-    }
+    moltis_config::user_global_config_dir_if_different()
 }
 
 fn home_key_store() -> Option<(KeyStore, PathBuf)> {

@@ -146,11 +146,7 @@ impl GitHubCopilotProvider {
 }
 
 fn home_token_store_if_different() -> Option<TokenStore> {
-    let home = moltis_config::user_global_config_dir()?;
-    let current = moltis_config::config_dir()?;
-    if home == current {
-        return None;
-    }
+    let home = moltis_config::user_global_config_dir_if_different()?;
     Some(TokenStore::with_path(home.join("oauth_tokens.json")))
 }
 

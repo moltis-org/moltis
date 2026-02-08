@@ -275,6 +275,42 @@ fn finalize_protected_routes(protected: Router<AppState>, app_state: AppState) -
     protected
 }
 
+/// Apply optional HTTP request/response tracing layer.
+fn apply_http_trace_layer<S>(router: Router<S>, enabled: bool) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    if enabled {
+        let http_trace = TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::http::Request<_>| {
+                let user_agent = request
+                    .headers()
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                let referer = request
+                    .headers()
+                    .get(axum::http::header::REFERER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    user_agent = %user_agent,
+                    referer = %referer
+                )
+            })
+            .on_request(DefaultOnRequest::new().level(Level::INFO))
+            .on_response(DefaultOnResponse::new().level(Level::INFO));
+        router.layer(http_trace)
+    } else {
+        router
+    }
+}
+
 /// Build the gateway router (shared between production startup and tests).
 #[cfg(feature = "push-notifications")]
 pub fn build_gateway_app(
@@ -326,36 +362,7 @@ pub fn build_gateway_app(
             .fallback(spa_fallback)
     };
 
-    let router = router.layer(cors);
-    let router = if http_request_logs {
-        let http_trace = TraceLayer::new_for_http()
-            .make_span_with(|request: &axum::http::Request<_>| {
-                let user_agent = request
-                    .headers()
-                    .get(axum::http::header::USER_AGENT)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-")
-                    .to_owned();
-                let referer = request
-                    .headers()
-                    .get(axum::http::header::REFERER)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-")
-                    .to_owned();
-                tracing::info_span!(
-                    "http_request",
-                    method = %request.method(),
-                    uri = %request.uri(),
-                    user_agent = %user_agent,
-                    referer = %referer
-                )
-            })
-            .on_request(DefaultOnRequest::new().level(Level::INFO))
-            .on_response(DefaultOnResponse::new().level(Level::INFO));
-        router.layer(http_trace)
-    } else {
-        router
-    };
+    let router = apply_http_trace_layer(router.layer(cors), http_request_logs);
 
     router.with_state(app_state)
 }
@@ -418,36 +425,7 @@ pub fn build_gateway_app(
             .fallback(spa_fallback)
     };
 
-    let router = router.layer(cors);
-    let router = if http_request_logs {
-        let http_trace = TraceLayer::new_for_http()
-            .make_span_with(|request: &axum::http::Request<_>| {
-                let user_agent = request
-                    .headers()
-                    .get(axum::http::header::USER_AGENT)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-")
-                    .to_owned();
-                let referer = request
-                    .headers()
-                    .get(axum::http::header::REFERER)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-")
-                    .to_owned();
-                tracing::info_span!(
-                    "http_request",
-                    method = %request.method(),
-                    uri = %request.uri(),
-                    user_agent = %user_agent,
-                    referer = %referer
-                )
-            })
-            .on_request(DefaultOnRequest::new().level(Level::INFO))
-            .on_response(DefaultOnResponse::new().level(Level::INFO));
-        router.layer(http_trace)
-    } else {
-        router
-    };
+    let router = apply_http_trace_layer(router.layer(cors), http_request_logs);
 
     router.with_state(app_state)
 }

@@ -12,6 +12,7 @@ import { openProviderModal } from "./providers.js";
 import { registerPage } from "./router.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
+import { ConfirmDialog, requestConfirm } from "./ui.js";
 
 var configuredModels = signal([]);
 var loading = signal(false);
@@ -92,15 +93,6 @@ function fetchProviders() {
 					authType: providerMeta.get(m.provider)?.authType || "api-key",
 				}));
 			}
-
-			// Sort: local providers first, then alphabetically by provider name
-			models = models.sort((a, b) => {
-				var aRank = providerSortRank(a.provider);
-				var bRank = providerSortRank(b.provider);
-				if (aRank !== bRank) return aRank - bRank;
-				if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
-				return (a.displayName || a.id).localeCompare(b.displayName || b.id);
-			});
 
 			// Include configured providers that don't currently expose a model.
 			var modelProviders = new Set(models.map((m) => m.provider));
@@ -196,24 +188,27 @@ function ProviderSection(props) {
 
 	function onDeleteProvider() {
 		if (deletingProvider.value) return;
-		deletingProvider.value = group.provider;
-		providerActionError.value = "";
-		sendRpc("providers.remove_key", { provider: group.provider })
-			.then((res) => {
-				if (res?.ok) {
-					configuredModels.value = configuredModels.value.filter((entry) => entry.provider !== group.provider);
-					fetchModels();
-					fetchProviders();
-					return;
-				}
-				providerActionError.value = res?.error?.message || "Failed to delete provider.";
-			})
-			.catch(() => {
-				providerActionError.value = "Failed to delete provider.";
-			})
-			.finally(() => {
-				deletingProvider.value = "";
-			});
+		requestConfirm(`Remove ${group.providerDisplayName} and all its credentials?`).then((yes) => {
+			if (!yes) return;
+			deletingProvider.value = group.provider;
+			providerActionError.value = "";
+			sendRpc("providers.remove_key", { provider: group.provider })
+				.then((res) => {
+					if (res?.ok) {
+						configuredModels.value = configuredModels.value.filter((entry) => entry.provider !== group.provider);
+						fetchModels();
+						fetchProviders();
+						return;
+					}
+					providerActionError.value = res?.error?.message || "Failed to delete provider.";
+				})
+				.catch(() => {
+					providerActionError.value = "Failed to delete provider.";
+				})
+				.finally(() => {
+					deletingProvider.value = "";
+				});
+		});
 	}
 
 	function onToggleModel(model) {
@@ -259,7 +254,7 @@ function ProviderSection(props) {
 						(model) => html`<div key=${model.id} class="flex items-start justify-between gap-3 py-1">
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2 min-w-0">
-									<div class="text-m font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
+									<div class="text-sm font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
 									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || "Model is not supported for this account/provider"}>Unsupported</span>` : null}
 									${model.supportsTools ? null : html`<span class="provider-item-badge warning">Chat only</span>`}
 									${model.disabled ? html`<span class="provider-item-badge muted">Disabled</span>` : null}
@@ -315,36 +310,13 @@ function ProvidersPage() {
 				<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
 					Configure LLM providers for chat and agent tasks. You can add multiple providers and switch between models.
 				</p>
-				<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
-					Detect All Models sends a single word (<code class="font-mono">ping</code>) to each model to check if your account can use it, then flags unsupported models.
-				</p>
-				<div
-					class="max-w-form rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs text-[var(--muted)]"
-				>
-					Unsupported models are advertised by the provider, but a probe ping returned an error for your account.
-				</div>
 				${
-					detectError.value
-						? html`<div class="text-xs text-[var(--danger,#ef4444)] max-w-form">${detectError.value}</div>`
+					(detectError.value || providerActionError.value)
+						? html`<div class="text-xs text-[var(--danger,#ef4444)] max-w-form">${detectError.value || providerActionError.value}</div>`
 						: null
 				}
 				${
-					providerActionError.value
-						? html`<div class="text-xs text-[var(--danger,#ef4444)] max-w-form">${providerActionError.value}</div>`
-						: null
-				}
-				${
-					detectSummary.value
-						? html`<div class="text-xs text-[var(--muted)] max-w-form">
-							Checked ${detectSummary.value.checked || 0}/${detectSummary.value.total || 0}.
-							Supported: ${detectSummary.value.supported || 0},
-							Unsupported: ${detectSummary.value.unsupported || 0},
-							Errors: ${detectSummary.value.errors || 0}.
-						</div>`
-						: null
-				}
-				${
-					detectingModels.value || (detectProgress.value && progressValue.total > 0)
+					detectingModels.value
 						? html`<div class="max-w-form">
 							<div class="h-2 w-full overflow-hidden rounded-sm border border-[var(--border)] bg-[var(--surface2)]">
 								<div
@@ -356,7 +328,11 @@ function ProvidersPage() {
 								Probing models: ${progressValue.checked}/${progressValue.total} (${progressPercent}%)
 							</div>
 						</div>`
-						: null
+						: detectSummary.value
+							? html`<div class="text-xs text-[var(--muted)] max-w-form">
+								Detected ${detectSummary.value.supported || 0} supported, ${detectSummary.value.unsupported || 0} unsupported out of ${detectSummary.value.total || 0} models.
+							</div>`
+							: null
 				}
 
 				<div style="max-width:600px;">
@@ -372,6 +348,7 @@ function ProvidersPage() {
 
 				</div>
 			</div>
+		<${ConfirmDialog} />
 		`;
 }
 
