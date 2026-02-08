@@ -157,7 +157,8 @@ impl ProcessTool {
         command: &str,
         session_name: Option<&str>,
     ) -> ProcessResult {
-        let name = match session_name {
+        // Treat empty strings as "not provided" — LLMs often send "" instead of omitting.
+        let name = match session_name.filter(|n| !n.is_empty()) {
             Some(n) => {
                 if !is_valid_session_name(n) {
                     return ProcessResult::err(
@@ -595,6 +596,27 @@ mod tests {
             } => {
                 assert_eq!(command, "python3");
                 assert!(session_name.is_none());
+            },
+            _ => panic!("expected Start action"),
+        }
+    }
+
+    #[test]
+    fn test_process_action_deserialize_start_empty_name() {
+        // LLMs often send "" instead of omitting — should deserialize as Some("").
+        let json = serde_json::json!({
+            "action": "start",
+            "command": "htop",
+            "session_name": ""
+        });
+        let action: ProcessAction = serde_json::from_value(json).unwrap();
+        match action {
+            ProcessAction::Start {
+                command,
+                session_name,
+            } => {
+                assert_eq!(command, "htop");
+                assert_eq!(session_name.as_deref(), Some(""));
             },
             _ => panic!("expected Start action"),
         }
