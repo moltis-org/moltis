@@ -80,6 +80,14 @@ use crate::{
     services::GatewayServices,
 };
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TtsRuntimeOverride {
+    pub provider: Option<String>,
+    pub voice_id: Option<String>,
+    pub model: Option<String>,
+}
+
 // ── Connected client ─────────────────────────────────────────────────────────
 
 /// A WebSocket client currently connected to the gateway.
@@ -263,6 +271,10 @@ pub struct GatewayState {
     /// send, we queue the reply target so the "final" response can be routed
     /// back to the originating channel.
     pub channel_reply_queue: RwLock<HashMap<String, Vec<ChannelReplyTarget>>>,
+    /// Per-session TTS runtime overrides (session_key -> override).
+    pub tts_session_overrides: RwLock<HashMap<String, TtsRuntimeOverride>>,
+    /// Per-channel-account TTS runtime overrides ((channel, account) -> override).
+    pub tts_channel_overrides: RwLock<HashMap<String, TtsRuntimeOverride>>,
     /// Hook registry for dispatching lifecycle events.
     pub hook_registry: RwLock<Option<Arc<moltis_common::hooks::HookRegistry>>>,
     /// Discovered hook metadata for the web UI.
@@ -394,6 +406,8 @@ impl GatewayState {
             active_projects: RwLock::new(HashMap::new()),
             sandbox_router,
             channel_reply_queue: RwLock::new(HashMap::new()),
+            tts_session_overrides: RwLock::new(HashMap::new()),
+            tts_channel_overrides: RwLock::new(HashMap::new()),
             hook_registry: RwLock::new(hook_registry),
             discovered_hooks: RwLock::new(Vec::new()),
             disabled_hooks: RwLock::new(HashSet::new()),

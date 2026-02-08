@@ -159,9 +159,25 @@ pub struct ChannelMessageMeta {
     pub channel_type: ChannelType,
     pub sender_name: Option<String>,
     pub username: Option<String>,
+    /// Original inbound message media kind (voice, audio, photo, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_kind: Option<ChannelMessageKind>,
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// Inbound channel message media kind.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelMessageKind {
+    Text,
+    Voice,
+    Audio,
+    Photo,
+    Document,
+    Video,
+    Other,
 }
 
 /// An attachment (image, file) from a channel message.

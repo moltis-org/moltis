@@ -2305,32 +2305,53 @@ async fn deliver_channel_replies(state: &Arc<GatewayState>, session_key: &str, t
         Some(o) => o,
         None => return,
     };
-    deliver_channel_replies_to_targets(outbound, targets, text).await;
+    deliver_channel_replies_to_targets(outbound, targets, session_key, text, Arc::clone(state))
+        .await;
 }
 
 async fn deliver_channel_replies_to_targets(
     outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
     targets: Vec<moltis_channels::ChannelReplyTarget>,
+    session_key: &str,
     text: &str,
+    state: Arc<GatewayState>,
 ) {
+    let session_key = session_key.to_string();
     let text = text.to_string();
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
+        let state = Arc::clone(&state);
+        let session_key = session_key.clone();
         let text = text.clone();
         tasks.push(tokio::spawn(async move {
+            let tts_payload = build_tts_payload(&state, &session_key, &target, &text).await;
             match target.channel_type {
-                moltis_channels::ChannelType::Telegram => {
-                    if let Err(e) = outbound
-                        .send_text(&target.account_id, &target.chat_id, &text)
-                        .await
-                    {
-                        warn!(
-                            account_id = target.account_id,
-                            chat_id = target.chat_id,
-                            "failed to send channel reply: {e}"
-                        );
-                    }
+                moltis_channels::ChannelType::Telegram => match tts_payload {
+                    Some(payload) => {
+                        if let Err(e) = outbound
+                            .send_media(&target.account_id, &target.chat_id, &payload)
+                            .await
+                        {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel voice reply: {e}"
+                            );
+                        }
+                    },
+                    None => {
+                        if let Err(e) = outbound
+                            .send_text(&target.account_id, &target.chat_id, &text)
+                            .await
+                        {
+                            warn!(
+                                account_id = target.account_id,
+                                chat_id = target.chat_id,
+                                "failed to send channel reply: {e}"
+                            );
+                        }
+                    },
                 },
             }
         }));
@@ -2341,6 +2362,96 @@ async fn deliver_channel_replies_to_targets(
             warn!(error = %e, "channel reply task join failed");
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct TtsStatusResponse {
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct TtsConvertRequest<'a> {
+    text: &'a str,
+    format: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "voiceId")]
+    voice_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TtsConvertResponse {
+    audio: String,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+async fn build_tts_payload(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    target: &moltis_channels::ChannelReplyTarget,
+    text: &str,
+) -> Option<moltis_common::types::ReplyPayload> {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
+    let tts_status = state.services.tts.status().await.ok()?;
+    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
+    if !status.enabled {
+        return None;
+    }
+
+    let channel_key = format!("{}:{}", target.channel_type.as_str(), target.account_id);
+    let channel_override = {
+        state
+            .tts_channel_overrides
+            .read()
+            .await
+            .get(&channel_key)
+            .cloned()
+    };
+    let session_override = {
+        state
+            .tts_session_overrides
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
+    };
+    let resolved = channel_override.or(session_override);
+
+    let request = TtsConvertRequest {
+        text,
+        format: "ogg",
+        provider: resolved.as_ref().and_then(|o| o.provider.clone()),
+        voice_id: resolved.as_ref().and_then(|o| o.voice_id.clone()),
+        model: resolved.as_ref().and_then(|o| o.model.clone()),
+    };
+
+    let tts_result = state
+        .services
+        .tts
+        .convert(serde_json::to_value(request).ok()?)
+        .await
+        .ok()?;
+
+    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
+
+    let mime_type = response
+        .mime_type
+        .unwrap_or_else(|| "audio/ogg".to_string());
+
+    Some(ReplyPayload {
+        text: String::new(),
+        media: Some(MediaAttachment {
+            url: format!("data:{mime_type};base64,{}", response.audio),
+            mime_type,
+        }),
+        reply_to_id: None,
+        silent: false,
+    })
 }
 
 /// Send a tool execution status to all pending channel targets for a session.
@@ -2638,9 +2749,18 @@ mod tests {
             account_id: "acct".to_string(),
             chat_id: "123".to_string(),
         }];
+        let state = crate::state::GatewayState::new(
+            crate::auth::ResolvedAuth {
+                mode: crate::auth::AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            crate::services::GatewayServices::noop(),
+            Arc::new(moltis_tools::approval::ApprovalManager::default()),
+        );
 
         let start = Instant::now();
-        deliver_channel_replies_to_targets(outbound, targets, "hello").await;
+        deliver_channel_replies_to_targets(outbound, targets, "session:test", "hello", state).await;
 
         assert!(
             start.elapsed() >= Duration::from_millis(45),

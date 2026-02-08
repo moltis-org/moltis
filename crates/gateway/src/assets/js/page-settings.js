@@ -1026,6 +1026,30 @@ function bufToB64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+function decodeBase64Safe(input) {
+	if (!input) return new Uint8Array();
+	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+	while (normalized.length % 4) normalized += "=";
+	var binary = "";
+	try {
+		binary = atob(normalized);
+	} catch (_err) {
+		throw new Error("Invalid base64 audio payload");
+	}
+	var bytes = new Uint8Array(binary.length);
+	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+	return bytes;
+}
+
+function encodeBase64Safe(bytes) {
+	var chunk = 0x8000;
+	var str = "";
+	for (var i = 0; i < bytes.length; i += chunk) {
+		str += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(str);
+}
+
 // ── Configuration section ─────────────────────────────────────
 
 function ConfigSection() {
@@ -1760,6 +1784,7 @@ var VOICE_PROVIDERS = {
 // Voice section signals
 var voiceShowAddModal = signal(false);
 var voiceSelectedProvider = signal(null);
+var voiceSelectedProviderData = signal(null);
 
 function VoiceSection() {
 	var [allProviders, setAllProviders] = useState({ tts: [], stt: [] });
@@ -1822,8 +1847,9 @@ function VoiceSection() {
 			});
 	}
 
-	function onConfigureProvider(providerId) {
+	function onConfigureProvider(providerId, providerData) {
 		voiceSelectedProvider.value = providerId;
+		voiceSelectedProviderData.value = providerData || null;
 		voiceShowAddModal.value = true;
 	}
 
@@ -1861,16 +1887,12 @@ function VoiceSection() {
 				});
 				if (res?.ok && res.payload?.audio) {
 					// Decode base64 audio and play it
-					var audioData = atob(res.payload.audio);
-					var bytes = new Uint8Array(audioData.length);
-					for (var i = 0; i < audioData.length; i++) {
-						bytes[i] = audioData.charCodeAt(i);
-					}
+					var bytes = decodeBase64Safe(res.payload.audio);
 					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
 					var url = URL.createObjectURL(blob);
 					var audio = new Audio(url);
 					audio.onended = () => URL.revokeObjectURL(url);
-					audio.play();
+					audio.play().catch(() => undefined);
 					setVoiceTestResults((prev) => ({
 						...prev,
 						[providerId]: { success: true, error: null },
@@ -1915,7 +1937,7 @@ function VoiceSection() {
 
 					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 					var buffer = await audioBlob.arrayBuffer();
-					var base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+					var base64 = encodeBase64Safe(new Uint8Array(buffer));
 
 					var sttRes = await sendRpc("stt.transcribe", {
 						audio: base64,
@@ -1984,7 +2006,7 @@ function VoiceSection() {
 							testState=${testState}
 							testResult=${testResult}
 							onToggle=${(enabled) => onToggleProvider(prov, enabled, "stt")}
-							onConfigure=${() => onConfigureProvider(prov.id)}
+							onConfigure=${() => onConfigureProvider(prov.id, prov)}
 							onTest=${() => testVoiceProvider(prov.id, "stt")}
 						/>`;
 					})}
@@ -2007,7 +2029,7 @@ function VoiceSection() {
 							testState=${testState}
 							testResult=${testResult}
 							onToggle=${(enabled) => onToggleProvider(prov, enabled, "tts")}
-							onConfigure=${() => onConfigureProvider(prov.id)}
+							onConfigure=${() => onConfigureProvider(prov.id, prov)}
 							onTest=${() => testVoiceProvider(prov.id, "tts")}
 						/>`;
 					})}
@@ -2022,6 +2044,7 @@ function VoiceSection() {
 				fetchVoiceStatus();
 				voiceShowAddModal.value = false;
 				voiceSelectedProvider.value = null;
+				voiceSelectedProviderData.value = null;
 			}}
 		/>
 	</div>`;
@@ -2057,6 +2080,7 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 				${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
 			</div>
 			<span class="text-xs text-[var(--muted)]">${meta.description}</span>
+			${provider.settingsSummary ? html`<span class="text-xs text-[var(--muted)]">Voice: ${provider.settingsSummary}</span>` : null}
 			${provider.binaryPath ? html`<span class="text-xs text-[var(--muted)]">Found at: ${provider.binaryPath}</span>` : null}
 			${!canEnable && provider.statusMessage ? html`<span class="text-xs text-[var(--muted)]">${provider.statusMessage}</span>` : null}
 			${
@@ -2090,6 +2114,9 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 			${testResult?.error ? html`<span class="text-xs text-[var(--error)]">${testResult.error}</span>` : null}
 		</div>
 		<div style="display:flex;align-items:center;gap:8px;">
+			<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onConfigure}>
+				Configure
+			</button>
 			${
 				showTestBtn
 					? html`<button
@@ -2111,15 +2138,8 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 						<span class="toggle-slider"></span>
 					</label>`
 					: provider.category === "local"
-						? html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick=${onConfigure}
-							title="View installation instructions">
-							Install
-						</button>`
-						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick=${onConfigure}>
-							Configure
-						</button>`
+						? html`<span class="text-xs text-[var(--muted)]">Install required</span>`
+						: null
 			}
 		</div>
 	</div>`;
@@ -2191,28 +2211,51 @@ function LocalProviderInstructions({ providerId, voxtralReqs }) {
 // Add Voice Provider Modal
 function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) {
 	var [apiKey, setApiKey] = useState("");
+	var [voiceValue, setVoiceValue] = useState("");
+	var [modelValue, setModelValue] = useState("");
+	var [languageCodeValue, setLanguageCodeValue] = useState("");
+	var [elevenlabsCatalog, setElevenlabsCatalog] = useState({ voices: [], models: [], warning: null });
+	var [elevenlabsCatalogLoading, setElevenlabsCatalogLoading] = useState(false);
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState("");
 
 	var selectedProvider = voiceSelectedProvider.value;
 	var providerMeta = selectedProvider ? VOICE_PROVIDERS[selectedProvider] : null;
+	var isElevenLabsProvider = selectedProvider === "elevenlabs" || selectedProvider === "elevenlabs-stt";
+	var supportsTtsVoiceSettings = providerMeta?.type === "tts";
 
 	function onClose() {
 		voiceShowAddModal.value = false;
 		voiceSelectedProvider.value = null;
+		voiceSelectedProviderData.value = null;
 		setApiKey("");
+		setVoiceValue("");
+		setModelValue("");
+		setLanguageCodeValue("");
 		setError("");
 	}
 
 	function onSaveKey() {
-		if (!apiKey.trim()) {
-			setError("API key is required.");
+		var hasApiKey = apiKey.trim().length > 0;
+		var hasSettings = supportsTtsVoiceSettings && (voiceValue.trim() || modelValue.trim() || languageCodeValue.trim());
+		if (!(hasApiKey || hasSettings)) {
+			setError("Provide an API key or at least one voice setting.");
 			return;
 		}
 		setError("");
 		setSaving(true);
 
-		sendRpc("voice.config.save_key", { provider: selectedProvider, api_key: apiKey.trim() })
+		var settingsPayload = {
+			provider: selectedProvider,
+			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
+			voiceId: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
+			model: supportsTtsVoiceSettings ? modelValue.trim() || undefined : undefined,
+			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
+		};
+		var req = hasApiKey
+			? sendRpc("voice.config.save_key", { ...settingsPayload, api_key: apiKey.trim() })
+			: sendRpc("voice.config.save_settings", settingsPayload);
+		req
 			.then((res) => {
 				setSaving(false);
 				if (res?.ok) {
@@ -2230,9 +2273,46 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 
 	function onSelectProvider(providerId) {
 		voiceSelectedProvider.value = providerId;
+		voiceSelectedProviderData.value = null;
 		setApiKey("");
+		setVoiceValue("");
+		setModelValue("");
+		setLanguageCodeValue("");
 		setError("");
 	}
+
+	useEffect(() => {
+		var settings = voiceSelectedProviderData.value?.settings;
+		if (!settings) return;
+		setVoiceValue(settings.voiceId || settings.voice || "");
+		setModelValue(settings.model || "");
+		setLanguageCodeValue(settings.languageCode || "");
+	}, [selectedProvider, voiceSelectedProviderData.value]);
+
+	useEffect(() => {
+		if (!isElevenLabsProvider) {
+			setElevenlabsCatalog({ voices: [], models: [], warning: null });
+			return;
+		}
+		setElevenlabsCatalogLoading(true);
+		sendRpc("voice.elevenlabs.catalog", {})
+			.then((res) => {
+				if (res?.ok) {
+					setElevenlabsCatalog({
+						voices: res.payload?.voices || [],
+						models: res.payload?.models || [],
+						warning: res.payload?.warning || null,
+					});
+				}
+			})
+			.catch(() => {
+				setElevenlabsCatalog({ voices: [], models: [], warning: "Failed to fetch ElevenLabs voice catalog." });
+			})
+			.finally(() => {
+				setElevenlabsCatalogLoading(false);
+				rerender();
+			});
+	}, [selectedProvider, isElevenLabsProvider]);
 
 	// Group providers by type and category
 	var sttCloud = unconfiguredProviders.filter((p) => p.type === "stt" && p.category === "cloud");
@@ -2251,10 +2331,71 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 					<label class="text-xs text-[var(--muted)]">API Key</label>
 					<input type="password" class="provider-key-input" style="width:100%;"
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${providerMeta.keyPlaceholder} />
+						placeholder=${providerMeta.keyPlaceholder || "Leave blank to keep existing key"} />
 					<div class="text-xs text-[var(--muted)]">
 						Get your API key at <a href=${providerMeta.keyUrl} target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">${providerMeta.keyUrlLabel}</a>
 					</div>
+
+					${
+						supportsTtsVoiceSettings
+							? html`<div class="flex flex-col gap-2">
+					<label class="text-xs text-[var(--muted)]">Voice</label>
+					${isElevenLabsProvider && elevenlabsCatalogLoading ? html`<div class="text-xs text-[var(--muted)]">Loading ElevenLabs voices...</div>` : null}
+					${isElevenLabsProvider && elevenlabsCatalog.warning ? html`<div class="text-xs text-[var(--muted)]">${elevenlabsCatalog.warning}</div>` : null}
+					${
+						isElevenLabsProvider && elevenlabsCatalog.voices.length > 0
+							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setVoiceValue(e.target.value)}>
+						<option value="">Pick a voice from your account...</option>
+						${elevenlabsCatalog.voices.map((v) => html`<option value=${v.id}>${v.name} (${v.id})</option>`)}
+					</select>`
+							: null
+					}
+					<input type="text" class="provider-key-input" style="width:100%;"
+						value=${voiceValue} onInput=${(e) => setVoiceValue(e.target.value)}
+						list=${isElevenLabsProvider ? "elevenlabs-voice-options" : undefined}
+						placeholder="voice id / name (optional)" />
+					${
+						isElevenLabsProvider
+							? html`<datalist id="elevenlabs-voice-options">
+						${elevenlabsCatalog.voices.map((v) => html`<option value=${v.id}>${v.name}</option>`)}
+					</datalist>`
+							: null
+					}
+
+					<label class="text-xs text-[var(--muted)]">Model</label>
+					${
+						isElevenLabsProvider && elevenlabsCatalog.models.length > 0
+							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setModelValue(e.target.value)}>
+						<option value="">Pick a model...</option>
+						${elevenlabsCatalog.models.map((m) => html`<option value=${m.id}>${m.name} (${m.id})</option>`)}
+					</select>`
+							: null
+					}
+					<input type="text" class="provider-key-input" style="width:100%;"
+						value=${modelValue} onInput=${(e) => setModelValue(e.target.value)}
+						list=${isElevenLabsProvider ? "elevenlabs-model-options" : undefined}
+						placeholder="model (optional)" />
+					${
+						isElevenLabsProvider
+							? html`<datalist id="elevenlabs-model-options">
+						${elevenlabsCatalog.models.map((m) => html`<option value=${m.id}>${m.name}</option>`)}
+					</datalist>`
+							: null
+					}
+
+					${
+						selectedProvider === "google" || selectedProvider === "google-tts"
+							? html`<div class="flex flex-col gap-2">
+							<label class="text-xs text-[var(--muted)]">Language Code</label>
+							<input type="text" class="provider-key-input" style="width:100%;"
+								value=${languageCodeValue} onInput=${(e) => setLanguageCodeValue(e.target.value)}
+								placeholder="en-US (optional)" />
+						</div>`
+							: null
+					}
+					</div>`
+							: null
+					}
 
 					${providerMeta.hint && html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;padding:8px;background:var(--surface-alt);border-radius:4px;font-style:italic;">${providerMeta.hint}</div>`}
 
@@ -2266,7 +2407,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 							setApiKey("");
 							setError("");
 						}}>Back</button>
-						<button class="provider-btn" disabled=${saving || !apiKey.trim()} onClick=${onSaveKey}>
+						<button class="provider-btn" disabled=${saving} onClick=${onSaveKey}>
 							${saving ? "Saving\u2026" : "Save"}
 						</button>
 					</div>

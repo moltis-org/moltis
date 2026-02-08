@@ -1596,6 +1596,14 @@ pub async fn start_gateway(
             moltis_tools::session_state::SessionStateTool::new(Arc::clone(&session_state_store)),
         ));
 
+        // Register built-in voice tools for explicit TTS/STT calls in agents.
+        tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
+            Arc::clone(&state.services.tts),
+        )));
+        tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
+            Arc::clone(&state.services.stt),
+        )));
+
         // Register skill management tools for agent self-extension.
         // Use data_dir so created skills land in the configured workspace root.
         {

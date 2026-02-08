@@ -30,6 +30,42 @@ import * as S from "./state.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
+var ttsWebStatus = null; // null = unknown, true/false = enabled state
+
+async function appendAssistantVoiceIfEnabled(msgEl, text) {
+	if (!(msgEl && text)) return false;
+
+	if (ttsWebStatus === null) {
+		var status = await sendRpc("tts.status", {});
+		ttsWebStatus = status?.ok && status.payload?.enabled === true;
+	}
+	if (!ttsWebStatus) return false;
+
+	var tts = await sendRpc("tts.convert", { text: text, format: "ogg" });
+	if (!(tts?.ok && tts.payload?.audio)) {
+		if (tts?.error) {
+			console.warn("TTS convert failed:", tts.error.message || tts.error);
+		}
+		return false;
+	}
+
+	msgEl.textContent = "";
+
+	var mimeType = tts.payload.mimeType || "audio/ogg";
+	var src = `data:${mimeType};base64,${tts.payload.audio}`;
+	var wrap = document.createElement("div");
+	wrap.className = "mt-2";
+	var audio = document.createElement("audio");
+	audio.controls = true;
+	audio.preload = "none";
+	audio.src = src;
+	audio.className = "w-full max-w-md";
+	wrap.appendChild(audio);
+	msgEl.appendChild(wrap);
+	audio.play().catch(() => undefined);
+	return true;
+}
+
 function makeThinkingDots() {
 	var tpl = document.getElementById("tpl-thinking-dots");
 	return tpl.content.cloneNode(true).firstElementChild;
@@ -361,7 +397,16 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
 	var msgEl = resolveFinalMessageEl(p);
-	appendFinalFooter(msgEl, p);
+	if (msgEl && p.text) {
+		appendAssistantVoiceIfEnabled(msgEl, p.text)
+			.catch((err) => {
+				console.warn("Web UI TTS playback failed:", err);
+				return false;
+			})
+			.finally(() => appendFinalFooter(msgEl, p));
+	} else {
+		appendFinalFooter(msgEl, p);
+	}
 	if (p.inputTokens || p.outputTokens) {
 		S.sessionTokens.input += p.inputTokens || 0;
 		S.sessionTokens.output += p.outputTokens || 0;

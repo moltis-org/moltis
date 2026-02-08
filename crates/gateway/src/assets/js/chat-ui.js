@@ -45,7 +45,16 @@ export function appendChannelFooter(el, channel) {
 	var label = channel.channel_type || "channel";
 	var who = channel.username ? `@${channel.username}` : channel.sender_name;
 	if (who) label += ` \u00b7 ${who}`;
-	ft.textContent = `via ${label}`;
+	if (channel.message_kind === "voice") {
+		var icon = document.createElement("span");
+		icon.className = "voice-icon";
+		icon.setAttribute("aria-hidden", "true");
+		ft.appendChild(icon);
+	}
+
+	var text = document.createElement("span");
+	text.textContent = `via ${label}`;
+	ft.appendChild(text);
 	el.appendChild(ft);
 }
 

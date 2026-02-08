@@ -123,6 +123,20 @@ Benefits of type-based matching:
 Only convert to strings at boundaries: serialization, database storage,
 logging, or display. Keep the core logic type-safe.
 
+### Type conversions
+
+- Avoid manual one-off conversion functions and ad-hoc `match` blocks sprinkled
+  through business logic when converting between types.
+- Prefer trait-based conversions (`From` / `Into` / `TryFrom` / `TryInto`) or a
+  dedicated local conversion trait when orphan rules prevent a direct impl.
+- Always prefer typed structs/enums and serde (de)serialization over raw
+  `serde_json::Value` access in production code.
+- Treat untyped JSON maps as test-only scaffolding unless there is a strict
+  boundary requirement (external RPC/tool contract, dynamic schema).
+- If trait-based conversion or typed serde mapping is truly not feasible for a
+  specific case, stop and ask for user approval before adding a manual
+  conversion path.
+
 ### Concurrency
 
 - Always prefer streaming over non-streaming API calls when possible.

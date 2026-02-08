@@ -14,8 +14,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelAttachment, ChannelEvent, ChannelMessageMeta, ChannelOutbound, ChannelReplyTarget,
-        ChannelType, message_log::MessageLogEntry,
+        ChannelAttachment, ChannelEvent, ChannelMessageKind, ChannelMessageMeta, ChannelOutbound,
+        ChannelReplyTarget, ChannelType, message_log::MessageLogEntry,
     },
     moltis_common::types::ChatType,
 };
@@ -483,6 +483,7 @@ pub async fn handle_message_direct(
             channel_type: ChannelType::Telegram,
             sender_name: sender_name.clone(),
             username: username.clone(),
+            message_kind: message_kind(&msg),
             model: config.model.clone(),
         };
 
@@ -1221,6 +1222,31 @@ fn describe_media_kind(msg: &Message) -> Option<&'static str> {
     }
 }
 
+fn message_kind(msg: &Message) -> Option<ChannelMessageKind> {
+    match &msg.kind {
+        MessageKind::Common(common) => Some(common.media_kind.to_channel_message_kind()),
+        _ => None,
+    }
+}
+
+trait ToChannelMessageKind {
+    fn to_channel_message_kind(&self) -> ChannelMessageKind;
+}
+
+impl ToChannelMessageKind for MediaKind {
+    fn to_channel_message_kind(&self) -> ChannelMessageKind {
+        match self {
+            MediaKind::Text(_) => ChannelMessageKind::Text,
+            MediaKind::Voice(_) => ChannelMessageKind::Voice,
+            MediaKind::Audio(_) => ChannelMessageKind::Audio,
+            MediaKind::Photo(_) => ChannelMessageKind::Photo,
+            MediaKind::Document(_) => ChannelMessageKind::Document,
+            MediaKind::Video(_) | MediaKind::VideoNote(_) => ChannelMessageKind::Video,
+            _ => ChannelMessageKind::Other,
+        }
+    }
+}
+
 /// Download a file from Telegram by file ID.
 async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<u8>> {
     // Get file info from Telegram
@@ -1524,6 +1550,34 @@ mod tests {
             msg.contains("Channels") && msg.contains("Senders"),
             "OTP challenge message must tell the user where to find the code"
         );
+    }
+
+    #[test]
+    fn voice_messages_are_marked_with_voice_message_kind() {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "voice": {
+                "file_id": "voice-file-id",
+                "file_unique_id": "voice-unique-id",
+                "duration": 1,
+                "mime_type": "audio/ogg",
+                "file_size": 123
+            }
+        }))
+        .expect("deserialize voice message");
+
+        assert!(matches!(
+            message_kind(&msg),
+            Some(ChannelMessageKind::Voice)
+        ));
     }
 
     #[tokio::test]
