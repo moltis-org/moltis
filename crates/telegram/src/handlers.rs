@@ -9,7 +9,7 @@ use {
             ParseMode,
         },
     },
-    tracing::{debug, warn},
+    tracing::{debug, info, warn},
 };
 
 use {
@@ -239,6 +239,15 @@ pub async fn handle_message_direct(
             text.clone().unwrap_or_else(|| "[Voice message]".to_string())
         }
     } else {
+        // Log unhandled media types so we know when users are sending attachments we don't process
+        if let Some(media_type) = describe_media_kind(&msg) {
+            info!(
+                account_id,
+                peer_id,
+                media_type,
+                "received unhandled attachment type"
+            );
+        }
         text.unwrap_or_default()
     };
 
@@ -1070,6 +1079,30 @@ fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
                 })
             },
             _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Describe a media kind for logging purposes.
+fn describe_media_kind(msg: &Message) -> Option<&'static str> {
+    match &msg.kind {
+        MessageKind::Common(common) => match &common.media_kind {
+            MediaKind::Text(_) => None,
+            MediaKind::Animation(_) => Some("animation/GIF"),
+            MediaKind::Audio(_) => Some("audio"),
+            MediaKind::Contact(_) => Some("contact"),
+            MediaKind::Document(_) => Some("document"),
+            MediaKind::Game(_) => Some("game"),
+            MediaKind::Location(_) => Some("location"),
+            MediaKind::Photo(_) => Some("photo"),
+            MediaKind::Poll(_) => Some("poll"),
+            MediaKind::Sticker(_) => Some("sticker"),
+            MediaKind::Venue(_) => Some("venue"),
+            MediaKind::Video(_) => Some("video"),
+            MediaKind::VideoNote(_) => Some("video note"),
+            MediaKind::Voice(_) => Some("voice"),
+            _ => Some("unknown media"),
         },
         _ => None,
     }
