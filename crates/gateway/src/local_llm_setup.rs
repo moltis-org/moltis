@@ -13,7 +13,7 @@ use {
     tracing::info,
 };
 
-use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm};
+use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm, raw_model_id};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -985,12 +985,13 @@ impl LocalLlmService for LiveLocalLlmService {
             .get("modelId")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'modelId' parameter".to_string())?;
+        let local_model_id = raw_model_id(model_id);
 
-        info!(model = %model_id, "removing local-llm model");
+        info!(model = %local_model_id, "removing local-llm model");
 
         // Remove from config
         let mut config = LocalLlmConfig::load().unwrap_or_default();
-        let removed = config.remove_model(model_id);
+        let removed = config.remove_model(local_model_id);
 
         if !removed {
             return Err(format!("model '{model_id}' not found in config"));
@@ -1014,7 +1015,7 @@ impl LocalLlmService for LiveLocalLlmService {
 
         Ok(serde_json::json!({
             "ok": true,
-            "modelId": model_id,
+            "modelId": local_model_id,
         }))
     }
 }

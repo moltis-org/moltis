@@ -6,7 +6,7 @@
 //!
 //! The Copilot API itself is OpenAI-compatible (`/chat/completions`).
 
-use std::pin::Pin;
+use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
 
 use {
     async_trait::async_trait,
@@ -34,6 +34,7 @@ const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 const COPILOT_API_BASE: &str = "https://api.individual.githubcopilot.com";
+const COPILOT_MODELS_ENDPOINT: &str = "https://api.individual.githubcopilot.com/models";
 
 const PROVIDER_NAME: &str = "github-copilot";
 
@@ -140,63 +141,34 @@ impl GitHubCopilotProvider {
 
     /// Get a valid Copilot API token, exchanging the GitHub token if needed.
     async fn get_valid_copilot_token(&self) -> anyhow::Result<String> {
-        let tokens = self.token_store.load(PROVIDER_NAME).ok_or_else(|| {
-            anyhow::anyhow!("not logged in to github-copilot — run OAuth device flow first")
-        })?;
-
-        // The `access_token` stored is the GitHub user token.
-        // We need to exchange it for a Copilot API token each time
-        // (the Copilot token is short-lived ~30 min).
-        // We store the Copilot token in a separate key for caching.
-        if let Some(copilot_tokens) = self.token_store.load("github-copilot-api")
-            && let Some(expires_at) = copilot_tokens.expires_at
-        {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            if now + 60 < expires_at {
-                return Ok(copilot_tokens.access_token.expose_secret().clone());
-            }
-        }
-
-        // Exchange GitHub token for Copilot API token
-        let resp = self
-            .client
-            .get(COPILOT_TOKEN_URL)
-            .header(
-                "Authorization",
-                format!("token {}", tokens.access_token.expose_secret()),
-            )
-            .header("Accept", "application/json")
-            .header(
-                "User-Agent",
-                "moltis/0.1.0 (GitHub Copilot compatible client)",
-            )
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Copilot token exchange failed: {body}");
-        }
-
-        let copilot_resp: CopilotTokenResponse = resp.json().await?;
-
-        // Cache the Copilot API token
-        let _ = self.token_store.save("github-copilot-api", &OAuthTokens {
-            access_token: Secret::new(copilot_resp.token.clone()),
-            refresh_token: None,
-            expires_at: Some(copilot_resp.expires_at),
-        });
-
-        Ok(copilot_resp.token)
+        fetch_valid_copilot_token_with_fallback(&self.client, &self.token_store).await
     }
+}
+
+fn home_token_store_if_different() -> Option<TokenStore> {
+    let home = moltis_config::user_global_config_dir()?;
+    let current = moltis_config::config_dir()?;
+    if home == current {
+        return None;
+    }
+    Some(TokenStore::with_path(home.join("oauth_tokens.json")))
+}
+
+fn token_store_with_provider_tokens(primary: &TokenStore) -> Option<TokenStore> {
+    if primary.load(PROVIDER_NAME).is_some() {
+        return Some(primary.clone());
+    }
+    if let Some(home_store) = home_token_store_if_different()
+        && home_store.load(PROVIDER_NAME).is_some()
+    {
+        return Some(home_store);
+    }
+    None
 }
 
 /// Check if we have stored GitHub tokens for Copilot.
 pub fn has_stored_tokens() -> bool {
-    TokenStore::new().load(PROVIDER_NAME).is_some()
+    token_store_with_provider_tokens(&TokenStore::new()).is_some()
 }
 
 /// Known Copilot models.
@@ -213,6 +185,234 @@ pub const COPILOT_MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4", "Claude Sonnet 4 (Copilot)"),
     ("gemini-2.0-flash", "Gemini 2.0 Flash (Copilot)"),
 ];
+
+async fn fetch_valid_copilot_token(
+    client: &reqwest::Client,
+    token_store: &TokenStore,
+) -> anyhow::Result<String> {
+    let tokens = token_store.load(PROVIDER_NAME).ok_or_else(|| {
+        anyhow::anyhow!("not logged in to github-copilot — run OAuth device flow first")
+    })?;
+
+    // The `access_token` stored is the GitHub user token.
+    // We exchange it for a short-lived Copilot API token and cache it.
+    if let Some(copilot_tokens) = token_store.load("github-copilot-api")
+        && let Some(expires_at) = copilot_tokens.expires_at
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now + 60 < expires_at {
+            return Ok(copilot_tokens.access_token.expose_secret().clone());
+        }
+    }
+
+    let resp = client
+        .get(COPILOT_TOKEN_URL)
+        .header(
+            "Authorization",
+            format!("token {}", tokens.access_token.expose_secret()),
+        )
+        .header("Accept", "application/json")
+        .header(
+            "User-Agent",
+            "moltis/0.1.0 (GitHub Copilot compatible client)",
+        )
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Copilot token exchange failed: {body}");
+    }
+
+    let copilot_resp: CopilotTokenResponse = resp.json().await?;
+    let _ = token_store.save("github-copilot-api", &OAuthTokens {
+        access_token: Secret::new(copilot_resp.token.clone()),
+        refresh_token: None,
+        expires_at: Some(copilot_resp.expires_at),
+    });
+
+    Ok(copilot_resp.token)
+}
+
+async fn fetch_valid_copilot_token_with_fallback(
+    client: &reqwest::Client,
+    primary_store: &TokenStore,
+) -> anyhow::Result<String> {
+    let Some(token_store) = token_store_with_provider_tokens(primary_store) else {
+        anyhow::bail!("not logged in to github-copilot — run OAuth device flow first");
+    };
+    fetch_valid_copilot_token(client, &token_store).await
+}
+
+fn default_model_catalog() -> Vec<(String, String)> {
+    COPILOT_MODELS
+        .iter()
+        .map(|(id, name)| (id.to_string(), name.to_string()))
+        .collect()
+}
+
+fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
+    let normalized = display_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(model_id);
+    if normalized == model_id {
+        model_id.to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn is_likely_model_id(model_id: &str) -> bool {
+    if model_id.is_empty() || model_id.len() > 120 {
+        return false;
+    }
+    if model_id.chars().any(char::is_whitespace) {
+        return false;
+    }
+    model_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+}
+
+fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
+    let obj = entry.as_object()?;
+    let model_id = obj
+        .get("id")
+        .or_else(|| obj.get("slug"))
+        .or_else(|| obj.get("model"))
+        .and_then(serde_json::Value::as_str)?;
+
+    if !is_likely_model_id(model_id) {
+        return None;
+    }
+
+    let display_name = obj
+        .get("display_name")
+        .or_else(|| obj.get("displayName"))
+        .or_else(|| obj.get("name"))
+        .or_else(|| obj.get("title"))
+        .and_then(serde_json::Value::as_str);
+
+    Some((
+        model_id.to_string(),
+        normalize_display_name(model_id, display_name),
+    ))
+}
+
+fn collect_candidate_arrays<'a>(
+    value: &'a serde_json::Value,
+    out: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(items) => out.extend(items),
+        serde_json::Value::Object(map) => {
+            for key in ["models", "data", "items", "results", "available"] {
+                if let Some(nested) = map.get(key) {
+                    collect_candidate_arrays(nested, out);
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+fn parse_models_payload(value: &serde_json::Value) -> Vec<(String, String)> {
+    let mut candidates = Vec::new();
+    collect_candidate_arrays(value, &mut candidates);
+
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in candidates {
+        if let Some((id, display_name)) = parse_model_entry(entry)
+            && seen.insert(id.clone())
+        {
+            models.push((id, display_name));
+        }
+    }
+    models
+}
+
+async fn fetch_models_from_api(
+    client: &reqwest::Client,
+    access_token: String,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let response = client
+        .get(COPILOT_MODELS_ENDPOINT)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("Accept", "application/json")
+        .header("Editor-Version", EDITOR_VERSION)
+        .header("User-Agent", COPILOT_USER_AGENT)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("copilot models API error HTTP {status}");
+    }
+    let payload: serde_json::Value = serde_json::from_str(&body)?;
+    let models = parse_models_payload(&payload);
+    if models.is_empty() {
+        anyhow::bail!("copilot models API returned no models");
+    }
+    Ok(models)
+}
+
+fn fetch_models_blocking() -> anyhow::Result<Vec<(String, String)>> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| {
+                rt.block_on(async {
+                    let client = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(8))
+                        .build()?;
+                    let token_store = TokenStore::new();
+                    let access_token =
+                        fetch_valid_copilot_token_with_fallback(&client, &token_store).await?;
+                    fetch_models_from_api(&client, access_token).await
+                })
+            });
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|err| anyhow::anyhow!("copilot model discovery worker failed: {err}"))?
+}
+
+pub fn live_models() -> anyhow::Result<Vec<(String, String)>> {
+    let models = fetch_models_blocking()?;
+    debug!(
+        model_count = models.len(),
+        "loaded github-copilot live models"
+    );
+    Ok(models)
+}
+
+pub fn available_models() -> Vec<(String, String)> {
+    let fallback = default_model_catalog();
+    let discovered = match live_models() {
+        Ok(models) => models,
+        Err(err) => {
+            warn!(error = %err, "failed to fetch github-copilot models, using fallback catalog");
+            return fallback;
+        },
+    };
+
+    let mut merged = discovered;
+    let mut seen: HashSet<String> = merged.iter().map(|(id, _)| id.clone()).collect();
+    for (id, display_name) in fallback {
+        if seen.insert(id.clone()) {
+            merged.push((id, display_name));
+        }
+    }
+    merged
+}
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────
 

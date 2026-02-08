@@ -47,6 +47,7 @@ const READ_METHODS: &[&str] = &[
     "tts.status",
     "tts.providers",
     "models.list",
+    "models.list_all",
     "agents.list",
     "agent.identity.get",
     "skills.list",
@@ -109,6 +110,7 @@ const WRITE_METHODS: &[&str] = &[
     "chat.compact",
     "browser.request",
     "logs.ack",
+    "models.detect_supported",
     "providers.save_key",
     "providers.remove_key",
     "providers.oauth.start",
@@ -170,6 +172,19 @@ const PAIRING_METHODS: &[&str] = &[
 
 fn is_in(method: &str, list: &[&str]) -> bool {
     list.contains(&method)
+}
+
+fn model_probe_params(provider: Option<&str>) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "background": true,
+        "reason": "provider_connected",
+    });
+    if let Some(provider) = provider
+        && !provider.trim().is_empty()
+    {
+        params["provider"] = serde_json::json!(provider);
+    }
+    params
 }
 
 /// Check role + scopes for a method. Returns None if authorized, Some(error) if not.
@@ -2584,6 +2599,19 @@ impl MethodRegistry {
             }),
         );
         self.register(
+            "models.list_all",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .list_all()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
             "models.disable",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -2609,6 +2637,19 @@ impl MethodRegistry {
                 })
             }),
         );
+        self.register(
+            "models.detect_supported",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .detect_supported(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
 
         // Provider setup
         self.register(
@@ -2628,12 +2669,28 @@ impl MethodRegistry {
             "providers.save_key",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let provider_name = ctx
+                        .params
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .save_key(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // Kick off background support probing after a provider is connected.
+                    let model_service = Arc::clone(&ctx.state.services.model);
+                    tokio::spawn(async move {
+                        let _ = model_service
+                            .detect_supported(model_probe_params(provider_name.as_deref()))
+                            .await;
+                    });
+
+                    Ok(result)
                 })
             }),
         );
@@ -2641,12 +2698,35 @@ impl MethodRegistry {
             "providers.oauth.start",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let provider_name = ctx
+                        .params
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .oauth_start(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // If oauth.start short-circuited because valid tokens already
+                    // existed, trigger a provider-scoped background probe now.
+                    if result
+                        .get("alreadyAuthenticated")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        let model_service = Arc::clone(&ctx.state.services.model);
+                        tokio::spawn(async move {
+                            let _ = model_service
+                                .detect_supported(model_probe_params(provider_name.as_deref()))
+                                .await;
+                        });
+                    }
+
+                    Ok(result)
                 })
             }),
         );
@@ -2667,12 +2747,28 @@ impl MethodRegistry {
             "providers.oauth.complete",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .oauth_complete(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    let provider_name = result
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+
+                    // Kick off background support probing after OAuth provider connect.
+                    let model_service = Arc::clone(&ctx.state.services.model);
+                    tokio::spawn(async move {
+                        let _ = model_service
+                            .detect_supported(model_probe_params(provider_name.as_deref()))
+                            .await;
+                    });
+
+                    Ok(result)
                 })
             }),
         );
@@ -3565,5 +3661,27 @@ mod tests {
                 "read-only scope should deny {method}"
             );
         }
+    }
+
+    #[test]
+    fn model_probe_params_include_provider_when_present() {
+        let params = model_probe_params(Some("github-copilot"));
+        assert_eq!(params["background"], serde_json::json!(true));
+        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
+        assert_eq!(params["provider"], serde_json::json!("github-copilot"));
+    }
+
+    #[test]
+    fn model_probe_params_omit_provider_when_missing() {
+        let params = model_probe_params(None);
+        assert_eq!(params["background"], serde_json::json!(true));
+        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
+        assert!(params.get("provider").is_none());
+    }
+
+    #[test]
+    fn model_probe_params_omit_provider_when_blank() {
+        let params = model_probe_params(Some("   "));
+        assert!(params.get("provider").is_none());
     }
 }

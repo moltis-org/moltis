@@ -584,6 +584,19 @@ function handleLocalLlmDownload(payload) {
 	}
 }
 
+var modelsUpdatedTimer = null;
+function handleModelsUpdated(payload) {
+	// Progress/status frames are consumed directly by the Providers page.
+	// Avoid spamming model refresh requests while a probe is running.
+	if (payload?.phase === "start" || payload?.phase === "progress") return;
+	if (modelsUpdatedTimer) return;
+	modelsUpdatedTimer = setTimeout(() => {
+		modelsUpdatedTimer = null;
+		fetchModels();
+		if (S.refreshProvidersPage) S.refreshProvidersPage();
+	}, 150);
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	"exec.approval.requested": handleApprovalEvent,
@@ -592,6 +605,7 @@ var eventHandlers = {
 	"sandbox.image.provision": handleSandboxImageProvision,
 	"browser.image.pull": handleBrowserImagePull,
 	"local-llm.download": handleLocalLlmDownload,
+	"models.updated": handleModelsUpdated,
 };
 
 function dispatchFrame(frame) {
@@ -642,8 +656,7 @@ export function connect() {
 			if (hello && hello.type === "hello-ok") {
 				S.setConnected(true);
 				S.setReconnectDelay(1000);
-				var assetHash = document.querySelector('meta[name="build-ts"]')?.content || "?";
-				setStatus("connected", `connected (v${hello.protocol}) assets:${assetHash.substring(0, 8)}`);
+				setStatus("connected", "live");
 				var now = new Date();
 				var ts = now.toLocaleTimeString([], {
 					hour: "2-digit",
@@ -709,6 +722,7 @@ function setStatus(state, text) {
 	var sText = S.$("statusText");
 	dot.className = `status-dot ${state}`;
 	sText.textContent = text;
+	sText.classList.toggle("status-text-live", state === "connected");
 	var sendBtn = S.$("sendBtn");
 	if (sendBtn) sendBtn.disabled = state !== "connected";
 }

@@ -1713,11 +1713,16 @@ impl UpdateService for NoopUpdateService {
 
 #[async_trait]
 pub trait ModelService: Send + Sync {
+    /// List runtime-selectable models (unsupported models hidden).
     async fn list(&self) -> ServiceResult;
+    /// List all configured models, including unsupported ones for diagnostics.
+    async fn list_all(&self) -> ServiceResult;
     /// Disable a model (hide it from the list).
     async fn disable(&self, params: Value) -> ServiceResult;
     /// Enable a model (un-hide it).
     async fn enable(&self, params: Value) -> ServiceResult;
+    /// Probe configured models and flag unsupported ones for this account.
+    async fn detect_supported(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopModelService;
@@ -1728,11 +1733,19 @@ impl ModelService for NoopModelService {
         Ok(serde_json::json!([]))
     }
 
+    async fn list_all(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
     async fn disable(&self, _params: Value) -> ServiceResult {
         Err("model service not configured".into())
     }
 
     async fn enable(&self, _params: Value) -> ServiceResult {
+        Err("model service not configured".into())
+    }
+
+    async fn detect_supported(&self, _params: Value) -> ServiceResult {
         Err("model service not configured".into())
     }
 }

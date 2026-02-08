@@ -21,6 +21,8 @@ pub fn parse_chat_error(raw: &str, provider_name: Option<&str>) -> Value {
 }
 
 fn try_parse_known_error(raw: &str) -> Value {
+    let http_status = extract_http_status(raw);
+
     // Try to extract embedded JSON from the error string.
     if let Some(start) = raw.find('{')
         && let Ok(parsed) = serde_json::from_str::<Value>(&raw[start..])
@@ -44,7 +46,10 @@ fn try_parse_known_error(raw: &str) -> Value {
         }
 
         // Rate limit
-        if matches_type_or_message(err_obj, "rate_limit_exceeded", "rate limit") {
+        if matches_type_or_message(err_obj, "rate_limit_exceeded", "rate limit")
+            || matches_type_or_message(err_obj, "rate_limit_exceeded", "quota exceeded")
+            || http_status == Some(429)
+        {
             let detail = err_obj
                 .get("message")
                 .and_then(|v| v.as_str())
@@ -60,13 +65,26 @@ fn try_parse_known_error(raw: &str) -> Value {
         }
 
         // Generic JSON error with a message field
+        if let Some(msg) = extract_message(err_obj)
+            && is_unsupported_model_message(msg)
+        {
+            return build_error(
+                "unsupported_model",
+                "\u{26A0}\u{FE0F}",
+                "Model not supported",
+                msg,
+                None,
+            );
+        }
+
+        // Generic JSON error with a message field
         if let Some(msg) = err_obj.get("message").and_then(|v| v.as_str()) {
             return build_error("api_error", "\u{26A0}\u{FE0F}", "Error", msg, None);
         }
     }
 
     // Check for HTTP status codes in the raw message.
-    if let Some(code) = extract_http_status(raw) {
+    if let Some(code) = http_status {
         match code {
             401 | 403 => {
                 return build_error(
@@ -99,8 +117,43 @@ fn try_parse_known_error(raw: &str) -> Value {
         }
     }
 
+    if is_unsupported_model_message(raw) {
+        return build_error(
+            "unsupported_model",
+            "\u{26A0}\u{FE0F}",
+            "Model not supported",
+            raw,
+            None,
+        );
+    }
+
     // Default: pass through raw message.
     build_error("unknown", "\u{26A0}\u{FE0F}", "Error", raw, None)
+}
+
+fn extract_message(obj: &Value) -> Option<&str> {
+    obj.get("detail")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("message").and_then(|v| v.as_str()))
+        .or_else(|| {
+            obj.get("error")
+                .and_then(|v| v.get("message"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            obj.get("error")
+                .and_then(|v| v.get("detail"))
+                .and_then(|v| v.as_str())
+        })
+}
+
+fn is_unsupported_model_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let has_model = lower.contains("model");
+    let unsupported = lower.contains("not supported")
+        || lower.contains("unsupported")
+        || lower.contains("not available");
+    has_model && unsupported
 }
 
 fn matches_type_or_message(obj: &Value, type_str: &str, message_substr: &str) -> bool {
@@ -122,8 +175,8 @@ fn extract_resets_at(obj: &Value) -> Option<u64> {
 }
 
 fn extract_http_status(raw: &str) -> Option<u16> {
-    // Match patterns like "HTTP 429", "status 503", "status: 401"
-    let patterns = ["HTTP ", "status: ", "status "];
+    // Match patterns like "HTTP 429", "status 503", "status: 401", "status=429"
+    let patterns = ["HTTP ", "status= ", "status=", "status: ", "status "];
     for pat in &patterns {
         if let Some(idx) = raw.find(pat) {
             let after = &raw[idx + pat.len()..];
@@ -212,6 +265,21 @@ mod tests {
     }
 
     #[test]
+    fn test_status_equals_429_format() {
+        let raw = "github-copilot API error status=429 Too Many Requests body=quota exceeded";
+        let result = parse_chat_error(raw, Some("github-copilot"));
+        assert_eq!(result["type"], "rate_limit_exceeded");
+        assert_eq!(result["provider"], "github-copilot");
+    }
+
+    #[test]
+    fn test_quota_exceeded_json_maps_to_rate_limit() {
+        let raw = r#"provider error: {"error":{"message":"quota exceeded"}}"#;
+        let result = parse_chat_error(raw, None);
+        assert_eq!(result["type"], "rate_limit_exceeded");
+    }
+
+    #[test]
     fn test_generic_json_error() {
         let raw = r#"Something went wrong: {"message":"unexpected token"}"#;
         let result = parse_chat_error(raw, None);
@@ -246,5 +314,21 @@ mod tests {
         let raw = r#"{"message":"You have hit the usage limit for your plan"}"#;
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "usage_limit_reached");
+    }
+
+    #[test]
+    fn test_unsupported_model_from_detail() {
+        let raw = r#"openai-codex API error HTTP 400: {"detail":"The 'gpt-5.3' model is not supported when using Codex with a ChatGPT account."}"#;
+        let result = parse_chat_error(raw, Some("openai-codex"));
+        assert_eq!(result["type"], "unsupported_model");
+        assert_eq!(result["title"], "Model not supported");
+        assert_eq!(result["provider"], "openai-codex");
+    }
+
+    #[test]
+    fn test_unsupported_model_from_plain_text() {
+        let raw = "The requested model is unsupported for this account";
+        let result = parse_chat_error(raw, None);
+        assert_eq!(result["type"], "unsupported_model");
     }
 }

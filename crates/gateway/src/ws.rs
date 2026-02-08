@@ -20,6 +20,14 @@ use crate::{
     state::{ConnectedClient, GatewayState},
 };
 
+fn top_level_param_keys(params: &Option<serde_json::Value>) -> Vec<String> {
+    params
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Handle a single WebSocket connection through its full lifecycle:
 /// handshake (with auth) → message loop → cleanup.
 pub async fn handle_connection(
@@ -72,6 +80,21 @@ pub async fn handle_connection(
     };
 
     let (request_id, params) = connect_result;
+
+    if state.ws_request_logs {
+        let connect_param_keys = serde_json::to_value(&params)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .map(|obj| obj.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        info!(
+            conn_id = %conn_id,
+            request_id = %request_id,
+            method = "connect",
+            param_keys = ?connect_param_keys,
+            "ws: received request frame"
+        );
+    }
 
     // Validate protocol version.
     if params.min_protocol > PROTOCOL_VERSION || params.max_protocol < PROTOCOL_VERSION {
@@ -335,6 +358,15 @@ pub async fn handle_connection(
 
         match frame {
             GatewayFrame::Request(req) => {
+                if state.ws_request_logs {
+                    info!(
+                        conn_id = %conn_id,
+                        request_id = %req.id,
+                        method = %req.method,
+                        param_keys = ?top_level_param_keys(&req.params),
+                        "ws: received request frame"
+                    );
+                }
                 let ctx = MethodContext {
                     request_id: req.id.clone(),
                     method: req.method.clone(),
@@ -345,6 +377,15 @@ pub async fn handle_connection(
                     state: Arc::clone(&state),
                 };
                 let response = methods.dispatch(ctx).await;
+                if state.ws_request_logs {
+                    info!(
+                        conn_id = %conn_id,
+                        request_id = %req.id,
+                        method = %req.method,
+                        ok = response.ok,
+                        "ws: sent response frame"
+                    );
+                }
                 let _ = client_tx.send(serde_json::to_string(&response).unwrap());
             },
             _ => {

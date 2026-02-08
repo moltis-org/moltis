@@ -23,11 +23,87 @@ pub mod local_gguf;
 #[cfg(feature = "local-llm")]
 pub mod local_llm;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
-use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret};
+use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret, tokio_stream::Stream};
 
-use crate::model::LlmProvider;
+use crate::model::{ChatMessage, LlmProvider, StreamEvent};
+
+const MODEL_ID_NAMESPACE_SEP: &str = "::";
+
+#[must_use]
+pub fn namespaced_model_id(provider: &str, model_id: &str) -> String {
+    if model_id.contains(MODEL_ID_NAMESPACE_SEP) {
+        return model_id.to_string();
+    }
+    format!("{provider}{MODEL_ID_NAMESPACE_SEP}{model_id}")
+}
+
+#[must_use]
+pub fn raw_model_id(model_id: &str) -> &str {
+    model_id
+        .rsplit_once(MODEL_ID_NAMESPACE_SEP)
+        .map(|(_, raw)| raw)
+        .unwrap_or(model_id)
+}
+
+fn configured_model_for_provider<'a>(provider: &str, model_id: &'a str) -> &'a str {
+    match model_id.split_once(MODEL_ID_NAMESPACE_SEP) {
+        Some((cfg_provider, raw)) if cfg_provider == provider => raw,
+        _ => model_id,
+    }
+}
+
+struct RegistryModelProvider {
+    model_id: String,
+    inner: Arc<dyn LlmProvider>,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for RegistryModelProvider {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn id(&self) -> &str {
+        &self.model_id
+    }
+
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> anyhow::Result<crate::model::CompletionResponse> {
+        self.inner.complete(messages, tools).await
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.inner.supports_tools()
+    }
+
+    fn context_window(&self) -> u32 {
+        self.inner.context_window()
+    }
+
+    fn supports_vision(&self) -> bool {
+        self.inner.supports_vision()
+    }
+
+    fn stream(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.inner.stream(messages)
+    }
+
+    fn stream_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.inner.stream_with_tools(messages, tools)
+    }
+}
 
 /// Resolve an API key from config (Secret) or environment variable,
 /// keeping the value wrapped in `Secret<String>` to avoid leaking it.
@@ -51,6 +127,7 @@ fn resolve_api_key(
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
 pub fn context_window_for_model(model_id: &str) -> u32 {
+    let model_id = raw_model_id(model_id);
     // Codestral has the largest window at 256k.
     if model_id.starts_with("codestral") {
         return 256_000;
@@ -89,6 +166,7 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
 /// When true, the runner sends images as multimodal content blocks rather than
 /// stripping them from the context.
 pub fn supports_vision_for_model(model_id: &str) -> bool {
+    let model_id = raw_model_id(model_id);
     // Claude models: all modern Claude models support vision
     if model_id.starts_with("claude-") {
         return true;
@@ -225,24 +303,269 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
     },
 ];
 
-/// Registry of available LLM providers, keyed by model ID.
+#[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+trait DynamicModelDiscovery {
+    fn provider_name(&self) -> &'static str;
+    fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool;
+    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str>;
+    fn available_models(&self) -> Vec<(String, String)>;
+    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>>;
+    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider>;
+    fn display_name(&self, model_id: &str, discovered: &str) -> String;
+}
+
+#[cfg(feature = "provider-openai-codex")]
+struct OpenAiCodexDiscovery;
+
+#[cfg(feature = "provider-openai-codex")]
+impl DynamicModelDiscovery for OpenAiCodexDiscovery {
+    fn provider_name(&self) -> &'static str {
+        "openai-codex"
+    }
+
+    fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool {
+        config.is_enabled(self.provider_name()) && openai_codex::has_stored_tokens()
+    }
+
+    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str> {
+        config
+            .get(self.provider_name())
+            .and_then(|entry| entry.model.as_deref())
+            .map(|model| configured_model_for_provider(self.provider_name(), model))
+    }
+
+    fn available_models(&self) -> Vec<(String, String)> {
+        openai_codex::available_models()
+    }
+
+    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+        openai_codex::live_models()
+    }
+
+    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider> {
+        Arc::new(openai_codex::OpenAiCodexProvider::new(model_id))
+    }
+
+    fn display_name(&self, _model_id: &str, discovered: &str) -> String {
+        format!("{discovered} (Codex/OAuth)")
+    }
+}
+
+#[cfg(feature = "provider-github-copilot")]
+struct GitHubCopilotDiscovery;
+
+#[cfg(feature = "provider-github-copilot")]
+impl DynamicModelDiscovery for GitHubCopilotDiscovery {
+    fn provider_name(&self) -> &'static str {
+        "github-copilot"
+    }
+
+    fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool {
+        config.is_enabled(self.provider_name()) && github_copilot::has_stored_tokens()
+    }
+
+    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str> {
+        config
+            .get(self.provider_name())
+            .and_then(|entry| entry.model.as_deref())
+            .map(|model| configured_model_for_provider(self.provider_name(), model))
+    }
+
+    fn available_models(&self) -> Vec<(String, String)> {
+        github_copilot::available_models()
+    }
+
+    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+        github_copilot::live_models()
+    }
+
+    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider> {
+        Arc::new(github_copilot::GitHubCopilotProvider::new(model_id))
+    }
+
+    fn display_name(&self, _model_id: &str, discovered: &str) -> String {
+        if discovered.to_ascii_lowercase().contains("copilot") {
+            discovered.to_string()
+        } else {
+            format!("{discovered} (Copilot)")
+        }
+    }
+}
+
+/// Registry of available LLM providers, keyed by namespaced model ID.
 pub struct ProviderRegistry {
     providers: HashMap<String, Arc<dyn LlmProvider>>,
     models: Vec<ModelInfo>,
 }
 
 impl ProviderRegistry {
+    fn has_provider_model(&self, provider: &str, model_id: &str) -> bool {
+        self.providers
+            .contains_key(&namespaced_model_id(provider, model_id))
+    }
+
+    fn resolve_registry_model_id(
+        &self,
+        model_id: &str,
+        provider_hint: Option<&str>,
+    ) -> Option<String> {
+        if self.providers.contains_key(model_id) {
+            return Some(model_id.to_string());
+        }
+
+        let raw = raw_model_id(model_id);
+        let mut matches = self
+            .models
+            .iter()
+            .filter(|m| raw_model_id(&m.id) == raw)
+            .filter(|m| provider_hint.is_none_or(|hint| m.provider == hint))
+            .map(|m| m.id.clone());
+
+        matches.next()
+    }
+
+    #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+    #[allow(clippy::vec_init_then_push)]
+    fn dynamic_discovery_sources() -> Vec<Box<dyn DynamicModelDiscovery>> {
+        let mut sources: Vec<Box<dyn DynamicModelDiscovery>> = Vec::new();
+        #[cfg(feature = "provider-openai-codex")]
+        sources.push(Box::new(OpenAiCodexDiscovery));
+        #[cfg(feature = "provider-github-copilot")]
+        sources.push(Box::new(GitHubCopilotDiscovery));
+        sources
+    }
+
+    #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+    fn desired_models_for_dynamic_source(
+        source: &dyn DynamicModelDiscovery,
+        config: &ProvidersConfig,
+        catalog: Vec<(String, String)>,
+    ) -> Option<Vec<(String, String)>> {
+        if !source.is_enabled_and_authenticated(config) {
+            return None;
+        }
+
+        if let Some(model_id) = source.configured_model(config) {
+            let display_name = catalog
+                .iter()
+                .find(|(id, _)| id == model_id)
+                .map(|(_, name)| name.as_str())
+                .unwrap_or(model_id);
+            return Some(vec![(model_id.to_string(), display_name.to_string())]);
+        }
+
+        Some(catalog)
+    }
+
+    #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+    fn register_dynamic_source_models(
+        &mut self,
+        source: &dyn DynamicModelDiscovery,
+        config: &ProvidersConfig,
+        catalog: Vec<(String, String)>,
+    ) {
+        let Some(models) = Self::desired_models_for_dynamic_source(source, config, catalog) else {
+            return;
+        };
+
+        for (model_id, discovered_display) in models {
+            if self.has_provider_model(source.provider_name(), &model_id) {
+                continue;
+            }
+            let provider = source.build_provider(model_id.clone());
+            self.register(
+                ModelInfo {
+                    id: model_id.clone(),
+                    provider: source.provider_name().to_string(),
+                    display_name: source.display_name(&model_id, &discovered_display),
+                },
+                provider,
+            );
+        }
+    }
+
+    #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+    fn refresh_dynamic_source_models(
+        &mut self,
+        source: &dyn DynamicModelDiscovery,
+        config: &ProvidersConfig,
+    ) -> bool {
+        if !source.is_enabled_and_authenticated(config) {
+            return false;
+        }
+
+        let live_catalog = match source.live_models() {
+            Ok(models) => models,
+            Err(err) => {
+                tracing::warn!(
+                    provider = source.provider_name(),
+                    error = %err,
+                    "skipping dynamic model refresh because live fetch failed"
+                );
+                return false;
+            },
+        };
+
+        let Some(next_models) =
+            Self::desired_models_for_dynamic_source(source, config, live_catalog)
+        else {
+            return false;
+        };
+
+        let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = next_models
+            .into_iter()
+            .map(|(model_id, discovered_display)| {
+                (
+                    ModelInfo {
+                        id: model_id.clone(),
+                        provider: source.provider_name().to_string(),
+                        display_name: source.display_name(&model_id, &discovered_display),
+                    },
+                    source.build_provider(model_id),
+                )
+            })
+            .collect();
+
+        // Replace stale provider entries atomically only after successful fetch.
+        let stale_ids: Vec<String> = self
+            .models
+            .iter()
+            .filter(|m| m.provider == source.provider_name())
+            .map(|m| m.id.clone())
+            .collect();
+        for model_id in &stale_ids {
+            self.providers.remove(model_id);
+        }
+        self.models.retain(|m| m.provider != source.provider_name());
+        for (info, provider) in new_entries {
+            self.register(info, provider);
+        }
+
+        true
+    }
+
     /// Register a provider manually.
-    pub fn register(&mut self, info: ModelInfo, provider: Arc<dyn LlmProvider>) {
-        self.providers.insert(info.id.clone(), provider);
+    pub fn register(&mut self, mut info: ModelInfo, provider: Arc<dyn LlmProvider>) {
+        let model_id = raw_model_id(&info.id).to_string();
+        let registry_model_id = namespaced_model_id(&info.provider, &model_id);
+        info.id = registry_model_id.clone();
+        let wrapped: Arc<dyn LlmProvider> = Arc::new(RegistryModelProvider {
+            model_id: registry_model_id.clone(),
+            inner: provider,
+        });
+        self.providers.insert(registry_model_id, wrapped);
         self.models.push(info);
     }
 
     /// Unregister a provider by model ID. Returns true if it was removed.
     pub fn unregister(&mut self, model_id: &str) -> bool {
-        let removed = self.providers.remove(model_id).is_some();
-        if removed {
-            self.models.retain(|m| m.id != model_id);
+        let resolved_id = self.resolve_registry_model_id(model_id, None);
+        let removed = resolved_id
+            .as_deref()
+            .and_then(|id| self.providers.remove(id))
+            .is_some();
+        if removed && let Some(id) = resolved_id {
+            self.models.retain(|m| m.id != id);
         }
         removed
     }
@@ -353,14 +676,14 @@ impl ProviderRegistry {
                 .get(provider_name)
                 .and_then(|e| e.model.as_deref())
                 .unwrap_or(default_model_id);
-
-            if self.providers.contains_key(model_id) {
-                continue;
-            }
+            let model_id = configured_model_for_provider(provider_name, model_id);
 
             // Get alias if configured (for metrics differentiation).
             let alias = config.get(provider_name).and_then(|e| e.alias.clone());
             let genai_provider_name = alias.unwrap_or_else(|| format!("genai/{provider_name}"));
+            if self.has_provider_model(&genai_provider_name, model_id) {
+                continue;
+            }
 
             let provider = Arc::new(genai_provider::GenaiProvider::new(
                 model_id.into(),
@@ -398,14 +721,14 @@ impl ProviderRegistry {
             .get("openai")
             .and_then(|e| e.model.as_deref())
             .unwrap_or("gpt-4o");
-
-        if self.providers.contains_key(model_id) {
-            return;
-        }
+        let model_id = configured_model_for_provider("openai", model_id);
 
         // Get alias if configured (for metrics differentiation).
         let alias = config.get("openai").and_then(|e| e.alias.clone());
         let provider_label = alias.clone().unwrap_or_else(|| "async-openai".into());
+        if self.has_provider_model(&provider_label, model_id) {
+            return;
+        }
 
         let provider = Arc::new(async_openai_provider::AsyncOpenAiProvider::with_alias(
             key,
@@ -425,107 +748,59 @@ impl ProviderRegistry {
 
     #[cfg(feature = "provider-openai-codex")]
     fn register_openai_codex_providers(&mut self, config: &ProvidersConfig) {
-        if !config.is_enabled("openai-codex") {
-            return;
+        let source = OpenAiCodexDiscovery;
+        self.register_dynamic_source_models(&source, config, source.available_models());
+    }
+
+    pub fn refresh_openai_codex_models(&mut self, config: &ProvidersConfig) -> bool {
+        #[cfg(feature = "provider-openai-codex")]
+        {
+            let source = OpenAiCodexDiscovery;
+            self.refresh_dynamic_source_models(&source, config)
         }
 
-        if !openai_codex::has_stored_tokens() {
-            return;
-        }
-
-        // All available Codex models, matching the Codex CLI model picker.
-        let codex_models: &[(&str, &str)] = &[
-            ("gpt-5.2-codex", "GPT-5.2 Codex"),
-            ("gpt-5.2", "GPT-5.2"),
-            ("gpt-5.1-codex-max", "GPT-5.1 Codex Max"),
-            ("gpt-5.1-codex-mini", "GPT-5.1 Codex Mini"),
-        ];
-
-        // If user configured a specific model, register only that one.
-        if let Some(model_id) = config.get("openai-codex").and_then(|e| e.model.as_deref()) {
-            if !self.providers.contains_key(model_id) {
-                let display_name = codex_models
-                    .iter()
-                    .find(|(id, _)| *id == model_id)
-                    .map(|(_, name)| format!("{name} (Codex/OAuth)"))
-                    .unwrap_or_else(|| format!("{model_id} (Codex/OAuth)"));
-                let provider = Arc::new(openai_codex::OpenAiCodexProvider::new(model_id.into()));
-                self.register(
-                    ModelInfo {
-                        id: model_id.into(),
-                        provider: "openai-codex".into(),
-                        display_name,
-                    },
-                    provider,
-                );
-            }
-            return;
-        }
-
-        // No specific model configured — register all available Codex models.
-        for &(model_id, display_name) in codex_models {
-            if self.providers.contains_key(model_id) {
-                continue;
-            }
-            let provider = Arc::new(openai_codex::OpenAiCodexProvider::new(model_id.into()));
-            self.register(
-                ModelInfo {
-                    id: model_id.into(),
-                    provider: "openai-codex".into(),
-                    display_name: format!("{display_name} (Codex/OAuth)"),
-                },
-                provider,
-            );
+        #[cfg(not(feature = "provider-openai-codex"))]
+        {
+            let _ = config;
+            false
         }
     }
 
     #[cfg(feature = "provider-github-copilot")]
     fn register_github_copilot_providers(&mut self, config: &ProvidersConfig) {
-        if !config.is_enabled("github-copilot") {
-            return;
-        }
+        let source = GitHubCopilotDiscovery;
+        self.register_dynamic_source_models(&source, config, source.available_models());
+    }
 
-        if !github_copilot::has_stored_tokens() {
-            return;
-        }
-
-        if let Some(model_id) = config
-            .get("github-copilot")
-            .and_then(|e| e.model.as_deref())
+    pub fn refresh_github_copilot_models(&mut self, config: &ProvidersConfig) -> bool {
+        #[cfg(feature = "provider-github-copilot")]
         {
-            if !self.providers.contains_key(model_id) {
-                let display = github_copilot::COPILOT_MODELS
-                    .iter()
-                    .find(|(id, _)| *id == model_id)
-                    .map(|(_, name)| name.to_string())
-                    .unwrap_or_else(|| format!("{model_id} (Copilot)"));
-                let provider =
-                    Arc::new(github_copilot::GitHubCopilotProvider::new(model_id.into()));
-                self.register(
-                    ModelInfo {
-                        id: model_id.into(),
-                        provider: "github-copilot".into(),
-                        display_name: display,
-                    },
-                    provider,
-                );
-            }
-            return;
+            let source = GitHubCopilotDiscovery;
+            self.refresh_dynamic_source_models(&source, config)
         }
 
-        for &(model_id, display_name) in github_copilot::COPILOT_MODELS {
-            if self.providers.contains_key(model_id) {
-                continue;
+        #[cfg(not(feature = "provider-github-copilot"))]
+        {
+            let _ = config;
+            false
+        }
+    }
+
+    pub fn refresh_dynamic_models(&mut self, config: &ProvidersConfig) -> Vec<(String, bool)> {
+        #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
+        {
+            let mut results = Vec::new();
+            for source in Self::dynamic_discovery_sources() {
+                let refreshed = self.refresh_dynamic_source_models(source.as_ref(), config);
+                results.push((source.provider_name().to_string(), refreshed));
             }
-            let provider = Arc::new(github_copilot::GitHubCopilotProvider::new(model_id.into()));
-            self.register(
-                ModelInfo {
-                    id: model_id.into(),
-                    provider: "github-copilot".into(),
-                    display_name: display_name.into(),
-                },
-                provider,
-            );
+            results
+        }
+
+        #[cfg(not(any(feature = "provider-openai-codex", feature = "provider-github-copilot")))]
+        {
+            let _ = config;
+            Vec::new()
         }
     }
 
@@ -535,18 +810,39 @@ impl ProviderRegistry {
             return;
         }
 
-        if !kimi_code::has_stored_tokens() {
+        let api_key = resolve_api_key(config, "kimi-code", "KIMI_API_KEY");
+        let has_oauth_tokens = kimi_code::has_stored_tokens();
+        if api_key.is_none() && !has_oauth_tokens {
             return;
         }
 
-        if let Some(model_id) = config.get("kimi-code").and_then(|e| e.model.as_deref()) {
-            if !self.providers.contains_key(model_id) {
+        let base_url = config
+            .get("kimi-code")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| std::env::var("KIMI_BASE_URL").ok())
+            .unwrap_or_else(|| "https://api.moonshot.ai/v1".into());
+
+        let build_provider = |model_id: &str| -> Arc<dyn LlmProvider> {
+            if let Some(api_key) = api_key.as_ref() {
+                Arc::new(kimi_code::KimiCodeProvider::new_with_api_key(
+                    api_key.clone(),
+                    model_id.into(),
+                    base_url.clone(),
+                ))
+            } else {
+                Arc::new(kimi_code::KimiCodeProvider::new(model_id.into()))
+            }
+        };
+
+        if let Some(configured_model) = config.get("kimi-code").and_then(|e| e.model.as_deref()) {
+            let model_id = configured_model_for_provider("kimi-code", configured_model);
+            if !self.has_provider_model("kimi-code", model_id) {
                 let display = kimi_code::KIMI_CODE_MODELS
                     .iter()
                     .find(|(id, _)| *id == model_id)
                     .map(|(_, name)| name.to_string())
-                    .unwrap_or_else(|| format!("{model_id} (Kimi Code/OAuth)"));
-                let provider = Arc::new(kimi_code::KimiCodeProvider::new(model_id.into()));
+                    .unwrap_or_else(|| model_id.to_string());
+                let provider = build_provider(model_id);
                 self.register(
                     ModelInfo {
                         id: model_id.into(),
@@ -560,10 +856,10 @@ impl ProviderRegistry {
         }
 
         for &(model_id, display_name) in kimi_code::KIMI_CODE_MODELS {
-            if self.providers.contains_key(model_id) {
+            if self.has_provider_model("kimi-code", model_id) {
                 continue;
             }
-            let provider = Arc::new(kimi_code::KimiCodeProvider::new(model_id.into()));
+            let provider = build_provider(model_id);
             self.register(
                 ModelInfo {
                     id: model_id.into(),
@@ -592,10 +888,11 @@ impl ProviderRegistry {
         let mut model_ids: Vec<String> = config.local_models.clone();
 
         // Add the single model if not already in the list
-        if let Some(model_id) = config.get("local").and_then(|e| e.model.as_deref())
-            && !model_ids.contains(&model_id.to_string())
+        if let Some(configured_model) = config.get("local").and_then(|e| e.model.as_deref())
+            && !model_ids
+                .contains(&configured_model_for_provider("local", configured_model).to_string())
         {
-            model_ids.push(model_id.to_string());
+            model_ids.push(configured_model_for_provider("local", configured_model).to_string());
         }
 
         if model_ids.is_empty() {
@@ -613,7 +910,7 @@ impl ProviderRegistry {
 
         // Register each model
         for model_id in model_ids {
-            if self.providers.contains_key(&model_id) {
+            if self.has_provider_model("local-llm", &model_id) {
                 continue;
             }
 
@@ -673,7 +970,8 @@ impl ProviderRegistry {
 
             // If user configured a specific model, register only that one.
             if let Some(model_id) = config.get("anthropic").and_then(|e| e.model.as_deref()) {
-                if !self.providers.contains_key(model_id) {
+                let model_id = configured_model_for_provider("anthropic", model_id);
+                if !self.has_provider_model(&provider_label, model_id) {
                     let display = ANTHROPIC_MODELS
                         .iter()
                         .find(|(id, _)| *id == model_id)
@@ -697,7 +995,7 @@ impl ProviderRegistry {
             } else {
                 // No specific model — register all known Anthropic models.
                 for &(model_id, display_name) in ANTHROPIC_MODELS {
-                    if self.providers.contains_key(model_id) {
+                    if self.has_provider_model(&provider_label, model_id) {
                         continue;
                     }
                     let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
@@ -733,7 +1031,8 @@ impl ProviderRegistry {
             let provider_label = alias.clone().unwrap_or_else(|| "openai".into());
 
             if let Some(model_id) = config.get("openai").and_then(|e| e.model.as_deref()) {
-                if !self.providers.contains_key(model_id) {
+                let model_id = configured_model_for_provider("openai", model_id);
+                if !self.has_provider_model(&provider_label, model_id) {
                     let display = OPENAI_MODELS
                         .iter()
                         .find(|(id, _)| *id == model_id)
@@ -756,7 +1055,7 @@ impl ProviderRegistry {
                 }
             } else {
                 for &(model_id, display_name) in OPENAI_MODELS {
-                    if self.providers.contains_key(model_id) {
+                    if self.has_provider_model(&provider_label, model_id) {
                         continue;
                     }
                     let provider = Arc::new(openai::OpenAiProvider::new_with_name(
@@ -809,7 +1108,8 @@ impl ProviderRegistry {
 
             // If user configured a specific model, register only that one.
             if let Some(model_id) = config.get(def.config_name).and_then(|e| e.model.as_deref()) {
-                if !self.providers.contains_key(model_id) {
+                let model_id = configured_model_for_provider(def.config_name, model_id);
+                if !self.has_provider_model(&provider_label, model_id) {
                     let display = def
                         .models
                         .iter()
@@ -840,7 +1140,7 @@ impl ProviderRegistry {
                 continue;
             }
             for &(model_id, display_name) in def.models {
-                if self.providers.contains_key(model_id) {
+                if self.has_provider_model(&provider_label, model_id) {
                     continue;
                 }
                 let provider = Arc::new(openai::OpenAiProvider::new_with_name(
@@ -862,7 +1162,10 @@ impl ProviderRegistry {
     }
 
     pub fn get(&self, model_id: &str) -> Option<Arc<dyn LlmProvider>> {
-        self.providers.get(model_id).cloned()
+        self.resolve_registry_model_id(model_id, None)
+            .as_deref()
+            .and_then(|id| self.providers.get(id))
+            .cloned()
     }
 
     pub fn first(&self) -> Option<Arc<dyn LlmProvider>> {
@@ -899,7 +1202,12 @@ impl ProviderRegistry {
     pub fn providers_for_models(&self, model_ids: &[String]) -> Vec<Arc<dyn LlmProvider>> {
         model_ids
             .iter()
-            .filter_map(|id| self.providers.get(id.as_str()).cloned())
+            .filter_map(|id| {
+                self.resolve_registry_model_id(id, None)
+                    .as_deref()
+                    .and_then(|rid| self.providers.get(rid))
+                    .cloned()
+            })
             .collect()
     }
 
@@ -915,6 +1223,7 @@ impl ProviderRegistry {
         primary_model_id: &str,
         primary_provider_name: &str,
     ) -> Vec<Arc<dyn LlmProvider>> {
+        let primary_raw_model_id = raw_model_id(primary_model_id);
         let mut same_model_diff_provider = Vec::new();
         let mut same_provider_diff_model = Vec::new();
         let mut other = Vec::new();
@@ -926,7 +1235,7 @@ impl ProviderRegistry {
             let Some(p) = self.providers.get(&info.id).cloned() else {
                 continue;
             };
-            if info.id == primary_model_id {
+            if raw_model_id(&info.id) == primary_raw_model_id {
                 same_model_diff_provider.push(p);
             } else if info.provider == primary_provider_name {
                 same_provider_diff_model.push(p);
@@ -1197,6 +1506,46 @@ mod tests {
         assert_eq!(reg.list_models().len(), initial_count + 1);
         assert!(reg.get("test-model").is_some());
         assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[cfg(feature = "provider-openai-codex")]
+    #[test]
+    fn refresh_openai_codex_models_is_noop_when_disabled() {
+        let mut reg = ProviderRegistry {
+            providers: HashMap::new(),
+            models: Vec::new(),
+        };
+        let provider = Arc::new(openai::OpenAiProvider::new_with_name(
+            secret("k"),
+            "gpt-5.2-codex".into(),
+            "https://example.com/v1".into(),
+            "openai-codex".into(),
+        ));
+        reg.register(
+            ModelInfo {
+                id: "gpt-5.2-codex".into(),
+                provider: "openai-codex".into(),
+                display_name: "GPT-5.2 Codex (Codex/OAuth)".into(),
+            },
+            provider,
+        );
+
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "openai-codex".into(),
+            moltis_config::schema::ProviderEntry {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+
+        let refreshed = reg.refresh_openai_codex_models(&config);
+        assert!(!refreshed);
+        assert!(
+            reg.list_models()
+                .iter()
+                .any(|m| m.provider == "openai-codex")
+        );
     }
 
     #[test]

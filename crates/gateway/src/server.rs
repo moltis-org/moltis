@@ -14,8 +14,11 @@ use {
         response::{IntoResponse, Json},
         routing::get,
     },
-    tower_http::cors::{Any, CorsLayer},
-    tracing::{debug, info, warn},
+    tower_http::{
+        cors::{Any, CorsLayer},
+        trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    },
+    tracing::{Level, debug, info, warn},
 };
 
 #[cfg(feature = "web-ui")]
@@ -278,6 +281,7 @@ pub fn build_gateway_app(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
+    http_request_logs: bool,
 ) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -312,6 +316,8 @@ pub fn build_gateway_app(
         // Public routes (assets, PWA files, SPA fallback).
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route("/onboarding", get(onboarding_handler))
+            .route("/onboarding/", get(onboarding_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -320,12 +326,47 @@ pub fn build_gateway_app(
             .fallback(spa_fallback)
     };
 
-    router.layer(cors).with_state(app_state)
+    let router = router.layer(cors);
+    let router = if http_request_logs {
+        let http_trace = TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::http::Request<_>| {
+                let user_agent = request
+                    .headers()
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                let referer = request
+                    .headers()
+                    .get(axum::http::header::REFERER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    user_agent = %user_agent,
+                    referer = %referer
+                )
+            })
+            .on_request(DefaultOnRequest::new().level(Level::INFO))
+            .on_response(DefaultOnResponse::new().level(Level::INFO));
+        router.layer(http_trace)
+    } else {
+        router
+    };
+
+    router.with_state(app_state)
 }
 
 /// Build the gateway router (shared between production startup and tests).
 #[cfg(not(feature = "push-notifications"))]
-pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>) -> Router {
+pub fn build_gateway_app(
+    state: Arc<GatewayState>,
+    methods: Arc<MethodRegistry>,
+    http_request_logs: bool,
+) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -367,6 +408,8 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
         // Public routes (assets, PWA files, SPA fallback).
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route("/onboarding", get(onboarding_handler))
+            .route("/onboarding/", get(onboarding_handler))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -375,7 +418,38 @@ pub fn build_gateway_app(state: Arc<GatewayState>, methods: Arc<MethodRegistry>)
             .fallback(spa_fallback)
     };
 
-    router.layer(cors).with_state(app_state)
+    let router = router.layer(cors);
+    let router = if http_request_logs {
+        let http_trace = TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::http::Request<_>| {
+                let user_agent = request
+                    .headers()
+                    .get(axum::http::header::USER_AGENT)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                let referer = request
+                    .headers()
+                    .get(axum::http::header::REFERER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_owned();
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    user_agent = %user_agent,
+                    referer = %referer
+                )
+            })
+            .on_request(DefaultOnRequest::new().level(Level::INFO))
+            .on_response(DefaultOnResponse::new().level(Level::INFO));
+        router.layer(http_trace)
+    } else {
+        router
+    };
+
+    router.with_state(app_state)
 }
 
 /// Start the gateway HTTP + WebSocket server.
@@ -412,17 +486,75 @@ pub async fn start_gateway(
         config.tls.enabled = false;
     }
 
+    let base_provider_config = config.providers.clone();
+
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
     let key_store = crate::provider_setup::KeyStore::new();
     let effective_providers =
-        crate::provider_setup::config_with_saved_keys(&config.providers, &key_store);
+        crate::provider_setup::config_with_saved_keys(&base_provider_config, &key_store);
+
+    let has_explicit_provider_settings =
+        crate::provider_setup::has_explicit_provider_settings(&config.providers);
+    let auto_detected_provider_sources = if has_explicit_provider_settings {
+        Vec::new()
+    } else {
+        crate::provider_setup::detect_auto_provider_sources(
+            &config.providers,
+            deploy_platform.as_deref(),
+        )
+    };
 
     // Discover LLM providers from env + config + saved keys.
     let registry = Arc::new(tokio::sync::RwLock::new(
         ProviderRegistry::from_env_with_config(&effective_providers),
     ));
     let provider_summary = registry.read().await.provider_summary();
+
+    if !has_explicit_provider_settings {
+        if auto_detected_provider_sources.is_empty() {
+            info!("llm auto-detect: no providers detected from env/files");
+        } else {
+            for detected in &auto_detected_provider_sources {
+                info!(
+                    provider = %detected.provider,
+                    source = %detected.source,
+                    "llm auto-detected provider source"
+                );
+            }
+        }
+    }
+
+    // Refresh dynamic provider model discovery hourly so long-lived sessions
+    // pick up newly available models without requiring a restart.
+    {
+        let registry_for_refresh = Arc::clone(&registry);
+        let provider_config_for_refresh = base_provider_config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let mut reg = registry_for_refresh.write().await;
+                let refresh_results = reg.refresh_dynamic_models(&provider_config_for_refresh);
+                for (provider_name, refreshed) in refresh_results {
+                    if !refreshed {
+                        continue;
+                    }
+                    let model_count = reg
+                        .list_models()
+                        .iter()
+                        .filter(|m| m.provider == provider_name)
+                        .count();
+                    info!(
+                        provider = %provider_name,
+                        models = model_count,
+                        "hourly dynamic provider model refresh complete"
+                    );
+                }
+            }
+        });
+    }
 
     // Create shared approval manager from config.
     let approval_manager = Arc::new(approval_manager_from_config(&config));
@@ -467,9 +599,21 @@ pub async fn start_gateway(
     // When local-llm feature is disabled, this variable is not needed since
     // the only usage is also feature-gated.
 
-    if !registry.read().await.is_empty() {
-        services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
-    }
+    let model_store = Arc::new(tokio::sync::RwLock::new(
+        crate::chat::DisabledModelsStore::load(),
+    ));
+
+    let live_model_service: Option<Arc<LiveModelService>> = if !registry.read().await.is_empty() {
+        let svc = Arc::new(LiveModelService::new(
+            Arc::clone(&registry),
+            Arc::clone(&model_store),
+            config.chat.priority_models.clone(),
+        ));
+        services = services.with_model(Arc::clone(&svc) as Arc<dyn crate::services::ModelService>);
+        Some(svc)
+    } else {
+        None
+    };
 
     // Wire live MCP service.
     let mcp_configured_count;
@@ -1489,6 +1633,7 @@ pub async fn start_gateway(
         hook_registry.clone(),
         memory_manager.clone(),
         port,
+        config.server.ws_request_logs,
         deploy_platform.clone(),
         #[cfg(feature = "metrics")]
         metrics_handle,
@@ -1538,6 +1683,28 @@ pub async fn start_gateway(
     #[cfg(feature = "local-llm")]
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
+    }
+
+    // Set the state on model service for broadcasting model update events.
+    if let Some(svc) = &live_model_service {
+        svc.set_state(Arc::clone(&state));
+
+        // Run an initial background model support probe once after startup.
+        let probe_service = Arc::clone(svc);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Err(err) = crate::services::ModelService::detect_supported(
+                &*probe_service,
+                serde_json::json!({
+                    "background": true,
+                    "reason": "startup",
+                }),
+            )
+            .await
+            {
+                warn!(error = %err, "initial model support probe failed");
+            }
+        });
     }
 
     // Store heartbeat config on state for gon data and RPC methods.
@@ -1657,6 +1824,7 @@ pub async fn start_gateway(
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
         let mut chat_service = LiveChatService::new(
             Arc::clone(&registry),
+            Arc::clone(&model_store),
             Arc::clone(&state),
             Arc::clone(&session_store),
             Arc::clone(&session_metadata),
@@ -1737,10 +1905,19 @@ pub async fn start_gateway(
 
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     #[cfg(feature = "push-notifications")]
-    let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods), push_service);
+    let mut app = build_gateway_app(
+        Arc::clone(&state),
+        Arc::clone(&methods),
+        push_service,
+        config.server.http_request_logs,
+    );
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     #[cfg(not(feature = "push-notifications"))]
-    let mut app = build_gateway_app(Arc::clone(&state), Arc::clone(&methods));
+    let mut app = build_gateway_app(
+        Arc::clone(&state),
+        Arc::clone(&methods),
+        config.server.http_request_logs,
+    );
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
 
@@ -2896,24 +3073,51 @@ async fn spa_fallback(
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
 
-    if let Some((setup_required, authenticated)) = auth_status_from_request(&state, &headers).await
-        && should_redirect_to_onboarding(path, setup_required, authenticated)
-    {
+    let onboarded = onboarding_completed(&state.gateway).await;
+    let setup_required = auth_status_from_request(&state, &headers)
+        .await
+        .map(|(setup_required, _authenticated)| setup_required)
+        .unwrap_or(false);
+    if should_redirect_to_onboarding(path, setup_required, onboarded) {
         return Redirect::to("/onboarding").into_response();
     }
+    render_spa_template(&state.gateway, false).await
+}
 
-    let raw = read_asset("index.html")
+#[cfg(feature = "web-ui")]
+async fn onboarding_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    let onboarded = onboarding_completed(&state.gateway).await;
+    let setup_required = auth_status_from_request(&state, &headers)
+        .await
+        .map(|(setup_required, _authenticated)| setup_required)
+        .unwrap_or(false);
+
+    if should_redirect_from_onboarding("/onboarding", setup_required, onboarded) {
+        return Redirect::to("/").into_response();
+    }
+
+    render_spa_template(&state.gateway, true).await
+}
+
+#[cfg(feature = "web-ui")]
+async fn render_spa_template(
+    gateway: &GatewayState,
+    onboarding_shell: bool,
+) -> axum::response::Response {
+    let template_name = if onboarding_shell {
+        "onboarding.html"
+    } else {
+        "index.html"
+    };
+
+    let raw = read_asset(template_name)
         .and_then(|b| String::from_utf8(b).ok())
         .unwrap_or_default();
 
-    // Build server-side data blob (gon pattern) injected into <head>.
-    let gon = build_gon_data(&state.gateway).await;
-    let gon_script = format!(
-        "<script>window.__MOLTIS__={};</script>",
-        serde_json::to_string(&gon).unwrap_or_else(|_| "{}".into()),
-    );
-
-    let body = if is_dev_assets() {
+    let mut body = if is_dev_assets() {
         // Dev: no versioned URLs, just serve directly with no-cache
         raw.replace("__BUILD_TS__", "dev")
     } else {
@@ -2924,37 +3128,17 @@ async fn spa_fallback(
             .replace("/assets/", &versioned)
     };
 
-    // Inject gon data into <head> so it's available before any module scripts run.
-    // An inline <script> in the <body> (right after the title elements) reads
-    // window.__MOLTIS__.identity to set emoji/name before the first paint.
-    let mut head_injections = vec![gon_script];
-    if path == "/onboarding" {
-        head_injections.push(
-            "<style>
-body.onboarding-init header,
-body.onboarding-init #branchBanner,
-body.onboarding-init #authDisabledBanner,
-body.onboarding-init #navOverlay,
-body.onboarding-init #sessionsOverlay,
-body.onboarding-init #navPanel,
-body.onboarding-init #sessionsPanel,
-body.onboarding-init #burgerBtn,
-body.onboarding-init #sessionsToggle {
-  display: none !important;
-}
-body.onboarding-init #pageContent {
-  min-height: 100vh;
-}
-</style>"
-                .to_owned(),
+    if !onboarding_shell {
+        // Build server-side data blob (gon pattern) injected into <head>.
+        let gon = build_gon_data(gateway).await;
+        let gon_script = format!(
+            "<script>window.__MOLTIS__={};</script>",
+            serde_json::to_string(&gon).unwrap_or_else(|_| "{}".into()),
         );
-    }
-    let mut body = body.replace(
-        "</head>",
-        &format!("{}\n</head>", head_injections.join("\n")),
-    );
-    if path == "/onboarding" {
-        body = body.replacen("<body>", "<body class=\"onboarding-init\">", 1);
+        // Inject gon data into <head> so it's available before any module scripts run.
+        // An inline <script> in the <body> (right after the title elements) reads
+        // window.__MOLTIS__.identity to set emoji/name before the first paint.
+        body = body.replace("</head>", &format!("{gon_script}\n</head>"));
     }
 
     ([("cache-control", "no-cache, no-store")], Html(body)).into_response()
@@ -2987,26 +3171,41 @@ async fn auth_status_from_request(
 }
 
 #[cfg(feature = "web-ui")]
-fn should_redirect_to_onboarding(path: &str, setup_required: bool, authenticated: bool) -> bool {
-    setup_required && !authenticated && path != "/onboarding"
+fn should_redirect_to_onboarding(path: &str, setup_required: bool, onboarded: bool) -> bool {
+    !is_onboarding_path(path) && (setup_required || !onboarded)
+}
+
+#[cfg(feature = "web-ui")]
+fn should_redirect_from_onboarding(path: &str, setup_required: bool, onboarded: bool) -> bool {
+    is_onboarding_path(path) && !setup_required && onboarded
+}
+
+#[cfg(feature = "web-ui")]
+fn is_onboarding_path(path: &str) -> bool {
+    path == "/onboarding" || path == "/onboarding/"
+}
+
+#[cfg(feature = "web-ui")]
+async fn onboarding_completed(gw: &GatewayState) -> bool {
+    gw.services
+        .onboarding
+        .wizard_status()
+        .await
+        .ok()
+        .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "web-ui")]
 async fn api_bootstrap_handler(State(state): State<AppState>) -> impl IntoResponse {
     let gw = &state.gateway;
-    let (channels, sessions, models, projects, wizard_status) = tokio::join!(
+    let (channels, sessions, models, projects, onboarded) = tokio::join!(
         gw.services.channel.status(),
         gw.services.session.list(),
         gw.services.model.list(),
         gw.services.project.list(),
-        gw.services.onboarding.wizard_status(),
+        onboarding_completed(gw),
     );
-    let onboarded = wizard_status
-        .as_ref()
-        .ok()
-        .and_then(|v| v.get("onboarded"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let identity = gw.services.agent.identity_get().await.ok();
     let sandbox = if let Some(ref router) = state.gateway.sandbox_router {
         let default_image = router.default_image().await;
@@ -4161,12 +4360,26 @@ mod tests {
     }
 
     #[test]
-    fn onboarding_redirect_only_when_setup_required_and_unauthenticated() {
+    fn onboarding_redirect_rules() {
+        // Setup/auth bootstrap still forces onboarding.
         assert!(should_redirect_to_onboarding("/", true, false));
         assert!(should_redirect_to_onboarding("/chats", true, false));
         assert!(!should_redirect_to_onboarding("/onboarding", true, false));
-        assert!(!should_redirect_to_onboarding("/", true, true));
-        assert!(!should_redirect_to_onboarding("/", false, false));
+
+        // Onboarding incomplete also forces onboarding server-side.
+        assert!(should_redirect_to_onboarding("/", false, false));
+
+        // Once onboarded and setup complete, no redirect is needed.
+        assert!(!should_redirect_to_onboarding("/", false, true));
+
+        // Once onboarding is complete, /onboarding should bounce back to /.
+        assert!(should_redirect_from_onboarding("/onboarding", false, true));
+        assert!(!should_redirect_from_onboarding("/onboarding", true, true));
+        assert!(!should_redirect_from_onboarding(
+            "/onboarding",
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -4240,6 +4453,16 @@ mod tests {
             .unwrap_or("");
         assert!(csp.contains("script-src 'none'"));
         assert!(csp.contains("object-src 'none'"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn onboarding_template_uses_dedicated_entrypoint() {
+        let raw = read_asset("onboarding.html").expect("onboarding template should exist");
+        let html = String::from_utf8(raw).expect("onboarding template should be valid utf-8");
+        assert!(html.contains("/assets/js/onboarding-app.js"));
+        assert!(!html.contains("/assets/js/app.js"));
+        assert!(!html.contains("/manifest.json"));
     }
 
     #[test]

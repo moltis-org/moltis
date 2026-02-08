@@ -176,6 +176,24 @@ pub fn config_dir() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".config").join("moltis"))
 }
 
+/// Returns the user-global config directory (`~/.config/moltis`) without
+/// considering overrides like `MOLTIS_CONFIG_DIR`.
+pub fn user_global_config_dir() -> Option<PathBuf> {
+    home_dir().map(|h| h.join(".config").join("moltis"))
+}
+
+/// Finds a config file in the user-global config directory only.
+pub fn find_user_global_config_file() -> Option<PathBuf> {
+    let dir = user_global_config_dir()?;
+    for name in CONFIG_FILENAMES {
+        let p = dir.join(name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// Returns the data directory: programmatic override → `MOLTIS_DATA_DIR` env →
 /// `~/.moltis/`.
 pub fn data_dir() -> PathBuf {
@@ -639,6 +657,17 @@ fn apply_env_overrides_with(
 
 /// Parse a string env value into a JSON value, trying bool and number first.
 fn parse_env_value(val: &str) -> serde_json::Value {
+    let trimmed = val.trim();
+
+    // Support JSON arrays/objects for list-like env overrides, e.g.
+    // MOLTIS_PROVIDERS__OFFERED='["openai","github-copilot"]' or '[]'.
+    if ((trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || (trimmed.starts_with('{') && trimmed.ends_with('}')))
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed)
+    {
+        return parsed;
+    }
+
     if val.eq_ignore_ascii_case("true") {
         return serde_json::Value::Bool(true);
     }
@@ -739,6 +768,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_env_value_json_array() {
+        assert_eq!(
+            parse_env_value("[\"openai\",\"github-copilot\"]"),
+            serde_json::json!(["openai", "github-copilot"])
+        );
+    }
+
+    #[test]
     fn set_nested_creates_intermediate_objects() {
         let mut root = serde_json::json!({});
         set_nested(
@@ -805,6 +842,28 @@ mod tests {
         )];
         let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
         assert_eq!(config.tools.exec.default_timeout_secs, 60);
+    }
+
+    #[test]
+    fn apply_env_overrides_providers_offered_array() {
+        let vars = vec![(
+            "MOLTIS_PROVIDERS__OFFERED".into(),
+            "[\"openai\",\"github-copilot\"]".into(),
+        )];
+        let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+        assert_eq!(config.providers.offered, vec!["openai", "github-copilot"]);
+    }
+
+    #[test]
+    fn apply_env_overrides_providers_offered_empty_array() {
+        let vars = vec![("MOLTIS_PROVIDERS__OFFERED".into(), "[]".into())];
+        let mut base = MoltisConfig::default();
+        base.providers.offered = vec!["openai".into()];
+        let config = apply_env_overrides_with(base, vars.into_iter());
+        assert!(
+            config.providers.offered.is_empty(),
+            "empty JSON array env override should clear providers.offered"
+        );
     }
 
     #[test]

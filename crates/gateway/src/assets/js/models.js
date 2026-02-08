@@ -15,7 +15,7 @@ function updateModelComboLabel(model) {
 }
 
 export function fetchModels() {
-	sendRpc("models.list", {}).then((res) => {
+	return sendRpc("models.list", {}).then((res) => {
 		if (!res?.ok) return;
 		S.setModels(res.payload || []);
 		if (S.models.length === 0) return;
@@ -25,6 +25,13 @@ export function fetchModels() {
 		S.setSelectedModelId(model.id);
 		updateModelComboLabel(model);
 		if (!found) localStorage.setItem("moltis-model", S.selectedModelId);
+
+		// If the dropdown is currently open, re-render to reflect updated flags
+		// (for example when a model becomes unsupported via a WS event).
+		if (S.modelDropdown && !S.modelDropdown.classList.contains("hidden")) {
+			var query = S.modelSearchInput ? S.modelSearchInput.value.trim() : "";
+			renderModelList(query);
+		}
 	});
 }
 
@@ -76,15 +83,32 @@ export function renderModelList(query) {
 		var el = document.createElement("div");
 		el.className = "model-dropdown-item";
 		if (m.id === S.selectedModelId) el.classList.add("selected");
+		if (m.unsupported) el.classList.add("model-dropdown-item-unsupported");
 		var label = document.createElement("span");
 		label.className = "model-item-label";
 		label.textContent = m.displayName || m.id;
 		el.appendChild(label);
+
+		var meta = document.createElement("span");
+		meta.className = "model-item-meta";
+
 		if (m.provider) {
 			var prov = document.createElement("span");
 			prov.className = "model-item-provider";
 			prov.textContent = m.provider;
-			el.appendChild(prov);
+			meta.appendChild(prov);
+		}
+
+		if (m.unsupported) {
+			var unsupported = document.createElement("span");
+			unsupported.className = "model-item-unsupported";
+			unsupported.textContent = "unsupported";
+			if (m.unsupportedReason) unsupported.title = m.unsupportedReason;
+			meta.appendChild(unsupported);
+		}
+
+		if (meta.childNodes.length > 0) {
+			el.appendChild(meta);
 		}
 		el.addEventListener("click", () => {
 			selectModel(m);

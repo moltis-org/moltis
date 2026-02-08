@@ -22,11 +22,21 @@ function updateThemeButtons(activeMode) {
 export function initTheme() {
 	var saved = localStorage.getItem("moltis-theme") || "system";
 	applyTheme(saved);
-	window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+	var mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+	var onSystemThemeChange = () => {
 		var current = localStorage.getItem("moltis-theme") || "system";
 		if (current === "system") applyTheme("system");
-	});
-	$("themeToggle").addEventListener("click", (e) => {
+	};
+	if (typeof mediaQuery.addEventListener === "function") {
+		mediaQuery.addEventListener("change", onSystemThemeChange);
+	} else if (typeof mediaQuery.addListener === "function") {
+		// Legacy Safari fallback.
+		mediaQuery.addListener(onSystemThemeChange);
+	}
+
+	var themeToggle = $("themeToggle");
+	if (!themeToggle) return;
+	themeToggle.addEventListener("click", (e) => {
 		var btn = e.target.closest(".theme-btn");
 		if (!btn) return;
 		var mode = btn.getAttribute("data-theme-val");

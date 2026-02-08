@@ -768,7 +768,7 @@ function SecuritySection() {
 				</p>
 				<button type="button" class="provider-btn" style="margin-top:10px;"
 					onClick=${() => {
-						navigate("/onboarding");
+						window.location.assign("/onboarding");
 					}}>Set up authentication</button>
 			</div>
 		</div>`;

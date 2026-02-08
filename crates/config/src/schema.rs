@@ -96,6 +96,12 @@ pub struct ServerConfig {
     /// Port to listen on. When a new config is created, a random available port
     /// is generated so each installation gets a unique port.
     pub port: u16,
+    /// Enable verbose Axum/Tower HTTP request logs (`http_request` spans).
+    /// Useful for debugging redirects and request flow.
+    pub http_request_logs: bool,
+    /// Enable WebSocket request/response logs (`ws:` entries).
+    /// Useful for debugging RPC calls from the web UI.
+    pub ws_request_logs: bool,
     /// Optional GitHub repository URL used by the update checker.
     ///
     /// When unset, Moltis falls back to the package repository metadata.
@@ -107,6 +113,8 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1".into(),
             port: 0, // Will be replaced with a random port when config is created
+            http_request_logs: false,
+            ws_request_logs: false,
             update_repository_url: None,
         }
     }
@@ -457,6 +465,8 @@ impl Default for TlsConfig {
 pub struct ChatConfig {
     /// How to handle messages that arrive while an agent run is active.
     pub message_queue_mode: MessageQueueMode,
+    /// Preferred model IDs to show first in selectors (full or raw model IDs).
+    pub priority_models: Vec<String>,
 }
 
 /// Behaviour when `chat.send()` is called during an active run.
@@ -866,6 +876,11 @@ pub struct OAuthProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProvidersConfig {
+    /// Optional allowlist of providers offered in web UI pickers (onboarding and
+    /// "add provider" modal). Empty means show all known providers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offered: Vec<String>,
+
     /// Provider-specific settings keyed by provider name.
     /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
     #[serde(flatten)]

@@ -11,7 +11,7 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Discord](https://img.shields.io/discord/1469505370169933837?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/t873en2E)
 
-[Features](#features) • [Installation](#installation) • [Quickstart](#quickstart) • [Cloud Deployment](#cloud-deployment) • [How It Works](#how-it-works) • [Hooks](#hooks) • [Discord](https://discord.gg/t873en2E)
+[Features](#features) • [Installation](#installation) • [Build](#build) • [Cloud Deployment](#cloud-deployment) • [How It Works](#how-it-works) • [Hooks](#hooks) • [Discord](https://discord.gg/t873en2E)
 
 </div>
 
@@ -38,35 +38,6 @@ docker pull ghcr.io/moltis-org/moltis:latest
 cargo install moltis --git https://github.com/moltis-org/moltis
 ```
 
-Moltis compiles your entire AI gateway — web UI, LLM providers, tools, and
-all assets — into a single self-contained executable. There is no Node.js
-process to babysit, no `node_modules` to keep in sync, no V8 garbage collector
-introducing latency spikes mid-conversation. Tokio's async runtime handles
-thousands of concurrent WebSocket connections with a fraction of the memory
-footprint, and Rust's ownership model means secrets wrapped in
-`secrecy::Secret` are zeroed on drop — not "eventually collected."
-
-What you get out of the box:
-
-- **Single binary deployment** — `cargo build --release` produces one file
-  that embeds the web UI, serves HTTP, speaks WebSocket, and connects to
-  Telegram. Copy it anywhere and run it.
-- **Native Apple Container support** — Sandbox commands in Docker *or* macOS
-  Containers (macOS 15+), with automatic backend selection. No other open-source
-  AI gateway does this.
-- **Compile-time safety** — Every LLM provider, tool, hook, and channel is
-  wired through traits. Misconfigurations that would be a runtime crash in
-  TypeScript are caught by `cargo check`.
-- **Streaming-first** — Token streaming is not bolted on; it is the primary
-  path. Responses start appearing the moment the first token arrives.
-- **Lock-free hook circuit breaker** — Hooks that fail repeatedly are
-  auto-disabled using atomic counters, not mutexes. They re-enable themselves
-  after a cooldown — no manual intervention.
-- **Auto-compaction** — When a conversation approaches 95 % of the model's
-  context window, history is summarized and important facts are persisted to
-  the memory store. On context-window-exceeded errors the agent loop
-  automatically compacts and retries once.
-
 ## Features
 
 - **Multi-provider LLM support** — OpenAI, Anthropic, GitHub Copilot, and more
@@ -90,7 +61,7 @@ What you get out of the box:
   truncates oversized results before feeding back to the LLM (configurable
   limit, default 50 KB)
 - **Memory and knowledge base** — embeddings-powered long-term memory
-- **Skills and plugins** — extensible skill system and plugin architecture
+- **Skills** — extensible skill system with support for existing repositories
 - **Hook system** — lifecycle hooks with priority ordering, parallel dispatch
   for read-only events, circuit breaker, dry-run mode, HOOK.md-based discovery,
   eligibility checks, bundled hooks (boot-md, session-memory, command-logger),
@@ -132,7 +103,7 @@ What you get out of the box:
   Serve (private HTTPS) or Funnel (public HTTPS), with status monitoring and
   mode switching from the web UI (optional `tailscale` feature flag)
 
-## Quickstart
+## Build
 
 ```bash
 # Clone and build
@@ -144,10 +115,7 @@ cargo build --release
 cargo run --release
 ```
 
-On first launch, a one-time setup code is printed to the terminal. Open
-`http://localhost:3000` in your browser, enter the code, and set a password or
-register a passkey. From there you can configure LLM providers and start
-chatting.
+Open `https://moltis.localhost:3000`
 
 ### Running with Docker
 

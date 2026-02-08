@@ -64,9 +64,9 @@ async fn start_auth_server_impl(
     let state_clone = Arc::clone(&state);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None);
+    let app = build_gateway_app(state, methods, None, false);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods);
+    let app = build_gateway_app(state, methods, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -92,9 +92,9 @@ async fn start_noauth_server() -> SocketAddr {
     );
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None);
+    let app = build_gateway_app(state, methods, None, false);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods);
+    let app = build_gateway_app(state, methods, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -756,6 +756,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 pub fn log_system_info_and_suggestions() {
     let sys = system_info::SystemInfo::detect();
     let tier = sys.memory_tier();
+    let cache_dir = models::default_models_dir();
 
     info!(
         total_ram_gb = sys.total_ram_gb(),
@@ -764,6 +765,10 @@ pub fn log_system_info_and_suggestions() {
         has_cuda = sys.has_cuda,
         tier = %tier,
         "local-llm system info"
+    );
+    info!(
+        cache_dir = %cache_dir.display(),
+        "local-llm model cache directory"
     );
 
     if let Some(suggested) = models::suggest_model(tier) {
@@ -775,11 +780,16 @@ pub fn log_system_info_and_suggestions() {
         );
     }
 
-    let available = models::models_for_tier(tier);
-    if !available.is_empty() {
-        let ids: Vec<&str> = available.iter().map(|m| m.id).collect();
-        info!(models = ?ids, "available models for {} tier", tier);
-    }
+    let cached_ids: Vec<&str> = models::MODEL_REGISTRY
+        .iter()
+        .filter(|m| models::is_model_cached(m, &cache_dir))
+        .map(|m| m.id)
+        .collect();
+    info!(
+        cached_models = ?cached_ids,
+        cached_count = cached_ids.len(),
+        "cached local models in model cache directory"
+    );
 }
 
 #[cfg(test)]

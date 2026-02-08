@@ -4,6 +4,8 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
+import { startProviderOAuth } from "./provider-oauth.js";
+import { validateProviderConnection } from "./provider-validation.js";
 import * as S from "./state.js";
 
 var _els = null;
@@ -198,6 +200,8 @@ export function showApiKeyForm(provider) {
 
 		saveBtn.disabled = true;
 		saveBtn.textContent = "Saving...";
+		keyLabel.classList.remove("text-error");
+		keyLabel.textContent = "API Key";
 
 		var payload = {
 			provider: provider.name,
@@ -210,24 +214,41 @@ export function showApiKeyForm(provider) {
 			payload.model = modelInp.value.trim();
 		}
 
-		sendRpc("providers.save_key", payload).then((res) => {
-			if (res?.ok) {
-				m.body.textContent = "";
-				var status = document.createElement("div");
-				status.className = "provider-status";
-				status.textContent = `${provider.displayName} configured successfully!`;
-				m.body.appendChild(status);
-				fetchModels();
-				if (S.refreshProvidersPage) S.refreshProvidersPage();
-				setTimeout(closeProviderModal, 1500);
-			} else {
+		sendRpc("providers.save_key", payload)
+			.then(async (res) => {
+				if (res?.ok) {
+					saveBtn.textContent = "Validating...";
+					var validation = await validateProviderConnection(provider.name);
+					if (!validation.ok) {
+						saveBtn.disabled = false;
+						saveBtn.textContent = "Save";
+						keyLabel.textContent = validation.message || "Saved credentials, but validation failed.";
+						keyLabel.classList.add("text-error");
+						return;
+					}
+
+					m.body.textContent = "";
+					var status = document.createElement("div");
+					status.className = "provider-status";
+					status.textContent = `${provider.displayName} configured successfully!`;
+					m.body.appendChild(status);
+					fetchModels();
+					if (S.refreshProvidersPage) S.refreshProvidersPage();
+					setTimeout(closeProviderModal, 1500);
+				} else {
+					saveBtn.disabled = false;
+					saveBtn.textContent = "Save";
+					var err = res?.error?.message || "Failed to save";
+					keyLabel.textContent = err;
+					keyLabel.classList.add("text-error");
+				}
+			})
+			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Save";
-				var err = res?.error?.message || "Failed to save";
-				keyLabel.textContent = err;
+				keyLabel.textContent = err?.message || "Failed to save";
 				keyLabel.classList.add("text-error");
-			}
-		});
+			});
 	});
 	btns.appendChild(saveBtn);
 	form.appendChild(btns);
@@ -263,25 +284,34 @@ export function showOAuthFlow(provider) {
 	connectBtn.addEventListener("click", () => {
 		connectBtn.disabled = true;
 		connectBtn.textContent = "Starting...";
-		sendRpc("providers.oauth.start", {
-			provider: provider.name,
-			redirectUri: `${window.location.origin}/auth/callback`,
-		}).then((res) => {
-			if (res?.ok && res.payload && res.payload.authUrl) {
-				window.open(res.payload.authUrl, "_blank");
-				connectBtn.textContent = "Waiting for auth...";
-				pollOAuthStatus(provider);
-			} else if (res?.ok && res.payload && res.payload.deviceFlow) {
+			startProviderOAuth(provider.name).then((result) => {
+				if (result.status === "already") {
+					connectBtn.textContent = "Connected";
+					desc.classList.remove("text-error");
+					desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
+					sendRpc("models.detect_supported", {
+						background: true,
+						reason: "provider_connected",
+						provider: provider.name,
+					});
+					fetchModels();
+					if (S.refreshProvidersPage) S.refreshProvidersPage();
+					setTimeout(closeProviderModal, 1200);
+				} else if (result.status === "browser") {
+					window.open(result.authUrl, "_blank");
+					connectBtn.textContent = "Waiting for auth...";
+					pollOAuthStatus(provider);
+			} else if (result.status === "device") {
 				connectBtn.textContent = "Waiting for auth...";
 				desc.classList.remove("text-error");
 				desc.textContent = "";
 				var linkEl = document.createElement("a");
-				linkEl.href = res.payload.verificationUri;
+				linkEl.href = result.verificationUrl;
 				linkEl.target = "_blank";
 				linkEl.className = "oauth-link";
-				linkEl.textContent = res.payload.verificationUri;
+				linkEl.textContent = result.verificationUrl;
 				var codeEl = document.createElement("strong");
-				codeEl.textContent = res.payload.userCode;
+				codeEl.textContent = result.userCode;
 				desc.appendChild(document.createTextNode("Go to "));
 				desc.appendChild(linkEl);
 				desc.appendChild(document.createTextNode(" and enter code: "));
@@ -290,7 +320,7 @@ export function showOAuthFlow(provider) {
 			} else {
 				connectBtn.disabled = false;
 				connectBtn.textContent = "Connect";
-				desc.textContent = res?.error?.message || "Failed to start OAuth";
+				desc.textContent = result.error || "Failed to start OAuth";
 				desc.classList.add("text-error");
 			}
 		});
@@ -323,6 +353,11 @@ function pollOAuthStatus(provider) {
 				status.className = "provider-status";
 				status.textContent = `${provider.displayName} connected successfully!`;
 				m.body.appendChild(status);
+				sendRpc("models.detect_supported", {
+					background: true,
+					reason: "provider_connected",
+					provider: provider.name,
+				});
 				fetchModels();
 				if (S.refreshProvidersPage) S.refreshProvidersPage();
 				setTimeout(closeProviderModal, 1500);

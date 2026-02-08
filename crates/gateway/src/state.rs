@@ -278,6 +278,8 @@ pub struct GatewayState {
     pub localhost_only: bool,
     /// Whether TLS is active on the gateway listener.
     pub tls_active: bool,
+    /// Whether WebSocket request/response logging is enabled.
+    pub ws_request_logs: bool,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
@@ -319,6 +321,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            false,
             None,
             #[cfg(feature = "metrics")]
             None,
@@ -345,6 +348,7 @@ impl GatewayState {
             None,
             None,
             18789,
+            false,
             None,
             #[cfg(feature = "metrics")]
             None,
@@ -366,6 +370,7 @@ impl GatewayState {
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
         port: u16,
+        ws_request_logs: bool,
         deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
@@ -401,6 +406,7 @@ impl GatewayState {
             setup_code: RwLock::new(None),
             localhost_only,
             tls_active,
+            ws_request_logs,
             deploy_platform,
             port,
             update: RwLock::new(crate::update_check::UpdateAvailability::default()),
