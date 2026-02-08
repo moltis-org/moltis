@@ -1,8 +1,10 @@
 // ── Voice input module ───────────────────────────────────────
 // Handles microphone recording and speech-to-text transcription.
 
+import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
-import { sendRpc } from "./helpers.js";
+import { renderMarkdown, sendRpc } from "./helpers.js";
+import { bumpSessionCount, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
 var micBtn = null;
@@ -10,6 +12,7 @@ var mediaRecorder = null;
 var audioChunks = [];
 var sttConfigured = false;
 var isRecording = false;
+var transcribingEl = null;
 
 /** Check if voice feature is enabled. */
 function isVoiceEnabled() {
@@ -100,12 +103,88 @@ function stopRecording() {
 	mediaRecorder.stop();
 }
 
+/** Create transcribing indicator element. */
+function createTranscribingIndicator(message, isError) {
+	var el = document.createElement("div");
+	el.className = "msg voice-transcribing";
+
+	var spinner = document.createElement("span");
+	spinner.className = "voice-transcribing-spinner";
+
+	var text = document.createElement("span");
+	text.className = "voice-transcribing-text";
+	if (isError) text.classList.add("text-[var(--error)]");
+	text.textContent = message;
+
+	if (!isError) el.appendChild(spinner);
+	el.appendChild(text);
+	return el;
+}
+
+/** Update transcribing element with a message. */
+function updateTranscribingMessage(message, isError) {
+	if (!transcribingEl) return;
+	transcribingEl.textContent = "";
+	var text = document.createElement("span");
+	text.className = "voice-transcribing-text";
+	text.classList.add(isError ? "text-[var(--error)]" : "text-[var(--muted)]");
+	text.textContent = message;
+	transcribingEl.appendChild(text);
+}
+
+/** Show a temporary message then remove the transcribing element. */
+function showTemporaryMessage(message, isError, delayMs) {
+	updateTranscribingMessage(message, isError);
+	setTimeout(() => {
+		if (transcribingEl) {
+			transcribingEl.remove();
+			transcribingEl = null;
+		}
+	}, delayMs);
+}
+
+/** Remove transcribing indicator and reset mic button state. */
+function cleanupTranscribingState() {
+	micBtn.classList.remove("transcribing");
+	micBtn.title = "Click to start recording";
+	if (transcribingEl) {
+		transcribingEl.remove();
+		transcribingEl = null;
+	}
+}
+
+/** Send transcribed text as a chat message. */
+function sendTranscribedMessage(text) {
+	// Add user message to chat (like sendChat does)
+	chatAddMsg("user", renderMarkdown(text), true);
+
+	// Send the message
+	var chatParams = { text: text };
+	var selectedModel = S.selectedModelId;
+	if (selectedModel) {
+		chatParams.model = selectedModel;
+	}
+	bumpSessionCount(S.activeSessionKey, 1);
+	setSessionReplying(S.activeSessionKey, true);
+	sendRpc("chat.send", chatParams).then((sendRes) => {
+		if (sendRes && !sendRes.ok && sendRes.error) {
+			chatAddMsg("error", sendRes.error.message || "Request failed");
+		}
+	});
+}
+
 /** Send recorded audio to STT service for transcription. */
 async function transcribeAudio() {
 	if (audioChunks.length === 0) {
-		micBtn.classList.remove("transcribing");
-		micBtn.title = "Click to start recording";
+		cleanupTranscribingState();
 		return;
+	}
+
+	// Show transcribing indicator in chat immediately
+	if (S.chatMsgBox) {
+		transcribingEl = createTranscribingIndicator("Transcribing voice...", false);
+		S.chatMsgBox.appendChild(transcribingEl);
+		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	}
 
 	try {
@@ -116,32 +195,28 @@ async function transcribeAudio() {
 		var buffer = await blob.arrayBuffer();
 		var base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
 
-		var res = await sendRpc("stt.transcribe", {
-			audio: base64,
-			format: "webm",
-		});
+		var res = await sendRpc("stt.transcribe", { audio: base64, format: "webm" });
 
 		micBtn.classList.remove("transcribing");
 		micBtn.title = "Click to start recording";
 
 		if (res?.ok && res.payload?.text) {
-			// Insert transcribed text into chat input
 			var text = res.payload.text.trim();
-			if (text && S.chatInput) {
-				var current = S.chatInput.value;
-				var newText = current ? `${current} ${text}` : text;
-				S.chatInput.value = newText;
-				S.chatInput.focus();
-				// Trigger resize
-				S.chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+			if (text) {
+				cleanupTranscribingState();
+				sendTranscribedMessage(text);
+			} else {
+				showTemporaryMessage("No speech detected", false, 2000);
 			}
 		} else if (res?.error) {
 			console.error("Transcription failed:", res.error.message);
+			showTemporaryMessage(`Transcription failed: ${res.error.message || "Unknown error"}`, true, 4000);
 		}
 	} catch (err) {
 		console.error("Transcription error:", err);
 		micBtn.classList.remove("transcribing");
 		micBtn.title = "Click to start recording";
+		showTemporaryMessage("Transcription error", true, 4000);
 	}
 }
 
