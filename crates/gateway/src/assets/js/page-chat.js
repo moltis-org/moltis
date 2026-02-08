@@ -508,15 +508,8 @@ function refreshRawPromptPanel() {
 			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build prompt"));
 			return;
 		}
-		var desc = ctxEl(
-			"div",
-			"text-xs text-[var(--muted)] mb-1",
-			"This is the full system prompt sent to the model before your message.",
-		);
-		panel.appendChild(desc);
-
-		var header = ctxEl("div", "flex items-center gap-3 mb-2 text-xs text-[var(--muted)]");
-		header.textContent = `${res.payload.charCount} chars | ${res.payload.toolCount} tools | native_tools=${res.payload.native_tools}`;
+		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-2");
+		header.textContent = `Full system prompt sent to the model · ${res.payload.charCount} chars · ${res.payload.toolCount} tools · native_tools=${res.payload.native_tools}`;
 		panel.appendChild(header);
 
 		var pre = ctxEl(
