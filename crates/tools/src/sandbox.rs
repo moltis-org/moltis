@@ -54,6 +54,16 @@ pub enum SandboxMode {
     All,
 }
 
+impl std::fmt::Display for SandboxMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => f.write_str("off"),
+            Self::NonMain => f.write_str("non-main"),
+            Self::All => f.write_str("all"),
+        }
+    }
+}
+
 /// Scope determines container lifecycle boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +75,16 @@ pub enum SandboxScope {
     Shared,
 }
 
+impl std::fmt::Display for SandboxScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session => f.write_str("session"),
+            Self::Agent => f.write_str("agent"),
+            Self::Shared => f.write_str("shared"),
+        }
+    }
+}
+
 /// Workspace mount mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -74,6 +94,16 @@ pub enum WorkspaceMount {
     #[default]
     Ro,
     Rw,
+}
+
+impl std::fmt::Display for WorkspaceMount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("none"),
+            Self::Ro => f.write_str("ro"),
+            Self::Rw => f.write_str("rw"),
+        }
+    }
 }
 
 /// Resource limits for sandboxed execution.
@@ -209,6 +239,8 @@ pub trait Sandbox: Send + Sync {
 pub fn sandbox_image_tag(base: &str, packages: &[String]) -> String {
     use std::hash::Hasher;
     let mut h = std::hash::DefaultHasher::new();
+    // Bump this when the Dockerfile template changes to force a rebuild.
+    h.write(b"v3");
     h.write(base.as_bytes());
     let mut sorted: Vec<&String> = packages.iter().collect();
     sorted.sort();
@@ -503,7 +535,7 @@ impl Sandbox for DockerSandbox {
         }
 
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
@@ -539,7 +571,11 @@ impl Sandbox for DockerSandbox {
 
         let pkg_list = packages.join(" ");
         let dockerfile = format!(
-            "FROM {base}\nRUN apt-get update -qq && apt-get install -y -qq {pkg_list} && rm -rf /var/lib/apt/lists/*\n"
+            "FROM {base}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
@@ -907,7 +943,7 @@ impl Sandbox for AppleContainerSandbox {
         info!(name, image, "apple container created and running");
 
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("container", &name, &self.config.packages).await?;
@@ -1019,7 +1055,11 @@ impl Sandbox for AppleContainerSandbox {
 
         let pkg_list = packages.join(" ");
         let dockerfile = format!(
-            "FROM {base}\nRUN apt-get update -qq && apt-get install -y -qq {pkg_list} && rm -rf /var/lib/apt/lists/*\n"
+            "FROM {base}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
@@ -1334,6 +1374,27 @@ impl SandboxRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sandbox_mode_display() {
+        assert_eq!(SandboxMode::Off.to_string(), "off");
+        assert_eq!(SandboxMode::NonMain.to_string(), "non-main");
+        assert_eq!(SandboxMode::All.to_string(), "all");
+    }
+
+    #[test]
+    fn test_sandbox_scope_display() {
+        assert_eq!(SandboxScope::Session.to_string(), "session");
+        assert_eq!(SandboxScope::Agent.to_string(), "agent");
+        assert_eq!(SandboxScope::Shared.to_string(), "shared");
+    }
+
+    #[test]
+    fn test_workspace_mount_display() {
+        assert_eq!(WorkspaceMount::None.to_string(), "none");
+        assert_eq!(WorkspaceMount::Ro.to_string(), "ro");
+        assert_eq!(WorkspaceMount::Rw.to_string(), "rw");
+    }
 
     #[test]
     fn test_resource_limits_default() {

@@ -1225,6 +1225,8 @@ fn default_sandbox_packages() -> Vec<String> {
         "patchelf",
         // Text processing & search
         "ripgrep",
+        // Terminal multiplexer (useful for capturing ncurses apps)
+        "tmux",
         // Browser automation (for browser tool)
         "chromium",
         "libxss1",

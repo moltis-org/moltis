@@ -7,12 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Process tool for interactive terminal sessions**: New `process` tool lets
+  the LLM manage interactive/TUI programs (htop, vim, REPLs, etc.) via tmux
+  sessions inside the sandbox. Supports start, poll, send_keys, paste, kill,
+  and list actions. Includes a built-in `tmux` skill with usage instructions.
+
+- **Runtime host+sandbox prompt context**: Chat system prompts now include a
+  `## Runtime` section with host details (hostname, OS, arch, shell, provider,
+  model, session, sudo non-interactive capability) and `exec` sandbox details
+  (enabled state, mode, backend, scope, image, workspace mount, network policy,
+  session override). Tool-mode prompts also add routing guidance so the agent
+  asks before requesting host installs or changing sandbox mode.
+
 ### Changed
 
 - **Provider auto-detection observability**: When no explicit provider settings are present in `moltis.toml`, startup now logs each auto-detected provider with its source (`env`, config file key, OAuth token file, provider key file, or Codex auth file). Added `server.http_request_logs` (Axum HTTP traces) and `server.ws_request_logs` (WebSocket RPC request/response traces) config options (both default `false`) for on-demand transport debugging without code changes.
 - **Dynamic OpenAI Codex model catalog**: OpenAI Codex providers now load model IDs from `https://chatgpt.com/backend-api/codex/models` at startup (with fallback defaults), and the gateway refreshes Codex models hourly so long-running sessions pick up newly available models (for example `gpt-5.3`) without restart.
 - **Model availability probing UX**: Model support probing now runs in parallel with bounded concurrency, starts automatically after provider connect/startup, and streams live progress (`start`/`progress`/`complete`) over WebSocket so the Providers page can render a progress bar.
-- **Provider-scoped probing on connect**: Connecting a provider from the Providers UI now probes only that provider’s models (instead of all providers), reducing noise and startup load when adding accounts one by one.
+- **Provider-scoped probing on connect**: Connecting a provider from the Providers UI now probes only that provider's models (instead of all providers), reducing noise and startup load when adding accounts one by one.
 - **Configurable model ordering**: Added `chat.priority_models` in `moltis.toml` to pin preferred models at the top of model selectors without rebuilding. Runtime model selectors (`models.list`, chat model dropdown, Telegram `/model`) hide unsupported models, while Providers diagnostics continue to show full catalog entries (including unsupported flags).
 - **Configurable provider offerings in UI**: Added `[providers] offered = [...]` allowlist in `moltis.toml` to control which providers are shown in onboarding/provider-picker UI. New config templates default this to `["openai", "github-copilot"]`; setting `offered = []` shows all known providers. Configured providers remain visible for management.
 
@@ -22,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local model cache path visibility**: Startup logs for local LLM providers now explicitly print the model cache directory and cached model IDs, making `MOLTIS_DATA_DIR` behavior easier to verify without noisy model-catalog output.
 - **Kimi device-flow OAuth in web UI**: Kimi OAuth now uses provider-specific headers and prefers `verification_uri_complete` (or synthesizes `?user_code=` fallback) so mobile-device sign-in links no longer fail with missing `user_code`.
 - **Kimi Code provider authentication compatibility**: `kimi-code` is now API-key-first in the web UI (`KIMI_API_KEY`, default base URL `https://api.moonshot.ai/v1`), while still honoring previously stored OAuth tokens for backward compatibility. Provider errors now include a targeted hint to switch to API-key auth when Kimi returns `access_terminated_error`.
-- **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive “configured” state.
+- **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive "configured" state.
 
 ## [0.2.9] - 2026-02-08
 
