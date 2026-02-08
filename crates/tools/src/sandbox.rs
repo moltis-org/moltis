@@ -54,6 +54,16 @@ pub enum SandboxMode {
     All,
 }
 
+impl std::fmt::Display for SandboxMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => f.write_str("off"),
+            Self::NonMain => f.write_str("non-main"),
+            Self::All => f.write_str("all"),
+        }
+    }
+}
+
 /// Scope determines container lifecycle boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +75,16 @@ pub enum SandboxScope {
     Shared,
 }
 
+impl std::fmt::Display for SandboxScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session => f.write_str("session"),
+            Self::Agent => f.write_str("agent"),
+            Self::Shared => f.write_str("shared"),
+        }
+    }
+}
+
 /// Workspace mount mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -74,6 +94,16 @@ pub enum WorkspaceMount {
     #[default]
     Ro,
     Rw,
+}
+
+impl std::fmt::Display for WorkspaceMount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("none"),
+            Self::Ro => f.write_str("ro"),
+            Self::Rw => f.write_str("rw"),
+        }
+    }
 }
 
 /// Resource limits for sandboxed execution.
@@ -1334,6 +1364,27 @@ impl SandboxRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sandbox_mode_display() {
+        assert_eq!(SandboxMode::Off.to_string(), "off");
+        assert_eq!(SandboxMode::NonMain.to_string(), "non-main");
+        assert_eq!(SandboxMode::All.to_string(), "all");
+    }
+
+    #[test]
+    fn test_sandbox_scope_display() {
+        assert_eq!(SandboxScope::Session.to_string(), "session");
+        assert_eq!(SandboxScope::Agent.to_string(), "agent");
+        assert_eq!(SandboxScope::Shared.to_string(), "shared");
+    }
+
+    #[test]
+    fn test_workspace_mount_display() {
+        assert_eq!(WorkspaceMount::None.to_string(), "none");
+        assert_eq!(WorkspaceMount::Ro.to_string(), "ro");
+        assert_eq!(WorkspaceMount::Rw.to_string(), "rw");
+    }
 
     #[test]
     fn test_resource_limits_default() {

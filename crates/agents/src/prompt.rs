@@ -75,38 +75,6 @@ pub fn build_system_prompt(
     )
 }
 
-/// Build the system prompt, optionally including session context stats, skills,
-/// and agent identity / user profile.
-///
-/// When `include_tools` is false (e.g., for local LLMs that don't support tool calling),
-/// tool schemas and tool-related instructions are omitted for a smaller prompt.
-pub fn build_system_prompt_with_session(
-    tools: &ToolRegistry,
-    native_tools: bool,
-    project_context: Option<&str>,
-    session_context: Option<&str>,
-    skills: &[SkillMetadata],
-    identity: Option<&AgentIdentity>,
-    user: Option<&UserProfile>,
-    soul_text: Option<&str>,
-    agents_text: Option<&str>,
-    tools_text: Option<&str>,
-) -> String {
-    build_system_prompt_with_session_runtime(
-        tools,
-        native_tools,
-        project_context,
-        session_context,
-        skills,
-        identity,
-        user,
-        soul_text,
-        agents_text,
-        tools_text,
-        None,
-    )
-}
-
 /// Build the system prompt with explicit runtime context.
 pub fn build_system_prompt_with_session_runtime(
     tools: &ToolRegistry,
@@ -134,28 +102,6 @@ pub fn build_system_prompt_with_session_runtime(
         tools_text,
         runtime_context,
         true, // include_tools
-    )
-}
-
-/// Build a minimal system prompt without tool schemas (for LLMs that don't support tools).
-pub fn build_system_prompt_minimal(
-    project_context: Option<&str>,
-    session_context: Option<&str>,
-    identity: Option<&AgentIdentity>,
-    user: Option<&UserProfile>,
-    soul_text: Option<&str>,
-    agents_text: Option<&str>,
-    tools_text: Option<&str>,
-) -> String {
-    build_system_prompt_minimal_runtime(
-        project_context,
-        session_context,
-        identity,
-        user,
-        soul_text,
-        agents_text,
-        tools_text,
-        None,
     )
 }
 
@@ -388,50 +334,24 @@ fn build_system_prompt_full(
 }
 
 fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
+    fn push_str(parts: &mut Vec<String>, key: &str, val: Option<&str>) {
+        if let Some(v) = val.filter(|s| !s.is_empty()) {
+            parts.push(format!("{key}={v}"));
+        }
+    }
+
     let mut parts = Vec::new();
-    if let Some(v) = host.host.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("host={v}"));
-    }
-    if let Some(v) = host.os.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("os={v}"));
-    }
-    if let Some(v) = host.arch.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("arch={v}"));
-    }
-    if let Some(v) = host.shell.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("shell={v}"));
-    }
-    if let Some(v) = host.provider.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("provider={v}"));
-    }
-    if let Some(v) = host.model.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("model={v}"));
-    }
-    if let Some(v) = host.session_key.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("session={v}"));
-    }
+    push_str(&mut parts, "host", host.host.as_deref());
+    push_str(&mut parts, "os", host.os.as_deref());
+    push_str(&mut parts, "arch", host.arch.as_deref());
+    push_str(&mut parts, "shell", host.shell.as_deref());
+    push_str(&mut parts, "provider", host.provider.as_deref());
+    push_str(&mut parts, "model", host.model.as_deref());
+    push_str(&mut parts, "session", host.session_key.as_deref());
     if let Some(v) = host.sudo_non_interactive {
         parts.push(format!("sudo_non_interactive={v}"));
     }
-    if let Some(v) = host.sudo_status.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("sudo_status={v}"));
-    }
+    push_str(&mut parts, "sudo_status", host.sudo_status.as_deref());
 
     if parts.is_empty() {
         None
@@ -583,8 +503,8 @@ mod tests {
             path: std::path::PathBuf::from("/skills/commit"),
             source: None,
         }];
-        let prompt = build_system_prompt_with_session(
-            &tools, true, None, None, &skills, None, None, None, None, None,
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools, true, None, None, &skills, None, None, None, None, None, None,
         );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
@@ -593,12 +513,13 @@ mod tests {
     #[test]
     fn test_no_skills_block_when_empty() {
         let tools = ToolRegistry::new();
-        let prompt = build_system_prompt_with_session(
+        let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
             None,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -621,7 +542,7 @@ mod tests {
             name: Some("Alice".into()),
             timezone: None,
         };
-        let prompt = build_system_prompt_with_session(
+        let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
             None,
@@ -629,6 +550,7 @@ mod tests {
             &[],
             Some(&identity),
             Some(&user),
+            None,
             None,
             None,
             None,
@@ -649,7 +571,7 @@ mod tests {
             name: Some("Rex".into()),
             ..Default::default()
         };
-        let prompt = build_system_prompt_with_session(
+        let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
             None,
@@ -658,6 +580,7 @@ mod tests {
             Some(&identity),
             None,
             Some("You are a loyal companion who loves fetch."),
+            None,
             None,
             None,
         );
@@ -669,12 +592,13 @@ mod tests {
     #[test]
     fn test_no_identity_no_extra_lines() {
         let tools = ToolRegistry::new();
-        let prompt = build_system_prompt_with_session(
+        let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
             None,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -689,7 +613,7 @@ mod tests {
     #[test]
     fn test_workspace_files_injected_when_provided() {
         let tools = ToolRegistry::new();
-        let prompt = build_system_prompt_with_session(
+        let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
             None,
@@ -700,6 +624,7 @@ mod tests {
             None,
             Some("Follow workspace agent instructions."),
             Some("Prefer read-only tools first."),
+            None,
         );
         assert!(prompt.contains("## Workspace Files"));
         assert!(prompt.contains("### AGENTS.md (workspace)"));

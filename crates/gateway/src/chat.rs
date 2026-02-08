@@ -37,10 +37,7 @@ use {
         store::SessionStore,
     },
     moltis_skills::discover::SkillDiscoverer,
-    moltis_tools::{
-        policy::{ToolPolicy, profile_tools},
-        sandbox::{SandboxMode, SandboxScope, WorkspaceMount},
-    },
+    moltis_tools::policy::{ToolPolicy, profile_tools},
 };
 
 use crate::{
@@ -214,27 +211,53 @@ async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) {
     }
 }
 
-fn sandbox_mode_str(mode: &SandboxMode) -> &'static str {
-    match mode {
-        SandboxMode::Off => "off",
-        SandboxMode::NonMain => "non-main",
-        SandboxMode::All => "all",
-    }
+/// Pre-loaded persona data used to build the system prompt.
+struct PromptPersona {
+    config: moltis_config::MoltisConfig,
+    identity: moltis_config::AgentIdentity,
+    user: moltis_config::UserProfile,
+    soul_text: Option<String>,
+    agents_text: Option<String>,
+    tools_text: Option<String>,
 }
 
-fn sandbox_scope_str(scope: &SandboxScope) -> &'static str {
-    match scope {
-        SandboxScope::Session => "session",
-        SandboxScope::Agent => "agent",
-        SandboxScope::Shared => "shared",
+/// Load identity, user profile, soul, and workspace text from config + data files.
+///
+/// Both `run_with_tools` and `run_streaming` need the same persona data;
+/// this function avoids duplicating the merge logic.
+fn load_prompt_persona() -> PromptPersona {
+    let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity() {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
+        }
     }
-}
-
-fn workspace_mount_str(mount: &WorkspaceMount) -> &'static str {
-    match mount {
-        WorkspaceMount::None => "none",
-        WorkspaceMount::Ro => "ro",
-        WorkspaceMount::Rw => "rw",
+    let mut user = config.user.clone();
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    PromptPersona {
+        config,
+        identity,
+        user,
+        soul_text: moltis_config::load_soul(),
+        agents_text: moltis_config::load_agents_md(),
+        tools_text: moltis_config::load_tools_md(),
     }
 }
 
@@ -251,11 +274,11 @@ async fn build_prompt_runtime_context(
             let config = router.config();
             Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: is_sandboxed,
-                mode: Some(sandbox_mode_str(&config.mode).to_string()),
+                mode: Some(config.mode.to_string()),
                 backend: Some(router.backend_name().to_string()),
-                scope: Some(sandbox_scope_str(&config.scope).to_string()),
+                scope: Some(config.scope.to_string()),
                 image: Some(router.resolve_image(session_key, None).await),
-                workspace_mount: Some(workspace_mount_str(&config.workspace_mount).to_string()),
+                workspace_mount: Some(config.workspace_mount.to_string()),
                 no_network: Some(config.no_network),
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
@@ -1912,42 +1935,14 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
 ) -> Option<(String, u32, u32)> {
-    // Load identity and user profile from config so the LLM knows who it is.
-    let config = moltis_config::discover_and_load();
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity() {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.creature.is_some() {
-            identity.creature = file_identity.creature;
-        }
-        if file_identity.vibe.is_some() {
-            identity.vibe = file_identity.vibe;
-        }
-    }
-    let mut user = config.user.clone();
-    if let Some(file_user) = moltis_config::load_user() {
-        if file_user.name.is_some() {
-            user.name = file_user.name;
-        }
-        if file_user.timezone.is_some() {
-            user.timezone = file_user.timezone;
-        }
-    }
-    let soul_text = moltis_config::load_soul();
-    let agents_text = moltis_config::load_agents_md();
-    let tools_text = moltis_config::load_tools_md();
+    let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
 
     let filtered_registry = {
         let registry_guard = tool_registry.read().await;
         if native_tools {
-            apply_runtime_tool_filters(&registry_guard, &config, skills, mcp_disabled)
+            apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
         } else {
             registry_guard.clone_without(&[])
         }
@@ -1962,11 +1957,11 @@ async fn run_with_tools(
             project_context,
             session_context,
             skills,
-            Some(&identity),
-            Some(&user),
-            soul_text.as_deref(),
-            agents_text.as_deref(),
-            tools_text.as_deref(),
+            Some(&persona.identity),
+            Some(&persona.user),
+            persona.soul_text.as_deref(),
+            persona.agents_text.as_deref(),
+            persona.tools_text.as_deref(),
             runtime_context,
         )
     } else {
@@ -1974,11 +1969,11 @@ async fn run_with_tools(
         build_system_prompt_minimal_runtime(
             project_context,
             session_context,
-            Some(&identity),
-            Some(&user),
-            soul_text.as_deref(),
-            agents_text.as_deref(),
-            tools_text.as_deref(),
+            Some(&persona.identity),
+            Some(&persona.user),
+            persona.soul_text.as_deref(),
+            persona.agents_text.as_deref(),
+            persona.tools_text.as_deref(),
             runtime_context,
         )
     };
@@ -2419,45 +2414,16 @@ async fn run_streaming(
     _skills: &[moltis_skills::types::SkillMetadata],
     runtime_context: Option<&PromptRuntimeContext>,
 ) -> Option<(String, u32, u32)> {
-    // Keep identity/user/soul/workspace context consistent with tool mode so
-    // stream-only runs still get the same runtime constraints and persona.
-    let config = moltis_config::discover_and_load();
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity() {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.creature.is_some() {
-            identity.creature = file_identity.creature;
-        }
-        if file_identity.vibe.is_some() {
-            identity.vibe = file_identity.vibe;
-        }
-    }
-    let mut user = config.user.clone();
-    if let Some(file_user) = moltis_config::load_user() {
-        if file_user.name.is_some() {
-            user.name = file_user.name;
-        }
-        if file_user.timezone.is_some() {
-            user.timezone = file_user.timezone;
-        }
-    }
-    let soul_text = moltis_config::load_soul();
-    let agents_text = moltis_config::load_agents_md();
-    let tools_text = moltis_config::load_tools_md();
+    let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
         project_context,
         session_context,
-        Some(&identity),
-        Some(&user),
-        soul_text.as_deref(),
-        agents_text.as_deref(),
-        tools_text.as_deref(),
+        Some(&persona.identity),
+        Some(&persona.user),
+        persona.soul_text.as_deref(),
+        persona.agents_text.as_deref(),
+        persona.tools_text.as_deref(),
         runtime_context,
     );
 
