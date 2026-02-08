@@ -120,6 +120,15 @@ pub trait ChannelEventSink: Send + Sync {
         _identifier: &str,
     ) {
     }
+
+    /// Transcribe voice audio to text using the configured STT provider.
+    ///
+    /// Returns the transcribed text, or an error if transcription fails.
+    /// The audio format is specified (e.g., "ogg", "mp3", "webm").
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+        let _ = (audio_data, format);
+        Err(anyhow::anyhow!("voice transcription not available"))
+    }
 }
 
 /// Metadata about a channel message, used for UI display.

@@ -49,7 +49,7 @@ pub fn build_handler() -> Handler<
 /// Handle a single inbound Telegram message (called from manual polling loop).
 pub async fn handle_message_direct(
     msg: Message,
-    _bot: &Bot,
+    bot: &Bot,
     account_id: &str,
     accounts: &AccountStateMap,
 ) -> anyhow::Result<()> {
@@ -194,7 +194,53 @@ pub async fn handle_message_direct(
 
     debug!(account_id, "handler: access granted");
 
-    let body = text.unwrap_or_default();
+    // Check for voice/audio messages and transcribe them
+    let body = if let Some(voice_file) = extract_voice_file(&msg) {
+        // Try to transcribe the voice message
+        if let Some(ref sink) = event_sink {
+            match download_telegram_file(bot, &voice_file.file_id).await {
+                Ok(audio_data) => {
+                    debug!(
+                        account_id,
+                        file_id = %voice_file.file_id,
+                        format = %voice_file.format,
+                        size = audio_data.len(),
+                        "downloaded voice file, transcribing"
+                    );
+                    match sink.transcribe_voice(&audio_data, &voice_file.format).await {
+                        Ok(transcribed) => {
+                            debug!(
+                                account_id,
+                                text_len = transcribed.len(),
+                                "voice transcription successful"
+                            );
+                            // Combine with any caption if present
+                            let caption = text.clone().unwrap_or_default();
+                            if caption.is_empty() {
+                                transcribed
+                            } else {
+                                format!("{}\n\n[Voice message]: {}", caption, transcribed)
+                            }
+                        },
+                        Err(e) => {
+                            warn!(account_id, error = %e, "voice transcription failed");
+                            // Fall back to caption or indicate transcription failed
+                            text.clone().unwrap_or_else(|| "[Voice message - transcription unavailable]".to_string())
+                        },
+                    }
+                },
+                Err(e) => {
+                    warn!(account_id, error = %e, "failed to download voice file");
+                    text.clone().unwrap_or_else(|| "[Voice message - download failed]".to_string())
+                },
+            }
+        } else {
+            // No event sink, can't transcribe
+            text.clone().unwrap_or_else(|| "[Voice message]".to_string())
+        }
+    } else {
+        text.unwrap_or_default()
+    };
 
     // Dispatch to the chat session (per-channel session key derived by the sink).
     // The reply target tells the gateway where to send the LLM response back.
@@ -983,6 +1029,76 @@ fn extract_media_url(msg: &Message) -> Option<String> {
         },
         _ => None,
     }
+}
+
+/// Voice/audio file info for transcription.
+struct VoiceFileInfo {
+    file_id: String,
+    /// Format hint: "ogg" for voice messages, "mp3"/"m4a" for audio files
+    format: String,
+}
+
+/// Extract voice or audio file info from a message.
+fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
+    match &msg.kind {
+        MessageKind::Common(common) => match &common.media_kind {
+            MediaKind::Voice(v) => Some(VoiceFileInfo {
+                file_id: v.voice.file.id.clone(),
+                format: "ogg".to_string(), // Telegram voice messages are OGG Opus
+            }),
+            MediaKind::Audio(a) => {
+                // Audio files can be various formats, try to detect from mime_type
+                let format = a
+                    .audio
+                    .mime_type
+                    .as_ref()
+                    .map(|m| {
+                        match m.as_ref() {
+                            "audio/mpeg" | "audio/mp3" => "mp3",
+                            "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
+                            "audio/ogg" | "audio/opus" => "ogg",
+                            "audio/wav" | "audio/x-wav" => "wav",
+                            "audio/webm" => "webm",
+                            _ => "mp3", // Default fallback
+                        }
+                    })
+                    .unwrap_or("mp3")
+                    .to_string();
+                Some(VoiceFileInfo {
+                    file_id: a.audio.file.id.clone(),
+                    format,
+                })
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Download a file from Telegram by file ID.
+async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<u8>> {
+    // Get file info from Telegram
+    let file = bot.get_file(file_id).await?;
+
+    // Build the download URL
+    // Telegram file URL format: https://api.telegram.org/file/bot<token>/<file_path>
+    let token = bot.token();
+    let url = format!(
+        "https://api.telegram.org/file/bot{}/{}",
+        token, file.path
+    );
+
+    // Download using reqwest
+    let response = reqwest::get(&url).await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "failed to download file: HTTP {}",
+            response.status()
+        ));
+    }
+
+    let data = response.bytes().await?.to_vec();
+    Ok(data)
 }
 
 /// Classify the chat type.

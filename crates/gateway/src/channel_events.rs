@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use {
-    anyhow::anyhow,
+    anyhow::{Result, anyhow},
     async_trait::async_trait,
     moltis_tools::image_cache::ImageBuilder,
     tracing::{debug, error, info, warn},
@@ -375,6 +375,38 @@ impl ChannelEventSink for GatewayChannelEventSink {
         } else {
             warn!("request_sender_approval: gateway not ready");
         }
+    }
+
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+        let state = self
+            .state
+            .get()
+            .ok_or_else(|| anyhow!("gateway not ready"))?;
+
+        // Encode audio as base64 for the STT service
+        let audio_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            audio_data,
+        );
+
+        let params = serde_json::json!({
+            "audio": audio_base64,
+            "format": format,
+        });
+
+        let result = state
+            .services
+            .stt
+            .transcribe(params)
+            .await
+            .map_err(|e| anyhow!("transcription failed: {}", e))?;
+
+        let text = result
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("transcription result missing text"))?;
+
+        Ok(text.to_string())
     }
 
     async fn dispatch_command(
