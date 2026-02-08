@@ -611,6 +611,75 @@ impl LiveChatService {
         }
         "main".to_string()
     }
+
+    /// Resolve the project context prompt section for a session.
+    async fn resolve_project_context(
+        &self,
+        session_key: &str,
+        conn_id: Option<&str>,
+    ) -> Option<String> {
+        let project_id = if let Some(cid) = conn_id {
+            let projects = self.state.active_projects.read().await;
+            projects.get(cid).cloned()
+        } else {
+            None
+        };
+        let project_id = project_id.or_else(|| {
+            // Use block_in_place would be wrong here; session_metadata.get is async
+            // but we're already in an async context, so we need a different approach.
+            // Actually this is called from an async fn so we can just return None
+            // and check below.
+            None
+        });
+        // Also check session metadata for project binding (async path).
+        let project_id = match project_id {
+            Some(pid) => Some(pid),
+            None => self
+                .session_metadata
+                .get(session_key)
+                .await
+                .and_then(|e| e.project_id),
+        };
+
+        let pid = project_id?;
+        let val = self
+            .state
+            .services
+            .project
+            .get(serde_json::json!({"id": pid}))
+            .await
+            .ok()?;
+        let dir = val.get("directory").and_then(|v| v.as_str())?;
+        let files = match moltis_projects::context::load_context_files(std::path::Path::new(dir)) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("failed to load project context: {e}");
+                return None;
+            },
+        };
+        let project: moltis_projects::Project = serde_json::from_value(val.clone()).ok()?;
+        let worktree_dir = self
+            .session_metadata
+            .get(session_key)
+            .await
+            .and_then(|e| e.worktree_branch)
+            .and_then(|_| {
+                let wt_path = std::path::Path::new(dir)
+                    .join(".moltis-worktrees")
+                    .join(session_key);
+                if wt_path.exists() {
+                    Some(wt_path)
+                } else {
+                    None
+                }
+            });
+        let ctx = moltis_projects::ProjectContext {
+            project,
+            context_files: files,
+            worktree_dir,
+        };
+        Some(ctx.to_prompt_section())
+    }
 }
 
 #[async_trait]
@@ -758,80 +827,9 @@ impl ChatService for LiveChatService {
         }
 
         // Resolve project context for this connection's active project.
-        let project_context = {
-            let project_id = if let Some(cid) = conn_id.as_deref() {
-                let projects = self.state.active_projects.read().await;
-                projects.get(cid).cloned()
-            } else {
-                None
-            };
-            // Also check session metadata for project binding.
-            let project_id = if project_id.is_some() {
-                project_id
-            } else {
-                self.session_metadata
-                    .get(&session_key)
-                    .await
-                    .and_then(|e| e.project_id)
-            };
-            if let Some(pid) = project_id {
-                match self
-                    .state
-                    .services
-                    .project
-                    .get(serde_json::json!({"id": pid}))
-                    .await
-                {
-                    Ok(val) => {
-                        if let Some(dir) = val.get("directory").and_then(|v| v.as_str()) {
-                            match moltis_projects::context::load_context_files(
-                                std::path::Path::new(dir),
-                            ) {
-                                Ok(files) => {
-                                    let project: Option<moltis_projects::Project> =
-                                        serde_json::from_value(val.clone()).ok();
-                                    if let Some(p) = project {
-                                        // Resolve worktree dir from session metadata.
-                                        let worktree_dir = self
-                                            .session_metadata
-                                            .get(&session_key)
-                                            .await
-                                            .and_then(|e| e.worktree_branch)
-                                            .and_then(|_| {
-                                                let wt_path = std::path::Path::new(dir)
-                                                    .join(".moltis-worktrees")
-                                                    .join(&session_key);
-                                                if wt_path.exists() {
-                                                    Some(wt_path)
-                                                } else {
-                                                    None
-                                                }
-                                            });
-                                        let ctx = moltis_projects::ProjectContext {
-                                            project: p,
-                                            context_files: files,
-                                            worktree_dir,
-                                        };
-                                        Some(ctx.to_prompt_section())
-                                    } else {
-                                        None
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!("failed to load project context: {e}");
-                                    None
-                                },
-                            }
-                        } else {
-                            None
-                        }
-                    },
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
-        };
+        let project_context = self
+            .resolve_project_context(&session_key, conn_id.as_deref())
+            .await;
 
         // Dispatch MessageReceived hook (read-only).
         if let Some(ref hooks) = self.hook_registry {
@@ -982,24 +980,6 @@ impl ChatService for LiveChatService {
             .get("_accept_language")
             .and_then(|v| v.as_str())
             .map(String::from);
-        // Compute session context stats for the system prompt.
-        let session_stats = {
-            let msg_count = history.len() + 1; // +1 for the current user message
-            let total_input: u64 = history
-                .iter()
-                .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
-                .sum();
-            let total_output: u64 = history
-                .iter()
-                .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
-                .sum();
-            let total_tokens = total_input + total_output;
-
-            format!(
-                "Session \"{session_key}\": {msg_count} messages, {total_tokens} tokens used ({total_input} input / {total_output} output)."
-            )
-        };
-
         // Auto-compact: if conversation input tokens exceed 95% of context window, compact first.
         let context_window = provider.context_window() as u64;
         let total_input: u64 = history
@@ -1129,7 +1109,6 @@ impl ChatService for LiveChatService {
         let handle = tokio::spawn(async move {
             let _permit = permit; // hold permit until task completes
             let ctx_ref = project_context.as_deref();
-            let stats_ref = Some(session_stats.as_str());
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -1142,7 +1121,6 @@ impl ChatService for LiveChatService {
                         &session_key_clone,
                         desired_reply_medium,
                         ctx_ref,
-                        stats_ref,
                         user_message_index,
                         &discovered_skills,
                         Some(&runtime_context),
@@ -1160,7 +1138,6 @@ impl ChatService for LiveChatService {
                         &session_key_clone,
                         desired_reply_medium,
                         ctx_ref,
-                        stats_ref,
                         Some(&runtime_context),
                         user_message_index,
                         &discovered_skills,
@@ -1378,7 +1355,6 @@ impl ChatService for LiveChatService {
                 &session_key,
                 desired_reply_medium,
                 None,
-                None,
                 user_message_index,
                 &[],
                 Some(&runtime_context),
@@ -1395,7 +1371,6 @@ impl ChatService for LiveChatService {
                 &history,
                 &session_key,
                 desired_reply_medium,
-                None,
                 None,
                 Some(&runtime_context),
                 user_message_index,
@@ -1911,6 +1886,119 @@ impl ChatService for LiveChatService {
             },
         }))
     }
+
+    async fn raw_prompt(&self, params: Value) -> ServiceResult {
+        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
+            sk.to_string()
+        } else {
+            let conn_id = params
+                .get("_conn_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            self.session_key_for(conn_id.as_deref()).await
+        };
+
+        let conn_id = params
+            .get("_conn_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Resolve provider.
+        let history = self
+            .session_store
+            .read(&session_key)
+            .await
+            .unwrap_or_default();
+        let provider = self.resolve_provider(&session_key, &history).await?;
+        let native_tools = provider.supports_tools();
+
+        // Load persona data.
+        let persona = load_prompt_persona();
+
+        // Build runtime context.
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
+
+        // Resolve project context.
+        let project_context = self
+            .resolve_project_context(&session_key, conn_id.as_deref())
+            .await;
+
+        // Discover skills.
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
+        let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
+        let discovered_skills = match discoverer.discover().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("failed to discover skills: {e}");
+                Vec::new()
+            },
+        };
+
+        // Check MCP disabled.
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|entry| entry.mcp_disabled)
+            .unwrap_or(false);
+
+        // Build filtered tool registry.
+        let filtered_registry = {
+            let registry_guard = self.tool_registry.read().await;
+            if native_tools {
+                apply_runtime_tool_filters(
+                    &registry_guard,
+                    &persona.config,
+                    &discovered_skills,
+                    mcp_disabled,
+                )
+            } else {
+                registry_guard.clone_without(&[])
+            }
+        };
+
+        let tool_count = filtered_registry.list_schemas().len();
+
+        // Build the system prompt.
+        let system_prompt = if native_tools {
+            build_system_prompt_with_session_runtime(
+                &filtered_registry,
+                native_tools,
+                project_context.as_deref(),
+                &discovered_skills,
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        } else {
+            build_system_prompt_minimal_runtime(
+                project_context.as_deref(),
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        };
+
+        let char_count = system_prompt.len();
+
+        Ok(serde_json::json!({
+            "prompt": system_prompt,
+            "charCount": char_count,
+            "native_tools": native_tools,
+            "toolCount": tool_count,
+        }))
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -1926,7 +2014,6 @@ async fn run_with_tools(
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
-    session_context: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
     user_message_index: usize,
     skills: &[moltis_skills::types::SkillMetadata],
@@ -1955,7 +2042,6 @@ async fn run_with_tools(
             &filtered_registry,
             native_tools,
             project_context,
-            session_context,
             skills,
             Some(&persona.identity),
             Some(&persona.user),
@@ -1968,7 +2054,6 @@ async fn run_with_tools(
         // Minimal prompt without tools for local LLMs
         build_system_prompt_minimal_runtime(
             project_context,
-            session_context,
             Some(&persona.identity),
             Some(&persona.user),
             persona.soul_text.as_deref(),
@@ -2409,7 +2494,6 @@ async fn run_streaming(
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
-    session_context: Option<&str>,
     user_message_index: usize,
     _skills: &[moltis_skills::types::SkillMetadata],
     runtime_context: Option<&PromptRuntimeContext>,
@@ -2418,7 +2502,6 @@ async fn run_streaming(
 
     let system_prompt = build_system_prompt_minimal_runtime(
         project_context,
-        session_context,
         Some(&persona.identity),
         Some(&persona.user),
         persona.soul_text.as_deref(),

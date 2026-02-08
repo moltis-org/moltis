@@ -64,7 +64,6 @@ pub fn build_system_prompt(
         tools,
         native_tools,
         project_context,
-        None,
         &[],
         None,
         None,
@@ -80,7 +79,6 @@ pub fn build_system_prompt_with_session_runtime(
     tools: &ToolRegistry,
     native_tools: bool,
     project_context: Option<&str>,
-    session_context: Option<&str>,
     skills: &[SkillMetadata],
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
@@ -93,7 +91,6 @@ pub fn build_system_prompt_with_session_runtime(
         tools,
         native_tools,
         project_context,
-        session_context,
         skills,
         identity,
         user,
@@ -108,7 +105,6 @@ pub fn build_system_prompt_with_session_runtime(
 /// Build a minimal system prompt with explicit runtime context.
 pub fn build_system_prompt_minimal_runtime(
     project_context: Option<&str>,
-    session_context: Option<&str>,
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
     soul_text: Option<&str>,
@@ -120,7 +116,6 @@ pub fn build_system_prompt_minimal_runtime(
         &ToolRegistry::new(),
         true,
         project_context,
-        session_context,
         &[],
         identity,
         user,
@@ -137,7 +132,6 @@ fn build_system_prompt_full(
     tools: &ToolRegistry,
     native_tools: bool,
     project_context: Option<&str>,
-    session_context: Option<&str>,
     skills: &[SkillMetadata],
     identity: Option<&AgentIdentity>,
     user: Option<&UserProfile>,
@@ -197,14 +191,6 @@ fn build_system_prompt_full(
     if let Some(ctx) = project_context {
         prompt.push_str(ctx);
         prompt.push('\n');
-    }
-
-    // Inject session context stats so the LLM can answer questions about
-    // the current session size and token usage.
-    if let Some(ctx) = session_context {
-        prompt.push_str("## Current Session\n\n");
-        prompt.push_str(ctx);
-        prompt.push_str("\n\n");
     }
 
     if let Some(runtime) = runtime_context {
@@ -504,7 +490,7 @@ mod tests {
             source: None,
         }];
         let prompt = build_system_prompt_with_session_runtime(
-            &tools, true, None, None, &skills, None, None, None, None, None, None,
+            &tools, true, None, &skills, None, None, None, None, None, None,
         );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
@@ -516,7 +502,6 @@ mod tests {
         let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
-            None,
             None,
             &[],
             None,
@@ -546,7 +531,6 @@ mod tests {
             &tools,
             true,
             None,
-            None,
             &[],
             Some(&identity),
             Some(&user),
@@ -575,7 +559,6 @@ mod tests {
             &tools,
             true,
             None,
-            None,
             &[],
             Some(&identity),
             None,
@@ -596,7 +579,6 @@ mod tests {
             &tools,
             true,
             None,
-            None,
             &[],
             None,
             None,
@@ -616,7 +598,6 @@ mod tests {
         let prompt = build_system_prompt_with_session_runtime(
             &tools,
             true,
-            None,
             None,
             &[],
             None,
@@ -664,7 +645,6 @@ mod tests {
             &tools,
             true,
             None,
-            None,
             &[],
             None,
             None,
@@ -699,16 +679,8 @@ mod tests {
             }),
         };
 
-        let prompt = build_system_prompt_minimal_runtime(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(&runtime),
-        );
+        let prompt =
+            build_system_prompt_minimal_runtime(None, None, None, None, None, None, Some(&runtime));
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
