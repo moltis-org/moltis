@@ -9,7 +9,7 @@ import {
 	stripChannelPrefix,
 	updateTokenBar,
 } from "./chat-ui.js";
-import { formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
+import { formatTokens, renderAudioPlayer, renderMarkdown, sendRpc } from "./helpers.js";
 import { makeBranchIcon, makeChatIcon, makeCronIcon, makeForkIcon, makeTelegramIcon } from "./icons.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
@@ -287,7 +287,25 @@ function createModelFooter(msg) {
 }
 
 function renderHistoryAssistantMessage(msg) {
-	var el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
+	var el;
+	if (msg.audio) {
+		// Voice response: render audio player first, then transcript text below.
+		el = chatAddMsg("assistant", "", true);
+		if (el) {
+			var filename = msg.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(el, audioSrc);
+			if (msg.content) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
+				textWrap.innerHTML = renderMarkdown(msg.content); // eslint-disable-line no-unsanitized/property
+				el.appendChild(textWrap);
+			}
+		}
+	} else {
+		el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
+	}
 	if (el && msg.model) {
 		el.appendChild(createModelFooter(msg));
 	}
@@ -481,6 +499,7 @@ export function switchSession(key, searchContext, projectId) {
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setStreamEl(null);
 	S.setStreamText("");
+	S.setVoicePending(false);
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionContextWindow(0);

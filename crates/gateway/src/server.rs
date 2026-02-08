@@ -1634,8 +1634,8 @@ pub async fn start_gateway(
     *state.discovered_hooks.write().await = discovered_hooks_info;
     *state.disabled_hooks.write().await = persisted_disabled;
 
-    // Wire the LLM provider registry for lightweight generation (TTS phrases).
-    *state.llm_providers.write().await = Some(Arc::clone(&registry));
+    // Note: LLM provider registry is available through the ChatService,
+    // not stored separately in GatewayState.
 
     // Generate a one-time setup code if setup is pending and auth is not disabled.
     let setup_code_display =

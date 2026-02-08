@@ -13,6 +13,26 @@ use {
 
 use crate::services::{ServiceResult, SessionService};
 
+/// Filter out empty assistant messages from history before sending to the UI.
+///
+/// Empty assistant messages are persisted in the session JSONL for LLM history
+/// coherence (so the model sees a complete user→assistant turn), but they
+/// should not be shown in the web UI or sent to channels.
+fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
+    messages
+        .into_iter()
+        .filter(|msg| {
+            if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+                return true;
+            }
+            // Keep assistant messages that have non-empty content.
+            msg.get("content")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        })
+        .collect()
+}
+
 /// Live session service backed by JSONL store + SQLite metadata.
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
@@ -118,7 +138,7 @@ impl SessionService for LiveSessionService {
             .read_last_n(key, limit)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!({ "messages": messages }))
+        Ok(serde_json::json!({ "messages": filter_ui_history(messages) }))
     }
 
     async fn resolve(&self, params: Value) -> ServiceResult {
@@ -162,7 +182,7 @@ impl SessionService for LiveSessionService {
                 "worktree_branch": entry.worktree_branch,
                 "mcpDisabled": entry.mcp_disabled,
             },
-            "history": history,
+            "history": filter_ui_history(history),
         }))
     }
 
@@ -509,5 +529,63 @@ impl SessionService for LiveSessionService {
         };
 
         Ok(serde_json::json!(enriched))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_ui_history_removes_empty_assistant_messages() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "assistant", "content": "hi there"}),
+            serde_json::json!({"role": "user", "content": "run ls"}),
+            // Empty assistant after tool use — should be filtered
+            serde_json::json!({"role": "assistant", "content": ""}),
+            serde_json::json!({"role": "user", "content": "run pwd"}),
+            serde_json::json!({"role": "assistant", "content": "here is the output"}),
+        ];
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 5);
+        // The empty assistant message at index 3 should be gone.
+        assert_eq!(filtered[2]["role"], "user");
+        assert_eq!(filtered[2]["content"], "run ls");
+        assert_eq!(filtered[3]["role"], "user");
+        assert_eq!(filtered[3]["content"], "run pwd");
+    }
+
+    #[test]
+    fn filter_ui_history_removes_whitespace_only_assistant() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "assistant", "content": "   \n  "}),
+        ];
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["role"], "user");
+    }
+
+    #[test]
+    fn filter_ui_history_keeps_non_empty_assistant() {
+        let messages = vec![
+            serde_json::json!({"role": "assistant", "content": "real response"}),
+            serde_json::json!({"role": "assistant", "content": ".", "model": "gpt-4o"}),
+        ];
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_ui_history_keeps_non_assistant_roles() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": ""}),
+            serde_json::json!({"role": "tool", "tool_call_id": "x", "content": ""}),
+            serde_json::json!({"role": "user", "content": ""}),
+        ];
+        // Non-assistant roles pass through even if content is empty.
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 3);
     }
 }

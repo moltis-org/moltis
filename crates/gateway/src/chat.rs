@@ -1866,6 +1866,19 @@ impl ChatService for LiveChatService {
         let handle = tokio::spawn(async move {
             let _permit = permit; // hold permit until task completes
             let ctx_ref = project_context.as_deref();
+            if desired_reply_medium == ReplyMedium::Voice {
+                broadcast(
+                    &state,
+                    "chat",
+                    serde_json::json!({
+                        "runId": run_id_clone,
+                        "sessionKey": session_key_clone,
+                        "state": "voice_pending",
+                    }),
+                    BroadcastOpts::default(),
+                )
+                .await;
+            }
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -2106,6 +2119,20 @@ impl ChatService for LiveChatService {
             "chat.send_sync"
         );
 
+        if desired_reply_medium == ReplyMedium::Voice {
+            broadcast(
+                &state,
+                "chat",
+                serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": session_key,
+                    "state": "voice_pending",
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+        }
+
         let result = if stream_only {
             run_streaming(
                 &state,
@@ -2223,7 +2250,20 @@ impl ChatService for LiveChatService {
             .read(&session_key)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(serde_json::json!(messages))
+        // Filter out empty assistant messages — they are kept in storage for LLM
+        // history coherence but should not be shown in the UI.
+        let visible: Vec<Value> = messages
+            .into_iter()
+            .filter(|msg| {
+                if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+                    return true;
+                }
+                msg.get("content")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty())
+            })
+            .collect();
+        Ok(serde_json::json!(visible))
     }
 
     async fn inject(&self, _params: Value) -> ServiceResult {

@@ -16,6 +16,7 @@ export var projects = [];
 export var streamEl = null;
 export var streamText = "";
 export var lastToolOutput = "";
+export var voicePending = false;
 export var chatHistory = JSON.parse(localStorage.getItem("moltis-chat-history") || "[]");
 export var chatHistoryIdx = -1;
 export var chatHistoryDraft = "";
@@ -130,6 +131,9 @@ export function setStreamText(v) {
 }
 export function setLastToolOutput(v) {
 	lastToolOutput = v;
+}
+export function setVoicePending(v) {
+	voicePending = v;
 }
 export function setChatHistory(v) {
 	chatHistory = v;

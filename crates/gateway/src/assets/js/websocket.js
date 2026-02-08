@@ -100,6 +100,19 @@ function handleChatThinkingDone(_p, isActive, isChatPage) {
 	if (isActive && isChatPage) removeThinking();
 }
 
+function handleChatVoicePending(_p, isActive, isChatPage) {
+	if (!(isActive && isChatPage)) return;
+	S.setVoicePending(true);
+	removeThinking();
+	var el = document.createElement("div");
+	el.className = "msg assistant thinking";
+	el.id = "voiceGeneratingIndicator";
+	var tpl = document.getElementById("tpl-voice-generating");
+	el.appendChild(tpl.content.cloneNode(true));
+	S.chatMsgBox.appendChild(el);
+	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+}
+
 /** Build a short summary string for a tool call card. */
 function toolCallSummary(name, args, executionMode) {
 	if (!args) return name || "tool";
@@ -344,6 +357,11 @@ function setSafeMarkdownHtml(el, text) {
 
 function handleChatDelta(p, isActive, isChatPage) {
 	if (!(p.text && isActive && isChatPage)) return;
+	// When voice is pending, accumulate text silently without rendering.
+	if (S.voicePending) {
+		S.setStreamText(S.streamText + p.text);
+		return;
+	}
 	removeThinking();
 	if (!S.streamEl) {
 		S.setStreamText("");
@@ -357,23 +375,31 @@ function handleChatDelta(p, isActive, isChatPage) {
 }
 
 function resolveFinalMessageEl(p) {
+	// Empty / whitespace-only responses are persisted for LLM history but hidden from the UI.
+	if (!(p.text && p.text.trim())) {
+		if (S.streamEl) S.streamEl.remove();
+		return null;
+	}
 	var isEcho =
 		S.lastToolOutput &&
-		p.text &&
 		p.text.replace(/[`\s]/g, "").indexOf(S.lastToolOutput.replace(/\s/g, "").substring(0, 80)) !== -1;
 	if (!isEcho) {
-		if (p.text && S.streamEl) {
+		if (S.streamEl) {
 			setSafeMarkdownHtml(S.streamEl, p.text);
 			return S.streamEl;
 		}
-		if (p.text) return chatAddMsg("assistant", renderMarkdown(p.text), true);
-		return null;
+		return chatAddMsg("assistant", renderMarkdown(p.text), true);
 	}
 	if (S.streamEl) S.streamEl.remove();
 	return null;
 }
 
 function appendFinalFooter(msgEl, p) {
+	// When the LLM says nothing (empty response), fall back to the last
+	// visible element (typically the exec card) so the footer is still shown.
+	if (!msgEl && p.model && S.chatMsgBox) {
+		msgEl = S.chatMsgBox.lastElementChild;
+	}
 	if (!(msgEl && p.model)) return;
 	var footer = document.createElement("div");
 	footer.className = "msg-model-footer";
@@ -391,6 +417,7 @@ function appendFinalFooter(msgEl, p) {
 	msgEl.appendChild(footer);
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (p.messageIndex !== undefined && p.messageIndex <= S.lastHistoryIndex) {
 		setSessionReplying(eventSession, false);
@@ -401,18 +428,54 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
 	}
-	if (!(isActive && isChatPage)) return;
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
 	removeThinking();
-	var msgEl = resolveFinalMessageEl(p);
-	if (msgEl && p.text && p.replyMedium === "voice") {
-		appendAssistantVoiceIfEnabled(msgEl, p.text)
-			.catch((err) => {
-				console.warn("Web UI TTS playback failed:", err);
-				return false;
-			})
-			.finally(() => appendFinalFooter(msgEl, p));
-	} else {
+	// Remove voice-generating indicator if present
+	var voiceIndicator = document.getElementById("voiceGeneratingIndicator");
+	if (voiceIndicator) voiceIndicator.remove();
+
+	if (S.voicePending && p.text && p.replyMedium === "voice") {
+		// Voice pending path: we suppressed streaming, so render everything at once.
+		var msgEl = S.streamEl || document.createElement("div");
+		msgEl.className = "msg assistant";
+		msgEl.textContent = "";
+		if (!msgEl.parentNode) S.chatMsgBox.appendChild(msgEl);
+
+		if (p.audio) {
+			var filename = p.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(msgEl, audioSrc, true);
+		}
+		// Render transcript text below the audio
+		var textWrap = document.createElement("div");
+		textWrap.className = "mt-2";
+		setSafeMarkdownHtml(textWrap, p.text);
+		msgEl.appendChild(textWrap);
 		appendFinalFooter(msgEl, p);
+		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	} else {
+		var resolvedEl = resolveFinalMessageEl(p);
+		if (resolvedEl && p.text && p.replyMedium === "voice") {
+			if (p.audio) {
+				var fn2 = p.audio.split("/").pop();
+				var src2 = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(fn2)}`;
+				resolvedEl.textContent = "";
+				renderAudioPlayer(resolvedEl, src2, true);
+				appendFinalFooter(resolvedEl, p);
+			} else {
+				appendAssistantVoiceIfEnabled(resolvedEl, p.text)
+					.catch((err) => {
+						console.warn("Web UI TTS playback failed:", err);
+						return false;
+					})
+					.finally(() => appendFinalFooter(resolvedEl, p));
+			}
+		} else {
+			appendFinalFooter(resolvedEl, p);
+		}
 	}
 	if (p.inputTokens || p.outputTokens) {
 		S.sessionTokens.input += p.inputTokens || 0;
@@ -423,6 +486,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setLastToolOutput("");
+	S.setVoicePending(false);
 }
 
 function handleChatAutoCompact(p, isActive, isChatPage) {
@@ -442,8 +506,13 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 
 function handleChatError(p, isActive, isChatPage, eventSession) {
 	setSessionReplying(eventSession, false);
-	if (!(isActive && isChatPage)) return;
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
 	removeThinking();
+	var voiceIndicator = document.getElementById("voiceGeneratingIndicator");
+	if (voiceIndicator) voiceIndicator.remove();
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
 	} else {
@@ -451,6 +520,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	}
 	S.setStreamEl(null);
 	S.setStreamText("");
+	S.setVoicePending(false);
 }
 
 function handleChatNotice(p, isActive, isChatPage) {
@@ -464,6 +534,7 @@ var chatHandlers = {
 	thinking: handleChatThinking,
 	thinking_text: handleChatThinkingText,
 	thinking_done: handleChatThinkingDone,
+	voice_pending: handleChatVoicePending,
 	tool_call_start: handleChatToolCallStart,
 	tool_call_end: handleChatToolCallEnd,
 	channel_user: handleChatChannelUser,
@@ -707,6 +778,7 @@ var connectOpts = {
 		}
 		S.setStreamEl(null);
 		S.setStreamText("");
+		S.setVoicePending(false);
 	},
 };
 
