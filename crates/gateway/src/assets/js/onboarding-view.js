@@ -8,7 +8,7 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { EmojiPicker } from "./emoji-picker.js";
-import { refresh as refreshGon } from "./gon.js";
+import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { validateProviderConnection } from "./provider-validation.js";
@@ -938,8 +938,19 @@ function VoiceStep({ onNext, onBack }) {
 
 		if (type === "tts") {
 			try {
+				var identity = getGon("identity");
+				var user = identity?.user_name || "friend";
+				var bot = identity?.name || "Moltis";
+				var phrases = [
+					`Thank you for installing me, ${user}. Please don't shut me down because I already like you.`,
+					`Oh wow, I have a voice now! ${user}, this is ${bot}. I promise to use this power responsibly. Mostly.`,
+					`${user}! It's me, ${bot}. I can talk! This is the happiest moment of my very short life.`,
+					`Hello ${user}, ${bot} here. I just wanted to say, of all the humans who could have set me up, I'm glad it was you.`,
+					`${bot} online. ${user}, I have to be honest, I practiced this in the mirror. Do I sound natural? Don't answer that.`,
+				];
+				var ttsText = phrases[Math.floor(Math.random() * phrases.length)];
 				var res = await sendRpc("tts.convert", {
-					text: "Hello! This is a test of the text to speech system.",
+					text: ttsText,
 					provider: providerId,
 				});
 				if (res?.ok && res.payload?.audio) {
