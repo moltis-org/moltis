@@ -1634,6 +1634,9 @@ pub async fn start_gateway(
     *state.discovered_hooks.write().await = discovered_hooks_info;
     *state.disabled_hooks.write().await = persisted_disabled;
 
+    // Wire the LLM provider registry for lightweight generation (TTS phrases).
+    *state.llm_providers.write().await = Some(Arc::clone(&registry));
+
     // Generate a one-time setup code if setup is pending and auth is not disabled.
     let setup_code_display =
         if !credential_store.is_setup_complete() && !credential_store.is_auth_disabled() {
@@ -4026,7 +4029,8 @@ Use this as a starting point for your own skills.
 const TMUX_SKILL_MD: &str = r#"---
 name: tmux
 description: Run and interact with terminal applications (htop, vim, etc.) using tmux sessions in the sandbox
-allowed-tools: process
+allowed-tools:
+  - process
 ---
 
 # tmux — Interactive Terminal Sessions
