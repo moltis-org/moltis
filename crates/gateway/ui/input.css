@@ -821,12 +821,13 @@
 
   /* Voice transcribing indicator in chat */
   .msg.voice-transcribing {
+    align-self: flex-end;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 12px 16px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
+    padding: 10px 14px;
+    background: var(--user-bg);
+    border: 1px solid var(--user-border);
     border-radius: var(--radius);
     animation: msg-in 0.15s ease-out;
   }

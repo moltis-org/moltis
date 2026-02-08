@@ -65,6 +65,14 @@ async function startRecording() {
 			}
 		};
 
+		// Only show recording indicator when actually recording
+		mediaRecorder.onstart = () => {
+			isRecording = true;
+			micBtn.classList.add("recording");
+			micBtn.setAttribute("aria-pressed", "true");
+			micBtn.title = "Click to stop and send";
+		};
+
 		mediaRecorder.onstop = async () => {
 			// Stop all tracks to release the microphone
 			for (var track of stream.getTracks()) {
@@ -74,10 +82,6 @@ async function startRecording() {
 		};
 
 		mediaRecorder.start();
-		isRecording = true;
-		micBtn.classList.add("recording");
-		micBtn.setAttribute("aria-pressed", "true");
-		micBtn.title = "Click to stop and send";
 	} catch (err) {
 		console.error("Failed to start recording:", err);
 		// Show user-friendly error
