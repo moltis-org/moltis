@@ -10,6 +10,7 @@ base64            = { workspace = true }
 moltis-auto-reply = { workspace = true }
 moltis-channels   = { workspace = true }
 moltis-common     = { workspace = true }
+moltis-media      = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
 rand              = { workspace = true }
 reqwest           = { workspace = true }
@@ -26,6 +27,7 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
+axum  = { workspace = true }
 tokio = { workspace = true }
 
 [lints]

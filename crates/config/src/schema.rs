@@ -235,8 +235,8 @@ impl Default for VoiceCoquiTtsConfig {
 pub struct VoiceSttConfig {
     /// Enable STT globally.
     pub enabled: bool,
-    /// Default provider: "whisper", "groq", "deepgram", "google", "mistral", "elevenlabs-stt", "voxtral-local", "whisper-cli", "sherpa-onnx".
-    pub provider: String,
+    /// Default provider.
+    pub provider: VoiceSttProvider,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
     /// Groq (Whisper-compatible) settings.
@@ -261,7 +261,7 @@ impl Default for VoiceSttConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: "whisper".into(),
+            provider: VoiceSttProvider::Whisper,
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
             deepgram: VoiceDeepgramConfig::default(),
@@ -272,6 +272,68 @@ impl Default for VoiceSttConfig {
             whisper_cli: VoiceWhisperCliConfig::default(),
             sherpa_onnx: VoiceSherpaOnnxConfig::default(),
         }
+    }
+}
+
+/// Speech-to-Text provider identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceSttProvider {
+    #[serde(rename = "whisper")]
+    Whisper,
+    #[serde(rename = "groq")]
+    Groq,
+    #[serde(rename = "deepgram")]
+    Deepgram,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "mistral")]
+    Mistral,
+    #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
+    ElevenLabs,
+    #[serde(rename = "voxtral-local")]
+    VoxtralLocal,
+    #[serde(rename = "whisper-cli")]
+    WhisperCli,
+    #[serde(rename = "sherpa-onnx")]
+    SherpaOnnx,
+}
+
+impl VoiceSttProvider {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Whisper => "whisper",
+            Self::Groq => "groq",
+            Self::Deepgram => "deepgram",
+            Self::Google => "google",
+            Self::Mistral => "mistral",
+            Self::ElevenLabs => "elevenlabs-stt",
+            Self::VoxtralLocal => "voxtral-local",
+            Self::WhisperCli => "whisper-cli",
+            Self::SherpaOnnx => "sherpa-onnx",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "whisper" => Some(Self::Whisper),
+            "groq" => Some(Self::Groq),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            "mistral" => Some(Self::Mistral),
+            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
+            "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-cli" => Some(Self::WhisperCli),
+            "sherpa-onnx" => Some(Self::SherpaOnnx),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for VoiceSttProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 

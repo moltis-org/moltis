@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 anyhow         = { workspace = true }
+image          = { workspace = true }
 moltis-common  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 reqwest        = { workspace = true }

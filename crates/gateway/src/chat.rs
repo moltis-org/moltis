@@ -27,7 +27,10 @@ use {
         runner::{RunnerEvent, run_agent_loop_streaming},
         tool_registry::ToolRegistry,
     },
-    moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
+    moltis_sessions::{
+        ContentBlock, MessageContent, PersistedMessage, metadata::SqliteSessionMetadata,
+        store::SessionStore,
+    },
     moltis_skills::discover::SkillDiscoverer,
     moltis_tools::policy::{ToolPolicy, profile_tools},
 };
@@ -349,8 +352,8 @@ impl ChatService for LiveChatService {
         // Support both text-only and multimodal content.
         // - "text": string → plain text message
         // - "content": array → multimodal content (text + images)
-        let (text, user_content) = if let Some(content) = params.get("content") {
-            // Multimodal content - extract text for logging/hooks, keep full content for LLM
+        let (text, message_content) = if let Some(content) = params.get("content") {
+            // Multimodal content - extract text for logging/hooks, parse into typed blocks
             let text_part = content
                 .as_array()
                 .and_then(|arr| {
@@ -360,14 +363,41 @@ impl ChatService for LiveChatService {
                 })
                 .unwrap_or("[Image]")
                 .to_string();
-            (text_part, content.clone())
+
+            // Parse JSON blocks into typed ContentBlock structs
+            let blocks: Vec<ContentBlock> = content
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|block| {
+                            let block_type = block.get("type")?.as_str()?;
+                            match block_type {
+                                "text" => {
+                                    let text = block.get("text")?.as_str()?.to_string();
+                                    Some(ContentBlock::text(text))
+                                },
+                                "image_url" => {
+                                    let url = block.get("image_url")?.get("url")?.as_str()?;
+                                    Some(ContentBlock::ImageUrl {
+                                        image_url: moltis_sessions::message::ImageUrl {
+                                            url: url.to_string(),
+                                        },
+                                    })
+                                },
+                                _ => None,
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (text_part, MessageContent::Multimodal(blocks))
         } else {
             let text = params
                 .get("text")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "missing 'text' or 'content' parameter".to_string())?
                 .to_string();
-            (text.clone(), serde_json::json!(text))
+            (text.clone(), MessageContent::Text(text))
         };
 
         let conn_id = params
@@ -552,14 +582,17 @@ impl ChatService for LiveChatService {
         }
 
         // Persist the user message (with optional channel metadata for UI display).
-        // Use multimodal content if available, otherwise plain text.
         let channel_meta = params.get("channel").cloned();
-        let mut user_msg =
-            serde_json::json!({"role": "user", "content": &user_content, "created_at": now_ms()});
-        if let Some(ch) = &channel_meta {
-            user_msg["channel"] = ch.clone();
-        }
-        if let Err(e) = self.session_store.append(&session_key, &user_msg).await {
+        let user_msg = PersistedMessage::User {
+            content: message_content,
+            created_at: Some(now_ms()),
+            channel: channel_meta,
+        };
+        if let Err(e) = self
+            .session_store
+            .append(&session_key, &user_msg.to_value())
+            .await
+        {
             warn!("failed to persist user message: {e}");
         }
 
@@ -902,9 +935,15 @@ impl ChatService for LiveChatService {
 
             // Persist assistant response.
             if let Some((response_text, input_tokens, output_tokens)) = assistant_text {
-                let assistant_msg = serde_json::json!({"role": "assistant", "content": response_text, "model": model_id, "provider": provider_name, "inputTokens": input_tokens, "outputTokens": output_tokens, "created_at": now_ms()});
+                let assistant_msg = PersistedMessage::assistant(
+                    response_text,
+                    &model_id,
+                    &provider_name,
+                    input_tokens,
+                    output_tokens,
+                );
                 if let Err(e) = session_store
-                    .append(&session_key_clone, &assistant_msg)
+                    .append(&session_key_clone, &assistant_msg.to_value())
                     .await
                 {
                     warn!("failed to persist assistant message: {e}");
@@ -998,9 +1037,12 @@ impl ChatService for LiveChatService {
         };
 
         // Persist the user message.
-        let user_msg =
-            serde_json::json!({"role": "user", "content": &text, "created_at": now_ms()});
-        if let Err(e) = self.session_store.append(&session_key, &user_msg).await {
+        let user_msg = PersistedMessage::user(&text);
+        if let Err(e) = self
+            .session_store
+            .append(&session_key, &user_msg.to_value())
+            .await
+        {
             warn!("send_sync: failed to persist user message: {e}");
         }
 
@@ -1074,18 +1116,16 @@ impl ChatService for LiveChatService {
 
         // Persist assistant response.
         if let Some((ref response_text, input_tokens, output_tokens)) = result {
-            let assistant_msg = serde_json::json!({
-                "role": "assistant",
-                "content": response_text,
-                "model": model_id,
-                "provider": provider_name,
-                "inputTokens": input_tokens,
-                "outputTokens": output_tokens,
-                "created_at": now_ms(),
-            });
+            let assistant_msg = PersistedMessage::assistant(
+                response_text,
+                &model_id,
+                &provider_name,
+                input_tokens,
+                output_tokens,
+            );
             if let Err(e) = self
                 .session_store
-                .append(&session_key, &assistant_msg)
+                .append(&session_key, &assistant_msg.to_value())
                 .await
             {
                 warn!("send_sync: failed to persist assistant message: {e}");
@@ -1110,12 +1150,11 @@ impl ChatService for LiveChatService {
                     .unwrap_or_else(|| "agent run failed (check server logs)".to_string());
 
                 // Persist the error in the session so it's visible in session history.
-                let error_entry = serde_json::json!({
-                    "role": "system",
-                    "content": format!("[error] {error_msg}"),
-                    "created_at": now_ms(),
-                });
-                let _ = self.session_store.append(&session_key, &error_entry).await;
+                let error_entry = PersistedMessage::system(format!("[error] {error_msg}"));
+                let _ = self
+                    .session_store
+                    .append(&session_key, &error_entry.to_value())
+                    .await;
                 // Update metadata so the session shows in the UI.
                 if let Ok(count) = self.session_store.count(&session_key).await {
                     self.session_metadata.touch(&session_key, count).await;
@@ -1285,11 +1324,16 @@ impl ChatService for LiveChatService {
         }
 
         // Replace history with a single assistant message containing the summary.
-        let compacted = vec![serde_json::json!({
-            "role": "assistant",
-            "content": format!("[Conversation Summary]\n\n{summary}"),
-            "created_at": now_ms(),
-        })];
+        let compacted_msg = PersistedMessage::Assistant {
+            content: format!("[Conversation Summary]\n\n{summary}"),
+            created_at: Some(now_ms()),
+            model: None,
+            provider: None,
+            input_tokens: None,
+            output_tokens: None,
+            tool_calls: None,
+        };
+        let compacted = vec![compacted_msg.to_value()];
 
         self.session_store
             .replace_history(&session_key, compacted.clone())
@@ -2063,11 +2107,16 @@ async fn compact_session(
         return Err("compact produced empty summary".into());
     }
 
-    let compacted = vec![serde_json::json!({
-        "role": "assistant",
-        "content": format!("[Conversation Summary]\n\n{summary}"),
-        "created_at": now_ms(),
-    })];
+    let compacted_msg = PersistedMessage::Assistant {
+        content: format!("[Conversation Summary]\n\n{summary}"),
+        created_at: Some(now_ms()),
+        model: None,
+        provider: None,
+        input_tokens: None,
+        output_tokens: None,
+        tool_calls: None,
+    };
+    let compacted = vec![compacted_msg.to_value()];
 
     store
         .replace_history(session_key, compacted)

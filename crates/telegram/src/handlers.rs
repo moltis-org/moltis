@@ -65,7 +65,7 @@ pub async fn handle_message_direct(
         return Ok(());
     }
 
-    let (config, bot_username, _outbound, message_log, event_sink) = {
+    let (config, bot_username, outbound, message_log, event_sink) = {
         let accts = accounts.read().unwrap();
         let state = match accts.get(account_id) {
             Some(s) => s,
@@ -196,6 +196,23 @@ pub async fn handle_message_direct(
 
     // Check for voice/audio messages and transcribe them
     let (body, attachments) = if let Some(voice_file) = extract_voice_file(&msg) {
+        // If STT is not configured, reply with guidance and do not dispatch to the LLM.
+        if let Some(ref sink) = event_sink
+            && !sink.voice_stt_available().await
+        {
+            if let Err(e) = outbound
+                .send_text(
+                    account_id,
+                    &msg.chat.id.0.to_string(),
+                    "I can't understand voice, you did not configure it, please visit Settings -> Voice",
+                )
+                .await
+            {
+                warn!(account_id, "failed to send STT setup hint: {e}");
+            }
+            return Ok(());
+        }
+
         // Try to transcribe the voice message
         if let Some(ref sink) = event_sink {
             match download_telegram_file(bot, &voice_file.file_id).await {
@@ -247,7 +264,8 @@ pub async fn handle_message_direct(
         } else {
             // No event sink, can't transcribe
             (
-                text.clone().unwrap_or_else(|| "[Voice message]".to_string()),
+                text.clone()
+                    .unwrap_or_else(|| "[Voice message]".to_string()),
                 Vec::new(),
             )
         }
@@ -261,9 +279,34 @@ pub async fn handle_message_direct(
                     size = image_data.len(),
                     "downloaded photo"
                 );
+
+                // Optimize image for LLM consumption (resize if needed, compress)
+                let (final_data, media_type) = match moltis_media::image_ops::optimize_for_llm(
+                    &image_data,
+                    None,
+                ) {
+                    Ok(optimized) => {
+                        if optimized.was_resized {
+                            info!(
+                                account_id,
+                                original_size = image_data.len(),
+                                final_size = optimized.data.len(),
+                                original_dims = %format!("{}x{}", optimized.original_width, optimized.original_height),
+                                final_dims = %format!("{}x{}", optimized.final_width, optimized.final_height),
+                                "resized image for LLM"
+                            );
+                        }
+                        (optimized.data, optimized.media_type)
+                    },
+                    Err(e) => {
+                        warn!(account_id, error = %e, "failed to optimize image, using original");
+                        (image_data, photo_file.media_type)
+                    },
+                };
+
                 let attachment = ChannelAttachment {
-                    media_type: photo_file.media_type,
-                    data: image_data,
+                    media_type,
+                    data: final_data,
                 };
                 // Use caption as text, or empty string if no caption
                 let caption = text.clone().unwrap_or_default();
@@ -283,9 +326,7 @@ pub async fn handle_message_direct(
         if let Some(media_type) = describe_media_kind(&msg) {
             info!(
                 account_id,
-                peer_id,
-                media_type,
-                "received unhandled attachment type"
+                peer_id, media_type, "received unhandled attachment type"
             );
         }
         (text.unwrap_or_default(), Vec::new())
@@ -1188,10 +1229,7 @@ async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<
     // Build the download URL
     // Telegram file URL format: https://api.telegram.org/file/bot<token>/<file_path>
     let token = bot.token();
-    let url = format!(
-        "https://api.telegram.org/file/bot{}/{}",
-        token, file.path
-    );
+    let url = format!("https://api.telegram.org/file/bot{}/{}", token, file.path);
 
     // Download using reqwest
     let response = reqwest::get(&url).await?;
@@ -1250,6 +1288,207 @@ fn build_session_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
+
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use axum::{
+        Json, Router,
+        body::Bytes,
+        extract::State,
+        http::Uri,
+        routing::post,
+    };
+    use moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget};
+    use secrecy::Secret;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
+    use tokio::sync::oneshot;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::{
+        config::TelegramAccountConfig,
+        otp::OtpState,
+        outbound::TelegramOutbound,
+        state::{AccountState, AccountStateMap},
+    };
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum TelegramApiMethod {
+        SendMessage,
+        SendChatAction,
+        Other(String),
+    }
+
+    impl TelegramApiMethod {
+        fn from_path(path: &str) -> Self {
+            let method = path.rsplit('/').next().unwrap_or_default();
+            match method {
+                "SendMessage" => Self::SendMessage,
+                "SendChatAction" => Self::SendChatAction,
+                _ => Self::Other(method.to_string()),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum CapturedTelegramRequest {
+        SendMessage(SendMessageRequest),
+        SendChatAction(SendChatActionRequest),
+        Other {
+            method: TelegramApiMethod,
+            raw_body: String,
+        },
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct SendMessageRequest {
+        chat_id: i64,
+        text: String,
+        #[serde(default)]
+        parse_mode: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct SendChatActionRequest {
+        chat_id: i64,
+        action: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramApiResponse {
+        ok: bool,
+        result: TelegramApiResult,
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(untagged)]
+    enum TelegramApiResult {
+        Message(TelegramMessageResult),
+        Bool(bool),
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramChat {
+        id: i64,
+        #[serde(rename = "type")]
+        chat_type: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramMessageResult {
+        message_id: i64,
+        date: i64,
+        chat: TelegramChat,
+        text: String,
+    }
+
+    #[derive(Clone)]
+    struct MockTelegramApi {
+        requests: Arc<Mutex<Vec<CapturedTelegramRequest>>>,
+    }
+
+    async fn telegram_api_handler(
+        State(state): State<MockTelegramApi>,
+        uri: Uri,
+        body: Bytes,
+    ) -> Json<TelegramApiResponse> {
+        let method = TelegramApiMethod::from_path(uri.path());
+        let raw_body = String::from_utf8_lossy(&body).to_string();
+
+        let captured = match method.clone() {
+            TelegramApiMethod::SendMessage => {
+                match serde_json::from_slice::<SendMessageRequest>(&body) {
+                    Ok(req) => CapturedTelegramRequest::SendMessage(req),
+                    Err(_) => CapturedTelegramRequest::Other {
+                        method,
+                        raw_body,
+                    },
+                }
+            },
+            TelegramApiMethod::SendChatAction => {
+                match serde_json::from_slice::<SendChatActionRequest>(&body) {
+                    Ok(req) => CapturedTelegramRequest::SendChatAction(req),
+                    Err(_) => CapturedTelegramRequest::Other {
+                        method,
+                        raw_body,
+                    },
+                }
+            },
+            TelegramApiMethod::Other(_) => CapturedTelegramRequest::Other {
+                method,
+                raw_body,
+            },
+        };
+
+        state
+            .requests
+            .lock()
+            .expect("lock requests")
+            .push(captured);
+
+        match TelegramApiMethod::from_path(uri.path()) {
+            TelegramApiMethod::SendMessage => Json(TelegramApiResponse {
+                ok: true,
+                result: TelegramApiResult::Message(TelegramMessageResult {
+                    message_id: 1,
+                    date: 0,
+                    chat: TelegramChat {
+                        id: 42,
+                        chat_type: "private".to_string(),
+                    },
+                    text: "ok".to_string(),
+                }),
+            }),
+            TelegramApiMethod::SendChatAction | TelegramApiMethod::Other(_) => {
+                Json(TelegramApiResponse {
+                    ok: true,
+                    result: TelegramApiResult::Bool(true),
+                })
+            },
+        }
+    }
+
+    #[derive(Default)]
+    struct MockSink {
+        dispatch_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ChannelEventSink for MockSink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+            self.dispatch_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(&self, _channel_type: &str, _account_id: &str, _reason: &str) {}
+
+        async fn transcribe_voice(&self, _audio_data: &[u8], _format: &str) -> Result<String> {
+            Err(anyhow::anyhow!("transcribe should not be called when STT unavailable"))
+        }
+
+        async fn voice_stt_available(&self) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn session_key_dm() {
@@ -1292,5 +1531,134 @@ mod tests {
             msg.contains("Channels") && msg.contains("Senders"),
             "OTP challenge message must tell the user where to find the code"
         );
+    }
+
+    #[tokio::test]
+    async fn voice_not_configured_replies_with_setup_hint_and_skips_dispatch() {
+        let recorded_requests = Arc::new(Mutex::new(Vec::<CapturedTelegramRequest>::new()));
+        let mock_api = MockTelegramApi {
+            requests: Arc::clone(&recorded_requests),
+        };
+        let app = Router::new()
+            .route("/{*path}", post(telegram_api_handler))
+            .with_state(mock_api);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let addr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve mock telegram api");
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+        let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+
+        let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let outbound = Arc::new(TelegramOutbound {
+            accounts: Arc::clone(&accounts),
+        });
+        let sink = Arc::new(MockSink::default());
+        let account_id = "test-account";
+
+        {
+            let mut map = accounts.write().expect("accounts write lock");
+            map.insert(
+                account_id.to_string(),
+                AccountState {
+                    bot: bot.clone(),
+                    bot_username: Some("test_bot".into()),
+                    account_id: account_id.to_string(),
+                    config: TelegramAccountConfig {
+                        token: Secret::new("test-token".to_string()),
+                        ..Default::default()
+                    },
+                    outbound: Arc::clone(&outbound),
+                    cancel: CancellationToken::new(),
+                    message_log: None,
+                    event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
+                    otp: std::sync::Mutex::new(OtpState::new(300)),
+                },
+            );
+        }
+
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "voice": {
+                "file_id": "voice-file-id",
+                "file_unique_id": "voice-unique-id",
+                "duration": 1,
+                "mime_type": "audio/ogg",
+                "file_size": 123
+            }
+        }))
+        .expect("deserialize voice message");
+        assert!(extract_voice_file(&msg).is_some(), "message should contain voice media");
+
+        handle_message_direct(msg, &bot, account_id, &accounts)
+            .await
+            .expect("handle message");
+
+        let requests = recorded_requests.lock().expect("requests lock");
+        assert!(
+            requests
+                .iter()
+                .any(|request| {
+                    if let CapturedTelegramRequest::SendMessage(body) = request {
+                        body.chat_id == 42
+                            && body.parse_mode.as_deref() == Some("HTML")
+                            && body
+                                .text
+                                .contains("I can't understand voice, you did not configure it")
+                    } else {
+                        false
+                    }
+                }),
+            "expected voice setup hint to be sent, requests={requests:?}"
+        );
+        assert!(
+            requests.iter().any(|request| {
+                if let CapturedTelegramRequest::SendChatAction(action) = request {
+                    action.chat_id == 42 && action.action == "typing"
+                } else {
+                    false
+                }
+            }),
+            "expected typing action before reply, requests={requests:?}"
+        );
+        assert!(
+            requests.iter().all(|request| {
+                if let CapturedTelegramRequest::Other { method, raw_body } = request {
+                    !matches!(method, TelegramApiMethod::SendMessage | TelegramApiMethod::SendChatAction)
+                        || raw_body.is_empty()
+                } else {
+                    true
+                }
+            }),
+            "unexpected untyped request capture for known method, requests={requests:?}"
+        );
+        assert_eq!(
+            sink.dispatch_calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "voice message should not be dispatched to chat when STT is unavailable"
+        );
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server join");
     }
 }

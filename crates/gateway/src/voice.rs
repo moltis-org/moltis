@@ -24,6 +24,28 @@ use moltis_voice::{
 #[cfg(feature = "voice")]
 use crate::services::TtsService;
 
+#[cfg(feature = "voice")]
+trait IntoVoiceSttProvider {
+    fn into_voice_stt_provider(self) -> moltis_config::VoiceSttProvider;
+}
+
+#[cfg(feature = "voice")]
+impl IntoVoiceSttProvider for SttProviderId {
+    fn into_voice_stt_provider(self) -> moltis_config::VoiceSttProvider {
+        match self {
+            SttProviderId::Whisper => moltis_config::VoiceSttProvider::Whisper,
+            SttProviderId::Groq => moltis_config::VoiceSttProvider::Groq,
+            SttProviderId::Deepgram => moltis_config::VoiceSttProvider::Deepgram,
+            SttProviderId::Google => moltis_config::VoiceSttProvider::Google,
+            SttProviderId::Mistral => moltis_config::VoiceSttProvider::Mistral,
+            SttProviderId::VoxtralLocal => moltis_config::VoiceSttProvider::VoxtralLocal,
+            SttProviderId::WhisperCli => moltis_config::VoiceSttProvider::WhisperCli,
+            SttProviderId::SherpaOnnx => moltis_config::VoiceSttProvider::SherpaOnnx,
+            SttProviderId::ElevenLabs => moltis_config::VoiceSttProvider::ElevenLabs,
+        }
+    }
+}
+
 // ── TTS Service ─────────────────────────────────────────────────────────────
 
 /// Live TTS service that delegates to voice providers.
@@ -606,7 +628,7 @@ impl SttService for LiveSttService {
         let provider_str = params
             .get("provider")
             .and_then(|v| v.as_str())
-            .unwrap_or(&cfg.voice.stt.provider);
+            .unwrap_or(cfg.voice.stt.provider.as_str());
 
         let provider_id = SttProviderId::parse(provider_str)
             .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
@@ -676,7 +698,7 @@ impl SttService for LiveSttService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.stt.provider = provider_id.to_string();
+            cfg.voice.stt.provider = provider_id.into_voice_stt_provider();
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 

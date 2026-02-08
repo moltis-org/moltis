@@ -392,11 +392,9 @@ mod tests {
 
             Mock::given(method("POST"))
                 .and(path("/speech-to-text"))
-                .respond_with(
-                    ResponseTemplate::new(422).set_body_string(
-                        r#"{"detail": [{"type": "missing", "msg": "Field required"}]}"#,
-                    ),
-                )
+                .respond_with(ResponseTemplate::new(422).set_body_string(
+                    r#"{"detail": [{"type": "missing", "msg": "Field required"}]}"#,
+                ))
                 .mount(&mock_server)
                 .await;
 

@@ -386,10 +386,8 @@ impl ChannelEventSink for GatewayChannelEventSink {
             .ok_or_else(|| anyhow!("gateway not ready"))?;
 
         // Encode audio as base64 for the STT service
-        let audio_base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            audio_data,
-        );
+        let audio_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, audio_data);
 
         let params = serde_json::json!({
             "audio": audio_base64,
@@ -409,6 +407,20 @@ impl ChannelEventSink for GatewayChannelEventSink {
             .ok_or_else(|| anyhow!("transcription result missing text"))?;
 
         Ok(text.to_string())
+    }
+
+    async fn voice_stt_available(&self) -> bool {
+        let Some(state) = self.state.get() else {
+            return false;
+        };
+
+        match state.services.stt.status().await {
+            Ok(status) => status
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            Err(_) => false,
+        }
     }
 
     async fn dispatch_to_chat_with_attachments(
