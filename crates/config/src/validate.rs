@@ -376,6 +376,129 @@ fn build_schema_map() -> KnownKeys {
                 ("rate_limit_window_secs", Leaf),
             ])),
         ),
+        (
+            "voice",
+            Struct(HashMap::from([
+                (
+                    "tts",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        ("providers", Leaf),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice_id", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "openai",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("language_code", Leaf),
+                                ("voice_name", Leaf),
+                            ])),
+                        ),
+                        ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
+                        (
+                            "coqui",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("voice_id", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
+                (
+                    "stt",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        ("providers", Leaf),
+                        (
+                            "whisper",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "groq",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "deepgram",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                                ("smart_format", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([("api_key", Leaf), ("language_code", Leaf)])),
+                        ),
+                        (
+                            "mistral",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "voxtral_local",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("model", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                        (
+                            "whisper_cli",
+                            Struct(HashMap::from([
+                                ("binary_path", Leaf),
+                                ("model_path", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "sherpa_onnx",
+                            Struct(HashMap::from([
+                                ("model_dir", Leaf),
+                                ("language", Leaf),
+                                ("sample_rate", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
+            ])),
+        ),
     ]))
 }
 
@@ -737,6 +860,57 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_security_levels.join(", ")
             ),
         });
+    }
+
+    // Unknown voice TTS providers list values
+    let valid_voice_tts_providers = [
+        "elevenlabs",
+        "openai",
+        "openai-tts",
+        "google",
+        "google-tts",
+        "piper",
+        "coqui",
+    ];
+    for (idx, provider) in config.voice.tts.providers.iter().enumerate() {
+        if !valid_voice_tts_providers.contains(&provider.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("voice.tts.providers[{idx}]"),
+                message: format!(
+                    "unknown TTS provider \"{provider}\"; expected one of: {}",
+                    valid_voice_tts_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown voice STT providers list values
+    let valid_voice_stt_providers = [
+        "whisper",
+        "groq",
+        "deepgram",
+        "google",
+        "mistral",
+        "elevenlabs",
+        "elevenlabs-stt",
+        "voxtral-local",
+        "whisper-cli",
+        "sherpa-onnx",
+    ];
+    for (idx, provider) in config.voice.stt.providers.iter().enumerate() {
+        if !valid_voice_stt_providers.contains(&provider.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("voice.stt.providers[{idx}]"),
+                message: format!(
+                    "unknown STT provider \"{provider}\"; expected one of: {}",
+                    valid_voice_stt_providers.join(", ")
+                ),
+            });
+        }
     }
 
     // port == 0
@@ -1172,6 +1346,65 @@ security_level = "paranoid"
         assert!(
             warning.is_some(),
             "expected warning for unknown security level"
+        );
+    }
+
+    #[test]
+    fn unknown_voice_tts_list_provider_warned() {
+        let toml = r#"
+[voice.tts]
+providers = ["openai-tts", "not-a-provider"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "voice.tts.providers[1]");
+        assert!(
+            warning.is_some(),
+            "expected warning for unknown voice.tts.providers entry"
+        );
+    }
+
+    #[test]
+    fn unknown_voice_stt_list_provider_warned() {
+        let toml = r#"
+[voice.stt]
+providers = ["whisper", "not-a-provider"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "voice.stt.providers[1]");
+        assert!(
+            warning.is_some(),
+            "expected warning for unknown voice.stt.providers entry"
+        );
+    }
+
+    #[test]
+    fn known_voice_provider_list_entries_not_warned() {
+        let toml = r#"
+[voice.tts]
+providers = ["openai", "google-tts", "coqui"]
+
+[voice.stt]
+providers = ["elevenlabs", "whisper-cli", "sherpa-onnx"]
+"#;
+        let result = validate_toml_str(toml);
+        let warnings: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.category == "unknown-field"
+                    && (d.path.starts_with("voice.tts.providers")
+                        || d.path.starts_with("voice.stt.providers"))
+            })
+            .collect();
+        assert!(
+            warnings.is_empty(),
+            "known voice provider list values should not warn: {warnings:?}"
         );
     }
 

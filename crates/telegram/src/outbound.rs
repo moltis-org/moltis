@@ -148,12 +148,28 @@ impl ChannelOutbound for TelegramOutbound {
                 }
 
                 // Non-image types: send as document
-                let input = InputFile::memory(bytes).file_name(filename);
-                let mut req = bot.send_document(chat_id, input);
-                if !payload.text.is_empty() {
-                    req = req.caption(&payload.text);
+                if media.mime_type == "audio/ogg" {
+                    let input = InputFile::memory(bytes).file_name("voice.ogg");
+                    let mut req = bot.send_voice(chat_id, input);
+                    if !payload.text.is_empty() {
+                        req = req.caption(&payload.text);
+                    }
+                    req.await?;
+                } else if media.mime_type.starts_with("audio/") {
+                    let input = InputFile::memory(bytes).file_name("audio.mp3");
+                    let mut req = bot.send_audio(chat_id, input);
+                    if !payload.text.is_empty() {
+                        req = req.caption(&payload.text);
+                    }
+                    req.await?;
+                } else {
+                    let input = InputFile::memory(bytes).file_name(filename);
+                    let mut req = bot.send_document(chat_id, input);
+                    if !payload.text.is_empty() {
+                        req = req.caption(&payload.text);
+                    }
+                    req.await?;
                 }
-                req.await?;
             } else {
                 // URL-based media
                 let input = InputFile::url(media.url.parse()?);
@@ -166,15 +182,15 @@ impl ChannelOutbound for TelegramOutbound {
                         }
                         req.await?;
                     },
-                    t if t.starts_with("audio/") => {
-                        let mut req = bot.send_audio(chat_id, input);
+                    "audio/ogg" => {
+                        let mut req = bot.send_voice(chat_id, input);
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }
                         req.await?;
                     },
-                    "audio/ogg" => {
-                        let mut req = bot.send_voice(chat_id, input);
+                    t if t.starts_with("audio/") => {
+                        let mut req = bot.send_audio(chat_id, input);
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }

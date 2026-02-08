@@ -436,6 +436,32 @@ fallback_models = []              # Ordered list of fallback models
                                   # Example: ["openai/gpt-4o", "anthropic/claude-3-haiku"]
 
 # ══════════════════════════════════════════════════════════════════════════════
+# VOICE
+# ══════════════════════════════════════════════════════════════════════════════
+# Voice provider settings for text-to-speech (TTS) and speech-to-text (STT).
+# `providers` controls what appears in the Settings UI provider list.
+
+[voice.tts]
+enabled = false                   # Enable text-to-speech
+provider = "elevenlabs"           # Active TTS provider
+providers = ["elevenlabs"]        # UI allowlist (empty = show all TTS providers)
+
+[voice.stt]
+enabled = false                   # Enable speech-to-text
+provider = "mistral"              # Active STT provider
+providers = ["mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+
+# [voice.tts.elevenlabs]
+# api_key = "${{ELEVENLABS_API_KEY}}" # Or set ELEVENLABS_API_KEY env var
+# voice_id = "21m00Tcm4TlvDq8ikWAM"
+# model = "eleven_flash_v2_5"
+
+# [voice.stt.mistral]
+# api_key = "${{MISTRAL_API_KEY}}"    # Or set MISTRAL_API_KEY env var
+# model = "voxtral-mini-latest"
+# language = "en"
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TAILSCALE
 # ══════════════════════════════════════════════════════════════════════════════
 # Expose moltis via Tailscale Serve (private) or Funnel (public).

@@ -617,7 +617,7 @@ impl CronService {
         let mut jobs = self.jobs.write().await;
         for job in jobs.iter_mut() {
             if let Some(running_at) = job.state.running_at_ms
-                && now - running_at > STUCK_THRESHOLD_MS
+                && now.saturating_sub(running_at) > STUCK_THRESHOLD_MS
             {
                 warn!(id = %job.id, "clearing stuck cron job");
                 job.state.running_at_ms = None;
@@ -1153,5 +1153,52 @@ mod tests {
         );
 
         svc.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_clear_stuck_jobs_handles_future_running_at_without_overflow() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        let job = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "future-running-at".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: false,
+                    channel: None,
+                    to: None,
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+            })
+            .await
+            .unwrap();
+
+        let now = now_ms();
+        svc.update_job_state(&job.id, |state| {
+            state.running_at_ms = Some(now + 1_000);
+        })
+        .await;
+
+        svc.clear_stuck_jobs(now).await;
+
+        let jobs = svc.list().await;
+        let job_state = jobs
+            .iter()
+            .find(|j| j.id == job.id)
+            .expect("job should exist");
+        assert_eq!(job_state.state.running_at_ms, Some(now + 1_000));
+        assert!(job_state.state.last_error.is_none());
     }
 }

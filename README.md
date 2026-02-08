@@ -98,6 +98,11 @@ What you get out of the box:
   and reloading hooks at runtime
 - **Web browsing** — web search (Brave, Perplexity) and URL fetching with
   readability extraction and SSRF protection
+- **Voice support** — Text-to-speech (TTS) and speech-to-text (STT) with
+  multiple providers. TTS: ElevenLabs, OpenAI, Google Cloud, Piper (local),
+  Coqui TTS (local). STT: OpenAI Whisper, Groq, Deepgram, Google Cloud,
+  Mistral Voxtral, ElevenLabs Scribe, whisper.cpp (local), sherpa-onnx (local).
+  Configure and manage providers from the Settings UI.
 - **Scheduled tasks** — cron-based task execution
 - **OAuth flows** — built-in OAuth2 for provider authentication
 - **TLS support** — automatic self-signed certificate generation

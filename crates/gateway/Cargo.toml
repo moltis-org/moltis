@@ -40,6 +40,7 @@ moltis-sessions    = { workspace = true }
 moltis-skills      = { workspace = true }
 moltis-telegram    = { workspace = true }
 moltis-tools       = { workspace = true }
+moltis-voice       = { optional = true, workspace = true }
 p256               = { features = ["ecdsa"], optional = true, workspace = true }
 password-hash      = { workspace = true }
 pulldown-cmark     = { features = ["html"], workspace = true }
@@ -82,6 +83,7 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "voice",
   "web-ui",
 ]
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
@@ -102,6 +104,7 @@ tls = [
   "dep:time",
   "dep:tokio-rustls",
 ]
+voice = ["dep:moltis-voice"]
 web-ui = ["dep:include_dir"]
 
 [dev-dependencies]

@@ -338,6 +338,104 @@
   <a href="/settings/security" class="provider-btn">Set up authentication</a>
 </div>
 
+<!-- Voice provider setup instructions (toggled by page-settings.js) -->
+<div id="voice-whisper-cli-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">brew install whisper-cpp</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "whisper-cli"
+
+[voice.stt.whisper_cli]
+model_path = "~/.moltis/models/ggml-base.en.bin"</code>
+  Download models from <a href="https://huggingface.co/ggerganov/whisper.cpp/tree/main" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">Hugging Face</a>.
+</div>
+
+<div id="voice-sherpa-onnx-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  See <a href="https://k2-fsa.github.io/sherpa/onnx/install.html" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">sherpa-onnx documentation</a> for installation.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "sherpa-onnx"
+
+[voice.stt.sherpa_onnx]
+model_dir = "~/.moltis/models/sherpa-onnx"</code>
+</div>
+
+<div id="voice-piper-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install piper-tts</code>
+  Or download from <a href="https://github.com/rhasspy/piper/releases" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">GitHub releases</a>.<br /><br />
+  <strong>Download a voice model:</strong><br />
+  Browse voices at <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">piper-samples</a> and download the .onnx file.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "piper"
+
+[voice.tts.piper]
+model_path = "~/.moltis/models/en_US-lessac-medium.onnx"</code>
+</div>
+
+<div id="voice-coqui-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install TTS</code>
+  <br />
+  <strong>Start the server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">tts-server --model_name tts_models/en/ljspeech/tacotron2-DDC</code>
+  Or use Docker:<br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">docker run -p 5002:5002 ghcr.io/coqui-ai/tts</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "coqui"
+
+[voice.tts.coqui]
+endpoint = "http://localhost:5002"</code>
+  <br />
+  Browse available models: <a href="https://github.com/coqui-ai/TTS#available-models" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">coqui-ai/TTS</a>
+</div>
+
+<div id="voice-voxtral-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <div data-voxtral-requirements></div>
+  <strong>Requirements:</strong> Linux, Python 3.10+, CUDA GPU with 10GB+ VRAM<br /><br />
+  <strong>Setup:</strong><br />
+  1. Install vLLM: <code class="font-mono text-xs">pip install "vllm[audio]"</code><br />
+  2. Start the server:<br />
+  <code class="font-mono text-xs block my-1 ml-3 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">vllm serve mistralai/Voxtral-Mini-3B-2507 \
+  --tokenizer_mode mistral \
+  --config_format mistral \
+  --load_format mistral</code>
+  3. The model downloads automatically on first run (~3GB)<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "voxtral-local"
+
+[voice.stt.voxtral_local]
+endpoint = "http://localhost:8000"</code>
+  <br />
+  <strong>Languages:</strong> English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish, Norwegian, Danish, Finnish, Arabic
+</div>
+
+<div id="voice-voxtral-requirements-ok" class="text-xs p-2 rounded-md mb-3 border border-[var(--accent)]" style="display:none;background:color-mix(in srgb, var(--accent) 10%, transparent);">
+  <div class="font-medium text-[var(--accent)]">✓ System requirements met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+</div>
+
+<div id="voice-voxtral-requirements-fail" class="text-xs p-2 rounded-md mb-3 border border-[var(--warning,#f59e0b)]" style="display:none;background:color-mix(in srgb, var(--warning, #f59e0b) 10%, transparent);">
+  <div class="font-medium" style="color:var(--warning,#f59e0b)">⚠ System requirements not met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+  <ul data-voxtral-reasons class="text-[var(--muted)] mt-1.5 pl-4 m-0"></ul>
+</div>
+
 <!-- Templates -->
 <template id="tpl-thinking-dots">
   <span class="thinking-dots"><span></span><span></span><span></span></span>

@@ -6,12 +6,15 @@ import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { EmojiPicker } from "./emoji-picker.js";
 import { onEvent } from "./events.js";
+import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
 import { navigate, registerPrefix } from "./router.js";
+import { connected } from "./signals.js";
 import * as S from "./state.js";
+import { Modal } from "./ui.js";
 
 var identity = signal(null);
 var loading = signal(true);
@@ -68,6 +71,11 @@ var sections = [
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.466.73-3.558"/></svg>`,
 	},
 	{
+		id: "voice",
+		label: "Voice",
+		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>`,
+	},
+	{
 		id: "notifications",
 		label: "Notifications",
 		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>`,
@@ -79,10 +87,15 @@ var sections = [
 	},
 ];
 
+function getVisibleSections() {
+	var voiceEnabled = gon.get("voice_enabled");
+	return sections.filter((s) => s.id !== "voice" || voiceEnabled);
+}
+
 function SettingsSidebar() {
 	return html`<div class="settings-sidebar">
 		<div class="settings-sidebar-nav">
-			${sections.map(
+			${getVisibleSections().map(
 				(s) => html`
 				<button
 					key=${s.id}
@@ -1013,6 +1026,30 @@ function bufToB64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+function decodeBase64Safe(input) {
+	if (!input) return new Uint8Array();
+	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+	while (normalized.length % 4) normalized += "=";
+	var binary = "";
+	try {
+		binary = atob(normalized);
+	} catch (_err) {
+		throw new Error("Invalid base64 audio payload");
+	}
+	var bytes = new Uint8Array(binary.length);
+	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+	return bytes;
+}
+
+function encodeBase64Safe(bytes) {
+	var chunk = 0x8000;
+	var str = "";
+	for (var i = 0; i < bytes.length; i += chunk) {
+		str += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(str);
+}
+
 // ── Configuration section ─────────────────────────────────────
 
 function ConfigSection() {
@@ -1607,6 +1644,888 @@ function TailscaleSection() {
 	</div>`;
 }
 
+// ── Voice section ────────────────────────────────────────────
+
+// Provider metadata for the add modal
+var VOICE_PROVIDERS = {
+	// STT Cloud
+	whisper: {
+		id: "whisper",
+		name: "OpenAI Whisper",
+		type: "stt",
+		category: "cloud",
+		description: "Best accuracy, handles accents and background noise",
+		keyPlaceholder: "sk-...",
+		keyUrl: "https://platform.openai.com/api-keys",
+		keyUrlLabel: "platform.openai.com/api-keys",
+	},
+	groq: {
+		id: "groq",
+		name: "Groq",
+		type: "stt",
+		category: "cloud",
+		description: "Ultra-fast Whisper inference on Groq hardware",
+		keyPlaceholder: "gsk_...",
+		keyUrl: "https://console.groq.com/keys",
+		keyUrlLabel: "console.groq.com/keys",
+	},
+	deepgram: {
+		id: "deepgram",
+		name: "Deepgram",
+		type: "stt",
+		category: "cloud",
+		description: "Fast and accurate with Nova-3 model",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.deepgram.com/api-keys",
+		keyUrlLabel: "console.deepgram.com",
+	},
+	google: {
+		id: "google",
+		name: "Google Cloud",
+		type: "stt",
+		category: "cloud",
+		description: "Supports 125+ languages with Google Speech-to-Text",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.cloud.google.com/apis/credentials",
+		keyUrlLabel: "console.cloud.google.com",
+	},
+	mistral: {
+		id: "mistral",
+		name: "Mistral AI",
+		type: "stt",
+		category: "cloud",
+		description: "Fast Voxtral transcription with 13 language support",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.mistral.ai/api-keys",
+		keyUrlLabel: "console.mistral.ai",
+	},
+	"elevenlabs-stt": {
+		id: "elevenlabs-stt",
+		name: "ElevenLabs Scribe",
+		type: "stt",
+		category: "cloud",
+		description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
+		keyPlaceholder: "API key",
+		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
+		keyUrlLabel: "elevenlabs.io",
+		hint: "If you already have ElevenLabs TTS configured, use the same API key here.",
+	},
+	// STT Local
+	"whisper-cli": {
+		id: "whisper-cli",
+		name: "whisper.cpp",
+		type: "stt",
+		category: "local",
+		description: "Local Whisper inference via whisper-cli",
+	},
+	"sherpa-onnx": {
+		id: "sherpa-onnx",
+		name: "sherpa-onnx",
+		type: "stt",
+		category: "local",
+		description: "Local offline speech recognition via ONNX runtime",
+	},
+	"voxtral-local": {
+		id: "voxtral-local",
+		name: "Voxtral (Local)",
+		type: "stt",
+		category: "local",
+		description: "Run Mistral's Voxtral model locally via vLLM server",
+	},
+	// TTS Cloud
+	elevenlabs: {
+		id: "elevenlabs",
+		name: "ElevenLabs",
+		type: "tts",
+		category: "cloud",
+		description: "Lowest latency (~75ms), natural voices. Same key enables Scribe STT",
+		keyPlaceholder: "API key",
+		keyUrl: "https://elevenlabs.io/app/settings/api-keys",
+		keyUrlLabel: "elevenlabs.io",
+		hint: "This API key also enables ElevenLabs Scribe for speech-to-text.",
+	},
+	openai: {
+		id: "openai",
+		name: "OpenAI TTS",
+		type: "tts",
+		category: "cloud",
+		description: "Good quality, shares API key with Whisper STT",
+		keyPlaceholder: "sk-...",
+		keyUrl: "https://platform.openai.com/api-keys",
+		keyUrlLabel: "platform.openai.com/api-keys",
+	},
+	"google-tts": {
+		id: "google",
+		name: "Google Cloud TTS",
+		type: "tts",
+		category: "cloud",
+		description: "220+ voices, 40+ languages, WaveNet and Neural2 voices",
+		keyPlaceholder: "API key",
+		keyUrl: "https://console.cloud.google.com/apis/credentials",
+		keyUrlLabel: "console.cloud.google.com",
+	},
+	// TTS Local
+	piper: {
+		id: "piper",
+		name: "Piper",
+		type: "tts",
+		category: "local",
+		description: "Fast local TTS, commonly used in Home Assistant",
+	},
+	coqui: {
+		id: "coqui",
+		name: "Coqui TTS",
+		type: "tts",
+		category: "local",
+		description: "Open-source deep learning TTS with many voice models",
+	},
+};
+
+// Voice section signals
+var voiceShowAddModal = signal(false);
+var voiceSelectedProvider = signal(null);
+var voiceSelectedProviderData = signal(null);
+
+function VoiceSection() {
+	var [allProviders, setAllProviders] = useState({ tts: [], stt: [] });
+	var [voiceLoading, setVoiceLoading] = useState(true);
+	var [voxtralReqs, setVoxtralReqs] = useState(null);
+	var [savingProvider, setSavingProvider] = useState(null);
+	var [voiceMsg, setVoiceMsg] = useState(null);
+	var [voiceErr, setVoiceErr] = useState(null);
+	var [voiceTesting, setVoiceTesting] = useState(null); // { id, type, phase } of provider being tested
+	var [activeRecorder, setActiveRecorder] = useState(null); // MediaRecorder for STT stop functionality
+	var [voiceTestResults, setVoiceTestResults] = useState({}); // { providerId: { text, error } }
+
+	function fetchVoiceStatus(options) {
+		if (!options?.silent) {
+			setVoiceLoading(true);
+			rerender();
+		}
+		Promise.all([sendRpc("voice.providers.all", {}), sendRpc("voice.config.voxtral_requirements", {})])
+			.then(([providers, voxtral]) => {
+				if (providers?.ok) setAllProviders(providers.payload || { tts: [], stt: [] });
+				if (voxtral?.ok) setVoxtralReqs(voxtral.payload);
+				if (!options?.silent) setVoiceLoading(false);
+				rerender();
+			})
+			.catch(() => {
+				if (!options?.silent) setVoiceLoading(false);
+				rerender();
+			});
+	}
+
+	useEffect(() => {
+		if (connected.value) fetchVoiceStatus();
+	}, [connected.value]);
+
+	function onToggleProvider(provider, enabled, providerType) {
+		setVoiceErr(null);
+		setVoiceMsg(null);
+		setSavingProvider(provider.id);
+		rerender();
+
+		sendRpc("voice.provider.toggle", { provider: provider.id, enabled, type: providerType })
+			.then((res) => {
+				setSavingProvider(null);
+				if (res?.ok) {
+					setVoiceMsg(`${provider.name} ${enabled ? "enabled" : "disabled"}.`);
+					setTimeout(() => {
+						setVoiceMsg(null);
+						rerender();
+					}, 2000);
+					fetchVoiceStatus({ silent: true });
+				} else {
+					setVoiceErr(res?.error?.message || "Failed to toggle provider");
+				}
+				rerender();
+			})
+			.catch((err) => {
+				setSavingProvider(null);
+				setVoiceErr(err.message);
+				rerender();
+			});
+	}
+
+	function onConfigureProvider(providerId, providerData) {
+		voiceSelectedProvider.value = providerId;
+		voiceSelectedProviderData.value = providerData || null;
+		voiceShowAddModal.value = true;
+	}
+
+	function getUnconfiguredProviders() {
+		var allIds = new Set([...allProviders.tts.map((p) => p.id), ...allProviders.stt.map((p) => p.id)]);
+		return Object.values(VOICE_PROVIDERS).filter((p) => !allIds.has(p.id));
+	}
+
+	// Stop active STT recording
+	function stopSttRecording() {
+		if (activeRecorder) {
+			activeRecorder.stop();
+		}
+	}
+
+	// Test a voice provider (TTS or STT)
+	async function testVoiceProvider(providerId, type) {
+		// If already recording for this provider, stop it
+		if (voiceTesting?.id === providerId && voiceTesting?.type === "stt" && voiceTesting?.phase === "recording") {
+			stopSttRecording();
+			return;
+		}
+
+		setVoiceErr(null);
+		setVoiceMsg(null);
+		setVoiceTesting({ id: providerId, type, phase: "testing" });
+		rerender();
+
+		if (type === "tts") {
+			// Test TTS by converting sample text to audio and playing it
+			try {
+				var res = await sendRpc("tts.convert", {
+					text: "Hello! This is a test of the text to speech system.",
+					provider: providerId,
+				});
+				if (res?.ok && res.payload?.audio) {
+					// Decode base64 audio and play it
+					var bytes = decodeBase64Safe(res.payload.audio);
+					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
+					var url = URL.createObjectURL(blob);
+					var audio = new Audio(url);
+					audio.onended = () => URL.revokeObjectURL(url);
+					audio.play().catch(() => undefined);
+					setVoiceTestResults((prev) => ({
+						...prev,
+						[providerId]: { success: true, error: null },
+					}));
+				} else {
+					setVoiceTestResults((prev) => ({
+						...prev,
+						[providerId]: { success: false, error: res?.error?.message || "TTS test failed" },
+					}));
+				}
+			} catch (err) {
+				setVoiceTestResults((prev) => ({
+					...prev,
+					[providerId]: { success: false, error: err.message || "TTS test failed" },
+				}));
+			}
+			setVoiceTesting(null);
+		} else {
+			// Test STT by recording audio and transcribing
+			try {
+				var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+					? "audio/webm;codecs=opus"
+					: "audio/webm";
+				var mediaRecorder = new MediaRecorder(stream, { mimeType });
+				var audioChunks = [];
+
+				mediaRecorder.ondataavailable = (e) => {
+					if (e.data.size > 0) audioChunks.push(e.data);
+				};
+
+				mediaRecorder.start();
+				setActiveRecorder(mediaRecorder);
+				setVoiceTesting({ id: providerId, type, phase: "recording" });
+				rerender();
+
+				mediaRecorder.onstop = async () => {
+					setActiveRecorder(null);
+					for (var track of stream.getTracks()) track.stop();
+					setVoiceTesting({ id: providerId, type, phase: "transcribing" });
+					rerender();
+
+					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+					var buffer = await audioBlob.arrayBuffer();
+					var base64 = encodeBase64Safe(new Uint8Array(buffer));
+
+					var sttRes = await sendRpc("stt.transcribe", {
+						audio: base64,
+						format: "webm",
+						provider: providerId,
+					});
+
+					if (sttRes?.ok && sttRes.payload?.text) {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: sttRes.payload.text, error: null },
+						}));
+					} else {
+						setVoiceTestResults((prev) => ({
+							...prev,
+							[providerId]: { text: null, error: sttRes?.error?.message || "STT test failed" },
+						}));
+					}
+					setVoiceTesting(null);
+					rerender();
+				};
+			} catch (err) {
+				if (err.name === "NotAllowedError") {
+					setVoiceErr("Microphone permission denied");
+				} else if (err.name === "NotFoundError") {
+					setVoiceErr("No microphone found");
+				} else {
+					setVoiceErr(err.message || "STT test failed");
+				}
+				setVoiceTesting(null);
+			}
+		}
+		rerender();
+	}
+
+	if (voiceLoading || !connected.value) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
+			<div class="text-xs text-[var(--muted)]">${connected.value ? "Loading\u2026" : "Connecting\u2026"}</div>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
+			Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in chat to record voice input. TTS lets you hear responses as audio.
+		</p>
+
+		${voiceMsg ? html`<div class="text-xs text-[var(--accent)]">${voiceMsg}</div>` : null}
+		${voiceErr ? html`<div class="text-xs text-[var(--error)]">${voiceErr}</div>` : null}
+
+		<div style="max-width:700px;display:flex;flex-direction:column;gap:24px;">
+			<!-- STT Providers -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Speech-to-Text (Voice Input)</h3>
+				<div class="flex flex-col gap-2">
+					${allProviders.stt.map((prov) => {
+						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
+						var testResult = voiceTestResults[prov.id] || null;
+						return html`<${VoiceProviderRow}
+							provider=${prov}
+							meta=${meta}
+							type="stt"
+							saving=${savingProvider === prov.id}
+							testState=${testState}
+							testResult=${testResult}
+							onToggle=${(enabled) => onToggleProvider(prov, enabled, "stt")}
+							onConfigure=${() => onConfigureProvider(prov.id, prov)}
+							onTest=${() => testVoiceProvider(prov.id, "stt")}
+						/>`;
+					})}
+				</div>
+			</div>
+
+			<!-- TTS Providers -->
+			<div>
+				<h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Text-to-Speech (Audio Responses)</h3>
+				<div class="flex flex-col gap-2">
+					${allProviders.tts.map((prov) => {
+						var meta = VOICE_PROVIDERS[prov.id] || { name: prov.name, description: "" };
+						var testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;
+						var testResult = voiceTestResults[prov.id] || null;
+						return html`<${VoiceProviderRow}
+							provider=${prov}
+							meta=${meta}
+							type="tts"
+							saving=${savingProvider === prov.id}
+							testState=${testState}
+							testResult=${testResult}
+							onToggle=${(enabled) => onToggleProvider(prov, enabled, "tts")}
+							onConfigure=${() => onConfigureProvider(prov.id, prov)}
+							onTest=${() => testVoiceProvider(prov.id, "tts")}
+						/>`;
+					})}
+				</div>
+			</div>
+		</div>
+
+		<${AddVoiceProviderModal}
+			unconfiguredProviders=${getUnconfiguredProviders()}
+			voxtralReqs=${voxtralReqs}
+			onSaved=${() => {
+				fetchVoiceStatus();
+				voiceShowAddModal.value = false;
+				voiceSelectedProvider.value = null;
+				voiceSelectedProviderData.value = null;
+			}}
+		/>
+	</div>`;
+}
+
+// Individual provider row with enable toggle
+function VoiceProviderRow({ provider, meta, type, saving, testState, testResult, onToggle, onConfigure, onTest }) {
+	var canEnable = provider.available;
+	var keySourceLabel =
+		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
+	var showTestBtn = canEnable && provider.enabled;
+
+	// Determine button text based on test state
+	var buttonText = "Test";
+	var buttonDisabled = false;
+	if (testState) {
+		if (testState.phase === "recording") {
+			buttonText = "Stop";
+		} else if (testState.phase === "transcribing") {
+			buttonText = "Testing…";
+			buttonDisabled = true;
+		} else {
+			buttonText = "Testing…";
+			buttonDisabled = true;
+		}
+	}
+
+	return html`<div class="provider-card" style="padding:10px 14px;border-radius:8px;display:flex;align-items:center;gap:12px;">
+		<div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+			<div style="display:flex;align-items:center;gap:8px;">
+				<span class="text-sm text-[var(--text-strong)]">${meta.name}</span>
+				${provider.category === "local" ? html`<span class="provider-item-badge">local</span>` : null}
+				${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
+			</div>
+			<span class="text-xs text-[var(--muted)]">${meta.description}</span>
+			${provider.settingsSummary ? html`<span class="text-xs text-[var(--muted)]">Voice: ${provider.settingsSummary}</span>` : null}
+			${provider.binaryPath ? html`<span class="text-xs text-[var(--muted)]">Found at: ${provider.binaryPath}</span>` : null}
+			${!canEnable && provider.statusMessage ? html`<span class="text-xs text-[var(--muted)]">${provider.statusMessage}</span>` : null}
+			${
+				testState?.phase === "recording"
+					? html`<div class="voice-recording-hint">
+				<span class="voice-recording-dot"></span>
+				<span>Speak now, then click Stop when finished</span>
+			</div>`
+					: null
+			}
+			${testState?.phase === "transcribing" ? html`<span class="text-xs text-[var(--muted)]">Transcribing...</span>` : null}
+			${testState?.phase === "testing" && type === "tts" ? html`<span class="text-xs text-[var(--muted)]">Playing audio...</span>` : null}
+			${
+				testResult?.text
+					? html`<div class="voice-transcription-result">
+				<span class="voice-transcription-label">Transcribed:</span>
+				<span class="voice-transcription-text">"${testResult.text}"</span>
+			</div>`
+					: null
+			}
+			${
+				testResult?.success === true
+					? html`<div class="voice-success-result">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<span>Audio played successfully</span>
+			</div>`
+					: null
+			}
+			${testResult?.error ? html`<span class="text-xs text-[var(--error)]">${testResult.error}</span>` : null}
+		</div>
+		<div style="display:flex;align-items:center;gap:8px;">
+			<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onConfigure}>
+				Configure
+			</button>
+			${
+				showTestBtn
+					? html`<button
+						class="provider-btn provider-btn-secondary provider-btn-sm"
+						onClick=${onTest}
+						disabled=${buttonDisabled}
+						title=${type === "tts" ? "Test voice output" : "Test voice input"}>
+						${buttonText}
+					</button>`
+					: null
+			}
+			${
+				canEnable
+					? html`<label class="toggle-switch">
+						<input type="checkbox"
+							checked=${provider.enabled}
+							disabled=${saving}
+							onChange=${(e) => onToggle(e.target.checked)} />
+						<span class="toggle-slider"></span>
+					</label>`
+					: provider.category === "local"
+						? html`<span class="text-xs text-[var(--muted)]">Install required</span>`
+						: null
+			}
+		</div>
+	</div>`;
+}
+
+// Local provider instructions component (uses hidden HTML elements)
+function LocalProviderInstructions({ providerId, voxtralReqs }) {
+	var ref = useRef(null);
+
+	useEffect(() => {
+		var container = ref.current;
+		if (!container) return;
+		while (container.firstChild) container.removeChild(container.firstChild);
+
+		var templateId = {
+			"whisper-cli": "voice-whisper-cli-instructions",
+			"sherpa-onnx": "voice-sherpa-onnx-instructions",
+			piper: "voice-piper-instructions",
+			coqui: "voice-coqui-instructions",
+			"voxtral-local": "voice-voxtral-instructions",
+		}[providerId];
+
+		if (!templateId) return;
+
+		var el = cloneHidden(templateId);
+		if (!el) return;
+
+		// For voxtral-local, populate the requirements section
+		if (providerId === "voxtral-local" && el.querySelector("[data-voxtral-requirements]")) {
+			var reqsContainer = el.querySelector("[data-voxtral-requirements]");
+			if (voxtralReqs) {
+				var detected = `${voxtralReqs.os}/${voxtralReqs.arch}`;
+				if (voxtralReqs.python?.available) detected += `, Python ${voxtralReqs.python.version}`;
+				else detected += ", no Python";
+				if (voxtralReqs.cuda?.available) {
+					detected += `, ${voxtralReqs.cuda.gpu_name || "NVIDIA GPU"} (${Math.round((voxtralReqs.cuda.memory_mb || 0) / 1024)}GB)`;
+				} else detected += ", no CUDA GPU";
+
+				var reqEl = cloneHidden(
+					voxtralReqs.compatible ? "voice-voxtral-requirements-ok" : "voice-voxtral-requirements-fail",
+				);
+				if (reqEl) {
+					reqEl.querySelector("[data-voxtral-detected]").textContent = detected;
+					if (!voxtralReqs.compatible && voxtralReqs.reasons?.length > 0) {
+						var ul = reqEl.querySelector("[data-voxtral-reasons]");
+						for (var r of voxtralReqs.reasons) {
+							var li = document.createElement("li");
+							li.style.margin = "2px 0";
+							li.textContent = r;
+							ul.appendChild(li);
+						}
+					}
+					reqsContainer.appendChild(reqEl);
+				}
+			} else {
+				var loadingEl = document.createElement("div");
+				loadingEl.className = "text-xs text-[var(--muted)] mb-3";
+				loadingEl.textContent = "Checking system requirements\u2026";
+				reqsContainer.appendChild(loadingEl);
+			}
+		}
+
+		container.appendChild(el);
+	}, [providerId, voxtralReqs]);
+
+	return html`<div ref=${ref}></div>`;
+}
+
+// Add Voice Provider Modal
+function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) {
+	var [apiKey, setApiKey] = useState("");
+	var [voiceValue, setVoiceValue] = useState("");
+	var [modelValue, setModelValue] = useState("");
+	var [languageCodeValue, setLanguageCodeValue] = useState("");
+	var [elevenlabsCatalog, setElevenlabsCatalog] = useState({ voices: [], models: [], warning: null });
+	var [elevenlabsCatalogLoading, setElevenlabsCatalogLoading] = useState(false);
+	var [saving, setSaving] = useState(false);
+	var [error, setError] = useState("");
+
+	var selectedProvider = voiceSelectedProvider.value;
+	var providerMeta = selectedProvider ? VOICE_PROVIDERS[selectedProvider] : null;
+	var isElevenLabsProvider = selectedProvider === "elevenlabs" || selectedProvider === "elevenlabs-stt";
+	var supportsTtsVoiceSettings = providerMeta?.type === "tts";
+
+	function onClose() {
+		voiceShowAddModal.value = false;
+		voiceSelectedProvider.value = null;
+		voiceSelectedProviderData.value = null;
+		setApiKey("");
+		setVoiceValue("");
+		setModelValue("");
+		setLanguageCodeValue("");
+		setError("");
+	}
+
+	function onSaveKey() {
+		var hasApiKey = apiKey.trim().length > 0;
+		var hasSettings = supportsTtsVoiceSettings && (voiceValue.trim() || modelValue.trim() || languageCodeValue.trim());
+		if (!(hasApiKey || hasSettings)) {
+			setError("Provide an API key or at least one voice setting.");
+			return;
+		}
+		setError("");
+		setSaving(true);
+
+		var settingsPayload = {
+			provider: selectedProvider,
+			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
+			voiceId: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
+			model: supportsTtsVoiceSettings ? modelValue.trim() || undefined : undefined,
+			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
+		};
+		var req = hasApiKey
+			? sendRpc("voice.config.save_key", { ...settingsPayload, api_key: apiKey.trim() })
+			: sendRpc("voice.config.save_settings", settingsPayload);
+		req
+			.then((res) => {
+				setSaving(false);
+				if (res?.ok) {
+					setApiKey("");
+					onSaved();
+				} else {
+					setError(res?.error?.message || "Failed to save key");
+				}
+			})
+			.catch((err) => {
+				setSaving(false);
+				setError(err.message);
+			});
+	}
+
+	function onSelectProvider(providerId) {
+		voiceSelectedProvider.value = providerId;
+		voiceSelectedProviderData.value = null;
+		setApiKey("");
+		setVoiceValue("");
+		setModelValue("");
+		setLanguageCodeValue("");
+		setError("");
+	}
+
+	useEffect(() => {
+		var settings = voiceSelectedProviderData.value?.settings;
+		if (!settings) return;
+		setVoiceValue(settings.voiceId || settings.voice || "");
+		setModelValue(settings.model || "");
+		setLanguageCodeValue(settings.languageCode || "");
+	}, [selectedProvider, voiceSelectedProviderData.value]);
+
+	useEffect(() => {
+		if (!isElevenLabsProvider) {
+			setElevenlabsCatalog({ voices: [], models: [], warning: null });
+			return;
+		}
+		setElevenlabsCatalogLoading(true);
+		sendRpc("voice.elevenlabs.catalog", {})
+			.then((res) => {
+				if (res?.ok) {
+					setElevenlabsCatalog({
+						voices: res.payload?.voices || [],
+						models: res.payload?.models || [],
+						warning: res.payload?.warning || null,
+					});
+				}
+			})
+			.catch(() => {
+				setElevenlabsCatalog({ voices: [], models: [], warning: "Failed to fetch ElevenLabs voice catalog." });
+			})
+			.finally(() => {
+				setElevenlabsCatalogLoading(false);
+				rerender();
+			});
+	}, [selectedProvider, isElevenLabsProvider]);
+
+	// Group providers by type and category
+	var sttCloud = unconfiguredProviders.filter((p) => p.type === "stt" && p.category === "cloud");
+	var sttLocal = unconfiguredProviders.filter((p) => p.type === "stt" && p.category === "local");
+	var ttsProviders = unconfiguredProviders.filter((p) => p.type === "tts");
+
+	// If a provider is selected, show its configuration form
+	if (selectedProvider && providerMeta) {
+		// Cloud provider - show API key form
+		if (providerMeta.category === "cloud") {
+			return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add ${providerMeta.name}">
+				<div class="channel-form">
+					<div class="text-sm text-[var(--text-strong)]">${providerMeta.name}</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-bottom:12px;">${providerMeta.description}</div>
+
+					<label class="text-xs text-[var(--muted)]">API Key</label>
+					<input type="password" class="provider-key-input" style="width:100%;"
+						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
+						placeholder=${providerMeta.keyPlaceholder || "Leave blank to keep existing key"} />
+					<div class="text-xs text-[var(--muted)]">
+						Get your API key at <a href=${providerMeta.keyUrl} target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">${providerMeta.keyUrlLabel}</a>
+					</div>
+
+					${
+						supportsTtsVoiceSettings
+							? html`<div class="flex flex-col gap-2">
+					<label class="text-xs text-[var(--muted)]">Voice</label>
+					${isElevenLabsProvider && elevenlabsCatalogLoading ? html`<div class="text-xs text-[var(--muted)]">Loading ElevenLabs voices...</div>` : null}
+					${isElevenLabsProvider && elevenlabsCatalog.warning ? html`<div class="text-xs text-[var(--muted)]">${elevenlabsCatalog.warning}</div>` : null}
+					${
+						isElevenLabsProvider && elevenlabsCatalog.voices.length > 0
+							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setVoiceValue(e.target.value)}>
+						<option value="">Pick a voice from your account...</option>
+						${elevenlabsCatalog.voices.map((v) => html`<option value=${v.id}>${v.name} (${v.id})</option>`)}
+					</select>`
+							: null
+					}
+					<input type="text" class="provider-key-input" style="width:100%;"
+						value=${voiceValue} onInput=${(e) => setVoiceValue(e.target.value)}
+						list=${isElevenLabsProvider ? "elevenlabs-voice-options" : undefined}
+						placeholder="voice id / name (optional)" />
+					${
+						isElevenLabsProvider
+							? html`<datalist id="elevenlabs-voice-options">
+						${elevenlabsCatalog.voices.map((v) => html`<option value=${v.id}>${v.name}</option>`)}
+					</datalist>`
+							: null
+					}
+
+					<label class="text-xs text-[var(--muted)]">Model</label>
+					${
+						isElevenLabsProvider && elevenlabsCatalog.models.length > 0
+							? html`<select class="provider-key-input" style="width:100%;" onChange=${(e) => setModelValue(e.target.value)}>
+						<option value="">Pick a model...</option>
+						${elevenlabsCatalog.models.map((m) => html`<option value=${m.id}>${m.name} (${m.id})</option>`)}
+					</select>`
+							: null
+					}
+					<input type="text" class="provider-key-input" style="width:100%;"
+						value=${modelValue} onInput=${(e) => setModelValue(e.target.value)}
+						list=${isElevenLabsProvider ? "elevenlabs-model-options" : undefined}
+						placeholder="model (optional)" />
+					${
+						isElevenLabsProvider
+							? html`<datalist id="elevenlabs-model-options">
+						${elevenlabsCatalog.models.map((m) => html`<option value=${m.id}>${m.name}</option>`)}
+					</datalist>`
+							: null
+					}
+
+					${
+						selectedProvider === "google" || selectedProvider === "google-tts"
+							? html`<div class="flex flex-col gap-2">
+							<label class="text-xs text-[var(--muted)]">Language Code</label>
+							<input type="text" class="provider-key-input" style="width:100%;"
+								value=${languageCodeValue} onInput=${(e) => setLanguageCodeValue(e.target.value)}
+								placeholder="en-US (optional)" />
+						</div>`
+							: null
+					}
+					</div>`
+							: null
+					}
+
+					${providerMeta.hint && html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;padding:8px;background:var(--surface-alt);border-radius:4px;font-style:italic;">${providerMeta.hint}</div>`}
+
+					${error && html`<div class="text-xs" style="color:var(--error);">${error}</div>`}
+
+					<div style="display:flex;gap:8px;margin-top:8px;">
+						<button class="provider-btn provider-btn-secondary" onClick=${() => {
+							voiceSelectedProvider.value = null;
+							setApiKey("");
+							setError("");
+						}}>Back</button>
+						<button class="provider-btn" disabled=${saving} onClick=${onSaveKey}>
+							${saving ? "Saving\u2026" : "Save"}
+						</button>
+					</div>
+				</div>
+			</${Modal}>`;
+		}
+
+		// Local provider - show setup instructions
+		if (providerMeta.category === "local") {
+			return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add ${providerMeta.name}">
+				<div class="channel-form">
+					<div class="text-sm text-[var(--text-strong)]">${providerMeta.name}</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-bottom:12px;">${providerMeta.description}</div>
+					<${LocalProviderInstructions} providerId=${selectedProvider} voxtralReqs=${voxtralReqs} />
+					<div style="display:flex;gap:8px;margin-top:12px;">
+						<button class="provider-btn provider-btn-secondary" onClick=${() => {
+							voiceSelectedProvider.value = null;
+						}}>Back</button>
+					</div>
+				</div>
+			</${Modal}>`;
+		}
+	}
+
+	// Show provider selection list
+	return html`<${Modal} show=${voiceShowAddModal.value} onClose=${onClose} title="Add Voice Provider">
+		<div class="channel-form" style="gap:16px;">
+			${
+				sttCloud.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Speech-to-Text (Cloud)</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${sttCloud.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				sttLocal.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Speech-to-Text (Local)</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${sttLocal.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				ttsProviders.length > 0
+					? html`
+				<div>
+					<h4 class="text-xs font-medium text-[var(--muted)]" style="margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px;">Text-to-Speech</h4>
+					<div style="display:flex;flex-direction:column;gap:6px;">
+						${ttsProviders.map(
+							(p) => html`
+							<button class="provider-card" style="padding:10px 12px;border-radius:6px;cursor:pointer;text-align:left;border:1px solid var(--border);background:var(--surface);"
+								onClick=${() => onSelectProvider(p.id)}>
+								<div style="display:flex;align-items:center;gap:8px;">
+									<div style="flex:1;">
+										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
+										<div class="text-xs text-[var(--muted)]">${p.description}</div>
+									</div>
+									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+								</div>
+							</button>
+						`,
+						)}
+					</div>
+				</div>
+			`
+					: null
+			}
+
+			${
+				unconfiguredProviders.length === 0
+					? html`
+				<div class="text-sm text-[var(--muted)]" style="text-align:center;padding:20px 0;">
+					All available providers are already configured.
+				</div>
+			`
+					: null
+			}
+		</div>
+	</${Modal}>`;
+}
+
 // ── Memory section ────────────────────────────────────────────
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Large component managing memory settings with QMD integration
@@ -2137,6 +3056,7 @@ function SettingsPage() {
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
 		${section === "security" ? html`<${SecuritySection} />` : null}
 		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
+		${section === "voice" ? html`<${VoiceSection} />` : null}
 		${section === "notifications" ? html`<${NotificationsSection} />` : null}
 		${section === "config" ? html`<${ConfigSection} />` : null}
 	</div>`;

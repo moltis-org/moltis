@@ -25,6 +25,7 @@ members = [
   "crates/skills",
   "crates/telegram",
   "crates/tools",
+  "crates/voice",
 ]
 resolver = "2"
 
@@ -83,6 +84,7 @@ toml              = "0.8"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
 base64       = "0.22"
+bytes        = "1"
 encoding_rs  = "0.8"
 fd-lock      = "4"
 genai        = "0.5"
@@ -120,6 +122,7 @@ metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"
 metrics-tracing-context     = "0.16"
 # Content processing
+image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Filesystem / archiving
 chrono                = "0.4"
@@ -159,3 +162,4 @@ moltis-sessions   = { path = "crates/sessions" }
 moltis-skills     = { path = "crates/skills" }
 moltis-telegram   = { path = "crates/telegram" }
 moltis-tools      = { path = "crates/tools" }
+moltis-voice      = { path = "crates/voice" }

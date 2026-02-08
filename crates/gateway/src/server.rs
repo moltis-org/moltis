@@ -467,6 +467,17 @@ pub async fn start_gateway(
     // When local-llm feature is disabled, this variable is not needed since
     // the only usage is also feature-gated.
 
+    // Wire live voice services when the feature is enabled.
+    #[cfg(feature = "voice")]
+    {
+        use crate::voice::{LiveSttService, LiveTtsService, SttServiceConfig};
+
+        // Services read fresh config from disk on each operation,
+        // so we just need to create the instances here.
+        services.tts = Arc::new(LiveTtsService::new(moltis_voice::TtsConfig::default()));
+        services.stt = Arc::new(LiveSttService::new(SttServiceConfig::default()));
+    }
+
     if !registry.read().await.is_empty() {
         services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
     }
@@ -1585,6 +1596,14 @@ pub async fn start_gateway(
             moltis_tools::session_state::SessionStateTool::new(Arc::clone(&session_state_store)),
         ));
 
+        // Register built-in voice tools for explicit TTS/STT calls in agents.
+        tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
+            Arc::clone(&state.services.tts),
+        )));
+        tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
+            Arc::clone(&state.services.stt),
+        )));
+
         // Register skill management tools for agent self-extension.
         // Use data_dir so created skills land in the configured workspace root.
         {
@@ -2600,6 +2619,7 @@ struct GonData {
     cron_status: moltis_cron::types::CronStatus,
     heartbeat_config: moltis_config::schema::HeartbeatConfig,
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
+    voice_enabled: bool,
     /// Non-main git branch name, if running from a git checkout on a
     /// non-default branch. `None` when on `main`/`master` or outside a repo.
     git_branch: Option<String>,
@@ -2734,6 +2754,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         cron_status,
         heartbeat_config,
         heartbeat_runs,
+        voice_enabled: cfg!(feature = "voice"),
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
