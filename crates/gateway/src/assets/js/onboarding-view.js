@@ -595,7 +595,7 @@ function ProviderStep({ onNext, onBack }) {
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Pick an LLM provider to power your agent. You can add more later in Settings.</p>
 		${
 			configuredProviders.length > 0 &&
-			html`<div class="rounded-md border border-[var(--ok)]/30 bg-[var(--ok)]/8 p-3 flex flex-col gap-2">
+			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
 			<div class="text-xs text-[var(--muted)]">Detected providers</div>
 			<div class="flex flex-wrap gap-2">
 				${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}

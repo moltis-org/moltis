@@ -3117,8 +3117,16 @@ async fn render_spa_template(
         .unwrap_or_default();
 
     let mut body = if is_dev_assets() {
-        // Dev: no versioned URLs, just serve directly with no-cache
+        // Dev: bust browser cache by routing through the versioned path with a
+        // timestamp that changes every request.  Safari aggressively caches even
+        // with no-cache headers, so a changing URL is the only reliable fix.
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let versioned = format!("/assets/v/{ts}/");
         raw.replace("__BUILD_TS__", "dev")
+            .replace("/assets/", &versioned)
     } else {
         // Production: inject content-hash versioned URLs for immutable caching
         static HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(asset_content_hash);
@@ -3740,17 +3748,22 @@ async fn versioned_asset_handler(
     Path((_version, path)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let cache = if is_dev_assets() {
-        "no-cache"
+        "no-cache, no-store"
     } else {
         "public, max-age=31536000, immutable"
     };
     serve_asset(&path, cache)
 }
 
-/// Unversioned assets: `/assets/path` — always no-cache.
+/// Unversioned assets: `/assets/path` — always revalidate.
 #[cfg(feature = "web-ui")]
 async fn asset_handler(Path(path): Path<String>) -> impl IntoResponse {
-    serve_asset(&path, "no-cache")
+    let cache = if is_dev_assets() {
+        "no-cache, no-store"
+    } else {
+        "no-cache"
+    };
+    serve_asset(&path, cache)
 }
 
 /// PWA manifest: `/manifest.json` — served from assets root.
