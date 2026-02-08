@@ -4039,6 +4039,34 @@ enum VoiceProviderId {
     SherpaOnnx,
 }
 
+impl VoiceProviderId {
+    fn parse_tts_list_id(id: &str) -> Option<Self> {
+        match id {
+            "elevenlabs" => Some(Self::Elevenlabs),
+            "openai" | "openai-tts" => Some(Self::OpenaiTts),
+            "google" | "google-tts" => Some(Self::GoogleTts),
+            "piper" => Some(Self::Piper),
+            "coqui" => Some(Self::Coqui),
+            _ => None,
+        }
+    }
+
+    fn parse_stt_list_id(id: &str) -> Option<Self> {
+        match id {
+            "whisper" => Some(Self::Whisper),
+            "groq" => Some(Self::Groq),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            "mistral" => Some(Self::Mistral),
+            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenlabsStt),
+            "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-cli" => Some(Self::WhisperCli),
+            "sherpa-onnx" => Some(Self::SherpaOnnx),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VoiceProviderInfo {
@@ -4355,20 +4383,48 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
         ),
     ];
 
-    let tts_with_details = tts_providers
-        .into_iter()
-        .map(|provider| enrich_voice_provider(provider, config))
-        .collect::<Vec<_>>();
-    let stt_with_details = stt_providers
-        .into_iter()
-        .map(|provider| enrich_voice_provider(provider, config))
-        .collect::<Vec<_>>();
+    let tts_with_details = filter_listed_voice_providers(
+        tts_providers
+            .into_iter()
+            .map(|provider| enrich_voice_provider(provider, config))
+            .collect::<Vec<_>>(),
+        &config.voice.tts.providers,
+        VoiceProviderId::parse_tts_list_id,
+    );
+    let stt_with_details = filter_listed_voice_providers(
+        stt_providers
+            .into_iter()
+            .map(|provider| enrich_voice_provider(provider, config))
+            .collect::<Vec<_>>(),
+        &config.voice.stt.providers,
+        VoiceProviderId::parse_stt_list_id,
+    );
 
     serde_json::to_value(VoiceProvidersResponse {
         tts: tts_with_details,
         stt: stt_with_details,
     })
     .unwrap_or_else(|_| serde_json::json!({ "tts": [], "stt": [] }))
+}
+
+fn filter_listed_voice_providers(
+    providers: Vec<VoiceProviderInfo>,
+    listed_provider_ids: &[String],
+    parse_provider_id: fn(&str) -> Option<VoiceProviderId>,
+) -> Vec<VoiceProviderInfo> {
+    if listed_provider_ids.is_empty() {
+        return providers;
+    }
+
+    let allowed_ids: Vec<_> = listed_provider_ids
+        .iter()
+        .filter_map(|id| parse_provider_id(id))
+        .collect();
+
+    providers
+        .into_iter()
+        .filter(|provider| allowed_ids.contains(&provider.id))
+        .collect()
 }
 
 fn enrich_voice_provider(
@@ -4825,6 +4881,74 @@ mod tests {
 
     fn scopes(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn test_voice_provider(id: VoiceProviderId) -> VoiceProviderInfo {
+        VoiceProviderInfo {
+            id,
+            name: String::new(),
+            provider_type: String::new(),
+            category: String::new(),
+            available: false,
+            enabled: false,
+            key_source: None,
+            binary_path: None,
+            status_message: None,
+            capabilities: serde_json::json!({}),
+            settings: serde_json::json!({}),
+            settings_summary: None,
+        }
+    }
+
+    #[test]
+    fn parse_voice_provider_list_aliases() {
+        assert_eq!(
+            VoiceProviderId::parse_tts_list_id("openai"),
+            Some(VoiceProviderId::OpenaiTts)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_tts_list_id("google-tts"),
+            Some(VoiceProviderId::GoogleTts)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_stt_list_id("elevenlabs"),
+            Some(VoiceProviderId::ElevenlabsStt)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_stt_list_id("sherpa-onnx"),
+            Some(VoiceProviderId::SherpaOnnx)
+        );
+    }
+
+    #[test]
+    fn filter_listed_voice_providers_keeps_all_when_list_is_empty() {
+        let filtered = filter_listed_voice_providers(
+            vec![
+                test_voice_provider(VoiceProviderId::OpenaiTts),
+                test_voice_provider(VoiceProviderId::GoogleTts),
+            ],
+            &[],
+            VoiceProviderId::parse_tts_list_id,
+        );
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_listed_voice_providers_filters_tts_ids() {
+        let filtered = filter_listed_voice_providers(
+            vec![
+                test_voice_provider(VoiceProviderId::OpenaiTts),
+                test_voice_provider(VoiceProviderId::GoogleTts),
+                test_voice_provider(VoiceProviderId::Piper),
+            ],
+            &["openai".to_string(), "piper".to_string()],
+            VoiceProviderId::parse_tts_list_id,
+        );
+        let ids: Vec<_> = filtered.into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec![
+            VoiceProviderId::OpenaiTts,
+            VoiceProviderId::Piper
+        ]);
     }
 
     #[test]

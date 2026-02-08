@@ -104,6 +104,8 @@ pub struct VoiceTtsConfig {
     pub enabled: bool,
     /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
     pub provider: String,
+    /// Provider IDs to list in the UI. Empty means list all.
+    pub providers: Vec<String>,
     /// ElevenLabs-specific settings.
     pub elevenlabs: VoiceElevenLabsConfig,
     /// OpenAI TTS settings.
@@ -121,6 +123,7 @@ impl Default for VoiceTtsConfig {
         Self {
             enabled: false,
             provider: "elevenlabs".into(),
+            providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
             google: VoiceGoogleTtsConfig::default(),
@@ -237,6 +240,8 @@ pub struct VoiceSttConfig {
     pub enabled: bool,
     /// Default provider.
     pub provider: VoiceSttProvider,
+    /// Provider IDs to list in the UI. Empty means list all.
+    pub providers: Vec<String>,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
     /// Groq (Whisper-compatible) settings.
@@ -262,6 +267,7 @@ impl Default for VoiceSttConfig {
         Self {
             enabled: false,
             provider: VoiceSttProvider::Whisper,
+            providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
             deepgram: VoiceDeepgramConfig::default(),

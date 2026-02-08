@@ -100,6 +100,7 @@ Or configure in `moltis.toml`:
 [voice.tts]
 enabled = true
 provider = "elevenlabs"  # or "openai"
+providers = []           # Optional UI allowlist, empty = show all TTS providers
 auto = "off"             # "always", "off", "inbound", "tagged"
 max_text_length = 2000
 
@@ -327,6 +328,7 @@ Moltis supports 8 STT providers: 5 cloud-based and 3 local.
 [voice.stt]
 enabled = true
 provider = "whisper"  # or "groq", "deepgram", "google", "mistral", "whisper-cli", "sherpa-onnx"
+providers = []        # Optional UI allowlist, empty = show all STT providers
 
 # Cloud providers - API key required
 [voice.stt.whisper]

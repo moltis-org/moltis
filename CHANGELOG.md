@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory. The `/plugins` page has been removed — everything is accessible from the
   `/skills` page. A one-time startup migration automatically moves data from the old
   plugins manifest and directory into the new unified location.
+- **Default config template voice list narrowed**: New generated configs now include a
+  `[voice]` section with provider-list allowlists limited to ElevenLabs for TTS and
+  Mistral + ElevenLabs for STT.
 
 ### Fixed
 
@@ -45,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Server availability checks for Coqui TTS and Voxtral Local
   - Setup instructions modal for local provider installation
   - Shared Google Cloud API key between TTS and STT
+- **Voice provider UI allowlists**: Added `voice.tts.providers` and `voice.stt.providers`
+  config lists to control which TTS/STT providers are shown in the Settings UI.
+  Empty lists keep current behavior and show all providers.
 
 - **New TTS Providers**:
   - Google Cloud Text-to-Speech (380+ voices, 50+ languages)
