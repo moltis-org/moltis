@@ -327,7 +327,11 @@ impl MethodRegistry {
                 ResponseFrame::ok(&request_id, payload)
             },
             Err(err) => {
-                warn!(method, request_id = %request_id, code = %err.code, msg = %err.message, "method error");
+                if err.code == error_codes::UNAVAILABLE {
+                    debug!(method, request_id = %request_id, code = %err.code, msg = %err.message, "method unavailable");
+                } else {
+                    warn!(method, request_id = %request_id, code = %err.code, msg = %err.message, "method error");
+                }
                 ResponseFrame::err(&request_id, err)
             },
         }

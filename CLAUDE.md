@@ -554,6 +554,28 @@ functions in `sandbox.rs`, parameterised by CLI binary name. The
 config-crate types to tools-crate types — use it instead of manual
 field-by-field conversion.
 
+## Logging Levels
+
+In production, the `debug` level is **never enabled** by default. Any log
+that needs to be visible for diagnosing issues must use `info!` or `warn!`,
+not `debug!`.
+
+- **`error!`** — unrecoverable failures (process will stop or feature is broken).
+- **`warn!`** — unexpected conditions that the system can recover from, but
+  an operator should investigate (e.g. auth failures, network errors, corrupt
+  data).
+- **`info!`** — normal operational milestones (startup, config loaded, tokens
+  saved). Keep these concise — one or two per major operation.
+- **`debug!`** — detailed diagnostic info (request/response bodies, internal
+  state). Expected "not configured" states belong here, **not** at `warn!`.
+- **`trace!`** — very verbose per-item data (token-by-token output, every SSE
+  line).
+
+**Common mistake:** logging `warn!` when a provider simply isn't configured
+(tokens not found, OAuth not set up). This floods the log on every startup
+for users who only use one or two providers. Use `debug!` for these expected
+conditions and reserve `warn!` for genuine failures.
+
 ## Security
 
 ### WebSocket Origin validation (CSWSH protection)

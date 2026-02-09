@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker RAM detection**: Fall back to `/proc/meminfo` when `sysinfo` returns
+  0 bytes for memory inside Docker/cgroup environments.
+- **MLX model suggested on Linux**: Use backend-aware model suggestion so MLX
+  models are only suggested on Apple Silicon, not on Linux servers.
+- **Host package provisioning noise**: Skip `apt-get` when running as non-root
+  with no passwordless sudo, instead of failing with permission denied warnings.
+- **Browser image pull without runtime**: Guard browser container image pull to
+  skip when no usable container runtime is available (backend = "none").
+- **OAuth token store logging**: Replace silent `.ok()?` chains with explicit
+  `warn!`/`info!` logging in `TokenStore` load/save/delete for diagnosability.
+- **Provider warning noise**: Downgrade "tokens not found" log from `warn!` to
+  `debug!` for unconfigured providers (GitHub Copilot, OpenAI Codex).
+- **models.detect_supported noise**: Downgrade UNAVAILABLE RPC errors from
+  `warn!` to `debug!` since they indicate expected "not ready yet" states.
+
 ## [0.3.8] - 2026-02-09
 
 ### Changed

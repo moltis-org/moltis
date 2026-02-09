@@ -1479,6 +1479,7 @@ pub async fn start_gateway(
             sandbox_router.config().mode,
             moltis_tools::sandbox::SandboxMode::Off
         )
+        && sandbox_router.backend_name() != "none"
     {
         let sandbox_image = config.tools.browser.sandbox_image.clone();
         let deferred_for_browser = Arc::clone(&deferred_state);

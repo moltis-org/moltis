@@ -773,11 +773,18 @@ pub fn log_system_info_and_suggestions() {
         "local-llm model cache directory"
     );
 
-    if let Some(suggested) = models::suggest_model(tier) {
+    let backend = if sys.has_metal || sys.is_apple_silicon {
+        models::ModelBackend::Mlx
+    } else {
+        models::ModelBackend::Gguf
+    };
+
+    if let Some(suggested) = models::suggest_model_for_backend(tier, backend) {
         info!(
             model = suggested.id,
             display_name = suggested.display_name,
             min_ram_gb = suggested.min_ram_gb,
+            backend = %backend,
             "suggested local model for your system"
         );
     }
@@ -811,5 +818,57 @@ mod tests {
     fn test_chat_template_selection() {
         // When model_def is None, should return Auto
         // (Can't test with actual provider without loading a model)
+    }
+
+    #[test]
+    fn test_log_system_info_does_not_suggest_mlx_on_non_apple() {
+        // On non-Apple platforms, the backend should be GGUF, never MLX.
+        let sys = system_info::SystemInfo {
+            total_ram_bytes: 16 * 1024 * 1024 * 1024,
+            available_ram_bytes: 8 * 1024 * 1024 * 1024,
+            has_metal: false,
+            has_cuda: false,
+            is_apple_silicon: false,
+        };
+        let tier = sys.memory_tier();
+        let backend = if sys.has_metal || sys.is_apple_silicon {
+            models::ModelBackend::Mlx
+        } else {
+            models::ModelBackend::Gguf
+        };
+        assert_eq!(backend, models::ModelBackend::Gguf);
+        // Suggested model must be a GGUF model
+        if let Some(suggested) = models::suggest_model_for_backend(tier, backend) {
+            assert_eq!(
+                suggested.backend,
+                models::ModelBackend::Gguf,
+                "non-Apple systems should only suggest GGUF models"
+            );
+        }
+    }
+
+    #[test]
+    fn test_log_system_info_suggests_mlx_on_apple() {
+        let sys = system_info::SystemInfo {
+            total_ram_bytes: 16 * 1024 * 1024 * 1024,
+            available_ram_bytes: 8 * 1024 * 1024 * 1024,
+            has_metal: true,
+            has_cuda: false,
+            is_apple_silicon: true,
+        };
+        let tier = sys.memory_tier();
+        let backend = if sys.has_metal || sys.is_apple_silicon {
+            models::ModelBackend::Mlx
+        } else {
+            models::ModelBackend::Gguf
+        };
+        assert_eq!(backend, models::ModelBackend::Mlx);
+        if let Some(suggested) = models::suggest_model_for_backend(tier, backend) {
+            assert_eq!(
+                suggested.backend,
+                models::ModelBackend::Mlx,
+                "Apple Silicon systems should suggest MLX models"
+            );
+        }
     }
 }

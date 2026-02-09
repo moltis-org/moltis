@@ -151,20 +151,31 @@ fn home_token_store_if_different() -> Option<TokenStore> {
 }
 
 fn token_store_with_provider_tokens(primary: &TokenStore) -> Option<TokenStore> {
+    debug!("checking primary token store for {PROVIDER_NAME}");
     if primary.load(PROVIDER_NAME).is_some() {
+        debug!("found {PROVIDER_NAME} tokens in primary store");
         return Some(primary.clone());
     }
-    if let Some(home_store) = home_token_store_if_different()
-        && home_store.load(PROVIDER_NAME).is_some()
-    {
-        return Some(home_store);
+    if let Some(home_store) = home_token_store_if_different() {
+        debug!("checking home token store for {PROVIDER_NAME}");
+        if home_store.load(PROVIDER_NAME).is_some() {
+            debug!("found {PROVIDER_NAME} tokens in home store");
+            return Some(home_store);
+        }
     }
+    debug!("{PROVIDER_NAME} tokens not found in any store");
     None
 }
 
 /// Check if we have stored GitHub tokens for Copilot.
 pub fn has_stored_tokens() -> bool {
-    token_store_with_provider_tokens(&TokenStore::new()).is_some()
+    let found = token_store_with_provider_tokens(&TokenStore::new()).is_some();
+    if found {
+        debug!("{PROVIDER_NAME} stored tokens found");
+    } else {
+        debug!("{PROVIDER_NAME} stored tokens not found");
+    }
+    found
 }
 
 /// Known Copilot models.
@@ -395,7 +406,12 @@ pub fn available_models() -> Vec<(String, String)> {
     let discovered = match live_models() {
         Ok(models) => models,
         Err(err) => {
-            warn!(error = %err, "failed to fetch github-copilot models, using fallback catalog");
+            let msg = err.to_string();
+            if msg.contains("not logged in") || msg.contains("tokens not found") {
+                debug!(error = %err, "github-copilot not configured, using fallback catalog");
+            } else {
+                warn!(error = %err, "failed to fetch github-copilot models, using fallback catalog");
+            }
             return fallback;
         },
     };
