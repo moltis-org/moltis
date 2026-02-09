@@ -17,12 +17,120 @@ pub struct AgentIdentity {
     pub vibe: Option<String>,
 }
 
+/// IANA timezone (e.g. `"Europe/Paris"`).
+///
+/// Wraps [`chrono_tz::Tz`] and (de)serialises as a plain string so it stays
+/// compatible with the YAML frontmatter in `USER.md`.
+#[derive(Debug, Clone)]
+pub struct Timezone(pub chrono_tz::Tz);
+
+impl Timezone {
+    /// The IANA name, e.g. `"Europe/Paris"`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    /// The inner [`chrono_tz::Tz`] value.
+    #[must_use]
+    pub fn tz(&self) -> chrono_tz::Tz {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Timezone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0.name())
+    }
+}
+
+impl std::str::FromStr for Timezone {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<chrono_tz::Tz>()
+            .map(Self)
+            .map_err(|_| format!("unknown IANA timezone: {s}"))
+    }
+}
+
+impl From<chrono_tz::Tz> for Timezone {
+    fn from(tz: chrono_tz::Tz) -> Self {
+        Self(tz)
+    }
+}
+
+impl Serialize for Timezone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Timezone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<chrono_tz::Tz>()
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Geographic coordinates (WGS 84).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Unix epoch seconds when the location was last updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+impl GeoLocation {
+    /// Create a new `GeoLocation` stamped with the current time.
+    pub fn now(latitude: f64, longitude: f64) -> Self {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Self {
+            latitude,
+            longitude,
+            updated_at: Some(ts),
+        }
+    }
+}
+
+impl std::fmt::Display for GeoLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.latitude, self.longitude)?;
+        if let Some(ts) = self.updated_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let age_secs = now.saturating_sub(ts);
+            let age_str = if age_secs < 60 {
+                "just now".to_string()
+            } else if age_secs < 3600 {
+                format!("{}m ago", age_secs / 60)
+            } else if age_secs < 86400 {
+                format!("{}h ago", age_secs / 3600)
+            } else {
+                format!("{}d ago", age_secs / 86400)
+            };
+            write!(f, " (updated {age_str})")?;
+        }
+        Ok(())
+    }
+}
+
 /// User profile collected during onboarding.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserProfile {
     pub name: Option<String>,
-    pub timezone: Option<String>,
+    pub timezone: Option<Timezone>,
+    pub location: Option<GeoLocation>,
 }
 
 /// Resolved identity combining agent identity and user profile.
@@ -84,7 +192,422 @@ pub struct MoltisConfig {
     pub tailscale: TailscaleConfig,
     pub failover: FailoverConfig,
     pub heartbeat: HeartbeatConfig,
+    pub voice: VoiceConfig,
     pub cron: CronConfig,
+}
+
+/// Voice configuration (TTS and STT).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    pub tts: VoiceTtsConfig,
+    pub stt: VoiceSttConfig,
+}
+
+/// Voice TTS configuration for moltis.toml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceTtsConfig {
+    /// Enable TTS globally.
+    pub enabled: bool,
+    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
+    pub provider: String,
+    /// Provider IDs to list in the UI. Empty means list all.
+    pub providers: Vec<String>,
+    /// ElevenLabs-specific settings.
+    pub elevenlabs: VoiceElevenLabsConfig,
+    /// OpenAI TTS settings.
+    pub openai: VoiceOpenAiConfig,
+    /// Google Cloud TTS settings.
+    pub google: VoiceGoogleTtsConfig,
+    /// Piper (local) settings.
+    pub piper: VoicePiperTtsConfig,
+    /// Coqui TTS (local server) settings.
+    pub coqui: VoiceCoquiTtsConfig,
+}
+
+impl Default for VoiceTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "elevenlabs".into(),
+            providers: Vec::new(),
+            elevenlabs: VoiceElevenLabsConfig::default(),
+            openai: VoiceOpenAiConfig::default(),
+            google: VoiceGoogleTtsConfig::default(),
+            piper: VoicePiperTtsConfig::default(),
+            coqui: VoiceCoquiTtsConfig::default(),
+        }
+    }
+}
+
+/// ElevenLabs provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceElevenLabsConfig {
+    /// API key (from ELEVENLABS_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Default voice ID.
+    pub voice_id: Option<String>,
+    /// Model to use (e.g., "eleven_flash_v2_5" for lowest latency).
+    pub model: Option<String>,
+}
+
+/// OpenAI TTS/STT provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceOpenAiConfig {
+    /// API key (from OPENAI_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Voice to use for TTS (alloy, echo, fable, onyx, nova, shimmer).
+    pub voice: Option<String>,
+    /// Model to use for TTS (tts-1, tts-1-hd).
+    pub model: Option<String>,
+}
+
+/// Google Cloud TTS provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceGoogleTtsConfig {
+    /// API key for Google Cloud Text-to-Speech.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    pub voice: Option<String>,
+    /// Language code (e.g., "en-US", "fr-FR").
+    pub language_code: Option<String>,
+    /// Speaking rate (0.25 - 4.0, default 1.0).
+    pub speaking_rate: Option<f32>,
+    /// Pitch (-20.0 - 20.0, default 0.0).
+    pub pitch: Option<f32>,
+}
+
+/// Piper TTS (local) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoicePiperTtsConfig {
+    /// Path to piper binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+    /// Path to the voice model file (.onnx).
+    pub model_path: Option<String>,
+    /// Path to the model config file (.onnx.json). If not set, uses model_path + ".json".
+    pub config_path: Option<String>,
+    /// Speaker ID for multi-speaker models.
+    pub speaker_id: Option<u32>,
+    /// Speaking rate multiplier (default 1.0).
+    pub length_scale: Option<f32>,
+}
+
+/// Coqui TTS (local server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceCoquiTtsConfig {
+    /// Coqui TTS server endpoint (default: http://localhost:5002).
+    pub endpoint: String,
+    /// Model name to use (if server supports multiple models).
+    pub model: Option<String>,
+    /// Speaker name or ID for multi-speaker models.
+    pub speaker: Option<String>,
+    /// Language code for multilingual models.
+    pub language: Option<String>,
+}
+
+impl Default for VoiceCoquiTtsConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:5002".into(),
+            model: None,
+            speaker: None,
+            language: None,
+        }
+    }
+}
+
+/// Voice STT configuration for moltis.toml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceSttConfig {
+    /// Enable STT globally.
+    pub enabled: bool,
+    /// Default provider.
+    pub provider: VoiceSttProvider,
+    /// Provider IDs to list in the UI. Empty means list all.
+    pub providers: Vec<String>,
+    /// Whisper (OpenAI) settings.
+    pub whisper: VoiceWhisperConfig,
+    /// Groq (Whisper-compatible) settings.
+    pub groq: VoiceGroqSttConfig,
+    /// Deepgram settings.
+    pub deepgram: VoiceDeepgramConfig,
+    /// Google Cloud Speech-to-Text settings.
+    pub google: VoiceGoogleSttConfig,
+    /// Mistral AI (Voxtral Transcribe) settings.
+    pub mistral: VoiceMistralSttConfig,
+    /// ElevenLabs Scribe settings.
+    pub elevenlabs: VoiceElevenLabsSttConfig,
+    /// Voxtral local (vLLM server) settings.
+    pub voxtral_local: VoiceVoxtralLocalConfig,
+    /// whisper-cli (whisper.cpp) settings.
+    pub whisper_cli: VoiceWhisperCliConfig,
+    /// sherpa-onnx offline settings.
+    pub sherpa_onnx: VoiceSherpaOnnxConfig,
+}
+
+impl Default for VoiceSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: VoiceSttProvider::Whisper,
+            providers: Vec::new(),
+            whisper: VoiceWhisperConfig::default(),
+            groq: VoiceGroqSttConfig::default(),
+            deepgram: VoiceDeepgramConfig::default(),
+            google: VoiceGoogleSttConfig::default(),
+            mistral: VoiceMistralSttConfig::default(),
+            elevenlabs: VoiceElevenLabsSttConfig::default(),
+            voxtral_local: VoiceVoxtralLocalConfig::default(),
+            whisper_cli: VoiceWhisperCliConfig::default(),
+            sherpa_onnx: VoiceSherpaOnnxConfig::default(),
+        }
+    }
+}
+
+/// Speech-to-Text provider identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceSttProvider {
+    #[serde(rename = "whisper")]
+    Whisper,
+    #[serde(rename = "groq")]
+    Groq,
+    #[serde(rename = "deepgram")]
+    Deepgram,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "mistral")]
+    Mistral,
+    #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
+    ElevenLabs,
+    #[serde(rename = "voxtral-local")]
+    VoxtralLocal,
+    #[serde(rename = "whisper-cli")]
+    WhisperCli,
+    #[serde(rename = "sherpa-onnx")]
+    SherpaOnnx,
+}
+
+impl VoiceSttProvider {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Whisper => "whisper",
+            Self::Groq => "groq",
+            Self::Deepgram => "deepgram",
+            Self::Google => "google",
+            Self::Mistral => "mistral",
+            Self::ElevenLabs => "elevenlabs-stt",
+            Self::VoxtralLocal => "voxtral-local",
+            Self::WhisperCli => "whisper-cli",
+            Self::SherpaOnnx => "sherpa-onnx",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "whisper" => Some(Self::Whisper),
+            "groq" => Some(Self::Groq),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            "mistral" => Some(Self::Mistral),
+            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
+            "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-cli" => Some(Self::WhisperCli),
+            "sherpa-onnx" => Some(Self::SherpaOnnx),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for VoiceSttProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// OpenAI Whisper configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceWhisperConfig {
+    /// API key (from OPENAI_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (whisper-1).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Groq STT configuration (Whisper-compatible API).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceGroqSttConfig {
+    /// API key (from GROQ_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (e.g., "whisper-large-v3-turbo").
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Deepgram STT configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceDeepgramConfig {
+    /// API key (from DEEPGRAM_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (e.g., "nova-3").
+    pub model: Option<String>,
+    /// Language hint (e.g., "en-US").
+    pub language: Option<String>,
+    /// Enable smart formatting (punctuation, capitalization).
+    pub smart_format: bool,
+}
+
+/// Google Cloud Speech-to-Text configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceGoogleSttConfig {
+    /// API key for Google Cloud Speech-to-Text.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Path to service account JSON file (alternative to API key).
+    pub service_account_json: Option<String>,
+    /// Language code (e.g., "en-US").
+    pub language: Option<String>,
+    /// Model variant (e.g., "latest_long", "latest_short").
+    pub model: Option<String>,
+}
+
+/// Mistral AI (Voxtral Transcribe) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceMistralSttConfig {
+    /// API key (from MISTRAL_API_KEY env or config).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (e.g., "voxtral-mini-latest").
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// ElevenLabs Scribe STT configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceElevenLabsSttConfig {
+    /// API key (from ELEVENLABS_API_KEY env or config).
+    /// Shared with TTS if not specified separately.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Model to use (scribe_v1 or scribe_v2).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// Voxtral local (vLLM server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceVoxtralLocalConfig {
+    /// vLLM server endpoint (default: http://localhost:8000).
+    pub endpoint: String,
+    /// Model to use (optional, server default if not set).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+impl Default for VoiceVoxtralLocalConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:8000".into(),
+            model: None,
+            language: None,
+        }
+    }
+}
+
+/// whisper-cli (whisper.cpp) configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceWhisperCliConfig {
+    /// Path to whisper-cli binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+    /// Path to the GGML model file (e.g., "~/.moltis/models/ggml-base.en.bin").
+    pub model_path: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+/// sherpa-onnx offline configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceSherpaOnnxConfig {
+    /// Path to sherpa-onnx-offline binary. If not set, looks in PATH.
+    pub binary_path: Option<String>,
+    /// Path to the ONNX model directory.
+    pub model_dir: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
 }
 
 /// Gateway server configuration.
@@ -96,6 +619,12 @@ pub struct ServerConfig {
     /// Port to listen on. When a new config is created, a random available port
     /// is generated so each installation gets a unique port.
     pub port: u16,
+    /// Enable verbose Axum/Tower HTTP request logs (`http_request` spans).
+    /// Useful for debugging redirects and request flow.
+    pub http_request_logs: bool,
+    /// Enable WebSocket request/response logs (`ws:` entries).
+    /// Useful for debugging RPC calls from the web UI.
+    pub ws_request_logs: bool,
     /// Optional GitHub repository URL used by the update checker.
     ///
     /// When unset, Moltis falls back to the package repository metadata.
@@ -107,6 +636,8 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1".into(),
             port: 0, // Will be replaced with a random port when config is created
+            http_request_logs: false,
+            ws_request_logs: false,
             update_repository_url: None,
         }
     }
@@ -457,6 +988,8 @@ impl Default for TlsConfig {
 pub struct ChatConfig {
     /// How to handle messages that arrive while an agent run is active.
     pub message_queue_mode: MessageQueueMode,
+    /// Preferred model IDs to show first in selectors (full or raw model IDs).
+    pub priority_models: Vec<String>,
 }
 
 /// Behaviour when `chat.send()` is called during an active run.
@@ -800,6 +1333,10 @@ fn default_sandbox_packages() -> Vec<String> {
         "patchelf",
         // Text processing & search
         "ripgrep",
+        "fd-find",
+        "yq",
+        // Terminal multiplexer (useful for capturing ncurses apps)
+        "tmux",
         // Browser automation (for browser tool)
         "chromium",
         "libxss1",
@@ -818,6 +1355,69 @@ fn default_sandbox_packages() -> Vec<String> {
         "libxrandr2",
         "libxkbcommon0",
         "fonts-liberation",
+        // Image processing (headless)
+        "imagemagick",
+        "graphicsmagick",
+        "libvips-tools",
+        "pngquant",
+        "optipng",
+        "jpegoptim",
+        "webp",
+        "libimage-exiftool-perl",
+        "libheif-dev",
+        // Audio / video / media
+        "ffmpeg",
+        "sox",
+        "lame",
+        "flac",
+        "vorbis-tools",
+        "opus-tools",
+        "mediainfo",
+        // Document & office conversion
+        "pandoc",
+        "poppler-utils",
+        "ghostscript",
+        "wkhtmltopdf",
+        "texlive-latex-base",
+        "texlive-latex-extra",
+        "texlive-fonts-recommended",
+        "antiword",
+        "catdoc",
+        "unrtf",
+        "libreoffice-core",
+        "libreoffice-writer",
+        // Data processing & conversion
+        "csvtool",
+        "xmlstarlet",
+        "html2text",
+        "dos2unix",
+        "miller",
+        "datamash",
+        // GIS / OpenStreetMap / map generation
+        "gdal-bin",
+        "mapnik-utils",
+        "osm2pgsql",
+        "osmium-tool",
+        "osmctools",
+        "python3-mapnik",
+        "libgdal-dev",
+        // CalDAV / CardDAV
+        "vdirsyncer",
+        "khal",
+        "python3-caldav",
+        // Email (IMAP sync, indexing, CLI clients)
+        "isync",
+        "offlineimap3",
+        "notmuch",
+        "notmuch-mutt",
+        "aerc",
+        "mutt",
+        "neomutt",
+        // Newsgroups (NNTP)
+        "tin",
+        "slrn",
+        // Messaging APIs
+        "python3-discord",
     ]
     .iter()
     .map(|s| (*s).to_string())
@@ -866,6 +1466,11 @@ pub struct OAuthProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProvidersConfig {
+    /// Optional allowlist of providers offered in web UI pickers (onboarding and
+    /// "add provider" modal). Empty means show all known providers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offered: Vec<String>,
+
     /// Provider-specific settings keyed by provider name.
     /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
     #[serde(flatten)]
@@ -941,6 +1546,14 @@ fn serialize_option_secret<S: serde::Serializer>(
         Some(s) => serializer.serialize_some(s.expose_secret()),
         None => serializer.serialize_none(),
     }
+}
+
+fn deserialize_option_secret<'de, D>(deserializer: D) -> Result<Option<Secret<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.map(Secret::new))
 }
 
 impl ProvidersConfig {

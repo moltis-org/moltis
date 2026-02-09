@@ -30,11 +30,10 @@ MCP server connections.
 ### `MOLTIS_DEPLOY_PLATFORM`
 
 Set this to the name of your cloud provider (e.g. `flyio`, `digitalocean`,
-`render`, `railway`). When set, Moltis hides local-only LLM providers
+`render`). When set, Moltis hides local-only LLM providers
 (local-llm and Ollama) from the provider setup page since they cannot run
 on cloud VMs. The included deploy templates for Fly.io, DigitalOcean, and
-Render already set this variable. Railway users should set it manually in
-the dashboard (`MOLTIS_DEPLOY_PLATFORM=railway`).
+Render already set this variable.
 
 ## Fly.io
 
@@ -110,27 +109,25 @@ The repository includes a `render.yaml` blueprint. Click the button above or:
 - **Environment**: set `MOLTIS_PASSWORD` in the Render dashboard under
   **Environment** > **Secret Files** or **Environment Variables**
 
+<!-- TODO: Railway deploy does not work yet
 ## Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?repo=moltis-org/moltis)
+The repository includes a `railway.json` configuration that sets the required
+environment variables (`MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`,
+`MOLTIS_DEPLOY_PLATFORM`) automatically.
 
-The repository includes a `railway.json` configuration. Click the button above
-or:
-
-1. Create a new project on Railway
+1. Create a new project on [Railway](https://railway.com)
 2. Add a service from **Docker Image**: `ghcr.io/moltis-org/moltis:latest`
-3. Railway injects the `$PORT` variable automatically
-4. Set environment variables:
-   - `MOLTIS_NO_TLS` = `true`
-   - `MOLTIS_CONFIG_DIR` = `/data/config`
-   - `MOLTIS_DATA_DIR` = `/data`
-   - `MOLTIS_DEPLOY_PLATFORM` = `railway`
+3. Railway injects the `$PORT` variable automatically; the `railway.json` start
+   command handles the rest
+4. Set additional environment variables in the Railway dashboard:
    - `MOLTIS_PASSWORD` = your password
 
 ### Persistent storage
 
 Railway supports persistent volumes. Add one in the service settings and mount
 it at `/data`.
+-->
 
 ## Authentication
 
@@ -143,8 +140,6 @@ setup code flow is skipped.
 # Fly.io
 fly secrets set MOLTIS_PASSWORD="your-secure-password"
 
-# Railway (via dashboard or CLI)
-railway variables set MOLTIS_PASSWORD="your-secure-password"
 ```
 
 For Render and DigitalOcean, set the variable in the dashboard's environment

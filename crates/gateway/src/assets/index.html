@@ -73,7 +73,6 @@
 <link rel="modulepreload" href="/assets/js/page-hooks.js">
 <link rel="modulepreload" href="/assets/js/page-settings.js">
 <link rel="modulepreload" href="/assets/js/page-images.js">
-<link rel="modulepreload" href="/assets/js/page-onboarding.js">
 <link rel="modulepreload" href="/assets/js/emoji-picker.js">
 <link rel="modulepreload" href="/assets/js/vendor/preact.mjs">
 <link rel="modulepreload" href="/assets/js/vendor/preact-hooks.mjs">
@@ -169,9 +168,9 @@
         Crons
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountCrons"></span>
       </a>
-      <a href="/images" data-nav class="nav-link">
+      <a href="/sandboxes" data-nav class="nav-link">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
-        Images
+        Sandboxes
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountImages"></span>
       </a>
       <a href="/logs" data-nav class="nav-link relative" id="navLogs">
@@ -338,10 +337,109 @@
   <a href="/settings/security" class="provider-btn">Set up authentication</a>
 </div>
 
+<!-- Voice provider setup instructions (toggled by page-settings.js) -->
+<div id="voice-whisper-cli-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">brew install whisper-cpp</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "whisper-cli"
+
+[voice.stt.whisper_cli]
+model_path = "~/.moltis/models/ggml-base.en.bin"</code>
+  Download models from <a href="https://huggingface.co/ggerganov/whisper.cpp/tree/main" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">Hugging Face</a>.
+</div>
+
+<div id="voice-sherpa-onnx-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  See <a href="https://k2-fsa.github.io/sherpa/onnx/install.html" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">sherpa-onnx documentation</a> for installation.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "sherpa-onnx"
+
+[voice.stt.sherpa_onnx]
+model_dir = "~/.moltis/models/sherpa-onnx"</code>
+</div>
+
+<div id="voice-piper-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install piper-tts</code>
+  Or download from <a href="https://github.com/rhasspy/piper/releases" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">GitHub releases</a>.<br /><br />
+  <strong>Download a voice model:</strong><br />
+  Browse voices at <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">piper-samples</a> and download the .onnx file.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "piper"
+
+[voice.tts.piper]
+model_path = "~/.moltis/models/en_US-lessac-medium.onnx"</code>
+</div>
+
+<div id="voice-coqui-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install TTS</code>
+  <br />
+  <strong>Start the server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">tts-server --model_name tts_models/en/ljspeech/tacotron2-DDC</code>
+  Or use Docker:<br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">docker run -p 5002:5002 ghcr.io/coqui-ai/tts</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "coqui"
+
+[voice.tts.coqui]
+endpoint = "http://localhost:5002"</code>
+  <br />
+  Browse available models: <a href="https://github.com/coqui-ai/TTS#available-models" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">coqui-ai/TTS</a>
+</div>
+
+<div id="voice-voxtral-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <div data-voxtral-requirements></div>
+  <strong>Requirements:</strong> Linux, Python 3.10+, CUDA GPU with 10GB+ VRAM<br /><br />
+  <strong>Setup:</strong><br />
+  1. Install vLLM: <code class="font-mono text-xs">pip install "vllm[audio]"</code><br />
+  2. Start the server:<br />
+  <code class="font-mono text-xs block my-1 ml-3 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">vllm serve mistralai/Voxtral-Mini-3B-2507 \
+  --tokenizer_mode mistral \
+  --config_format mistral \
+  --load_format mistral</code>
+  3. The model downloads automatically on first run (~3GB)<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "voxtral-local"
+
+[voice.stt.voxtral_local]
+endpoint = "http://localhost:8000"</code>
+  <br />
+  <strong>Languages:</strong> English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish, Norwegian, Danish, Finnish, Arabic
+</div>
+
+<div id="voice-voxtral-requirements-ok" class="text-xs p-2 rounded-md mb-3 border border-[var(--accent)]" style="display:none;background:color-mix(in srgb, var(--accent) 10%, transparent);">
+  <div class="font-medium text-[var(--accent)]">✓ System requirements met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+</div>
+
+<div id="voice-voxtral-requirements-fail" class="text-xs p-2 rounded-md mb-3 border border-[var(--warning,#f59e0b)]" style="display:none;background:color-mix(in srgb, var(--warning, #f59e0b) 10%, transparent);">
+  <div class="font-medium" style="color:var(--warning,#f59e0b)">⚠ System requirements not met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+  <ul data-voxtral-reasons class="text-[var(--muted)] mt-1.5 pl-4 m-0"></ul>
+</div>
+
 <!-- Templates -->
 <template id="tpl-thinking-dots">
   <span class="thinking-dots"><span></span><span></span><span></span></span>
 </template>
+
 
 <template id="tpl-exec-card">
   <div class="msg exec-card running">
@@ -411,6 +509,53 @@
       <div class="ctx-disabled" style="margin-top:8px">
         Tools disabled — file operations, shell commands, and memory search are not available.
       </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-welcome-card">
+  <div id="welcomeCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
+    <div data-welcome-emoji class="text-4xl mb-4"></div>
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">
+      <span data-welcome-greeting></span>
+    </h2>
+    <p class="text-sm text-[var(--muted)] mb-6">
+      I'm <span data-welcome-bot-name class="font-medium text-[var(--text)]"></span>. How can I help?
+    </p>
+    <ul class="text-left text-sm text-[var(--muted)] flex flex-col gap-3 w-full">
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </span>
+        <span>Chat with multiple AI providers and models</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </span>
+        <span>Run commands in a sandboxed environment</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
+        <span>Browse the web and fetch content</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </span>
+        <span>Remember context across sessions with long-term memory</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </span>
+        <span>Extend with MCP tools, skills, and plugins</span>
+      </li>
+    </ul>
+    <div class="mt-6 text-xs text-[var(--muted)]">
+      Type a message or use <kbd class="px-1.5 py-0.5 bg-[var(--surface2)] border border-[var(--border)] rounded text-[var(--text)] text-xs font-mono">/</kbd> for commands
     </div>
   </div>
 </template>

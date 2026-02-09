@@ -46,15 +46,14 @@ async fn start_auth_server_impl(
     let state = GatewayState::with_options(
         resolved_auth,
         services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
         None,
         Some(Arc::clone(&cred_store)),
-        None,
         localhost_only,
         false,
         None,
         None,
         18789,
+        false,
         None,
         #[cfg(feature = "metrics")]
         None,
@@ -64,9 +63,9 @@ async fn start_auth_server_impl(
     let state_clone = Arc::clone(&state);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None);
+    let app = build_gateway_app(state, methods, None, false, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods);
+    let app = build_gateway_app(state, methods, false, None);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -85,16 +84,12 @@ async fn start_auth_server_impl(
 async fn start_noauth_server() -> SocketAddr {
     let resolved_auth = auth::resolve_auth(None, None);
     let services = GatewayServices::noop();
-    let state = GatewayState::new(
-        resolved_auth,
-        services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None);
+    let app = build_gateway_app(state, methods, None, false, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods);
+    let app = build_gateway_app(state, methods, false, None);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -299,9 +294,10 @@ async fn reenable_auth_after_reset() {
 
     // Reset should have generated a new setup code.
     let code = state
-        .setup_code
+        .inner
         .read()
         .await
+        .setup_code
         .as_ref()
         .unwrap()
         .expose_secret()
@@ -386,7 +382,7 @@ async fn revoked_api_key_returns_401() {
 #[tokio::test]
 async fn setup_without_code_when_required_returns_403() {
     let (addr, _store, state) = start_auth_server_with_state().await;
-    *state.setup_code.write().await = Some(secrecy::Secret::new("123456".to_string()));
+    state.inner.write().await.setup_code = Some(secrecy::Secret::new("123456".to_string()));
 
     let client = reqwest::Client::new();
     let resp = client
@@ -404,7 +400,7 @@ async fn setup_without_code_when_required_returns_403() {
 #[tokio::test]
 async fn setup_with_wrong_code_returns_403() {
     let (addr, _store, state) = start_auth_server_with_state().await;
-    *state.setup_code.write().await = Some(secrecy::Secret::new("123456".to_string()));
+    state.inner.write().await.setup_code = Some(secrecy::Secret::new("123456".to_string()));
 
     let client = reqwest::Client::new();
     let resp = client
@@ -422,7 +418,7 @@ async fn setup_with_wrong_code_returns_403() {
 #[tokio::test]
 async fn setup_with_correct_code_succeeds() {
     let (addr, _store, state) = start_auth_server_with_state().await;
-    *state.setup_code.write().await = Some(secrecy::Secret::new("123456".to_string()));
+    state.inner.write().await.setup_code = Some(secrecy::Secret::new("123456".to_string()));
 
     let client = reqwest::Client::new();
     let resp = client
@@ -435,7 +431,7 @@ async fn setup_with_correct_code_succeeds() {
     assert_eq!(resp.status(), 200);
 
     // Code should be cleared after successful setup.
-    assert!(state.setup_code.read().await.is_none());
+    assert!(state.inner.read().await.setup_code.is_none());
 }
 
 /// Setup code not required when already set up.
@@ -457,7 +453,7 @@ async fn setup_code_not_required_when_already_setup() {
 #[tokio::test]
 async fn status_reports_setup_code_required() {
     let (addr, _store, state) = start_auth_server_with_state().await;
-    *state.setup_code.write().await = Some(secrecy::Secret::new("654321".to_string()));
+    state.inner.write().await.setup_code = Some(secrecy::Secret::new("654321".to_string()));
 
     let resp = reqwest::get(format!("http://{addr}/api/auth/status"))
         .await

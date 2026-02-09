@@ -362,6 +362,13 @@ impl CronService {
             bail!("job is disabled (use force=true to override)");
         }
 
+        // Mark as running before executing (prevents duplicate runs).
+        let now = now_ms();
+        self.update_job_state(&job.id, |state| {
+            state.running_at_ms = Some(now);
+        })
+        .await;
+
         self.execute_job(&job).await;
         Ok(())
     }
@@ -438,15 +445,20 @@ impl CronService {
     async fn process_due_jobs(self: &Arc<Self>) {
         let now = now_ms();
         let due_jobs: Vec<CronJob> = {
-            let jobs = self.jobs.read().await;
-            jobs.iter()
-                .filter(|j| j.enabled)
-                .filter(|j| {
-                    j.state.next_run_at_ms.is_some_and(|t| t <= now)
-                        && j.state.running_at_ms.is_none()
-                })
-                .cloned()
-                .collect()
+            let mut jobs = self.jobs.write().await;
+            let mut due = Vec::new();
+            for job in jobs.iter_mut() {
+                if job.enabled
+                    && job.state.next_run_at_ms.is_some_and(|t| t <= now)
+                    && job.state.running_at_ms.is_none()
+                {
+                    // Mark as running under the write lock BEFORE spawning,
+                    // so the next timer tick won't pick up the same job again.
+                    job.state.running_at_ms = Some(now);
+                    due.push(job.clone());
+                }
+            }
+            due
         };
 
         // Clear stuck jobs.
@@ -468,11 +480,7 @@ impl CronService {
         #[cfg(feature = "metrics")]
         counter!(cron_metrics::EXECUTIONS_TOTAL).increment(1);
 
-        // Mark as running.
-        self.update_job_state(&job.id, |state| {
-            state.running_at_ms = Some(started);
-        })
-        .await;
+        // running_at_ms was already set in process_due_jobs() before spawning.
 
         let result = match &job.payload {
             CronPayload::SystemEvent { text } => {
@@ -617,7 +625,7 @@ impl CronService {
         let mut jobs = self.jobs.write().await;
         for job in jobs.iter_mut() {
             if let Some(running_at) = job.state.running_at_ms
-                && now - running_at > STUCK_THRESHOLD_MS
+                && now.saturating_sub(running_at) > STUCK_THRESHOLD_MS
             {
                 warn!(id = %job.id, "clearing stuck cron job");
                 job.state.running_at_ms = None;
@@ -1153,5 +1161,52 @@ mod tests {
         );
 
         svc.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_clear_stuck_jobs_handles_future_running_at_without_overflow() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        let job = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "future-running-at".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: false,
+                    channel: None,
+                    to: None,
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+            })
+            .await
+            .unwrap();
+
+        let now = now_ms();
+        svc.update_job_state(&job.id, |state| {
+            state.running_at_ms = Some(now + 1_000);
+        })
+        .await;
+
+        svc.clear_stuck_jobs(now).await;
+
+        let jobs = svc.list().await;
+        let job_state = jobs
+            .iter()
+            .find(|j| j.id == job.id)
+            .expect("job should exist");
+        assert_eq!(job_state.state.running_at_ms, Some(now + 1_000));
+        assert!(job_state.state.last_error.is_none());
     }
 }

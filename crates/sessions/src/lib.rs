@@ -6,11 +6,16 @@
 
 pub mod compaction;
 pub mod key;
+pub mod message;
 pub mod metadata;
 pub mod state_store;
 pub mod store;
 
-pub use {key::SessionKey, store::SearchResult};
+pub use {
+    key::SessionKey,
+    message::{ContentBlock, MessageContent, PersistedMessage},
+    store::SearchResult,
+};
 
 /// Run database migrations for the sessions crate.
 ///

@@ -258,6 +258,12 @@ impl LlmProvider for AnthropicProvider {
         let usage = Usage {
             input_tokens: resp["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: resp["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: resp["usage"]["cache_read_input_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+            cache_write_tokens: resp["usage"]["cache_creation_input_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
         };
 
         Ok(CompletionResponse {
@@ -337,6 +343,8 @@ impl LlmProvider for AnthropicProvider {
             let mut buf = String::new();
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
+            let mut cache_read_tokens: u32 = 0;
+            let mut cache_write_tokens: u32 = 0;
 
             // Track current content block index for tool calls.
             let mut current_block_index: Option<usize> = None;
@@ -401,17 +409,37 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                     }
                                     "message_delta" => {
-                                        if let Some(u) = evt["usage"]["output_tokens"].as_u64() {
-                                            output_tokens = u as u32;
+                                        let u = &evt["usage"];
+                                        if let Some(v) = u["output_tokens"].as_u64() {
+                                            output_tokens = v as u32;
+                                        }
+                                        // Anthropic may report cache tokens in delta
+                                        if let Some(v) = u["cache_read_input_tokens"].as_u64() {
+                                            cache_read_tokens = v as u32;
+                                        }
+                                        if let Some(v) = u["cache_creation_input_tokens"].as_u64() {
+                                            cache_write_tokens = v as u32;
                                         }
                                     }
                                     "message_start" => {
-                                        if let Some(u) = evt["message"]["usage"]["input_tokens"].as_u64() {
-                                            input_tokens = u as u32;
+                                        let u = &evt["message"]["usage"];
+                                        if let Some(v) = u["input_tokens"].as_u64() {
+                                            input_tokens = v as u32;
+                                        }
+                                        if let Some(v) = u["cache_read_input_tokens"].as_u64() {
+                                            cache_read_tokens = v as u32;
+                                        }
+                                        if let Some(v) = u["cache_creation_input_tokens"].as_u64() {
+                                            cache_write_tokens = v as u32;
                                         }
                                     }
                                     "message_stop" => {
-                                        yield StreamEvent::Done(Usage { input_tokens, output_tokens });
+                                        yield StreamEvent::Done(Usage {
+                                            input_tokens,
+                                            output_tokens,
+                                            cache_read_tokens,
+                                            cache_write_tokens,
+                                        });
                                         return;
                                     }
                                     "error" => {

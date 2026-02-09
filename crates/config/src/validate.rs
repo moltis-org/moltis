@@ -72,6 +72,11 @@ enum KnownKeys {
     /// A map with dynamic keys (providers, mcp.servers, etc.) whose values
     /// have a known shape.
     Map(Box<KnownKeys>),
+    /// A map with dynamic keys plus explicit static keys.
+    MapWithFields {
+        value: Box<KnownKeys>,
+        fields: HashMap<&'static str, KnownKeys>,
+    },
     /// An array of typed items.
     Array(Box<KnownKeys>),
     /// Scalar value — stop recursion.
@@ -95,9 +100,12 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "ollama",
 ];
 
+/// Static metadata keys allowed directly under `[providers]`.
+const PROVIDERS_META_KEYS: &[&str] = &["offered"];
+
 /// Build the full schema map mirroring every field in `schema.rs`.
 fn build_schema_map() -> KnownKeys {
-    use KnownKeys::{Array, Leaf, Map, Struct};
+    use KnownKeys::{Array, Leaf, Map, MapWithFields, Struct};
 
     let provider_entry = || {
         Struct(HashMap::from([
@@ -263,13 +271,21 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("bind", Leaf),
                 ("port", Leaf),
+                ("http_request_logs", Leaf),
+                ("ws_request_logs", Leaf),
                 ("update_repository_url", Leaf),
             ])),
         ),
-        ("providers", Map(Box::new(provider_entry()))),
+        ("providers", MapWithFields {
+            value: Box::new(provider_entry()),
+            fields: HashMap::from([("offered", Array(Box::new(Leaf)))]),
+        }),
         (
             "chat",
-            Struct(HashMap::from([("message_queue_mode", Leaf)])),
+            Struct(HashMap::from([
+                ("message_queue_mode", Leaf),
+                ("priority_models", Leaf),
+            ])),
         ),
         ("tools", tools()),
         (
@@ -374,6 +390,129 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("rate_limit_max", Leaf),
                 ("rate_limit_window_secs", Leaf),
+            ])),
+        ),
+        (
+            "voice",
+            Struct(HashMap::from([
+                (
+                    "tts",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        ("providers", Leaf),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice_id", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "openai",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("voice", Leaf),
+                                ("model", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("language_code", Leaf),
+                                ("voice_name", Leaf),
+                            ])),
+                        ),
+                        ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
+                        (
+                            "coqui",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("voice_id", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
+                (
+                    "stt",
+                    Struct(HashMap::from([
+                        ("enabled", Leaf),
+                        ("provider", Leaf),
+                        ("providers", Leaf),
+                        (
+                            "whisper",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "groq",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "deepgram",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                                ("smart_format", Leaf),
+                            ])),
+                        ),
+                        (
+                            "google",
+                            Struct(HashMap::from([("api_key", Leaf), ("language_code", Leaf)])),
+                        ),
+                        (
+                            "mistral",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "elevenlabs",
+                            Struct(HashMap::from([
+                                ("api_key", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "voxtral_local",
+                            Struct(HashMap::from([
+                                ("base_url", Leaf),
+                                ("model", Leaf),
+                                ("endpoint", Leaf),
+                            ])),
+                        ),
+                        (
+                            "whisper_cli",
+                            Struct(HashMap::from([
+                                ("binary_path", Leaf),
+                                ("model_path", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
+                            "sherpa_onnx",
+                            Struct(HashMap::from([
+                                ("model_dir", Leaf),
+                                ("language", Leaf),
+                                ("sample_rate", Leaf),
+                            ])),
+                        ),
+                    ])),
+                ),
             ])),
         ),
     ]))
@@ -569,6 +708,26 @@ fn check_unknown_fields(
                 check_unknown_fields(child_value, value_schema, &path, diagnostics);
             }
         },
+        (
+            toml::Value::Table(table),
+            KnownKeys::MapWithFields {
+                value: value_schema,
+                fields,
+            },
+        ) => {
+            for (key, child_value) in table {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                if let Some(child_schema) = fields.get(key.as_str()) {
+                    check_unknown_fields(child_value, child_schema, &path, diagnostics);
+                } else {
+                    check_unknown_fields(child_value, value_schema, &path, diagnostics);
+                }
+            }
+        },
         (toml::Value::Array(arr), KnownKeys::Array(item_schema)) => {
             for (i, item) in arr.iter().enumerate() {
                 let path = format!("{prefix}[{i}]");
@@ -586,6 +745,9 @@ fn check_provider_names(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for name in providers.keys() {
+        if PROVIDERS_META_KEYS.contains(&name.as_str()) {
+            continue;
+        }
         if !KNOWN_PROVIDER_NAMES.contains(&name.as_str()) {
             let suggestion = suggest(name, KNOWN_PROVIDER_NAMES, 3);
             let msg = if let Some(s) = suggestion {
@@ -737,6 +899,57 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
                 valid_security_levels.join(", ")
             ),
         });
+    }
+
+    // Unknown voice TTS providers list values
+    let valid_voice_tts_providers = [
+        "elevenlabs",
+        "openai",
+        "openai-tts",
+        "google",
+        "google-tts",
+        "piper",
+        "coqui",
+    ];
+    for (idx, provider) in config.voice.tts.providers.iter().enumerate() {
+        if !valid_voice_tts_providers.contains(&provider.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("voice.tts.providers[{idx}]"),
+                message: format!(
+                    "unknown TTS provider \"{provider}\"; expected one of: {}",
+                    valid_voice_tts_providers.join(", ")
+                ),
+            });
+        }
+    }
+
+    // Unknown voice STT providers list values
+    let valid_voice_stt_providers = [
+        "whisper",
+        "groq",
+        "deepgram",
+        "google",
+        "mistral",
+        "elevenlabs",
+        "elevenlabs-stt",
+        "voxtral-local",
+        "whisper-cli",
+        "sherpa-onnx",
+    ];
+    for (idx, provider) in config.voice.stt.providers.iter().enumerate() {
+        if !valid_voice_stt_providers.contains(&provider.as_str()) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: format!("voice.stt.providers[{idx}]"),
+                message: format!(
+                    "unknown STT provider \"{provider}\"; expected one of: {}",
+                    valid_voice_stt_providers.join(", ")
+                ),
+            });
+        }
     }
 
     // port == 0
@@ -891,6 +1104,24 @@ enabled = true
         let d = warning.unwrap();
         assert_eq!(d.severity, Severity::Warning);
         assert!(d.message.contains("anthropic"));
+    }
+
+    #[test]
+    fn providers_offered_key_not_treated_as_provider_name() {
+        let toml = r#"
+[providers]
+offered = ["openai", "github-copilot"]
+"#;
+        let result = validate_toml_str(toml);
+        let offered_warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-provider" && d.path == "providers.offered");
+        assert!(
+            offered_warning.is_none(),
+            "providers.offered should be treated as metadata, got: {:?}",
+            result.diagnostics
+        );
     }
 
     #[test]
@@ -1176,6 +1407,65 @@ security_level = "paranoid"
     }
 
     #[test]
+    fn unknown_voice_tts_list_provider_warned() {
+        let toml = r#"
+[voice.tts]
+providers = ["openai-tts", "not-a-provider"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "voice.tts.providers[1]");
+        assert!(
+            warning.is_some(),
+            "expected warning for unknown voice.tts.providers entry"
+        );
+    }
+
+    #[test]
+    fn unknown_voice_stt_list_provider_warned() {
+        let toml = r#"
+[voice.stt]
+providers = ["whisper", "not-a-provider"]
+"#;
+        let result = validate_toml_str(toml);
+        let warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.path == "voice.stt.providers[1]");
+        assert!(
+            warning.is_some(),
+            "expected warning for unknown voice.stt.providers entry"
+        );
+    }
+
+    #[test]
+    fn known_voice_provider_list_entries_not_warned() {
+        let toml = r#"
+[voice.tts]
+providers = ["openai", "google-tts", "coqui"]
+
+[voice.stt]
+providers = ["elevenlabs", "whisper-cli", "sherpa-onnx"]
+"#;
+        let result = validate_toml_str(toml);
+        let warnings: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.category == "unknown-field"
+                    && (d.path.starts_with("voice.tts.providers")
+                        || d.path.starts_with("voice.stt.providers"))
+            })
+            .collect();
+        assert!(
+            warnings.is_empty(),
+            "known voice provider list values should not warn: {warnings:?}"
+        );
+    }
+
+    #[test]
     fn tls_disabled_non_localhost_warned() {
         let toml = r#"
 [server]
@@ -1285,6 +1575,26 @@ unknwon = "value"
                         format!("{prefix}.{key}")
                     };
                     collect_missing_keys(child_value, value_schema, &path, missing);
+                }
+            },
+            (
+                toml::Value::Table(table),
+                KnownKeys::MapWithFields {
+                    value: value_schema,
+                    fields,
+                },
+            ) => {
+                for (key, child_value) in table {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    if let Some(child_schema) = fields.get(key.as_str()) {
+                        collect_missing_keys(child_value, child_schema, &path, missing);
+                    } else {
+                        collect_missing_keys(child_value, value_schema, &path, missing);
+                    }
                 }
             },
             (toml::Value::Array(arr), KnownKeys::Array(item_schema)) => {

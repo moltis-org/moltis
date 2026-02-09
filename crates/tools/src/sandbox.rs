@@ -40,6 +40,155 @@ async fn provision_packages(cli: &str, container_name: &str, packages: &[String]
     Ok(())
 }
 
+/// Check whether the current host is Debian/Ubuntu (has `/etc/debian_version`
+/// and `apt-get` on PATH).
+pub fn is_debian_host() -> bool {
+    std::path::Path::new("/etc/debian_version").exists() && is_cli_available("apt-get")
+}
+
+/// Result of host package provisioning.
+#[derive(Debug, Clone)]
+pub struct HostProvisionResult {
+    /// Packages that were actually installed.
+    pub installed: Vec<String>,
+    /// Packages that were already present.
+    pub skipped: Vec<String>,
+    /// Whether sudo was used for installation.
+    pub used_sudo: bool,
+}
+
+/// Install configured packages directly on the host via `apt-get`.
+///
+/// Used when the sandbox backend is `"none"` (no container runtime) and the
+/// host is Debian/Ubuntu. Returns `None` if packages are empty or the host
+/// is not Debian-based.
+///
+/// This is **non-fatal**: failures are logged as warnings and do not block
+/// startup.
+pub async fn provision_host_packages(packages: &[String]) -> Result<Option<HostProvisionResult>> {
+    if packages.is_empty() || !is_debian_host() {
+        return Ok(None);
+    }
+
+    // Determine which packages are already installed via dpkg-query.
+    let mut missing = Vec::new();
+    let mut skipped = Vec::new();
+
+    for pkg in packages {
+        let output = tokio::process::Command::new("dpkg-query")
+            .args(["-W", "-f=${Status}", pkg])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .await;
+        let installed = output.as_ref().is_ok_and(|o| {
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout).contains("install ok installed")
+        });
+        if installed {
+            skipped.push(pkg.clone());
+        } else {
+            missing.push(pkg.clone());
+        }
+    }
+
+    if missing.is_empty() {
+        info!(
+            skipped = skipped.len(),
+            "all host packages already installed"
+        );
+        return Ok(Some(HostProvisionResult {
+            installed: Vec::new(),
+            skipped,
+            used_sudo: false,
+        }));
+    }
+
+    // Check if we can use sudo without a password prompt.
+    let has_sudo = tokio::process::Command::new("sudo")
+        .args(["-n", "true"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|s| s.success());
+
+    let pkg_list = missing.join(" ");
+    let apt_update = if has_sudo {
+        "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq".to_string()
+    } else {
+        "DEBIAN_FRONTEND=noninteractive apt-get update -qq".to_string()
+    };
+    let apt_install = if has_sudo {
+        format!("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkg_list}")
+    } else {
+        format!("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {pkg_list}")
+    };
+
+    info!(
+        packages = %pkg_list,
+        sudo = has_sudo,
+        "provisioning host packages"
+    );
+
+    // Run apt-get update.
+    let update_out = tokio::process::Command::new("sh")
+        .args(["-c", &apt_update])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await;
+    if let Ok(ref out) = update_out
+        && !out.status.success()
+    {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        warn!(%stderr, "apt-get update failed (non-fatal)");
+    }
+
+    // Run apt-get install.
+    let install_out = tokio::process::Command::new("sh")
+        .args(["-c", &apt_install])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await;
+
+    match install_out {
+        Ok(out) if out.status.success() => {
+            info!(
+                installed = missing.len(),
+                skipped = skipped.len(),
+                "host packages provisioned"
+            );
+            Ok(Some(HostProvisionResult {
+                installed: missing,
+                skipped,
+                used_sudo: has_sudo,
+            }))
+        },
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            warn!(
+                %stderr,
+                "apt-get install failed (non-fatal)"
+            );
+            Ok(Some(HostProvisionResult {
+                installed: Vec::new(),
+                skipped,
+                used_sudo: has_sudo,
+            }))
+        },
+        Err(e) => {
+            warn!(%e, "failed to run apt-get install (non-fatal)");
+            Ok(Some(HostProvisionResult {
+                installed: Vec::new(),
+                skipped,
+                used_sudo: has_sudo,
+            }))
+        },
+    }
+}
+
 /// Default container image used when none is configured.
 pub const DEFAULT_SANDBOX_IMAGE: &str = "ubuntu:25.10";
 
@@ -54,6 +203,16 @@ pub enum SandboxMode {
     All,
 }
 
+impl std::fmt::Display for SandboxMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => f.write_str("off"),
+            Self::NonMain => f.write_str("non-main"),
+            Self::All => f.write_str("all"),
+        }
+    }
+}
+
 /// Scope determines container lifecycle boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +224,16 @@ pub enum SandboxScope {
     Shared,
 }
 
+impl std::fmt::Display for SandboxScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session => f.write_str("session"),
+            Self::Agent => f.write_str("agent"),
+            Self::Shared => f.write_str("shared"),
+        }
+    }
+}
+
 /// Workspace mount mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -74,6 +243,16 @@ pub enum WorkspaceMount {
     #[default]
     Ro,
     Rw,
+}
+
+impl std::fmt::Display for WorkspaceMount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("none"),
+            Self::Ro => f.write_str("ro"),
+            Self::Rw => f.write_str("rw"),
+        }
+    }
 }
 
 /// Resource limits for sandboxed execution.
@@ -105,6 +284,8 @@ pub struct SandboxConfig {
     /// Packages to install via `apt-get` after container creation.
     /// Set to an empty list to skip provisioning.
     pub packages: Vec<String>,
+    /// IANA timezone (e.g. "Europe/Paris") injected as `TZ` env var into containers.
+    pub timezone: Option<String>,
 }
 
 impl Default for SandboxConfig {
@@ -119,6 +300,7 @@ impl Default for SandboxConfig {
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
+            timezone: None,
         }
     }
 }
@@ -151,6 +333,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 pids_max: cfg.resource_limits.pids_max,
             },
             packages: cfg.packages.clone(),
+            timezone: None, // Set by gateway from user profile
         }
     }
 }
@@ -209,6 +392,8 @@ pub trait Sandbox: Send + Sync {
 pub fn sandbox_image_tag(base: &str, packages: &[String]) -> String {
     use std::hash::Hasher;
     let mut h = std::hash::DefaultHasher::new();
+    // Bump this when the Dockerfile template changes to force a rebuild.
+    h.write(b"v4");
     h.write(base.as_bytes());
     let mut sorted: Vec<&String> = packages.iter().collect();
     sorted.sort();
@@ -485,6 +670,10 @@ impl Sandbox for DockerSandbox {
             args.push("--network=none".to_string());
         }
 
+        if let Some(ref tz) = self.config.timezone {
+            args.extend(["-e".to_string(), format!("TZ={tz}")]);
+        }
+
         args.extend(self.resource_args());
         args.extend(self.workspace_args());
 
@@ -503,7 +692,7 @@ impl Sandbox for DockerSandbox {
         }
 
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
@@ -539,7 +728,14 @@ impl Sandbox for DockerSandbox {
 
         let pkg_list = packages.join(" ");
         let dockerfile = format!(
-            "FROM {base}\nRUN apt-get update -qq && apt-get install -y -qq {pkg_list} && rm -rf /var/lib/apt/lists/*\n"
+            "FROM {base}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
+    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
+WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
@@ -881,15 +1077,22 @@ impl Sandbox for AppleContainerSandbox {
         // Must pass `sleep infinity` so the container stays alive for subsequent
         // exec calls (the default entrypoint /bin/bash exits immediately without a TTY).
         info!(name, image, "creating apple container");
-        let args = vec![
+        let mut args = vec![
             "run".to_string(),
             "-d".to_string(),
             "--name".to_string(),
             name.clone(),
+        ];
+
+        if let Some(ref tz) = self.config.timezone {
+            args.extend(["-e".to_string(), format!("TZ={tz}")]);
+        }
+
+        args.extend([
             image.to_string(),
             "sleep".to_string(),
             "infinity".to_string(),
-        ];
+        ]);
 
         let output = tokio::process::Command::new("container")
             .args(&args)
@@ -907,7 +1110,7 @@ impl Sandbox for AppleContainerSandbox {
         info!(name, image, "apple container created and running");
 
         // Skip provisioning if the image is a pre-built moltis-sandbox image
-        // (packages are already baked in).
+        // (packages are already baked in — including /home/sandbox from the Dockerfile).
         let is_prebuilt = image.starts_with("moltis-sandbox:");
         if !is_prebuilt {
             provision_packages("container", &name, &self.config.packages).await?;
@@ -1019,7 +1222,14 @@ impl Sandbox for AppleContainerSandbox {
 
         let pkg_list = packages.join(" ");
         let dockerfile = format!(
-            "FROM {base}\nRUN apt-get update -qq && apt-get install -y -qq {pkg_list} && rm -rf /var/lib/apt/lists/*\n"
+            "FROM {base}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
+    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
+WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
@@ -1334,6 +1544,27 @@ impl SandboxRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sandbox_mode_display() {
+        assert_eq!(SandboxMode::Off.to_string(), "off");
+        assert_eq!(SandboxMode::NonMain.to_string(), "non-main");
+        assert_eq!(SandboxMode::All.to_string(), "all");
+    }
+
+    #[test]
+    fn test_sandbox_scope_display() {
+        assert_eq!(SandboxScope::Session.to_string(), "session");
+        assert_eq!(SandboxScope::Agent.to_string(), "agent");
+        assert_eq!(SandboxScope::Shared.to_string(), "shared");
+    }
+
+    #[test]
+    fn test_workspace_mount_display() {
+        assert_eq!(WorkspaceMount::None.to_string(), "none");
+        assert_eq!(WorkspaceMount::Ro.to_string(), "ro");
+        assert_eq!(WorkspaceMount::Rw.to_string(), "rw");
+    }
 
     #[test]
     fn test_resource_limits_default() {
@@ -1800,6 +2031,33 @@ mod tests {
             let backend = select_backend(config);
             assert_eq!(backend.backend_name(), "apple-container");
         }
+    }
+
+    #[test]
+    fn test_is_debian_host() {
+        let result = is_debian_host();
+        // On macOS/Windows this should be false; on Debian/Ubuntu it should be true.
+        if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+            assert!(!result);
+        }
+        // On Linux, it depends on the distro — just verify it returns a bool without panic.
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_provision_host_packages_empty() {
+        let result = provision_host_packages(&[]).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_provision_host_packages_non_debian() {
+        if is_debian_host() {
+            // Can't test the non-debian path on a Debian host.
+            return;
+        }
+        let result = provision_host_packages(&["curl".into()]).await.unwrap();
+        assert!(result.is_none());
     }
 
     #[test]

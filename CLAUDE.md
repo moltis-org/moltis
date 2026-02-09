@@ -123,6 +123,20 @@ Benefits of type-based matching:
 Only convert to strings at boundaries: serialization, database storage,
 logging, or display. Keep the core logic type-safe.
 
+### Type conversions
+
+- Avoid manual one-off conversion functions and ad-hoc `match` blocks sprinkled
+  through business logic when converting between types.
+- Prefer trait-based conversions (`From` / `Into` / `TryFrom` / `TryInto`) or a
+  dedicated local conversion trait when orphan rules prevent a direct impl.
+- Always prefer typed structs/enums and serde (de)serialization over raw
+  `serde_json::Value` access in production code.
+- Treat untyped JSON maps as test-only scaffolding unless there is a strict
+  boundary requirement (external RPC/tool contract, dynamic schema).
+- If trait-based conversion or typed serde mapping is truly not feasible for a
+  specific case, stop and ask for user approval before adding a manual
+  conversion path.
+
 ### Concurrency
 
 - Always prefer streaming over non-streaming API calls when possible.
@@ -134,6 +148,10 @@ logging, or display. Keep the core logic type-safe.
   result.
 - Never use `block_on` or any blocking call inside an async context (see
   "Async all the way down" below).
+- **Code smell (forbidden): `Mutex<()>` / `Arc<Mutex<()>>` as a lock token.**
+  The mutex must guard the actual state/resource being synchronized (e.g. a
+  `struct` containing the config/file path/cache), not unit `()` sentinels.
+  This keeps locking intent explicit and avoids lock/data drift over time.
 
 ### Error handling
 
@@ -431,6 +449,28 @@ behind a cargo feature flag (e.g. `#[cfg(feature = "skills")]`).
 Examples: `/api/skills`, `/api/plugins`, `/api/channels`, with RPC methods
 `skills.list`, `plugins.install`, `channels.status`, etc. Never merge
 multiple features into a single endpoint.
+
+## Channel Message Handling
+
+When processing inbound messages from channels (Telegram, etc.), **always
+respond to approved senders**. No message should be left without a reply,
+even if an error occurs:
+
+- If the LLM response fails, send an error message back to the channel
+- If transcription fails, send a fallback message and continue
+- If attachment download fails, acknowledge the issue
+- If the message type is unhandled, respond with a helpful message like
+  "Sorry, I can't understand that message type. Check logs for details."
+
+This ensures users always know their message was received and processed
+(or why it wasn't). Silent failures create confusion and make debugging
+harder.
+
+**Access control**: Only approved senders should receive responses. Messages
+from non-allowlisted users are handled by the OTP flow or silently ignored
+per the configured policy. The "always respond" rule applies only after
+access is granted.
+
 ## Authentication Architecture
 
 The gateway supports password and passkey (WebAuthn) authentication, managed
@@ -768,6 +808,18 @@ exact release version (without the `v` prefix). Example: tag `v0.2.0` requires
 The Build Packages workflow derives artifact versions from the tag when running
 on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
 packaging metadata consistency, and future non-tag runs.
+
+**Cargo.lock must stay in sync.** After changing dependencies or merging
+`main`, run `cargo fetch` (without `--locked`) to sync the lockfile without
+upgrading existing dependency versions, then commit the result. Verify with
+`cargo fetch --locked`. CI uses `--locked` and will reject a stale lockfile.
+`local-validate.sh` handles this automatically — if the lockfile is stale it
+runs `cargo fetch` and auto-commits the update before proceeding.
+
+Only use `cargo update --workspace` when you intentionally want to upgrade
+dependency versions. For routine lockfile sync (e.g. after merging main or
+bumping the workspace version), `cargo fetch` is sufficient and won't change
+versions unnecessarily.
 
 **Merging main into your branch:** When merging `main` into your current branch
 and encountering conflicts, resolve them by keeping both sides of the changes.

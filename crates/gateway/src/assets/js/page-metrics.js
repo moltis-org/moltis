@@ -417,10 +417,7 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 	if (!filteredPoints || filteredPoints.length < 2) {
 		return html`
 			<div class="space-y-8">
-				<div class="flex items-center justify-between">
-					<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
-					<${LiveIndicator} live=${isLive.value} />
-				</div>
+				<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
 				<${EmptyState}
 					icon=${chartIcon}
 					title="Collecting data..."
@@ -447,10 +444,7 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 
 	return html`
 		<div class="space-y-8">
-			<div class="flex items-center justify-between">
-				<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
-				<${LiveIndicator} live=${isLive.value} />
-			</div>
+			<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
 				${
 					tokenData &&

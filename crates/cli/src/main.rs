@@ -8,6 +8,7 @@ mod sandbox_commands;
 mod tailscale_commands;
 
 use {
+    anyhow::anyhow,
     clap::{Parser, Subcommand},
     moltis_gateway::logs::{LogBroadcastLayer, LogBuffer},
     tracing::info,
@@ -305,6 +306,25 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref dir) = cli.data_dir {
         moltis_config::set_data_dir(dir.clone());
     }
+
+    // Ensure config/data directories exist for every command path. This is a
+    // hard requirement for startup; fail fast if directory initialization fails.
+    let config_dir =
+        moltis_config::config_dir().ok_or_else(|| anyhow!("unable to resolve config directory"))?;
+    std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create config directory {}: {e}",
+            config_dir.display()
+        )
+    });
+
+    let data_dir = moltis_config::data_dir();
+    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
+        panic!(
+            "failed to create data directory {}: {e}",
+            data_dir.display()
+        )
+    });
 
     match cli.command {
         // Default: start gateway when no subcommand is provided

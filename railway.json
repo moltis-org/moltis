@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
-    "startCommand": "moltis --bind 0.0.0.0 --port $PORT --no-tls",
+    "startCommand": "MOLTIS_CONFIG_DIR=/tmp/moltis/config MOLTIS_DATA_DIR=/tmp/moltis MOLTIS_DEPLOY_PLATFORM=railway moltis --bind 0.0.0.0 --port $PORT --no-tls",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 5,
     "restartPolicyType": "ON_FAILURE",

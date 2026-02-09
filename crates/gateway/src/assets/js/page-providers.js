@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { fetchModels } from "./models.js";
 import { updateNavCount } from "./nav-counts.js";
@@ -15,123 +16,340 @@ import { ConfirmDialog, requestConfirm } from "./ui.js";
 
 var configuredModels = signal([]);
 var loading = signal(false);
+var detectingModels = signal(false);
+var detectSummary = signal(null);
+var detectError = signal("");
+var detectProgress = signal(null);
+var deletingProvider = signal("");
+var providerActionError = signal("");
+
+function providerSortRank(provider) {
+	return provider === "local-llm" || provider === "ollama" ? 0 : 1;
+}
+
+function countUniqueProviders(models) {
+	return new Set(models.map((m) => m.provider)).size;
+}
+
+function progressFromPayload(payload) {
+	return {
+		total: payload?.total || 0,
+		checked: payload?.checked || 0,
+		supported: payload?.supported || 0,
+		unsupported: payload?.unsupported || 0,
+		errors: payload?.errors || 0,
+	};
+}
+
+function handleModelsUpdatedEvent(payload) {
+	if (!payload?.phase) return;
+	if (payload.phase === "start") {
+		detectingModels.value = true;
+		detectError.value = "";
+		detectSummary.value = null;
+		detectProgress.value = progressFromPayload(payload);
+		return;
+	}
+	if (payload.phase === "progress") {
+		detectingModels.value = true;
+		detectProgress.value = progressFromPayload(payload);
+		return;
+	}
+	if (payload.phase === "complete") {
+		detectingModels.value = false;
+		if (payload.summary) {
+			detectSummary.value = payload.summary;
+			detectProgress.value = progressFromPayload(payload.summary);
+		}
+		return;
+	}
+	if (payload.phase === "error") {
+		detectingModels.value = false;
+		detectError.value = payload.error || "Model detection failed.";
+	}
+}
 
 function fetchProviders() {
 	loading.value = true;
-	// Fetch actual models from the registry - this shows all configured models
-	sendRpc("models.list", {}).then((res) => {
-		loading.value = false;
-		if (!res?.ok) return;
-		// Sort: local providers first, then alphabetically by provider name
-		var models = (res.payload || []).sort((a, b) => {
-			var aIsLocal = a.provider === "local-llm" || a.provider === "ollama";
-			var bIsLocal = b.provider === "local-llm" || b.provider === "ollama";
-			if (aIsLocal && !bIsLocal) return -1;
-			if (!aIsLocal && bIsLocal) return 1;
-			if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
-			return (a.displayName || a.id).localeCompare(b.displayName || b.id);
+	return Promise.all([sendRpc("models.list_all", {}), sendRpc("providers.available", {})])
+		.then(([modelsRes, providersRes]) => {
+			loading.value = false;
+			var providerMeta = new Map();
+			var configuredProviders = [];
+			if (providersRes?.ok) {
+				configuredProviders = (providersRes.payload || []).filter(
+					(configuredProvider) => configuredProvider.configured,
+				);
+				for (var providerMetaEntry of providersRes.payload || []) {
+					providerMeta.set(providerMetaEntry.name, providerMetaEntry);
+				}
+			}
+
+			var models = [];
+			if (modelsRes?.ok) {
+				models = (modelsRes.payload || []).map((m) => ({
+					...m,
+					providerDisplayName: providerMeta.get(m.provider)?.displayName || m.provider,
+					authType: providerMeta.get(m.provider)?.authType || "api-key",
+				}));
+			}
+
+			// Include configured providers that don't currently expose a model.
+			var modelProviders = new Set(models.map((m) => m.provider));
+			var providerOnlyRows = [];
+			providerOnlyRows = configuredProviders
+				.filter((providerWithoutModels) => !modelProviders.has(providerWithoutModels.name))
+				.map((providerWithoutModels) => ({
+					id: `provider:${providerWithoutModels.name}`,
+					provider: providerWithoutModels.name,
+					displayName: providerWithoutModels.displayName,
+					providerDisplayName: providerWithoutModels.displayName,
+					providerOnly: true,
+					authType: providerWithoutModels.authType,
+				}));
+
+			configuredModels.value = [...models, ...providerOnlyRows];
+			updateNavCount("providers", countUniqueProviders(configuredModels.value));
+		})
+		.catch(() => {
+			loading.value = false;
 		});
-		configuredModels.value = models;
-		updateNavCount("providers", models.length);
-	});
 }
 
-function ModelCard(props) {
-	var m = props.model;
-	var isLocal = m.provider === "local-llm";
+async function runDetectAllModels() {
+	if (!connected.value || detectingModels.value) return;
+	detectingModels.value = true;
+	detectSummary.value = null;
+	detectError.value = "";
+	detectProgress.value = null;
 
-	function onRemove() {
-		var msg = `Remove ${m.displayName || m.id}?`;
-		requestConfirm(msg).then((yes) => {
+	try {
+		// Phase 1: show current full list first before probing.
+		await Promise.all([fetchModels(), fetchProviders()]);
+		await new Promise((resolve) => {
+			requestAnimationFrame(resolve);
+		});
+
+		var res = await sendRpc("models.detect_supported", {});
+		if (!res?.ok) {
+			detectError.value = res?.error?.message || "Failed to detect model availability.";
+			detectingModels.value = false;
+			return;
+		}
+		if (res.payload?.skipped) {
+			detectingModels.value = false;
+			return;
+		}
+		detectSummary.value = res.payload || null;
+		detectProgress.value = progressFromPayload(res.payload);
+		await Promise.all([fetchModels(), fetchProviders()]);
+		var p = detectProgress.value;
+		if (!p || p.total === 0 || p.checked >= p.total) {
+			detectingModels.value = false;
+		}
+	} catch (_err) {
+		detectingModels.value = false;
+	}
+}
+
+function groupProviderRows(models) {
+	var groups = new Map();
+	for (var row of models) {
+		var key = row.provider;
+		if (!groups.has(key)) {
+			groups.set(key, {
+				provider: key,
+				providerDisplayName: row.providerDisplayName || row.displayName || key,
+				authType: row.authType || "api-key",
+				models: [],
+			});
+		}
+		var groupEntry = groups.get(key);
+		if (!row.providerOnly) {
+			groupEntry.models.push(row);
+		}
+	}
+
+	var result = Array.from(groups.values());
+	result.sort((a, b) => {
+		var aRank = providerSortRank(a.provider);
+		var bRank = providerSortRank(b.provider);
+		if (aRank !== bRank) return aRank - bRank;
+		return a.providerDisplayName.localeCompare(b.providerDisplayName);
+	});
+	for (var providerGroup of result) {
+		providerGroup.models.sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
+	}
+	return result;
+}
+
+function ProviderSection(props) {
+	var group = props.group;
+
+	function onDeleteProvider() {
+		if (deletingProvider.value) return;
+		requestConfirm(`Remove ${group.providerDisplayName} and all its credentials?`).then((yes) => {
 			if (!yes) return;
-			// For local-llm models, actually remove from config
-			// For other providers, disable (hide) the model
-			if (isLocal) {
-				sendRpc("providers.local.remove_model", { modelId: m.id }).then((res) => {
+			deletingProvider.value = group.provider;
+			providerActionError.value = "";
+			sendRpc("providers.remove_key", { provider: group.provider })
+				.then((res) => {
 					if (res?.ok) {
+						configuredModels.value = configuredModels.value.filter((entry) => entry.provider !== group.provider);
 						fetchModels();
 						fetchProviders();
+						return;
 					}
+					providerActionError.value = res?.error?.message || "Failed to delete provider.";
+				})
+				.catch(() => {
+					providerActionError.value = "Failed to delete provider.";
+				})
+				.finally(() => {
+					deletingProvider.value = "";
 				});
+		});
+	}
+
+	function onToggleModel(model) {
+		var method = model.disabled ? "models.enable" : "models.disable";
+		sendRpc(method, { modelId: model.id }).then((res) => {
+			if (res?.ok) {
+				providerActionError.value = "";
+				configuredModels.value = configuredModels.value.map((entry) =>
+					entry.id === model.id ? { ...entry, disabled: !model.disabled } : entry,
+				);
+				fetchModels();
+				fetchProviders();
 			} else {
-				// Disable (hide) the model without removing the provider
-				sendRpc("models.disable", { modelId: m.id }).then((res) => {
-					if (res?.ok) {
-						fetchModels();
-						fetchProviders();
-					}
-				});
+				providerActionError.value = res?.error?.message || "Failed to update model state.";
 			}
 		});
 	}
 
-	function getProviderBadge() {
-		if (m.provider === "local-llm") return "Local";
-		if (m.provider === "ollama") return "Ollama";
-		return m.provider;
-	}
-
-	var displayName = m.displayName || m.id;
-
-	return html`<div class="provider-item" style="margin-bottom:0;cursor:default;">
-		<div style="flex:1;min-width:0;">
-			<div style="display:flex;align-items:center;gap:8px;">
-				<span class="provider-item-name">${displayName}</span>
-				<span class="provider-item-badge ${isLocal ? "local" : "api-key"}">
-					${getProviderBadge()}
+	return html`<div class="max-w-form py-1">
+		<div class="flex items-center justify-between gap-3">
+			<div class="flex items-center gap-2 min-w-0">
+				<h3 class="text-base font-semibold text-[var(--text-strong)] truncate">${group.providerDisplayName}</h3>
+				<span class="provider-item-badge ${group.authType}">
+					${group.authType === "oauth" ? "OAuth" : group.authType === "local" ? "Local" : "API Key"}
 				</span>
-				${m.supportsTools ? null : html`<span class="provider-item-badge" style="background:var(--warning-bg,rgba(234,179,8,.15));color:var(--warning,#eab308);border-color:var(--warning,#eab308);">Chat only</span>`}
 			</div>
-			<div style="font-size:.7rem;color:var(--muted);margin-top:4px;">
-				<span style="font-family:var(--font-mono);">${m.id}</span>
+			<div class="shrink-0">
+				<button
+					class="provider-btn provider-btn-danger provider-btn-sm"
+					disabled=${deletingProvider.value === group.provider}
+					onClick=${onDeleteProvider}
+				>
+					${deletingProvider.value === group.provider ? "Deleting..." : "Delete"}
+				</button>
 			</div>
 		</div>
-		<button
-			class="provider-btn provider-btn-danger"
-			onClick=${onRemove}
-		>
-			Remove
-		</button>
+		<div class="mt-2 border-b border-[var(--border)]"></div>
+		${
+			group.models.length === 0
+				? html`<div class="mt-2 text-xs text-[var(--muted)]">No active models.</div>`
+				: html`<div class="mt-2 flex flex-col gap-2">
+					${group.models.map(
+						(model) => html`<div key=${model.id} class="flex items-start justify-between gap-3 py-1">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-2 min-w-0">
+									<div class="text-sm font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
+									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || "Model is not supported for this account/provider"}>Unsupported</span>` : null}
+									${model.supportsTools ? null : html`<span class="provider-item-badge warning">Chat only</span>`}
+									${model.disabled ? html`<span class="provider-item-badge muted">Disabled</span>` : null}
+								</div>
+								<div class="mt-1 text-xs text-[var(--muted)] font-mono opacity-75">${model.id}</div>
+							</div>
+							<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${() => onToggleModel(model)}>
+								${model.disabled ? "Enable" : "Disable"}
+							</button>
+						</div>`,
+					)}
+				</div>`
+		}
 	</div>`;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Provider page UI composition keeps related sections in one render function.
 function ProvidersPage() {
 	useEffect(() => {
 		if (connected.value) fetchProviders();
+		var offModelsUpdated = onEvent("models.updated", handleModelsUpdatedEvent);
+
+		return () => {
+			offModelsUpdated();
+		};
 	}, [connected.value]);
 
 	S.setRefreshProvidersPage(fetchProviders);
 
+	var progressValue = detectProgress.value || { total: 0, checked: 0, supported: 0, unsupported: 0, errors: 0 };
+	var progressPercent = progressValue.total > 0 ? Math.round((progressValue.checked / progressValue.total) * 100) : 0;
+
 	return html`
 		<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Providers</h2>
-			<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
-				Configure LLM providers for chat and agent tasks. You can add multiple providers and switch between models.
-			</p>
+				<div class="flex items-center gap-3">
+					<h2 class="text-lg font-medium text-[var(--text-strong)]">Providers</h2>
+					<button
+						class="provider-btn"
+						onClick=${() => {
+							if (connected.value) openProviderModal();
+						}}
+					>
+						Add Provider
+					</button>
+					<button
+						class="provider-btn provider-btn-secondary"
+						disabled=${!connected.value || detectingModels.value}
+						onClick=${runDetectAllModels}
+					>
+						${detectingModels.value ? "Detecting Models..." : "Detect All Models"}
+					</button>
+				</div>
+				<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
+					Configure LLM providers for chat and agent tasks. You can add multiple providers and switch between models.
+				</p>
+				${
+					detectError.value || providerActionError.value
+						? html`<div class="text-xs text-[var(--danger,#ef4444)] max-w-form">${detectError.value || providerActionError.value}</div>`
+						: null
+				}
+				${
+					detectingModels.value
+						? html`<div class="max-w-form">
+							<div class="h-2 w-full overflow-hidden rounded-sm border border-[var(--border)] bg-[var(--surface2)]">
+								<div
+									class="h-full bg-[var(--accent)] transition-all duration-150"
+									style=${`width:${progressPercent}%;`}
+								></div>
+							</div>
+							<div class="mt-1 text-xs text-[var(--muted)]">
+								Probing models: ${progressValue.checked}/${progressValue.total} (${progressPercent}%)
+							</div>
+						</div>`
+						: detectSummary.value
+							? html`<div class="text-xs text-[var(--muted)] max-w-form">
+								Detected ${detectSummary.value.supported || 0} supported, ${detectSummary.value.unsupported || 0} unsupported out of ${detectSummary.value.total || 0} models.
+							</div>`
+							: null
+				}
 
-			<div style="max-width:600px;">
+				<div style="max-width:600px;">
 				${
 					loading.value && configuredModels.value.length === 0
 						? html`<div class="text-xs text-[var(--muted)]">Loading…</div>`
 						: configuredModels.value.length === 0
 							? html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No providers configured yet.</div>`
 							: html`<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
-								${configuredModels.value.map((m) => html`<${ModelCard} key=${m.id} model=${m} />`)}
+								${groupProviderRows(configuredModels.value).map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
 							</div>`
 				}
 
-				<button
-					class="provider-btn"
-					onClick=${() => {
-						if (connected.value) openProviderModal();
-					}}
-				>
-					Add Provider
-				</button>
+				</div>
 			</div>
-		</div>
 		<${ConfirmDialog} />
-	`;
+		`;
 }
 
 registerPage(

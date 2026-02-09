@@ -2,7 +2,10 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Durat
 
 use tracing::{debug, warn};
 
-use moltis_protocol::{ErrorShape, ResponseFrame, error_codes};
+use {
+    moltis_config::VoiceSttProvider,
+    moltis_protocol::{ErrorShape, ResponseFrame, error_codes},
+};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -46,7 +49,10 @@ const READ_METHODS: &[&str] = &[
     "usage.cost",
     "tts.status",
     "tts.providers",
+    "stt.status",
+    "stt.providers",
     "models.list",
+    "models.list_all",
     "agents.list",
     "agent.identity.get",
     "skills.list",
@@ -74,6 +80,7 @@ const READ_METHODS: &[&str] = &[
     "node.describe",
     "chat.history",
     "chat.context",
+    "chat.raw_prompt",
     "providers.available",
     "providers.oauth.status",
     "providers.local.system_info",
@@ -83,6 +90,11 @@ const READ_METHODS: &[&str] = &[
     "mcp.list",
     "mcp.status",
     "mcp.tools",
+    "tts.generate_phrase",
+    "voice.config.get",
+    "voice.config.voxtral_requirements",
+    "voice.providers.all",
+    "voice.elevenlabs.catalog",
     "memory.status",
     "memory.config.get",
     "memory.qmd.status",
@@ -101,14 +113,18 @@ const WRITE_METHODS: &[&str] = &[
     "tts.disable",
     "tts.convert",
     "tts.setProvider",
+    "stt.transcribe",
+    "stt.setProvider",
     "voicewake.set",
     "node.invoke",
     "chat.send",
     "chat.abort",
+    "chat.cancel_queued",
     "chat.clear",
     "chat.compact",
     "browser.request",
     "logs.ack",
+    "models.detect_supported",
     "providers.save_key",
     "providers.remove_key",
     "providers.oauth.start",
@@ -145,11 +161,20 @@ const WRITE_METHODS: &[&str] = &[
     "cron.run",
     "heartbeat.update",
     "heartbeat.run",
+    "voice.config.save_key",
+    "voice.config.save_settings",
+    "voice.config.remove_key",
+    "voice.provider.toggle",
+    "voice.override.session.set",
+    "voice.override.session.clear",
+    "voice.override.channel.set",
+    "voice.override.channel.clear",
     "memory.config.update",
     "hooks.enable",
     "hooks.disable",
     "hooks.save",
     "hooks.reload",
+    "location.result",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -170,6 +195,19 @@ const PAIRING_METHODS: &[&str] = &[
 
 fn is_in(method: &str, list: &[&str]) -> bool {
     list.contains(&method)
+}
+
+fn model_probe_params(provider: Option<&str>) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "background": true,
+        "reason": "provider_connected",
+    });
+    if let Some(provider) = provider
+        && !provider.trim().is_empty()
+    {
+        params["provider"] = serde_json::json!(provider);
+    }
+    params
 }
 
 /// Check role + scopes for a method. Returns None if authorized, Some(error) if not.
@@ -331,11 +369,12 @@ impl MethodRegistry {
             "status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let nodes = ctx.state.nodes.read().await;
+                    let inner = ctx.state.inner.read().await;
+                    let nodes = &inner.nodes;
                     Ok(serde_json::json!({
                         "version": ctx.state.version,
                         "hostname": ctx.state.hostname,
-                        "connections": ctx.state.client_count().await,
+                        "connections": inner.clients.len(),
                         "nodes": nodes.count(),
                         "hasMobileNode": nodes.has_mobile_node(),
                     }))
@@ -348,10 +387,10 @@ impl MethodRegistry {
             "system-presence",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let clients = ctx.state.clients.read().await;
-                    let nodes = ctx.state.nodes.read().await;
+                    let inner = ctx.state.inner.read().await;
 
-                    let client_list: Vec<_> = clients
+                    let client_list: Vec<_> = inner
+                        .clients
                         .values()
                         .map(|c| {
                             serde_json::json!({
@@ -365,7 +404,8 @@ impl MethodRegistry {
                         })
                         .collect();
 
-                    let node_list: Vec<_> = nodes
+                    let node_list: Vec<_> = inner
+                        .nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -415,8 +455,8 @@ impl MethodRegistry {
             "last-heartbeat",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let clients = ctx.state.clients.read().await;
-                    if let Some(client) = clients.get(&ctx.client_conn_id) {
+                    let inner = ctx.state.inner.read().await;
+                    if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
                         Ok(serde_json::json!({
                             "lastActivitySecs": client.last_activity.elapsed().as_secs(),
                         }))
@@ -432,8 +472,13 @@ impl MethodRegistry {
             "set-heartbeats",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    if let Some(client) =
-                        ctx.state.clients.write().await.get_mut(&ctx.client_conn_id)
+                    if let Some(client) = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .clients
+                        .get_mut(&ctx.client_conn_id)
                     {
                         client.touch();
                     }
@@ -451,8 +496,9 @@ impl MethodRegistry {
             "node.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let nodes = ctx.state.nodes.read().await;
-                    let list: Vec<_> = nodes
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner
+                        .nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -484,8 +530,8 @@ impl MethodRegistry {
                         .ok_or_else(|| {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing nodeId")
                         })?;
-                    let nodes = ctx.state.nodes.read().await;
-                    let node = nodes.get(node_id).ok_or_else(|| {
+                    let inner = ctx.state.inner.read().await;
+                    let node = inner.nodes.get(node_id).ok_or_else(|| {
                         ErrorShape::new(error_codes::UNAVAILABLE, "node not found")
                     })?;
                     Ok(serde_json::json!({
@@ -523,8 +569,9 @@ impl MethodRegistry {
                         .ok_or_else(|| {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing displayName")
                         })?;
-                    let mut nodes = ctx.state.nodes.write().await;
-                    nodes
+                    let mut inner = ctx.state.inner.write().await;
+                    inner
+                        .nodes
                         .rename(node_id, name)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
                     Ok(serde_json::json!({}))
@@ -562,8 +609,8 @@ impl MethodRegistry {
                     // Find the node's conn_id and send the invoke request.
                     let invoke_id = uuid::Uuid::new_v4().to_string();
                     let conn_id = {
-                        let nodes = ctx.state.nodes.read().await;
-                        let node = nodes.get(&node_id).ok_or_else(|| {
+                        let inner = ctx.state.inner.read().await;
+                        let node = inner.nodes.get(&node_id).ok_or_else(|| {
                             ErrorShape::new(error_codes::UNAVAILABLE, "node not connected")
                         })?;
                         node.conn_id.clone()
@@ -583,27 +630,31 @@ impl MethodRegistry {
                         ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
                     })?;
 
-                    let clients = ctx.state.clients.read().await;
-                    let node_client = clients.get(&conn_id).ok_or_else(|| {
-                        ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
-                    })?;
-                    if !node_client.send(&event_json) {
-                        return Err(ErrorShape::new(
-                            error_codes::UNAVAILABLE,
-                            "node send failed",
-                        ));
+                    {
+                        let inner = ctx.state.inner.read().await;
+                        let node_client = inner.clients.get(&conn_id).ok_or_else(|| {
+                            ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
+                        })?;
+                        if !node_client.send(&event_json) {
+                            return Err(ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                "node send failed",
+                            ));
+                        }
                     }
-                    drop(clients);
 
                     // Set up a oneshot for the result with a timeout.
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     {
-                        let mut invokes = ctx.state.pending_invokes.write().await;
-                        invokes.insert(invoke_id.clone(), crate::state::PendingInvoke {
-                            request_id: ctx.request_id.clone(),
-                            sender: tx,
-                            created_at: std::time::Instant::now(),
-                        });
+                        let mut inner = ctx.state.inner.write().await;
+                        inner.pending_invokes.insert(
+                            invoke_id.clone(),
+                            crate::state::PendingInvoke {
+                                request_id: ctx.request_id.clone(),
+                                sender: tx,
+                                created_at: std::time::Instant::now(),
+                            },
+                        );
                     }
 
                     // Wait for result with 30s timeout.
@@ -614,7 +665,12 @@ impl MethodRegistry {
                             "invoke cancelled",
                         )),
                         Err(_) => {
-                            ctx.state.pending_invokes.write().await.remove(&invoke_id);
+                            ctx.state
+                                .inner
+                                .write()
+                                .await
+                                .pending_invokes
+                                .remove(&invoke_id);
                             Err(ErrorShape::new(
                                 error_codes::AGENT_TIMEOUT,
                                 "node invoke timeout",
@@ -643,7 +699,13 @@ impl MethodRegistry {
                         .cloned()
                         .unwrap_or(serde_json::json!(null));
 
-                    let pending = ctx.state.pending_invokes.write().await.remove(invoke_id);
+                    let pending = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .pending_invokes
+                        .remove(invoke_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -674,6 +736,62 @@ impl MethodRegistry {
                         .unwrap_or(serde_json::json!({}));
                     broadcast(&ctx.state, event, payload, BroadcastOpts::default()).await;
                     Ok(serde_json::json!({}))
+                })
+            }),
+        );
+
+        // location.result: browser returns the result of a geolocation request
+        self.register(
+            "location.result",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let request_id = ctx
+                        .params
+                        .get("requestId")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            ErrorShape::new(error_codes::INVALID_REQUEST, "missing requestId")
+                        })?;
+
+                    // Build the result value to send through the pending invoke channel.
+                    let result = if let Some(loc) = ctx.params.get("location") {
+                        // Success: cache the location and persist to USER.md.
+                        if let (Some(lat), Some(lon)) = (
+                            loc.get("latitude").and_then(|v| v.as_f64()),
+                            loc.get("longitude").and_then(|v| v.as_f64()),
+                        ) {
+                            let geo = moltis_config::GeoLocation::now(lat, lon);
+                            ctx.state.inner.write().await.cached_location = Some(geo.clone());
+
+                            // Persist to USER.md (best-effort).
+                            let mut user = moltis_config::load_user().unwrap_or_default();
+                            user.location = Some(geo);
+                            if let Err(e) = moltis_config::save_user(&user) {
+                                tracing::warn!(error = %e, "failed to persist location to USER.md");
+                            }
+                        }
+                        serde_json::json!({ "location": ctx.params.get("location") })
+                    } else {
+                        // Error (permission denied, timeout, etc.)
+                        serde_json::json!({ "error": ctx.params.get("error") })
+                    };
+
+                    let pending = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .pending_invokes
+                        .remove(request_id);
+                    if let Some(invoke) = pending {
+                        let _ = invoke.sender.send(result);
+                        Ok(serde_json::json!({}))
+                    } else {
+                        Err(ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "no pending location request for this id",
+                        ))
+                    }
                 })
             }),
         );
@@ -762,7 +880,7 @@ impl MethodRegistry {
                         .unwrap_or("unknown");
                     let public_key = ctx.params.get("publicKey").and_then(|v| v.as_str());
 
-                    let req = ctx.state.pairing.write().await.request_pair(
+                    let req = ctx.state.inner.write().await.pairing.request_pair(
                         device_id,
                         display_name,
                         platform,
@@ -796,8 +914,9 @@ impl MethodRegistry {
             "node.pair.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let pairing = ctx.state.pairing.read().await;
-                    let list: Vec<_> = pairing
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner
+                        .pairing
                         .list_pending()
                         .iter()
                         .map(|r| {
@@ -828,9 +947,10 @@ impl MethodRegistry {
                             })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .approve(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -865,9 +985,10 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing id")
                             })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .reject(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -897,8 +1018,9 @@ impl MethodRegistry {
             "device.pair.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let pairing = ctx.state.pairing.read().await;
-                    let list: Vec<_> = pairing
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner
+                        .pairing
                         .list_devices()
                         .iter()
                         .map(|d| {
@@ -928,9 +1050,10 @@ impl MethodRegistry {
                             })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .approve(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -962,9 +1085,10 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing id")
                             })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .reject(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -997,9 +1121,10 @@ impl MethodRegistry {
                         })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .rotate_token(device_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
                     Ok(serde_json::json!({ "deviceToken": token.token, "scopes": token.scopes }))
@@ -1020,9 +1145,10 @@ impl MethodRegistry {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing deviceId")
                         })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .revoke_token(device_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
                     Ok(serde_json::json!({}))
@@ -1550,7 +1676,7 @@ impl MethodRegistry {
             "heartbeat.status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let config = ctx.state.heartbeat_config.read().await.clone();
+                    let config = ctx.state.inner.read().await.heartbeat_config.clone();
                     let heartbeat_path = moltis_config::heartbeat_path();
                     let heartbeat_file_exists = heartbeat_path.exists();
                     let heartbeat_md = moltis_config::load_heartbeat_md();
@@ -1558,14 +1684,9 @@ impl MethodRegistry {
                         config.prompt.as_deref(),
                         heartbeat_md.as_deref(),
                     );
-                    let has_prompt_override = config
-                        .prompt
-                        .as_deref()
-                        .is_some_and(|p| !p.trim().is_empty());
-                    let heartbeat_file_effectively_empty =
-                        heartbeat_file_exists && heartbeat_md.is_none();
-                    let skip_llm_when_empty =
-                        heartbeat_file_effectively_empty && !has_prompt_override;
+                    // No meaningful prompt → heartbeat won't execute.
+                    let has_prompt =
+                        prompt_source != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
                     // Find the heartbeat job to get its state.
                     let jobs_val = ctx
                         .state
@@ -1582,8 +1703,7 @@ impl MethodRegistry {
                         "job": hb_job,
                         "promptSource": prompt_source.as_str(),
                         "heartbeatFileExists": heartbeat_file_exists,
-                        "heartbeatFileEffectivelyEmpty": heartbeat_file_effectively_empty,
-                        "skipLlmWhenEmpty": skip_llm_when_empty,
+                        "hasPrompt": has_prompt,
                     }))
                 })
             }),
@@ -1599,7 +1719,7 @@ impl MethodRegistry {
                                 format!("invalid heartbeat config: {e}"),
                             )
                         })?;
-                    *ctx.state.heartbeat_config.write().await = patch.clone();
+                    ctx.state.inner.write().await.heartbeat_config = patch.clone();
 
                     // Persist to moltis.toml so the config survives restarts.
                     if let Err(e) = moltis_config::update_config(|cfg| {
@@ -1641,6 +1761,11 @@ impl MethodRegistry {
                                 "heartbeat prompt source conflict: config heartbeat.prompt overrides HEARTBEAT.md"
                             );
                         }
+                        // Disable the job when there is no meaningful prompt,
+                        // even if the user toggled enabled=true.
+                        let has_prompt = prompt_source
+                            != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
+                        let effective_enabled = patch.enabled && has_prompt;
                         let job_patch = moltis_cron::types::CronJobPatch {
                             schedule: Some(moltis_cron::types::CronSchedule::Every {
                                 every_ms: interval_ms,
@@ -1654,7 +1779,7 @@ impl MethodRegistry {
                                 channel: None,
                                 to: None,
                             }),
-                            enabled: Some(patch.enabled),
+                            enabled: Some(effective_enabled),
                             sandbox: Some(moltis_cron::types::CronSandboxConfig {
                                 enabled: patch.sandbox_enabled,
                                 image: patch.sandbox_image.clone(),
@@ -1759,15 +1884,20 @@ impl MethodRegistry {
                 Box::pin(async move {
                     let mut params = ctx.params.clone();
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
-                    // Forward client Accept-Language to web tools.
-                    let accept_language = {
-                        let clients = ctx.state.clients.read().await;
-                        clients
-                            .get(&ctx.client_conn_id)
-                            .and_then(|c| c.accept_language.clone())
-                    };
-                    if let Some(lang) = accept_language {
-                        params["_accept_language"] = serde_json::json!(lang);
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
                     }
                     ctx.state
                         .chat()
@@ -1786,6 +1916,19 @@ impl MethodRegistry {
                         .chat()
                         .await
                         .abort(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "chat.cancel_queued",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .chat()
+                        .await
+                        .cancel_queued(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
@@ -1866,6 +2009,68 @@ impl MethodRegistry {
             }),
         );
 
+        self.register(
+            "chat.raw_prompt",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let mut params = ctx.params.clone();
+                    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
+                    }
+                    ctx.state
+                        .chat()
+                        .await
+                        .raw_prompt(params)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        self.register(
+            "chat.full_context",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let mut params = ctx.params.clone();
+                    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
+                    }
+                    ctx.state
+                        .chat()
+                        .await
+                        .full_context(params)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
         // Session switching
         self.register(
             "sessions.switch",
@@ -1879,28 +2084,23 @@ impl MethodRegistry {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
                         })?;
 
-                    // Store the active session for this connection.
-                    ctx.state
-                        .active_sessions
-                        .write()
-                        .await
-                        .insert(ctx.client_conn_id.clone(), key.to_string());
-
-                    // Store the active project for this connection, if provided.
-                    if let Some(project_id) = ctx.params.get("project_id").and_then(|v| v.as_str())
+                    // Store the active session (and project if provided) for this connection.
                     {
-                        if project_id.is_empty() {
-                            ctx.state
-                                .active_projects
-                                .write()
-                                .await
-                                .remove(&ctx.client_conn_id);
-                        } else {
-                            ctx.state
-                                .active_projects
-                                .write()
-                                .await
-                                .insert(ctx.client_conn_id.clone(), project_id.to_string());
+                        let mut inner = ctx.state.inner.write().await;
+                        inner
+                            .active_sessions
+                            .insert(ctx.client_conn_id.clone(), key.to_string());
+
+                        if let Some(project_id) =
+                            ctx.params.get("project_id").and_then(|v| v.as_str())
+                        {
+                            if project_id.is_empty() {
+                                inner.active_projects.remove(&ctx.client_conn_id);
+                            } else {
+                                inner
+                                    .active_projects
+                                    .insert(ctx.client_conn_id.clone(), project_id.to_string());
+                            }
                         }
                     }
 
@@ -2013,85 +2213,211 @@ impl MethodRegistry {
             }),
         );
 
-        // TTS
-        self.register(
-            "tts.status",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .status()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.providers",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .providers()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.enable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .enable(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.disable",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .disable()
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.convert",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .convert(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
-        self.register(
-            "tts.setProvider",
-            Box::new(|ctx| {
-                Box::pin(async move {
-                    ctx.state
-                        .services
-                        .tts
-                        .set_provider(ctx.params.clone())
-                        .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
-                })
-            }),
-        );
+        // TTS and STT (voice feature)
+        #[cfg(feature = "voice")]
+        {
+            self.register(
+                "tts.status",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .status()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.providers",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .providers()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.enable",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .enable(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.disable",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .disable()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.convert",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .convert(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "tts.generate_phrase",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let context = ctx
+                            .params
+                            .get("context")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("settings");
+
+                        let config = moltis_config::discover_and_load();
+                        let identity = moltis_config::ResolvedIdentity::from_config(&config);
+                        let user = identity
+                            .user_name
+                            .unwrap_or_else(|| "friend".into());
+                        let bot = identity.name;
+
+                        // Try LLM generation with a 3-second timeout.
+                        // Clone the Arc out so we don't hold the outer RwLock across awaits.
+                        let providers = ctx.state.inner.read().await.llm_providers.clone();
+                        if let Some(providers) = providers {
+                            let provider = providers.read().await.first();
+                            if let Some(provider) = provider {
+                                let system_prompt = format!(
+                                    "You generate short, funny TTS test phrases for a voice assistant.\n\
+                                     The user's name is {user}. The bot's name is {bot}.\n\
+                                     Include SSML <break time=\"0.5s\"/> tags for natural pauses.\n\
+                                     Reply with ONLY the phrase text — no quotes, no markdown. Under 200 chars."
+                                );
+                                let messages = vec![
+                                    moltis_agents::model::ChatMessage::system(system_prompt),
+                                    moltis_agents::model::ChatMessage::user(format!(
+                                        "Generate a {context} TTS test phrase."
+                                    )),
+                                ];
+                                let result = tokio::time::timeout(
+                                    Duration::from_secs(3),
+                                    provider.complete(&messages, &[]),
+                                )
+                                .await;
+
+                                if let Ok(Ok(response)) = result
+                                    && let Some(text) = response.text
+                                {
+                                    let text = text.trim().to_string();
+                                    if !text.is_empty() {
+                                        return Ok(serde_json::json!({
+                                            "phrase": text,
+                                            "source": "llm",
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fall back to static phrases with sequential picking.
+                        let phrases =
+                            crate::tts_phrases::static_phrases(&user, &bot, context);
+                        let idx = ctx.state.next_tts_phrase_index(phrases.len());
+                        let phrase = phrases
+                            .into_iter()
+                            .nth(idx)
+                            .unwrap_or_default();
+
+                        Ok(serde_json::json!({
+                            "phrase": phrase,
+                            "source": "static",
+                        }))
+                    })
+                }),
+            );
+            self.register(
+                "tts.setProvider",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .tts
+                            .set_provider(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.status",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .status()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.providers",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .providers()
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.transcribe",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .transcribe(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+            self.register(
+                "stt.setProvider",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        ctx.state
+                            .services
+                            .stt
+                            .set_provider(ctx.params.clone())
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    })
+                }),
+            );
+        }
 
         // Skills
         self.register(
@@ -2584,6 +2910,19 @@ impl MethodRegistry {
             }),
         );
         self.register(
+            "models.list_all",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .list_all()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
             "models.disable",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -2604,6 +2943,19 @@ impl MethodRegistry {
                         .services
                         .model
                         .enable(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "models.detect_supported",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .detect_supported(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
@@ -2641,12 +2993,35 @@ impl MethodRegistry {
             "providers.oauth.start",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let provider_name = ctx
+                        .params
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .oauth_start(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // If oauth.start short-circuited because valid tokens already
+                    // existed, trigger a provider-scoped background probe now.
+                    if result
+                        .get("alreadyAuthenticated")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        let model_service = Arc::clone(&ctx.state.services.model);
+                        tokio::spawn(async move {
+                            let _ = model_service
+                                .detect_supported(model_probe_params(provider_name.as_deref()))
+                                .await;
+                        });
+                    }
+
+                    Ok(result)
                 })
             }),
         );
@@ -2667,12 +3042,28 @@ impl MethodRegistry {
             "providers.oauth.complete",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .oauth_complete(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    let provider_name = result
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+
+                    // Kick off background support probing after OAuth provider connect.
+                    let model_service = Arc::clone(&ctx.state.services.model);
+                    tokio::spawn(async move {
+                        let _ = model_service
+                            .detect_supported(model_probe_params(provider_name.as_deref()))
+                            .await;
+                    });
+
+                    Ok(result)
                 })
             }),
         );
@@ -3028,6 +3419,505 @@ impl MethodRegistry {
             }),
         );
 
+        // ── Voice Config ───────────────────────────────────────────────
+        #[cfg(feature = "voice")]
+        {
+            self.register(
+                "voice.config.get",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        let config = moltis_config::discover_and_load();
+                        Ok(serde_json::json!({
+                            "tts": {
+                                "enabled": config.voice.tts.enabled,
+                                "provider": config.voice.tts.provider,
+                                "elevenlabs_configured": config.voice.tts.elevenlabs.api_key.is_some(),
+                                "openai_configured": config.voice.tts.openai.api_key.is_some(),
+                            },
+                            "stt": {
+                                "enabled": config.voice.stt.enabled,
+                                "provider": config.voice.stt.provider,
+                                "whisper_configured": config.voice.stt.whisper.api_key.is_some(),
+                                "groq_configured": config.voice.stt.groq.api_key.is_some(),
+                                "deepgram_configured": config.voice.stt.deepgram.api_key.is_some(),
+                                "google_configured": config.voice.stt.google.api_key.is_some(),
+                                "elevenlabs_configured": config.voice.stt.elevenlabs.api_key.is_some(),
+                                "whisper_cli_configured": config.voice.stt.whisper_cli.model_path.is_some(),
+                                "sherpa_onnx_configured": config.voice.stt.sherpa_onnx.model_dir.is_some(),
+                            },
+                        }))
+                    })
+                }),
+            );
+            // Comprehensive provider listing with availability detection
+            self.register(
+                "voice.providers.all",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        let config = moltis_config::discover_and_load();
+                        let providers = detect_voice_providers(&config).await;
+                        Ok(serde_json::json!(providers))
+                    })
+                }),
+            );
+            self.register(
+                "voice.elevenlabs.catalog",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        let config = moltis_config::discover_and_load();
+                        Ok(fetch_elevenlabs_catalog(&config).await)
+                    })
+                }),
+            );
+            // Enable/disable a voice provider (updates config file)
+            self.register(
+                "voice.provider.toggle",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+                        let enabled = ctx
+                            .params
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing enabled")
+                            })?;
+                        let provider_type = ctx
+                            .params
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("stt");
+
+                        toggle_voice_provider(provider, enabled, provider_type).map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to toggle provider: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast change
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider, "enabled": enabled }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider, "enabled": enabled }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.override.session.set",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let session_key = ctx
+                            .params
+                            .get("sessionKey")
+                            .or_else(|| ctx.params.get("session_key"))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing sessionKey")
+                            })?
+                            .to_string();
+
+                        let override_cfg = crate::state::TtsRuntimeOverride {
+                            provider: ctx
+                                .params
+                                .get("provider")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            voice_id: ctx
+                                .params
+                                .get("voiceId")
+                                .or_else(|| ctx.params.get("voice_id"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            model: ctx
+                                .params
+                                .get("model")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                        };
+
+                        ctx.state
+                            .inner
+                            .write()
+                            .await
+                            .tts_session_overrides
+                            .insert(session_key.clone(), override_cfg.clone());
+
+                        Ok(serde_json::to_value(override_cfg).unwrap_or_else(
+                            |_| serde_json::json!({ "ok": true, "sessionKey": session_key }),
+                        ))
+                    })
+                }),
+            );
+            self.register(
+                "voice.override.session.clear",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let session_key = ctx
+                            .params
+                            .get("sessionKey")
+                            .or_else(|| ctx.params.get("session_key"))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing sessionKey")
+                            })?
+                            .to_string();
+
+                        ctx.state
+                            .inner
+                            .write()
+                            .await
+                            .tts_session_overrides
+                            .remove(&session_key);
+                        Ok(serde_json::json!({ "ok": true, "sessionKey": session_key }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.override.channel.set",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let channel_type = ctx
+                            .params
+                            .get("channelType")
+                            .or_else(|| ctx.params.get("channel_type"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("telegram");
+                        let account_id = ctx
+                            .params
+                            .get("accountId")
+                            .or_else(|| ctx.params.get("account_id"))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing accountId")
+                            })?;
+
+                        let key = format!("{}:{}", channel_type, account_id);
+                        let override_cfg = crate::state::TtsRuntimeOverride {
+                            provider: ctx
+                                .params
+                                .get("provider")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            voice_id: ctx
+                                .params
+                                .get("voiceId")
+                                .or_else(|| ctx.params.get("voice_id"))
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            model: ctx
+                                .params
+                                .get("model")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                        };
+
+                        ctx.state
+                            .inner
+                            .write()
+                            .await
+                            .tts_channel_overrides
+                            .insert(key.clone(), override_cfg.clone());
+
+                        Ok(serde_json::json!({ "ok": true, "key": key, "override": override_cfg }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.override.channel.clear",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let channel_type = ctx
+                            .params
+                            .get("channelType")
+                            .or_else(|| ctx.params.get("channel_type"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("telegram");
+                        let account_id = ctx
+                            .params
+                            .get("accountId")
+                            .or_else(|| ctx.params.get("account_id"))
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing accountId")
+                            })?;
+
+                        let key = format!("{}:{}", channel_type, account_id);
+                        ctx.state
+                            .inner
+                            .write()
+                            .await
+                            .tts_channel_overrides
+                            .remove(&key);
+                        Ok(serde_json::json!({ "ok": true, "key": key }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.save_key",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        use secrecy::Secret;
+
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+                        let api_key = ctx
+                            .params
+                            .get("api_key")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing api_key")
+                            })?;
+
+                        moltis_config::update_config(|cfg| {
+                            match provider {
+                                // TTS providers
+                                "elevenlabs" => {
+                                    // ElevenLabs shares key between TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.tts.elevenlabs.api_key = Some(key.clone());
+                                    cfg.voice.stt.elevenlabs.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both TTS and STT with ElevenLabs
+                                    cfg.voice.tts.provider = "elevenlabs".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                    cfg.voice.stt.provider = VoiceSttProvider::ElevenLabs;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "openai" | "openai-tts" => {
+                                    cfg.voice.tts.openai.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.tts.provider = "openai".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                "google-tts" => {
+                                    // Google API key is shared - set both TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.tts.google.api_key = Some(key.clone());
+                                    cfg.voice.stt.google.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both TTS and STT with Google
+                                    cfg.voice.tts.provider = "google".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                    cfg.voice.stt.provider = VoiceSttProvider::Google;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                // STT providers
+                                "whisper" => {
+                                    cfg.voice.stt.whisper.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = VoiceSttProvider::Whisper;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "groq" => {
+                                    cfg.voice.stt.groq.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = VoiceSttProvider::Groq;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "deepgram" => {
+                                    cfg.voice.stt.deepgram.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = VoiceSttProvider::Deepgram;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "google" => {
+                                    // Google STT key - also set TTS since they share the same key
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.stt.google.api_key = Some(key.clone());
+                                    cfg.voice.tts.google.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both STT and TTS with Google
+                                    cfg.voice.stt.provider = VoiceSttProvider::Google;
+                                    cfg.voice.stt.enabled = true;
+                                    cfg.voice.tts.provider = "google".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                "mistral" => {
+                                    cfg.voice.stt.mistral.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    cfg.voice.stt.provider = VoiceSttProvider::Mistral;
+                                    cfg.voice.stt.enabled = true;
+                                },
+                                "elevenlabs-stt" => {
+                                    // ElevenLabs shares key between TTS and STT
+                                    let key = Secret::new(api_key.to_string());
+                                    cfg.voice.stt.elevenlabs.api_key = Some(key.clone());
+                                    cfg.voice.tts.elevenlabs.api_key =
+                                        Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both STT and TTS with ElevenLabs
+                                    cfg.voice.stt.provider = VoiceSttProvider::ElevenLabs;
+                                    cfg.voice.stt.enabled = true;
+                                    cfg.voice.tts.provider = "elevenlabs".to_string();
+                                    cfg.voice.tts.enabled = true;
+                                },
+                                _ => {},
+                            }
+
+                            apply_voice_provider_settings(cfg, provider, &ctx.params);
+                        })
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast voice config change event
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.save_settings",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+
+                        moltis_config::update_config(|cfg| {
+                            apply_voice_provider_settings(cfg, provider, &ctx.params);
+                        })
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save settings: {}", e),
+                            )
+                        })?;
+
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider, "settings": true }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.remove_key",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let provider = ctx
+                            .params
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
+                            })?;
+
+                        moltis_config::update_config(|cfg| match provider {
+                            // TTS providers
+                            "elevenlabs" => {
+                                cfg.voice.tts.elevenlabs.api_key = None;
+                            },
+                            "openai" => {
+                                cfg.voice.tts.openai.api_key = None;
+                            },
+                            // STT providers
+                            "whisper" => {
+                                cfg.voice.stt.whisper.api_key = None;
+                            },
+                            "groq" => {
+                                cfg.voice.stt.groq.api_key = None;
+                            },
+                            "deepgram" => {
+                                cfg.voice.stt.deepgram.api_key = None;
+                            },
+                            "google" => {
+                                cfg.voice.stt.google.api_key = None;
+                            },
+                            "mistral" => {
+                                cfg.voice.stt.mistral.api_key = None;
+                            },
+                            "elevenlabs-stt" => {
+                                cfg.voice.stt.elevenlabs.api_key = None;
+                            },
+                            _ => {},
+                        })
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save: {}", e),
+                            )
+                        })?;
+
+                        // Broadcast voice config change event
+                        broadcast(
+                            &ctx.state,
+                            "voice.config.changed",
+                            serde_json::json!({ "provider": provider, "removed": true }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+
+                        Ok(serde_json::json!({ "ok": true, "provider": provider }))
+                    })
+                }),
+            );
+            self.register(
+                "voice.config.voxtral_requirements",
+                Box::new(|_ctx| {
+                    Box::pin(async move {
+                        // Detect OS and architecture
+                        let os = std::env::consts::OS;
+                        let arch = std::env::consts::ARCH;
+
+                        // Check Python version
+                        let python_info = check_python_version().await;
+
+                        // Check CUDA availability
+                        let cuda_info = check_cuda_availability().await;
+
+                        // Determine compatibility
+                        let (compatible, reasons) =
+                            check_voxtral_compatibility(os, arch, &python_info, &cuda_info);
+
+                        Ok(serde_json::json!({
+                            "os": os,
+                            "arch": arch,
+                            "python": python_info,
+                            "cuda": cuda_info,
+                            "compatible": compatible,
+                            "reasons": reasons,
+                        }))
+                    })
+                }),
+            );
+        }
+
         // ── Memory ─────────────────────────────────────────────────────
 
         self.register(
@@ -3178,11 +4068,11 @@ impl MethodRegistry {
             "hooks.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let hooks = ctx.state.discovered_hooks.read().await;
-                    let mut list = hooks.clone();
+                    let inner = ctx.state.inner.read().await;
+                    let mut list = inner.discovered_hooks.clone();
 
                     // Enrich with live stats from the registry.
-                    if let Some(ref registry) = *ctx.state.hook_registry.read().await {
+                    if let Some(ref registry) = inner.hook_registry {
                         for hook in &mut list {
                             if let Some(stats) = registry.handler_stats(&hook.name) {
                                 let calls =
@@ -3219,7 +4109,7 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing name")
                             })?;
 
-                    ctx.state.disabled_hooks.write().await.remove(name);
+                    ctx.state.inner.write().await.disabled_hooks.remove(name);
 
                     // Persist disabled hooks list.
                     persist_disabled_hooks(&ctx.state).await;
@@ -3246,9 +4136,10 @@ impl MethodRegistry {
                             })?;
 
                     ctx.state
-                        .disabled_hooks
+                        .inner
                         .write()
                         .await
+                        .disabled_hooks
                         .insert(name.to_string());
 
                     // Persist disabled hooks list.
@@ -3284,8 +4175,9 @@ impl MethodRegistry {
 
                     // Find the hook's source path.
                     let source_path = {
-                        let hooks = ctx.state.discovered_hooks.read().await;
-                        hooks
+                        let inner = ctx.state.inner.read().await;
+                        inner
+                            .discovered_hooks
                             .iter()
                             .find(|h| h.name == name)
                             .map(|h| h.source_path.clone())
@@ -3325,15 +4217,1102 @@ impl MethodRegistry {
     }
 }
 
+/// Check if Python 3.10+ is available.
+async fn check_python_version() -> serde_json::Value {
+    // Try python3 first, then python
+    for cmd in &["python3", "python"] {
+        if let Ok(output) = tokio::process::Command::new(cmd)
+            .arg("--version")
+            .output()
+            .await
+            && output.status.success()
+        {
+            let version_str = String::from_utf8_lossy(&output.stdout);
+            // Parse "Python 3.11.0" format
+            if let Some(version) = version_str.strip_prefix("Python ") {
+                let version = version.trim();
+                // Check if version is 3.10+
+                let parts: Vec<&str> = version.split('.').collect();
+                if parts.len() >= 2
+                    && let (Ok(major), Ok(minor)) =
+                        (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                {
+                    let sufficient = major > 3 || (major == 3 && minor >= 10);
+                    return serde_json::json!({
+                        "available": true,
+                        "version": version,
+                        "sufficient": sufficient,
+                    });
+                }
+                return serde_json::json!({
+                    "available": true,
+                    "version": version,
+                    "sufficient": false,
+                });
+            }
+        }
+    }
+    serde_json::json!({
+        "available": false,
+        "version": null,
+        "sufficient": false,
+    })
+}
+
+/// Check CUDA availability via nvidia-smi.
+async fn check_cuda_availability() -> serde_json::Value {
+    // Check if nvidia-smi is available
+    if let Ok(output) = tokio::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=name,memory.total")
+        .arg("--format=csv,noheader,nounits")
+        .output()
+        .await
+        && output.status.success()
+    {
+        let info = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = info.trim().lines().collect();
+        if let Some(first_gpu) = lines.first() {
+            let parts: Vec<&str> = first_gpu.split(", ").collect();
+            if parts.len() >= 2 {
+                let gpu_name = parts[0].trim();
+                let memory_mb: u64 = parts[1].trim().parse().unwrap_or(0);
+                // vLLM needs ~9.5GB, recommend 10GB minimum
+                let sufficient = memory_mb >= 10000;
+                return serde_json::json!({
+                    "available": true,
+                    "gpu_name": gpu_name,
+                    "memory_mb": memory_mb,
+                    "sufficient": sufficient,
+                });
+            }
+        }
+        return serde_json::json!({
+            "available": true,
+            "gpu_name": null,
+            "memory_mb": null,
+            "sufficient": false,
+        });
+    }
+    serde_json::json!({
+        "available": false,
+        "gpu_name": null,
+        "memory_mb": null,
+        "sufficient": false,
+    })
+}
+
+/// Check if the system meets Voxtral Local requirements.
+fn check_voxtral_compatibility(
+    os: &str,
+    arch: &str,
+    python: &serde_json::Value,
+    cuda: &serde_json::Value,
+) -> (bool, Vec<String>) {
+    let mut reasons = Vec::new();
+
+    // vLLM primarily supports Linux
+    let os_ok = os == "linux";
+    if !os_ok {
+        if os == "macos" {
+            reasons.push("vLLM has limited macOS support. Linux is recommended.".into());
+        } else if os == "windows" {
+            reasons.push("vLLM requires WSL2 on Windows.".into());
+        }
+    }
+
+    // Architecture check
+    let arch_ok = arch == "x86_64";
+    if !arch_ok && arch == "aarch64" {
+        reasons.push("ARM64 has limited CUDA/vLLM support.".into());
+    }
+
+    // Python check
+    let python_ok = python["sufficient"].as_bool().unwrap_or(false);
+    if !python["available"].as_bool().unwrap_or(false) {
+        reasons.push("Python is not installed. Install Python 3.10+.".into());
+    } else if !python_ok {
+        let ver = python["version"].as_str().unwrap_or("unknown");
+        reasons.push(format!("Python {} is too old. Python 3.10+ required.", ver));
+    }
+
+    // CUDA check
+    let cuda_ok = cuda["sufficient"].as_bool().unwrap_or(false);
+    if !cuda["available"].as_bool().unwrap_or(false) {
+        reasons.push("No NVIDIA GPU detected. CUDA GPU with 10GB+ VRAM required.".into());
+    } else if !cuda_ok {
+        let mem = cuda["memory_mb"].as_u64().unwrap_or(0);
+        reasons.push(format!(
+            "GPU has {}MB VRAM. 10GB+ recommended for Voxtral.",
+            mem
+        ));
+    }
+
+    // Overall compatibility
+    let compatible = os_ok && arch_ok && python_ok && cuda_ok;
+
+    (compatible, reasons)
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum VoiceProviderId {
+    Elevenlabs,
+    OpenaiTts,
+    GoogleTts,
+    Piper,
+    Coqui,
+    Whisper,
+    Groq,
+    Deepgram,
+    Google,
+    Mistral,
+    ElevenlabsStt,
+    VoxtralLocal,
+    WhisperCli,
+    SherpaOnnx,
+}
+
+/// Static UI metadata for a voice provider (description, key hints, URLs).
+struct VoiceProviderMeta {
+    description: &'static str,
+    key_placeholder: Option<&'static str>,
+    key_url: Option<&'static str>,
+    key_url_label: Option<&'static str>,
+    hint: Option<&'static str>,
+}
+
+impl VoiceProviderId {
+    fn meta(self) -> VoiceProviderMeta {
+        match self {
+            // TTS Cloud
+            Self::Elevenlabs => VoiceProviderMeta {
+                description: "Lowest latency (~75ms), natural voices. Same key enables Scribe STT",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://elevenlabs.io/app/settings/api-keys"),
+                key_url_label: Some("elevenlabs.io"),
+                hint: Some("This API key also enables ElevenLabs Scribe for speech-to-text."),
+            },
+            Self::OpenaiTts => VoiceProviderMeta {
+                description: "Good quality, shares API key with Whisper STT",
+                key_placeholder: Some("sk-..."),
+                key_url: Some("https://platform.openai.com/api-keys"),
+                key_url_label: Some("platform.openai.com/api-keys"),
+                hint: None,
+            },
+            Self::GoogleTts => VoiceProviderMeta {
+                description: "220+ voices, 40+ languages, WaveNet and Neural2 voices",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.cloud.google.com/apis/credentials"),
+                key_url_label: Some("console.cloud.google.com"),
+                hint: None,
+            },
+            Self::Piper => VoiceProviderMeta {
+                description: "Fast local TTS, commonly used in Home Assistant",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::Coqui => VoiceProviderMeta {
+                description: "Open-source deep learning TTS with many voice models",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            // STT Cloud
+            Self::Whisper => VoiceProviderMeta {
+                description: "Best accuracy, handles accents and background noise",
+                key_placeholder: Some("sk-..."),
+                key_url: Some("https://platform.openai.com/api-keys"),
+                key_url_label: Some("platform.openai.com/api-keys"),
+                hint: None,
+            },
+            Self::Groq => VoiceProviderMeta {
+                description: "Ultra-fast Whisper inference on Groq hardware",
+                key_placeholder: Some("gsk_..."),
+                key_url: Some("https://console.groq.com/keys"),
+                key_url_label: Some("console.groq.com/keys"),
+                hint: None,
+            },
+            Self::Deepgram => VoiceProviderMeta {
+                description: "Fast and accurate with Nova-3 model",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.deepgram.com/api-keys"),
+                key_url_label: Some("console.deepgram.com"),
+                hint: None,
+            },
+            Self::Google => VoiceProviderMeta {
+                description: "Supports 125+ languages with Google Speech-to-Text",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.cloud.google.com/apis/credentials"),
+                key_url_label: Some("console.cloud.google.com"),
+                hint: None,
+            },
+            Self::Mistral => VoiceProviderMeta {
+                description: "Fast Voxtral transcription with 13 language support",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://console.mistral.ai/api-keys"),
+                key_url_label: Some("console.mistral.ai"),
+                hint: None,
+            },
+            Self::ElevenlabsStt => VoiceProviderMeta {
+                description: "90+ languages, word timestamps. Same API key as ElevenLabs TTS",
+                key_placeholder: Some("API key"),
+                key_url: Some("https://elevenlabs.io/app/settings/api-keys"),
+                key_url_label: Some("elevenlabs.io"),
+                hint: Some(
+                    "If you already have ElevenLabs TTS configured, use the same API key here.",
+                ),
+            },
+            // STT Local
+            Self::WhisperCli => VoiceProviderMeta {
+                description: "Local Whisper inference via whisper-cli",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::SherpaOnnx => VoiceProviderMeta {
+                description: "Local offline speech recognition via ONNX runtime",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+            Self::VoxtralLocal => VoiceProviderMeta {
+                description: "Run Mistral's Voxtral model locally via vLLM server",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
+        }
+    }
+
+    fn parse_tts_list_id(id: &str) -> Option<Self> {
+        match id {
+            "elevenlabs" => Some(Self::Elevenlabs),
+            "openai" | "openai-tts" => Some(Self::OpenaiTts),
+            "google" | "google-tts" => Some(Self::GoogleTts),
+            "piper" => Some(Self::Piper),
+            "coqui" => Some(Self::Coqui),
+            _ => None,
+        }
+    }
+
+    fn parse_stt_list_id(id: &str) -> Option<Self> {
+        match id {
+            "whisper" => Some(Self::Whisper),
+            "groq" => Some(Self::Groq),
+            "deepgram" => Some(Self::Deepgram),
+            "google" => Some(Self::Google),
+            "mistral" => Some(Self::Mistral),
+            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenlabsStt),
+            "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-cli" => Some(Self::WhisperCli),
+            "sherpa-onnx" => Some(Self::SherpaOnnx),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceProviderInfo {
+    id: VoiceProviderId,
+    name: String,
+    #[serde(rename = "type")]
+    provider_type: String,
+    category: String,
+    description: String,
+    available: bool,
+    enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_url_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binary_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_message: Option<String>,
+    capabilities: serde_json::Value,
+    settings: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settings_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct VoiceProvidersResponse {
+    tts: Vec<VoiceProviderInfo>,
+    stt: Vec<VoiceProviderInfo>,
+}
+
+/// Detect all available voice providers with their availability status.
+async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    use secrecy::ExposeSecret;
+
+    // Check for API keys from environment variables
+    let env_openai_key = std::env::var("OPENAI_API_KEY").ok();
+    let env_elevenlabs_key = std::env::var("ELEVENLABS_API_KEY").ok();
+    let env_google_key = std::env::var("GOOGLE_API_KEY")
+        .or_else(|_| std::env::var("GOOGLE_CLOUD_API_KEY"))
+        .ok();
+    let env_groq_key = std::env::var("GROQ_API_KEY").ok();
+    let env_deepgram_key = std::env::var("DEEPGRAM_API_KEY").ok();
+    let env_mistral_key = std::env::var("MISTRAL_API_KEY").ok();
+
+    // Check for API keys from LLM providers config
+    let llm_openai_key = config
+        .providers
+        .get("openai")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+    let llm_groq_key = config
+        .providers
+        .get("groq")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+    let _llm_deepseek_key = config
+        .providers
+        .get("deepseek")
+        .and_then(|p| p.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string());
+
+    // Check for local binaries
+    let whisper_cli_available = check_binary_available("whisper-cpp")
+        .await
+        .or(check_binary_available("whisper").await);
+    let piper_available = check_binary_available("piper").await;
+    let sherpa_onnx_available = check_binary_available("sherpa-onnx-offline").await;
+    let coqui_server_running = check_coqui_server(&config.voice.tts.coqui.endpoint).await;
+    let tts_server_binary = check_binary_available("tts-server").await;
+
+    // Build TTS providers list
+    let tts_providers = vec![
+        build_provider_info(
+            VoiceProviderId::Elevenlabs,
+            "ElevenLabs",
+            "tts",
+            "cloud",
+            config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some(),
+            config.voice.tts.provider == "elevenlabs" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.elevenlabs.api_key.is_some(),
+                env_elevenlabs_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::OpenaiTts,
+            "OpenAI TTS",
+            "tts",
+            "cloud",
+            config.voice.tts.openai.api_key.is_some()
+                || env_openai_key.is_some()
+                || llm_openai_key.is_some(),
+            config.voice.tts.provider == "openai" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.openai.api_key.is_some(),
+                env_openai_key.is_some(),
+                llm_openai_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::GoogleTts,
+            "Google Cloud TTS",
+            "tts",
+            "cloud",
+            config.voice.tts.google.api_key.is_some() || env_google_key.is_some(),
+            config.voice.tts.provider == "google" && config.voice.tts.enabled,
+            key_source(
+                config.voice.tts.google.api_key.is_some(),
+                env_google_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Piper,
+            "Piper",
+            "tts",
+            "local",
+            piper_available.is_some() && config.voice.tts.piper.model_path.is_some(),
+            config.voice.tts.provider == "piper" && config.voice.tts.enabled,
+            None,
+            piper_available.clone(),
+            if piper_available.is_none() {
+                Some(
+                    "piper binary not found. Install from https://github.com/rhasspy/piper/releases",
+                )
+            } else if config.voice.tts.piper.model_path.is_none() {
+                Some(
+                    "model not configured - download voice models from https://rhasspy.github.io/piper-samples/",
+                )
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            VoiceProviderId::Coqui,
+            "Coqui TTS",
+            "tts",
+            "local",
+            coqui_server_running,
+            config.voice.tts.provider == "coqui" && config.voice.tts.enabled,
+            None,
+            tts_server_binary,
+            if !coqui_server_running {
+                Some("server not running")
+            } else {
+                None
+            },
+        ),
+    ];
+
+    // Check voxtral local server
+    let voxtral_server_running = check_vllm_server(&config.voice.stt.voxtral_local.endpoint).await;
+
+    // Build STT providers list
+    let stt_providers = vec![
+        build_provider_info(
+            VoiceProviderId::Whisper,
+            "OpenAI Whisper",
+            "stt",
+            "cloud",
+            config.voice.stt.whisper.api_key.is_some()
+                || env_openai_key.is_some()
+                || llm_openai_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::Whisper && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.whisper.api_key.is_some(),
+                env_openai_key.is_some(),
+                llm_openai_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Groq,
+            "Groq",
+            "stt",
+            "cloud",
+            config.voice.stt.groq.api_key.is_some()
+                || env_groq_key.is_some()
+                || llm_groq_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::Groq && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.groq.api_key.is_some(),
+                env_groq_key.is_some(),
+                llm_groq_key.is_some(),
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Deepgram,
+            "Deepgram",
+            "stt",
+            "cloud",
+            config.voice.stt.deepgram.api_key.is_some() || env_deepgram_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::Deepgram && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.deepgram.api_key.is_some(),
+                env_deepgram_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Google,
+            "Google Cloud STT",
+            "stt",
+            "cloud",
+            config.voice.stt.google.api_key.is_some() || env_google_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::Google && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.google.api_key.is_some(),
+                env_google_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::Mistral,
+            "Mistral (Voxtral)",
+            "stt",
+            "cloud",
+            config.voice.stt.mistral.api_key.is_some() || env_mistral_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::Mistral && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.mistral.api_key.is_some(),
+                env_mistral_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::ElevenlabsStt,
+            "ElevenLabs Scribe",
+            "stt",
+            "cloud",
+            config.voice.stt.elevenlabs.api_key.is_some()
+                || config.voice.tts.elevenlabs.api_key.is_some()
+                || env_elevenlabs_key.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::ElevenLabs && config.voice.stt.enabled,
+            key_source(
+                config.voice.stt.elevenlabs.api_key.is_some()
+                    || config.voice.tts.elevenlabs.api_key.is_some(),
+                env_elevenlabs_key.is_some(),
+                false,
+            ),
+            None,
+            None,
+        ),
+        build_provider_info(
+            VoiceProviderId::VoxtralLocal,
+            "Voxtral (Local)",
+            "stt",
+            "local",
+            voxtral_server_running,
+            config.voice.stt.provider == VoiceSttProvider::VoxtralLocal && config.voice.stt.enabled,
+            None,
+            None,
+            if !voxtral_server_running {
+                Some("server not running")
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            VoiceProviderId::WhisperCli,
+            "whisper.cpp",
+            "stt",
+            "local",
+            whisper_cli_available.is_some() && config.voice.stt.whisper_cli.model_path.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::WhisperCli && config.voice.stt.enabled,
+            None,
+            whisper_cli_available.clone(),
+            if whisper_cli_available.is_none() {
+                Some(
+                    "whisper-cpp binary not found. Install with: brew install whisper-cpp (macOS) or build from https://github.com/ggerganov/whisper.cpp",
+                )
+            } else if config.voice.stt.whisper_cli.model_path.is_none() {
+                Some(
+                    "model not configured - download a GGML model from https://huggingface.co/ggerganov/whisper.cpp",
+                )
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            VoiceProviderId::SherpaOnnx,
+            "sherpa-onnx",
+            "stt",
+            "local",
+            sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
+            config.voice.stt.provider == VoiceSttProvider::SherpaOnnx && config.voice.stt.enabled,
+            None,
+            sherpa_onnx_available.clone(),
+            if sherpa_onnx_available.is_none() {
+                Some(
+                    "sherpa-onnx binary not found. Download from https://github.com/k2-fsa/sherpa-onnx/releases",
+                )
+            } else if config.voice.stt.sherpa_onnx.model_dir.is_none() {
+                Some(
+                    "model not configured - download models from https://github.com/k2-fsa/sherpa-onnx/releases",
+                )
+            } else {
+                None
+            },
+        ),
+    ];
+
+    let tts_with_details = filter_listed_voice_providers(
+        tts_providers
+            .into_iter()
+            .map(|provider| enrich_voice_provider(provider, config))
+            .collect::<Vec<_>>(),
+        &config.voice.tts.providers,
+        VoiceProviderId::parse_tts_list_id,
+    );
+    let stt_with_details = filter_listed_voice_providers(
+        stt_providers
+            .into_iter()
+            .map(|provider| enrich_voice_provider(provider, config))
+            .collect::<Vec<_>>(),
+        &config.voice.stt.providers,
+        VoiceProviderId::parse_stt_list_id,
+    );
+
+    serde_json::to_value(VoiceProvidersResponse {
+        tts: tts_with_details,
+        stt: stt_with_details,
+    })
+    .unwrap_or_else(|_| serde_json::json!({ "tts": [], "stt": [] }))
+}
+
+fn filter_listed_voice_providers(
+    providers: Vec<VoiceProviderInfo>,
+    listed_provider_ids: &[String],
+    parse_provider_id: fn(&str) -> Option<VoiceProviderId>,
+) -> Vec<VoiceProviderInfo> {
+    if listed_provider_ids.is_empty() {
+        return providers;
+    }
+
+    let allowed_ids: Vec<_> = listed_provider_ids
+        .iter()
+        .filter_map(|id| parse_provider_id(id))
+        .collect();
+
+    providers
+        .into_iter()
+        .filter(|provider| allowed_ids.contains(&provider.id))
+        .collect()
+}
+
+fn enrich_voice_provider(
+    mut provider: VoiceProviderInfo,
+    config: &moltis_config::MoltisConfig,
+) -> VoiceProviderInfo {
+    let (capabilities, settings, summary) = match provider.id {
+        VoiceProviderId::OpenaiTts => (
+            serde_json::json!({
+                "voiceChoices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+                "modelChoices": ["tts-1", "tts-1-hd"],
+                "customVoice": true,
+                "customModel": true,
+            }),
+            serde_json::json!({
+                "voice": config.voice.tts.openai.voice,
+                "model": config.voice.tts.openai.model,
+            }),
+            format_voice_summary(
+                config.voice.tts.openai.voice.clone(),
+                config.voice.tts.openai.model.clone(),
+            ),
+        ),
+        VoiceProviderId::Elevenlabs => (
+            serde_json::json!({
+                "voiceId": true,
+                "modelChoices": ["eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"],
+                "customVoice": true,
+                "customModel": true,
+            }),
+            serde_json::json!({
+                "voiceId": config.voice.tts.elevenlabs.voice_id,
+                "model": config.voice.tts.elevenlabs.model,
+            }),
+            format_voice_summary(
+                config.voice.tts.elevenlabs.voice_id.clone(),
+                config.voice.tts.elevenlabs.model.clone(),
+            ),
+        ),
+        VoiceProviderId::GoogleTts => (
+            serde_json::json!({
+                "languageChoices": ["en-US", "en-GB", "fr-FR", "de-DE", "es-ES", "it-IT", "pt-BR", "ja-JP"],
+                "exampleVoices": [
+                    "en-US-Neural2-A", "en-US-Neural2-C", "en-GB-Neural2-A", "en-GB-Neural2-B",
+                    "fr-FR-Neural2-A", "de-DE-Neural2-B"
+                ],
+                "customVoice": true,
+                "customLanguage": true,
+            }),
+            serde_json::json!({
+                "voice": config.voice.tts.google.voice,
+                "languageCode": config.voice.tts.google.language_code,
+            }),
+            format_voice_summary(
+                config.voice.tts.google.voice.clone(),
+                config.voice.tts.google.language_code.clone(),
+            ),
+        ),
+        VoiceProviderId::Coqui => (
+            serde_json::json!({
+                "speaker": true,
+                "language": true,
+                "customSpeaker": true,
+                "customLanguage": true,
+            }),
+            serde_json::json!({
+                "speaker": config.voice.tts.coqui.speaker,
+                "language": config.voice.tts.coqui.language,
+                "model": config.voice.tts.coqui.model,
+            }),
+            format_voice_summary(
+                config.voice.tts.coqui.speaker.clone(),
+                config.voice.tts.coqui.language.clone(),
+            ),
+        ),
+        VoiceProviderId::Piper => (
+            serde_json::json!({
+                "speakerId": true,
+                "customModelPath": true,
+            }),
+            serde_json::json!({
+                "speakerId": config.voice.tts.piper.speaker_id,
+                "modelPath": config.voice.tts.piper.model_path,
+            }),
+            format_voice_summary(
+                config
+                    .voice
+                    .tts
+                    .piper
+                    .speaker_id
+                    .map(|s| format!("speaker {}", s)),
+                None,
+            ),
+        ),
+        _ => (serde_json::json!({}), serde_json::json!({}), None),
+    };
+
+    provider.capabilities = capabilities;
+    provider.settings = settings;
+    provider.settings_summary = summary;
+    provider
+}
+
+fn format_voice_summary(primary: Option<String>, secondary: Option<String>) -> Option<String> {
+    match (primary, secondary) {
+        (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => Some(format!("{} · {}", a, b)),
+        (Some(a), _) if !a.is_empty() => Some(a),
+        (_, Some(b)) if !b.is_empty() => Some(b),
+        _ => None,
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsVoiceListResponse {
+    voices: Vec<ElevenLabsVoice>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsVoice {
+    voice_id: String,
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ElevenLabsModel {
+    model_id: String,
+    name: String,
+    #[serde(default)]
+    can_do_text_to_speech: Option<bool>,
+}
+
+async fn fetch_elevenlabs_catalog(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    use secrecy::ExposeSecret;
+
+    let fallback_models = vec![
+        serde_json::json!({ "id": "eleven_flash_v2_5", "name": "Eleven Flash v2.5" }),
+        serde_json::json!({ "id": "eleven_turbo_v2_5", "name": "Eleven Turbo v2.5" }),
+        serde_json::json!({ "id": "eleven_multilingual_v2", "name": "Eleven Multilingual v2" }),
+        serde_json::json!({ "id": "eleven_monolingual_v1", "name": "Eleven Monolingual v1" }),
+    ];
+
+    let api_key = config
+        .voice
+        .tts
+        .elevenlabs
+        .api_key
+        .as_ref()
+        .or(config.voice.stt.elevenlabs.api_key.as_ref())
+        .map(|k| k.expose_secret().to_string())
+        .or_else(|| std::env::var("ELEVENLABS_API_KEY").ok());
+
+    let Some(api_key) = api_key else {
+        return serde_json::json!({
+            "voices": [],
+            "models": fallback_models,
+            "warning": "No ElevenLabs API key configured. Showing known model suggestions only.",
+        });
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build();
+    let Ok(client) = client else {
+        return serde_json::json!({ "voices": [], "models": fallback_models });
+    };
+
+    let voices_req = client
+        .get("https://api.elevenlabs.io/v1/voices")
+        .header("xi-api-key", &api_key)
+        .send();
+    let models_req = client
+        .get("https://api.elevenlabs.io/v1/models")
+        .header("xi-api-key", &api_key)
+        .send();
+
+    let (voices_res, models_res) = tokio::join!(voices_req, models_req);
+
+    let voices = match voices_res {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<ElevenLabsVoiceListResponse>().await {
+                Ok(body) => body
+                    .voices
+                    .into_iter()
+                    .map(|v| serde_json::json!({ "id": v.voice_id, "name": v.name }))
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            }
+        },
+        _ => Vec::new(),
+    };
+
+    let models = match models_res {
+        Ok(resp) if resp.status().is_success() => match resp.json::<Vec<ElevenLabsModel>>().await {
+            Ok(body) => {
+                let parsed: Vec<_> = body
+                    .into_iter()
+                    .filter(|m| m.can_do_text_to_speech.unwrap_or(true))
+                    .map(|m| serde_json::json!({ "id": m.model_id, "name": m.name }))
+                    .collect();
+                if parsed.is_empty() {
+                    fallback_models.clone()
+                } else {
+                    parsed
+                }
+            },
+            Err(_) => fallback_models.clone(),
+        },
+        _ => fallback_models.clone(),
+    };
+
+    serde_json::json!({
+        "voices": voices,
+        "models": models,
+    })
+}
+
+fn build_provider_info(
+    id: VoiceProviderId,
+    name: &str,
+    provider_type: &str,
+    category: &str,
+    available: bool,
+    enabled: bool,
+    key_source: Option<&str>,
+    binary_path: Option<String>,
+    status_message: Option<&str>,
+) -> VoiceProviderInfo {
+    let meta = id.meta();
+    VoiceProviderInfo {
+        id,
+        name: name.to_string(),
+        provider_type: provider_type.to_string(),
+        category: category.to_string(),
+        description: meta.description.to_string(),
+        available,
+        enabled,
+        key_source: key_source.map(str::to_string),
+        key_placeholder: meta.key_placeholder.map(str::to_string),
+        key_url: meta.key_url.map(str::to_string),
+        key_url_label: meta.key_url_label.map(str::to_string),
+        hint: meta.hint.map(str::to_string),
+        binary_path,
+        status_message: status_message.map(str::to_string),
+        capabilities: serde_json::json!({}),
+        settings: serde_json::json!({}),
+        settings_summary: None,
+    }
+}
+
+fn key_source(in_config: bool, in_env: bool, in_llm_provider: bool) -> Option<&'static str> {
+    if in_config {
+        Some("config")
+    } else if in_env {
+        Some("env")
+    } else if in_llm_provider {
+        Some("llm_provider")
+    } else {
+        None
+    }
+}
+
+fn apply_voice_provider_settings(
+    cfg: &mut moltis_config::MoltisConfig,
+    provider: &str,
+    params: &serde_json::Value,
+) {
+    let get_string = |key: &str| -> Option<String> {
+        params
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+    };
+
+    match provider {
+        "openai" | "openai-tts" => {
+            if let Some(voice) = get_string("voice") {
+                cfg.voice.tts.openai.voice = Some(voice);
+            }
+            if let Some(model) = get_string("model") {
+                cfg.voice.tts.openai.model = Some(model);
+            }
+        },
+        "elevenlabs" => {
+            if let Some(voice_id) = get_string("voiceId") {
+                cfg.voice.tts.elevenlabs.voice_id = Some(voice_id);
+            }
+            if let Some(model) = get_string("model") {
+                cfg.voice.tts.elevenlabs.model = Some(model);
+            }
+        },
+        "google" | "google-tts" => {
+            if let Some(voice) = get_string("voice") {
+                cfg.voice.tts.google.voice = Some(voice);
+            }
+            if let Some(language_code) = get_string("languageCode") {
+                cfg.voice.tts.google.language_code = Some(language_code);
+            }
+        },
+        "coqui" => {
+            if let Some(speaker) = get_string("speaker") {
+                cfg.voice.tts.coqui.speaker = Some(speaker);
+            }
+            if let Some(language) = get_string("language") {
+                cfg.voice.tts.coqui.language = Some(language);
+            }
+            if let Some(model) = get_string("model") {
+                cfg.voice.tts.coqui.model = Some(model);
+            }
+        },
+        "piper" => {
+            if let Some(model_path) = get_string("modelPath") {
+                cfg.voice.tts.piper.model_path = Some(model_path);
+            }
+            if let Some(speaker_id) = params
+                .get("speakerId")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+            {
+                cfg.voice.tts.piper.speaker_id = Some(speaker_id);
+            }
+        },
+        _ => {},
+    }
+}
+
+async fn check_binary_available(name: &str) -> Option<String> {
+    // Try to find the binary in PATH
+    if let Ok(output) = tokio::process::Command::new("which")
+        .arg(name)
+        .output()
+        .await
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Check if Coqui TTS server is running.
+async fn check_coqui_server(endpoint: &str) -> bool {
+    // Try to connect to the server's health endpoint
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    // Coqui TTS server responds to GET /
+    if let Ok(resp) = client.get(endpoint).send().await {
+        return resp.status().is_success();
+    }
+    false
+}
+
+/// Check if vLLM server is running (for Voxtral local).
+async fn check_vllm_server(endpoint: &str) -> bool {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+
+    // vLLM exposes /health endpoint
+    let health_url = format!("{}/health", endpoint.trim_end_matches('/'));
+    if let Ok(resp) = client.get(&health_url).send().await {
+        return resp.status().is_success();
+    }
+    false
+}
+
+/// Toggle a voice provider on/off by updating the config file.
+fn toggle_voice_provider(
+    provider: &str,
+    enabled: bool,
+    provider_type: &str,
+) -> Result<(), anyhow::Error> {
+    moltis_config::update_config(|cfg| {
+        match provider_type {
+            "tts" => {
+                if enabled {
+                    // Map provider id to config provider name
+                    let config_provider = match provider {
+                        "openai-tts" => "openai",
+                        "google-tts" => "google",
+                        other => other,
+                    };
+                    cfg.voice.tts.provider = config_provider.to_string();
+                    cfg.voice.tts.enabled = true;
+                } else if cfg.voice.tts.provider == provider
+                    || (provider == "openai-tts" && cfg.voice.tts.provider == "openai")
+                    || (provider == "google-tts" && cfg.voice.tts.provider == "google")
+                {
+                    cfg.voice.tts.enabled = false;
+                }
+            },
+            "stt" => {
+                let stt_provider = VoiceSttProvider::parse(provider);
+                if enabled {
+                    if let Some(provider_id) = stt_provider {
+                        cfg.voice.stt.provider = provider_id;
+                        cfg.voice.stt.enabled = true;
+                    }
+                } else if stt_provider
+                    .is_some_and(|provider_id| cfg.voice.stt.provider == provider_id)
+                {
+                    cfg.voice.stt.enabled = false;
+                }
+            },
+            _ => {},
+        }
+    })?;
+    Ok(())
+}
+
 /// Re-run hook discovery, rebuild the registry, and broadcast the update.
 async fn reload_hooks(state: &Arc<GatewayState>) {
-    let disabled = state.disabled_hooks.read().await.clone();
+    let disabled = state.inner.read().await.disabled_hooks.clone();
     let session_store = state.services.session_store.as_ref();
     let (new_registry, new_info) =
         crate::server::discover_and_build_hooks(&disabled, session_store).await;
 
-    *state.hook_registry.write().await = new_registry;
-    *state.discovered_hooks.write().await = new_info.clone();
+    {
+        let mut inner = state.inner.write().await;
+        inner.hook_registry = new_registry;
+        inner.discovered_hooks = new_info.clone();
+    }
 
     // Broadcast hooks.status event so connected UIs auto-refresh.
     broadcast(
@@ -3347,9 +5326,9 @@ async fn reload_hooks(state: &Arc<GatewayState>) {
 
 /// Persist the disabled hooks set to `data_dir/disabled_hooks.json`.
 async fn persist_disabled_hooks(state: &Arc<GatewayState>) {
-    let disabled = state.disabled_hooks.read().await;
+    let disabled = state.inner.read().await.disabled_hooks.clone();
     let path = moltis_config::data_dir().join("disabled_hooks.json");
-    let json = serde_json::to_string_pretty(&*disabled).unwrap_or_default();
+    let json = serde_json::to_string_pretty(&disabled).unwrap_or_default();
     if let Err(e) = std::fs::write(&path, json) {
         warn!("failed to persist disabled hooks: {e}");
     }
@@ -3370,6 +5349,80 @@ mod tests {
 
     fn scopes(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn test_voice_provider(id: VoiceProviderId) -> VoiceProviderInfo {
+        let meta = id.meta();
+        VoiceProviderInfo {
+            id,
+            name: String::new(),
+            provider_type: String::new(),
+            category: String::new(),
+            description: meta.description.to_string(),
+            available: false,
+            enabled: false,
+            key_source: None,
+            key_placeholder: meta.key_placeholder.map(str::to_string),
+            key_url: meta.key_url.map(str::to_string),
+            key_url_label: meta.key_url_label.map(str::to_string),
+            hint: meta.hint.map(str::to_string),
+            binary_path: None,
+            status_message: None,
+            capabilities: serde_json::json!({}),
+            settings: serde_json::json!({}),
+            settings_summary: None,
+        }
+    }
+
+    #[test]
+    fn parse_voice_provider_list_aliases() {
+        assert_eq!(
+            VoiceProviderId::parse_tts_list_id("openai"),
+            Some(VoiceProviderId::OpenaiTts)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_tts_list_id("google-tts"),
+            Some(VoiceProviderId::GoogleTts)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_stt_list_id("elevenlabs"),
+            Some(VoiceProviderId::ElevenlabsStt)
+        );
+        assert_eq!(
+            VoiceProviderId::parse_stt_list_id("sherpa-onnx"),
+            Some(VoiceProviderId::SherpaOnnx)
+        );
+    }
+
+    #[test]
+    fn filter_listed_voice_providers_keeps_all_when_list_is_empty() {
+        let filtered = filter_listed_voice_providers(
+            vec![
+                test_voice_provider(VoiceProviderId::OpenaiTts),
+                test_voice_provider(VoiceProviderId::GoogleTts),
+            ],
+            &[],
+            VoiceProviderId::parse_tts_list_id,
+        );
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_listed_voice_providers_filters_tts_ids() {
+        let filtered = filter_listed_voice_providers(
+            vec![
+                test_voice_provider(VoiceProviderId::OpenaiTts),
+                test_voice_provider(VoiceProviderId::GoogleTts),
+                test_voice_provider(VoiceProviderId::Piper),
+            ],
+            &["openai".to_string(), "piper".to_string()],
+            VoiceProviderId::parse_tts_list_id,
+        );
+        let ids: Vec<_> = filtered.into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec![
+            VoiceProviderId::OpenaiTts,
+            VoiceProviderId::Piper
+        ]);
     }
 
     #[test]
@@ -3565,5 +5618,27 @@ mod tests {
                 "read-only scope should deny {method}"
             );
         }
+    }
+
+    #[test]
+    fn model_probe_params_include_provider_when_present() {
+        let params = model_probe_params(Some("github-copilot"));
+        assert_eq!(params["background"], serde_json::json!(true));
+        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
+        assert_eq!(params["provider"], serde_json::json!("github-copilot"));
+    }
+
+    #[test]
+    fn model_probe_params_omit_provider_when_missing() {
+        let params = model_probe_params(None);
+        assert_eq!(params["background"], serde_json::json!(true));
+        assert_eq!(params["reason"], serde_json::json!("provider_connected"));
+        assert!(params.get("provider").is_none());
+    }
+
+    #[test]
+    fn model_probe_params_omit_provider_when_blank() {
+        let params = model_probe_params(Some("   "));
+        assert!(params.get("provider").is_none());
     }
 }

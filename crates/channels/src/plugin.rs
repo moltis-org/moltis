@@ -120,6 +120,49 @@ pub trait ChannelEventSink: Send + Sync {
         _identifier: &str,
     ) {
     }
+
+    /// Transcribe voice audio to text using the configured STT provider.
+    ///
+    /// Returns the transcribed text, or an error if transcription fails.
+    /// The audio format is specified (e.g., "ogg", "mp3", "webm").
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+        let _ = (audio_data, format);
+        Err(anyhow::anyhow!("voice transcription not available"))
+    }
+
+    /// Whether voice STT is configured and available for channel audio messages.
+    async fn voice_stt_available(&self) -> bool {
+        true
+    }
+
+    /// Update the user's geolocation from a channel message (e.g. Telegram location share).
+    ///
+    /// Returns `true` if a pending tool-triggered location request was resolved.
+    async fn update_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
+    /// Dispatch an inbound message with attachments (images, files) to the chat session.
+    ///
+    /// This is used when a channel message contains both text and media (e.g., a
+    /// Telegram photo with a caption). The attachments are sent to the LLM as
+    /// multimodal content.
+    async fn dispatch_to_chat_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<ChannelAttachment>,
+        reply_to: ChannelReplyTarget,
+        meta: ChannelMessageMeta,
+    ) {
+        // Default implementation ignores attachments and just sends text.
+        let _ = attachments;
+        self.dispatch_to_chat(text, reply_to, meta).await;
+    }
 }
 
 /// Metadata about a channel message, used for UI display.
@@ -128,9 +171,35 @@ pub struct ChannelMessageMeta {
     pub channel_type: ChannelType,
     pub sender_name: Option<String>,
     pub username: Option<String>,
+    /// Original inbound message media kind (voice, audio, photo, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_kind: Option<ChannelMessageKind>,
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+/// Inbound channel message media kind.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelMessageKind {
+    Text,
+    Voice,
+    Audio,
+    Photo,
+    Document,
+    Video,
+    Location,
+    Other,
+}
+
+/// An attachment (image, file) from a channel message.
+#[derive(Debug, Clone)]
+pub struct ChannelAttachment {
+    /// MIME type of the attachment (e.g., "image/jpeg", "image/png").
+    pub media_type: String,
+    /// Raw binary data of the attachment.
+    pub data: Vec<u8>,
 }
 
 /// Where to send the LLM response back.
@@ -140,6 +209,10 @@ pub struct ChannelReplyTarget {
     pub account_id: String,
     /// Chat/peer ID to send the reply to.
     pub chat_id: String,
+    /// Platform-specific message ID of the inbound message.
+    /// Used to thread replies (e.g. Telegram `reply_to_message_id`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 /// Core channel plugin trait. Each messaging platform implements this.
@@ -165,17 +238,38 @@ pub trait ChannelPlugin: Send + Sync {
 }
 
 /// Send messages to a channel.
+///
+/// `reply_to` is an optional platform-specific message ID that the outbound
+/// message should thread as a reply to (e.g. Telegram `reply_to_message_id`).
 #[async_trait]
 pub trait ChannelOutbound: Send + Sync {
-    async fn send_text(&self, account_id: &str, to: &str, text: &str) -> Result<()>;
-    async fn send_media(&self, account_id: &str, to: &str, payload: &ReplyPayload) -> Result<()>;
+    async fn send_text(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()>;
+    async fn send_media(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<()>;
     /// Send a "typing" indicator. No-op by default.
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())
     }
     /// Send a text message without notification (silent). Falls back to send_text by default.
-    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
-        self.send_text(account_id, to, text).await
+    async fn send_text_silent(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        self.send_text(account_id, to, text, reply_to).await
     }
 }
 
@@ -215,4 +309,58 @@ pub type StreamSender = mpsc::Sender<StreamEvent>;
 pub trait ChannelStreamOutbound: Send + Sync {
     /// Send a streaming response that updates a message in place.
     async fn send_stream(&self, account_id: &str, to: &str, stream: StreamReceiver) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummySink;
+
+    #[async_trait]
+    impl ChannelEventSink for DummySink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+        ) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
+
+    #[tokio::test]
+    async fn default_voice_stt_available_is_true() {
+        let sink = DummySink;
+        assert!(sink.voice_stt_available().await);
+    }
+
+    #[tokio::test]
+    async fn default_update_location_returns_false() {
+        let sink = DummySink;
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "42".into(),
+            message_id: None,
+        };
+        assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+    }
 }

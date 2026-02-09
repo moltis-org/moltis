@@ -1,10 +1,8 @@
 // Service Worker for moltis PWA
 // Handles caching for offline support and push notifications
 
-var CACHE_NAME = "moltis-v1";
+var CACHE_NAME = "moltis-v2";
 var STATIC_ASSETS = [
-  "/",
-  "/chats",
   "/manifest.json",
   "/assets/css/base.css",
   "/assets/css/layout.css",
@@ -107,7 +105,11 @@ self.addEventListener("fetch", (event) => {
         .catch(() => {
           // Offline - return cached version or root page
           return caches.match(event.request).then((cached) => {
-            return cached || caches.match("/");
+            if (cached) return cached;
+            return caches.match("/onboarding").then((onboardingCached) => {
+              if (onboardingCached) return onboardingCached;
+              return caches.match("/");
+            });
           });
         }),
     );

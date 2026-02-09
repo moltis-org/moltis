@@ -5,6 +5,9 @@ use {
     tracing::{debug, info, trace, warn},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
+
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
@@ -540,6 +543,7 @@ pub async fn run_agent_loop_with_context(
                 usage: Usage {
                     input_tokens: total_input_tokens,
                     output_tokens: total_output_tokens,
+                    ..Default::default()
                 },
             });
         }
@@ -830,6 +834,8 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Use streaming API.
+        #[cfg(feature = "metrics")]
+        let iter_start = std::time::Instant::now();
         let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
 
         // Accumulate text and tool calls from the stream.
@@ -881,6 +887,49 @@ pub async fn run_agent_loop_streaming(
                     input_tokens = usage.input_tokens;
                     output_tokens = usage.output_tokens;
                     debug!(input_tokens, output_tokens, "stream done");
+
+                    #[cfg(feature = "metrics")]
+                    {
+                        let provider_name = provider.name().to_string();
+                        let model_id = provider.id().to_string();
+                        let duration = iter_start.elapsed().as_secs_f64();
+                        counter!(
+                            llm_metrics::COMPLETIONS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(1);
+                        counter!(
+                            llm_metrics::INPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(usage.input_tokens));
+                        counter!(
+                            llm_metrics::OUTPUT_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(usage.output_tokens));
+                        counter!(
+                            llm_metrics::CACHE_READ_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(usage.cache_read_tokens));
+                        counter!(
+                            llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(usage.cache_write_tokens));
+                        histogram!(
+                            llm_metrics::COMPLETION_DURATION_SECONDS,
+                            labels::PROVIDER => provider_name,
+                            labels::MODEL => model_id
+                        )
+                        .record(duration);
+                    }
                 },
                 StreamEvent::Error(msg) => {
                     stream_error = Some(msg);
@@ -954,6 +1003,7 @@ pub async fn run_agent_loop_streaming(
                 usage: Usage {
                     input_tokens: total_input_tokens,
                     output_tokens: total_output_tokens,
+                    ..Default::default()
                 },
             });
         }
@@ -1222,6 +1272,7 @@ mod tests {
                 usage: Usage {
                     input_tokens: 10,
                     output_tokens: 5,
+                    ..Default::default()
                 },
             })
         }
@@ -1272,6 +1323,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 10,
                         output_tokens: 5,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -1281,6 +1333,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 20,
                         output_tokens: 10,
+                        ..Default::default()
                     },
                 })
             }
@@ -1326,7 +1379,7 @@ mod tests {
                 Ok(CompletionResponse {
                     text: Some("```tool_call\n{\"tool\": \"exec\", \"arguments\": {\"command\": \"echo hello\"}}\n```".into()),
                     tool_calls: vec![],
-                    usage: Usage { input_tokens: 10, output_tokens: 20 },
+                    usage: Usage { input_tokens: 10, output_tokens: 20, ..Default::default() },
                 })
             } else {
                 // Verify tool result was fed back.
@@ -1350,6 +1403,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 30,
                         output_tokens: 10,
+                        ..Default::default()
                     },
                 })
             }
@@ -1501,6 +1555,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 10,
                         output_tokens: 5,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -1524,6 +1579,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 20,
                         output_tokens: 10,
+                        ..Default::default()
                     },
                 })
             }
@@ -1719,6 +1775,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 10,
                         output_tokens: 5,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -1728,6 +1785,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 20,
                         output_tokens: 10,
+                        ..Default::default()
                     },
                 })
             }
@@ -2181,6 +2239,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 10,
                         output_tokens: 5,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -2213,6 +2272,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 20,
                         output_tokens: 10,
+                        ..Default::default()
                     },
                 })
             }
@@ -2480,10 +2540,7 @@ mod tests {
             Ok(CompletionResponse {
                 text: Some("fallback".into()),
                 tool_calls: vec![],
-                usage: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: Usage::default(),
             })
         }
 
@@ -2523,6 +2580,7 @@ mod tests {
                     StreamEvent::Done(Usage {
                         input_tokens: 10,
                         output_tokens: 5,
+                        ..Default::default()
                     }),
                 ]))
             } else {
@@ -2532,6 +2590,7 @@ mod tests {
                     StreamEvent::Done(Usage {
                         input_tokens: 5,
                         output_tokens: 3,
+                        ..Default::default()
                     }),
                 ]))
             }
@@ -2633,10 +2692,7 @@ mod tests {
             Ok(CompletionResponse {
                 text: Some("fallback".into()),
                 tool_calls: vec![],
-                usage: Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                },
+                usage: Usage::default(),
             })
         }
 
@@ -2682,6 +2738,7 @@ mod tests {
                     StreamEvent::Done(Usage {
                         input_tokens: 15,
                         output_tokens: 10,
+                        ..Default::default()
                     }),
                 ]))
             } else {
@@ -2690,6 +2747,7 @@ mod tests {
                     StreamEvent::Done(Usage {
                         input_tokens: 5,
                         output_tokens: 3,
+                        ..Default::default()
                     }),
                 ]))
             }

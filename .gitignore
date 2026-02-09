@@ -1,4 +1,5 @@
 /target
+.superset
 memory
 prompts
 .envrc

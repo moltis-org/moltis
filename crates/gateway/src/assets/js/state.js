@@ -16,9 +16,13 @@ export var projects = [];
 export var streamEl = null;
 export var streamText = "";
 export var lastToolOutput = "";
+export var voicePending = false;
 export var chatHistory = JSON.parse(localStorage.getItem("moltis-chat-history") || "[]");
 export var chatHistoryIdx = -1;
 export var chatHistoryDraft = "";
+// Client-side sequence counter for message ordering diagnostics.
+// Resumed from the highest user seq in history on session switch.
+export var chatSeq = 0;
 
 // Session token usage tracking (cumulative for the current session)
 export var sessionTokens = { input: 0, output: 0 };
@@ -131,6 +135,9 @@ export function setStreamText(v) {
 export function setLastToolOutput(v) {
 	lastToolOutput = v;
 }
+export function setVoicePending(v) {
+	voicePending = v;
+}
 export function setChatHistory(v) {
 	chatHistory = v;
 }
@@ -139,6 +146,9 @@ export function setChatHistoryIdx(v) {
 }
 export function setChatHistoryDraft(v) {
 	chatHistoryDraft = v;
+}
+export function setChatSeq(v) {
+	chatSeq = v;
 }
 export function setSessionTokens(v) {
 	sessionTokens = v;

@@ -266,7 +266,7 @@ function HeartbeatSection() {
 			? "config custom prompt"
 			: promptSource === "heartbeat_md"
 				? "HEARTBEAT.md"
-				: "built-in default";
+				: "none (heartbeat inactive)";
 
 	return html`<div class="heartbeat-form" style="max-width:600px;">
     <!-- Header -->

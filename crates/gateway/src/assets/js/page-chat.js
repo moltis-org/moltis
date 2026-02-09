@@ -13,6 +13,7 @@ import {
 	updateChatSessionHeader,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
 var slashCommands = [
@@ -493,6 +494,199 @@ function toggleDebugPanel() {
 	if (hidden) refreshDebugPanel();
 }
 
+// ── Raw prompt panel ─────────────────────────────────────
+
+function refreshRawPromptPanel() {
+	var panel = S.$("rawPromptPanel");
+	if (!panel) return;
+	panel.textContent = "";
+	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building prompt\u2026"));
+
+	sendRpc("chat.raw_prompt", {}).then((res) => {
+		panel.textContent = "";
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build prompt"));
+			return;
+		}
+		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-2");
+		header.textContent = `Full system prompt sent to the model · ${res.payload.charCount} chars · ${res.payload.toolCount} tools · native_tools=${res.payload.native_tools}`;
+		panel.appendChild(header);
+
+		var pre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-3 overflow-y-auto text-[var(--text)]",
+		);
+		pre.style.maxHeight = "320px";
+		pre.textContent = res.payload.prompt;
+		panel.appendChild(pre);
+	});
+}
+
+function toggleRawPromptPanel() {
+	var panel = S.$("rawPromptPanel");
+	var btn = S.$("rawPromptBtn");
+	if (!panel) return;
+	var hidden = panel.classList.contains("hidden");
+	panel.classList.toggle("hidden", !hidden);
+	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
+	if (hidden) refreshRawPromptPanel();
+}
+
+// ── Full context panel ───────────────────────────────────
+
+var ROLE_COLORS = {
+	system: "var(--accent)",
+	user: "var(--ok, #22c55e)",
+	assistant: "var(--info, #3b82f6)",
+	tool: "var(--muted)",
+};
+
+function ctxMsgBadge(role) {
+	var color = ROLE_COLORS[role] || "var(--text)";
+	var badge = ctxEl("span", "text-xs font-semibold uppercase px-1.5 py-0.5 rounded");
+	badge.style.cssText = `color:${color};background:color-mix(in srgb, ${color} 15%, transparent)`;
+	badge.textContent = role;
+	return badge;
+}
+
+function ctxMsgMeta(msg, contentStr) {
+	var parts = [];
+	var chars = contentStr ? contentStr.length : 0;
+	if (chars > 0) parts.push(`${chars.toLocaleString()} chars`);
+	var toolCalls = msg.tool_calls || [];
+	if (toolCalls.length > 0) {
+		parts.push(`${toolCalls.length} tool call${toolCalls.length > 1 ? "s" : ""}`);
+	}
+	if (msg.role === "tool" && msg.tool_call_id) {
+		parts.push(`id: ${msg.tool_call_id}`);
+	}
+	return parts.join(" \xb7 ");
+}
+
+function ctxMsgToolCall(tc) {
+	var div = ctxEl("div", "mt-1 border border-[var(--border)] rounded-md p-2 bg-[var(--surface)]");
+	var hdr = ctxEl("div", "text-xs font-semibold text-[var(--text)] mb-1");
+	hdr.textContent = `\ud83d\udee0 ${tc.function?.name || "unknown"}`;
+	if (tc.id) {
+		hdr.appendChild(ctxEl("span", "font-normal text-[var(--muted)] ml-2", `id: ${tc.id}`));
+	}
+	div.appendChild(hdr);
+	if (tc.function?.arguments) {
+		var pre = ctxEl("pre", "text-xs font-mono whitespace-pre-wrap break-words text-[var(--text)]");
+		try {
+			pre.textContent = JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
+		} catch {
+			pre.textContent = tc.function.arguments;
+		}
+		div.appendChild(pre);
+	}
+	return div;
+}
+
+function renderContextMessage(msg, index) {
+	var wrapper = ctxEl("div", "mb-2");
+	var contentStr = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2);
+
+	// Header row: role badge + index + meta + chevron
+	var hdr = ctxEl("div", "flex items-center gap-2 cursor-pointer select-none");
+	hdr.appendChild(ctxMsgBadge(msg.role || "unknown"));
+	hdr.appendChild(ctxEl("span", "text-xs text-[var(--muted)]", `#${index}`));
+	var meta = ctxMsgMeta(msg, contentStr);
+	if (meta) hdr.appendChild(ctxEl("span", "text-xs text-[var(--muted)]", meta));
+	var chevron = ctxEl("span", "text-xs text-[var(--muted)] ml-auto");
+	var startOpen = index !== 0;
+	chevron.textContent = startOpen ? "\u25bc" : "\u25b6";
+	hdr.appendChild(chevron);
+	wrapper.appendChild(hdr);
+
+	// Collapsible body
+	var body = ctxEl("div", "mt-1");
+	body.style.display = startOpen ? "block" : "none";
+	hdr.addEventListener("click", () => {
+		var open = body.style.display !== "none";
+		body.style.display = open ? "none" : "block";
+		chevron.textContent = open ? "\u25b6" : "\u25bc";
+	});
+
+	if (contentStr) {
+		var pre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+		);
+		pre.textContent = contentStr;
+		body.appendChild(pre);
+	}
+	for (var tc of msg.tool_calls || []) body.appendChild(ctxMsgToolCall(tc));
+
+	wrapper.appendChild(body);
+	return wrapper;
+}
+
+function refreshFullContextPanel() {
+	var panel = S.$("fullContextPanel");
+	if (!panel) return;
+	panel.textContent = "";
+	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building full context\u2026"));
+
+	sendRpc("chat.full_context", {}).then((res) => {
+		panel.textContent = "";
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
+			return;
+		}
+		var headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
+		var headerText = ctxEl("span", "text-xs text-[var(--muted)]");
+		headerText.textContent =
+			`${res.payload.messageCount} messages \xb7 ` +
+			`system prompt ${res.payload.systemPromptChars.toLocaleString()} chars \xb7 ` +
+			`total ${res.payload.totalChars.toLocaleString()} chars`;
+		headerRow.appendChild(headerText);
+
+		var messages = res.payload.messages || [];
+
+		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary text-xs");
+		copyBtn.textContent = "Copy";
+		copyBtn.addEventListener("click", () => {
+			var lines = messages.map((m) => {
+				var content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+				var parts = [content];
+				for (var tc of m.tool_calls || []) {
+					parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
+				}
+				return `[${m.role}] ${parts.join("\n")}`;
+			});
+			navigator.clipboard.writeText(lines.join("\n")).then(() => {
+				copyBtn.textContent = "Copied!";
+				setTimeout(() => {
+					copyBtn.textContent = "Copy";
+				}, 1500);
+			});
+		});
+		headerRow.appendChild(copyBtn);
+		panel.appendChild(headerRow);
+
+		for (var i = 0; i < messages.length; i++) {
+			panel.appendChild(renderContextMessage(messages[i], i));
+		}
+	});
+}
+
+function toggleFullContextPanel() {
+	var panel = S.$("fullContextPanel");
+	var btn = S.$("fullContextBtn");
+	if (!panel) return;
+	var hidden = panel.classList.contains("hidden");
+	panel.classList.toggle("hidden", !hidden);
+	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
+	if (hidden) refreshFullContextPanel();
+}
+
+/** Refresh the full-context panel if it is currently visible. */
+export function maybeRefreshFullContext() {
+	var panel = S.$("fullContextPanel");
+	if (panel && !panel.classList.contains("hidden")) refreshFullContextPanel();
+}
+
 // ── MCP toggle ───────────────────────────────────────────
 export function updateMcpToggleUI(enabled) {
 	var btn = S.$("mcpToggleBtn");
@@ -607,8 +801,9 @@ function sendChat() {
 	S.setChatHistoryDraft("");
 	S.chatInput.value = "";
 	chatAutoResize();
-	chatAddMsg("user", renderMarkdown(text), true);
-	var chatParams = { text: text };
+	var userEl = chatAddMsg("user", renderMarkdown(text), true);
+	S.setChatSeq(S.chatSeq + 1);
+	var chatParams = { text: text, _seq: S.chatSeq };
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
 		chatParams.model = selectedModel;
@@ -617,10 +812,40 @@ function sendChat() {
 	bumpSessionCount(S.activeSessionKey, 1);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
-		if (res && !res.ok && res.error) {
+		if (res?.payload?.queued) {
+			markMessageQueued(userEl, S.activeSessionKey);
+		} else if (res && !res.ok && res.error) {
 			chatAddMsg("error", res.error.message || "Request failed");
 		}
 	});
+	maybeRefreshFullContext();
+}
+
+function markMessageQueued(el, sessionKey) {
+	if (!el) return;
+	var tray = document.getElementById("queuedMessages");
+	if (!tray) return;
+	console.debug("[queued] marking user message as queued, moving to tray", { sessionKey });
+	// Move the user message from the main chat into the queued tray.
+	el.classList.add("queued");
+	var badge = document.createElement("div");
+	badge.className = "queued-badge";
+	var label = document.createElement("span");
+	label.className = "queued-label";
+	label.textContent = "Queued";
+	var btn = document.createElement("button");
+	btn.className = "queued-cancel";
+	btn.title = "Cancel all queued";
+	btn.textContent = "\u2715";
+	btn.addEventListener("click", (e) => {
+		e.stopPropagation();
+		sendRpc("chat.cancel_queued", { sessionKey });
+	});
+	badge.appendChild(label);
+	badge.appendChild(btn);
+	el.appendChild(badge);
+	tray.appendChild(el);
+	tray.classList.remove("hidden");
 }
 
 function chatAutoResize() {
@@ -656,7 +881,7 @@ function handleHistoryDown() {
 
 // Safe: static hardcoded HTML template string — no user input is interpolated.
 var chatPageHTML =
-	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto;overflow:hidden">' +
+	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden">' +
 	'<div class="px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
@@ -687,6 +912,14 @@ var chatPageHTML =
 	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.194-.14 1.743" /></svg>' +
 	'<span id="debugPanelLabel">Debug</span>' +
 	"</button>" +
+	'<button id="rawPromptBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show raw system prompt sent to model">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" /></svg>' +
+	'<span id="rawPromptLabel">Prompt</span>' +
+	"</button>" +
+	'<button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>' +
+	'<span id="fullContextLabel">Context</span>' +
+	"</button>" +
 	'<div class="ml-auto flex items-center gap-1.5">' +
 	'<span id="chatSessionName" class="text-xs text-[var(--muted)] cursor-default" title="Click to rename"></span>' +
 	'<input id="chatSessionRenameInput" class="hidden text-xs text-[var(--text)] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] px-1.5 py-0.5 outline-none max-w-[200px]" style="width:0" />' +
@@ -694,12 +927,21 @@ var chatPageHTML =
 	'<button id="chatSessionDelete" class="provider-btn provider-btn-danger provider-btn-sm hidden">Delete</button>' +
 	"</div>" +
 	"</div>" +
+	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
+	'<div id="rawPromptPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:400px;"></div>' +
+	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
+	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
+	'<div id="queuedMessages" class="queued-tray hidden"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
 	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
 	'<textarea id="chatInput" placeholder="Type a message..." rows="1" ' +
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
+	'<button id="micBtn" disabled title="Click to start recording" ' +
+	'class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>' +
+	"</button>" +
 	'<button id="sendBtn" disabled ' +
 	'class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button>' +
 	"</div></div>";
@@ -768,6 +1010,11 @@ registerPrefix(
 		var debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
 
+		var rawBtn = S.$("rawPromptBtn");
+		if (rawBtn) rawBtn.addEventListener("click", toggleRawPromptPanel);
+
+		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
+
 		if (S.models.length > 0 && S.modelComboLabel) {
 			var found = S.models.find((m) => m.id === S.selectedModelId);
 			if (found) {
@@ -817,9 +1064,13 @@ registerPrefix(
 
 		S.chatMsgBox.addEventListener("copy", handleChatCopy);
 
+		// Initialize voice input
+		initVoiceInput(S.$("micBtn"));
+
 		S.chatInput.focus();
 	},
 	function teardownChat() {
+		teardownVoiceInput();
 		slashHideMenu();
 		S.setChatMsgBox(null);
 		S.setChatInput(null);

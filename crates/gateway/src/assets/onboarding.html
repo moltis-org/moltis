@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<script>!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
+<title>moltis onboarding</title>
+<meta name="build-ts" content="__BUILD_TS__">
+<script type="importmap">
+{
+  "imports": {
+    "preact": "/assets/js/vendor/preact.mjs",
+    "preact/hooks": "/assets/js/vendor/preact-hooks.mjs",
+    "@preact/signals": "/assets/js/vendor/preact-signals.mjs",
+    "htm/preact": "/assets/js/vendor/htm-preact.mjs"
+  }
+}
+</script>
+<link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/components.css">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="onboardingRoot"></div>
+<script type="module" src="/assets/js/onboarding-app.js"></script>
+</body>
+</html>

@@ -98,6 +98,31 @@ else
   SHA="$(git rev-parse HEAD)"
 fi
 
+# Auto-sync Cargo.lock if stale (common after merging main).
+# Uses `cargo fetch` (without --locked) to resolve deps without compiling
+# or upgrading existing dependency versions.
+if ! cargo fetch --locked 2>/dev/null; then
+  echo "Cargo.lock is out of sync — running cargo fetch to update..."
+  if cargo fetch 2>/dev/null; then
+    if ! git diff --quiet -- Cargo.lock 2>/dev/null; then
+      git add Cargo.lock
+      git commit -m "chore: sync Cargo.lock"
+      SHA="$(git rev-parse HEAD)"
+      echo "Auto-committed Cargo.lock sync (new HEAD: ${SHA:0:7})"
+      if [[ "$LOCAL_ONLY" -eq 0 ]]; then
+        echo "Push this commit so CI sees the updated lockfile."
+      fi
+    else
+      echo "cargo fetch --locked failed but Cargo.lock is unchanged." >&2
+      echo "Run 'cargo fetch' manually to diagnose." >&2
+      exit 1
+    fi
+  else
+    echo "cargo fetch failed — check your network or Cargo.toml for errors." >&2
+    exit 1
+  fi
+fi
+
 # Reject dirty working trees in all modes. Validating with uncommitted changes
 # gives misleading results (local-only) or publishes statuses for the wrong
 # content (PR mode).

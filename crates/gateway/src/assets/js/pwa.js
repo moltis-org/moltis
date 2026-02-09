@@ -133,6 +133,8 @@ export function getNotificationPermission() {
 
 // Initialize PWA features
 export function initPWA() {
+	var hadControllerBeforeInit = Boolean(navigator.serviceWorker?.controller);
+
 	// Register service worker
 	registerServiceWorker();
 
@@ -145,7 +147,15 @@ export function initPWA() {
 
 	// Listen for controller change (new SW activated)
 	navigator.serviceWorker?.addEventListener("controllerchange", () => {
-		// Reload to get new content
+		// First service worker install should not force a reload.
+		if (!hadControllerBeforeInit) {
+			return;
+		}
+		// Avoid forced reload churn on onboarding; the app boot path will
+		// fetch fresh assets on the next navigation to the main UI.
+		if (window.location.pathname === "/onboarding") {
+			return;
+		}
 		window.location.reload();
 	});
 }
