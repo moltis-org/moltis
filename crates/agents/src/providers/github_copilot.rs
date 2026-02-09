@@ -481,6 +481,10 @@ impl LlmProvider for GitHubCopilotProvider {
         let usage = Usage {
             input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: resp["usage"]["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+            ..Default::default()
         };
 
         Ok(CompletionResponse {
@@ -738,6 +742,7 @@ mod tests {
             let usage = Usage {
                 input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
                 output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                ..Default::default()
             };
 
             Ok(CompletionResponse {

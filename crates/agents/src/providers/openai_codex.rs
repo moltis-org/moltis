@@ -627,6 +627,7 @@ impl LlmProvider for OpenAiCodexProvider {
             usage: Usage {
                 input_tokens,
                 output_tokens,
+                ..Default::default()
             },
         })
     }
@@ -751,7 +752,7 @@ impl LlmProvider for OpenAiCodexProvider {
                         for index in tool_calls.keys() {
                             yield StreamEvent::ToolCallComplete { index: *index };
                         }
-                        yield StreamEvent::Done(Usage { input_tokens, output_tokens });
+                        yield StreamEvent::Done(Usage { input_tokens, output_tokens, ..Default::default() });
                         return;
                     }
 
@@ -810,7 +811,7 @@ impl LlmProvider for OpenAiCodexProvider {
                                 for index in tool_calls.keys() {
                                     yield StreamEvent::ToolCallComplete { index: *index };
                                 }
-                                yield StreamEvent::Done(Usage { input_tokens, output_tokens });
+                                yield StreamEvent::Done(Usage { input_tokens, output_tokens, ..Default::default() });
                                 return;
                             }
                             "error" | "response.failed" => {

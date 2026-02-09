@@ -48,6 +48,9 @@ use crate::{
     state::GatewayState,
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum ReplyMedium {
@@ -3912,6 +3915,9 @@ async fn run_streaming(
     messages.extend(values_to_chat_messages(history_raw));
     messages.push(ChatMessage::user(text));
 
+    #[cfg(feature = "metrics")]
+    let stream_start = Instant::now();
+
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
 
@@ -3934,6 +3940,48 @@ async fn run_streaming(
             },
             StreamEvent::Done(usage) => {
                 clear_unsupported_model(state, model_store, model_id).await;
+
+                // Record streaming completion metrics (mirroring provider_chain.rs)
+                #[cfg(feature = "metrics")]
+                {
+                    let duration = stream_start.elapsed().as_secs_f64();
+                    counter!(
+                        llm_metrics::COMPLETIONS_TOTAL,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .increment(1);
+                    counter!(
+                        llm_metrics::INPUT_TOKENS_TOTAL,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .increment(u64::from(usage.input_tokens));
+                    counter!(
+                        llm_metrics::OUTPUT_TOKENS_TOTAL,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .increment(u64::from(usage.output_tokens));
+                    counter!(
+                        llm_metrics::CACHE_READ_TOKENS_TOTAL,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .increment(u64::from(usage.cache_read_tokens));
+                    counter!(
+                        llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .increment(u64::from(usage.cache_write_tokens));
+                    histogram!(
+                        llm_metrics::COMPLETION_DURATION_SECONDS,
+                        labels::PROVIDER => provider_name.to_string(),
+                        labels::MODEL => model_id.to_string()
+                    )
+                    .record(duration);
+                }
 
                 let is_silent = accumulated.trim().is_empty();
 

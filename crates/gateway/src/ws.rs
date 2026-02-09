@@ -291,6 +291,12 @@ pub async fn handle_connection(
     };
     state.register_client(client).await;
 
+    #[cfg(feature = "metrics")]
+    {
+        moltis_metrics::counter!(moltis_metrics::websocket::CONNECTIONS_TOTAL).increment(1);
+        moltis_metrics::gauge!(moltis_metrics::websocket::CONNECTIONS_ACTIVE).increment(1.0);
+    }
+
     // If node role, register in node registry.
     if role == "node" {
         let caps = params.caps.clone().unwrap_or_default();
@@ -440,6 +446,9 @@ pub async fn handle_connection(
         .await
         .map(|c| c.connected_at.elapsed())
         .unwrap_or_default();
+
+    #[cfg(feature = "metrics")]
+    moltis_metrics::gauge!(moltis_metrics::websocket::CONNECTIONS_ACTIVE).decrement(1.0);
 
     info!(
         conn_id = %conn_id,

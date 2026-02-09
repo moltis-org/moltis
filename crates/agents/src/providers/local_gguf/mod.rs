@@ -409,6 +409,7 @@ impl LlmProvider for LocalGgufProvider {
             usage: Usage {
                 input_tokens,
                 output_tokens,
+                ..Default::default()
             },
         })
     }
@@ -612,6 +613,7 @@ fn stream_generate_sync(
             let _ = tx.blocking_send(StreamEvent::Done(Usage {
                 input_tokens,
                 output_tokens,
+                ..Default::default()
             }));
         },
         Err(e) => {

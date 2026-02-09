@@ -491,11 +491,25 @@ impl GatewayState {
     pub async fn register_client(&self, client: ConnectedClient) {
         let conn_id = client.conn_id.clone();
         self.clients.write().await.insert(conn_id, client);
+
+        #[cfg(feature = "metrics")]
+        {
+            let count = self.clients.read().await.len() as f64;
+            moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count);
+        }
     }
 
     /// Remove a client by conn_id. Returns the removed client if found.
     pub async fn remove_client(&self, conn_id: &str) -> Option<ConnectedClient> {
-        self.clients.write().await.remove(conn_id)
+        let removed = self.clients.write().await.remove(conn_id);
+
+        #[cfg(feature = "metrics")]
+        {
+            let count = self.clients.read().await.len() as f64;
+            moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count);
+        }
+
+        removed
     }
 
     /// Number of connected clients.

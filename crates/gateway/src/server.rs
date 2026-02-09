@@ -2337,6 +2337,7 @@ pub async fn start_gateway(
     #[cfg(feature = "metrics")]
     {
         let metrics_state = Arc::clone(&state);
+        let server_start = std::time::Instant::now();
         tokio::spawn(async move {
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
@@ -2368,6 +2369,12 @@ pub async fn start_gateway(
             loop {
                 interval.tick().await;
                 if let Some(ref handle) = metrics_state.metrics_handle {
+                    // Update gauges that are derived from server state, not events.
+                    moltis_metrics::gauge!(moltis_metrics::system::UPTIME_SECONDS)
+                        .set(server_start.elapsed().as_secs_f64());
+                    let session_count = metrics_state.active_sessions.read().await.len() as f64;
+                    moltis_metrics::gauge!(moltis_metrics::session::ACTIVE).set(session_count);
+
                     let prometheus_text = handle.render();
                     let snapshot =
                         moltis_metrics::MetricsSnapshot::from_prometheus_text(&prometheus_text);

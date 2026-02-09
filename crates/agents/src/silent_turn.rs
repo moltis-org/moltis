@@ -264,6 +264,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 100,
                         output_tokens: 50,
+                        ..Default::default()
                     },
                 })
             } else {
@@ -273,6 +274,7 @@ mod tests {
                     usage: Usage {
                         input_tokens: 50,
                         output_tokens: 5,
+                        ..Default::default()
                     },
                 })
             }
