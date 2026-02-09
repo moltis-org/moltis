@@ -69,7 +69,7 @@ pub struct MetricsUpdatePayload {
 
 use moltis_protocol::ConnectParams;
 
-use moltis_tools::{approval::ApprovalManager, sandbox::SandboxRouter};
+use moltis_tools::sandbox::SandboxRouter;
 
 use moltis_channels::ChannelReplyTarget;
 
@@ -449,9 +449,7 @@ impl GatewayState {
             push_service: RwLock::new(None),
             tts_phrase_counter: AtomicUsize::new(0),
             llm_providers: RwLock::new(None),
-            cached_location: RwLock::new(
-                moltis_config::load_user().and_then(|u| u.location),
-            ),
+            cached_location: RwLock::new(moltis_config::load_user().and_then(|u| u.location)),
         })
     }
 

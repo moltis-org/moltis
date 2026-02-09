@@ -755,8 +755,7 @@ impl MethodRegistry {
                         serde_json::json!({ "error": ctx.params.get("error") })
                     };
 
-                    let pending =
-                        ctx.state.pending_invokes.write().await.remove(request_id);
+                    let pending = ctx.state.pending_invokes.write().await.remove(request_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -1651,8 +1650,8 @@ impl MethodRegistry {
                         heartbeat_md.as_deref(),
                     );
                     // No meaningful prompt → heartbeat won't execute.
-                    let has_prompt = prompt_source
-                        != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
+                    let has_prompt =
+                        prompt_source != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
                     // Find the heartbeat job to get its state.
                     let jobs_val = ctx
                         .state

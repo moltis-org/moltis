@@ -237,10 +237,7 @@ impl LogBuffer {
 
     /// Return the path to the persisted JSONL file, if persistence is enabled.
     pub fn file_path(&self) -> Option<PathBuf> {
-        self.file_path
-            .read()
-            .ok()
-            .and_then(|fp| fp.clone())
+        self.file_path.read().ok().and_then(|fp| fp.clone())
     }
 
     /// O(1) count of unseen warn/error entries since the last ack.

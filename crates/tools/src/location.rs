@@ -43,9 +43,9 @@ impl std::fmt::Display for LocationError {
             Self::PermissionDenied => f.write_str("User denied location permission"),
             Self::PositionUnavailable => f.write_str("Position unavailable"),
             Self::Timeout => f.write_str("Location request timed out"),
-            Self::NoClientConnected => {
-                f.write_str("No browser client connected — location requires an active browser session")
-            },
+            Self::NoClientConnected => f.write_str(
+                "No browser client connected — location requires an active browser session",
+            ),
             Self::NotSupported => f.write_str("Geolocation not supported in this browser"),
         }
     }
@@ -159,8 +159,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use moltis_agents::tool_registry::AgentTool;
+    use {super::*, moltis_agents::tool_registry::AgentTool};
 
     /// Mock requester that returns a fixed response.
     struct MockRequester {

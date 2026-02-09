@@ -376,8 +376,7 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
 /// Persist user values to `USER.md` using YAML frontmatter.
 pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     let path = user_path();
-    let has_values =
-        user.name.is_some() || user.timezone.is_some() || user.location.is_some();
+    let has_values = user.name.is_some() || user.timezone.is_some() || user.location.is_some();
 
     if !has_values {
         if path.exists() {
@@ -1009,7 +1008,10 @@ mod tests {
 
         let loaded = load_user().expect("load user");
         assert_eq!(loaded.name.as_deref(), Some("Alice"));
-        assert_eq!(loaded.timezone.as_ref().map(|tz| tz.name()), Some("Europe/Berlin"));
+        assert_eq!(
+            loaded.timezone.as_ref().map(|tz| tz.name()),
+            Some("Europe/Berlin")
+        );
 
         clear_data_dir();
     }
