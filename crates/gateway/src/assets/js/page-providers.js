@@ -311,7 +311,7 @@ function ProvidersPage() {
 					Configure LLM providers for chat and agent tasks. You can add multiple providers and switch between models.
 				</p>
 				${
-					(detectError.value || providerActionError.value)
+					detectError.value || providerActionError.value
 						? html`<div class="text-xs text-[var(--danger,#ef4444)] max-w-form">${detectError.value || providerActionError.value}</div>`
 						: null
 				}

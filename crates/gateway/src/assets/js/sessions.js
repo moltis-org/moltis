@@ -629,6 +629,15 @@ export function switchSession(key, searchContext, projectId) {
 			});
 			S.setChatBatchLoading(false);
 			S.setLastHistoryIndex(history.length > 0 ? history.length - 1 : -1);
+			// Resume chatSeq from the highest user message seq in history
+			// so the counter continues from where it left off after reload.
+			var maxSeq = 0;
+			for (var hm of history) {
+				if (hm.role === "user" && hm.seq > maxSeq) {
+					maxSeq = hm.seq;
+				}
+			}
+			S.setChatSeq(maxSeq);
 			if (history.length === 0) {
 				showWelcomeCard();
 			}

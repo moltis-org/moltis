@@ -1637,6 +1637,9 @@ impl ChatService for LiveChatService {
             }
         }
 
+        // Generate run_id early so we can link the user message to its agent run.
+        let run_id = uuid::Uuid::new_v4().to_string();
+
         // Build the user message for later persistence (deferred until we
         // know the message won't be queued — avoids double-persist when a
         // queued message is replayed via send()).
@@ -1645,6 +1648,8 @@ impl ChatService for LiveChatService {
             content: message_content,
             created_at: Some(now_ms()),
             channel: channel_meta,
+            seq: client_seq,
+            run_id: Some(run_id.clone()),
         };
 
         // Load conversation history (the current user message is NOT yet
@@ -1720,7 +1725,6 @@ impl ChatService for LiveChatService {
         )
         .await;
 
-        let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
         let run_id_clone = run_id.clone();
@@ -1935,6 +1939,7 @@ impl ChatService for LiveChatService {
                         &discovered_skills,
                         Some(&runtime_context),
                         Some(&session_store),
+                        client_seq,
                     )
                     .await
                 } else {
@@ -1958,6 +1963,7 @@ impl ChatService for LiveChatService {
                         accept_language.clone(),
                         Some(&session_store),
                         mcp_disabled,
+                        client_seq,
                     )
                     .await
                 }
@@ -2005,14 +2011,18 @@ impl ChatService for LiveChatService {
 
             // Persist assistant response (even empty ones — needed for LLM history coherence).
             if let Some((response_text, input_tokens, output_tokens, audio_path)) = assistant_text {
-                let assistant_msg = PersistedMessage::assistant(
-                    response_text,
-                    &model_id,
-                    &provider_name,
-                    input_tokens,
-                    output_tokens,
-                    audio_path,
-                );
+                let assistant_msg = PersistedMessage::Assistant {
+                    content: response_text,
+                    created_at: Some(now_ms()),
+                    model: Some(model_id.clone()),
+                    provider: Some(provider_name.clone()),
+                    input_tokens: Some(input_tokens),
+                    output_tokens: Some(output_tokens),
+                    tool_calls: None,
+                    audio: audio_path,
+                    seq: client_seq,
+                    run_id: Some(run_id_clone.clone()),
+                };
                 if let Err(e) = session_store
                     .append(&session_key_clone, &assistant_msg.to_value())
                     .await
@@ -2206,6 +2216,7 @@ impl ChatService for LiveChatService {
                 &[],
                 Some(&runtime_context),
                 Some(&self.session_store),
+                None, // send_sync: no client seq
             )
             .await
         } else {
@@ -2229,20 +2240,25 @@ impl ChatService for LiveChatService {
                 None,
                 Some(&self.session_store),
                 false, // send_sync: MCP tools always enabled for API calls
+                None,  // send_sync: no client seq
             )
             .await
         };
 
         // Persist assistant response (even empty ones — needed for LLM history coherence).
         if let Some((ref response_text, input_tokens, output_tokens, ref audio_path)) = result {
-            let assistant_msg = PersistedMessage::assistant(
-                response_text,
-                &model_id,
-                &provider_name,
-                input_tokens,
-                output_tokens,
-                audio_path.clone(),
-            );
+            let assistant_msg = PersistedMessage::Assistant {
+                content: response_text.clone(),
+                created_at: Some(now_ms()),
+                model: Some(model_id.clone()),
+                provider: Some(provider_name.clone()),
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(output_tokens),
+                tool_calls: None,
+                audio: audio_path.clone(),
+                seq: None,
+                run_id: Some(run_id.clone()),
+            };
             if let Err(e) = self
                 .session_store
                 .append(&session_key, &assistant_msg.to_value())
@@ -2498,6 +2514,8 @@ impl ChatService for LiveChatService {
             output_tokens: None,
             tool_calls: None,
             audio: None,
+            seq: None,
+            run_id: None,
         };
         let compacted = vec![compacted_msg.to_value()];
 
@@ -3160,6 +3178,7 @@ async fn run_with_tools(
     accept_language: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
+    client_seq: Option<u64>,
 ) -> Option<(String, u32, u32, Option<String>)> {
     let persona = load_prompt_persona();
 
@@ -3223,8 +3242,9 @@ async fn run_with_tools(
         let sk = session_key_for_events.clone();
         let store = session_store_for_events.clone();
         let args_map = Arc::clone(&tool_args_map);
+        let seq = client_seq;
         tokio::spawn(async move {
-            let payload = match &event {
+            let mut payload = match &event {
                 RunnerEvent::Thinking => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
@@ -3462,6 +3482,9 @@ async fn run_with_tools(
                     "toolCallsMade": tool_calls_made,
                 }),
             };
+            if let Some(s) = seq {
+                payload["seq"] = serde_json::json!(s);
+            }
             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
         });
     });
@@ -3640,6 +3663,9 @@ async fn run_with_tools(
             if let Some(ref audio) = audio_path {
                 final_payload["audio"] = serde_json::json!(audio);
             }
+            if let Some(s) = client_seq {
+                final_payload["seq"] = serde_json::json!(s);
+            }
             broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
 
             if !is_silent {
@@ -3665,18 +3691,16 @@ async fn run_with_tools(
             state.set_run_error(run_id, error_str.clone()).await;
             let error_obj = parse_chat_error(&error_str, Some(provider_name));
             mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj).await;
-            broadcast(
-                state,
-                "chat",
-                serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": session_key,
-                    "state": "error",
-                    "error": error_obj,
-                }),
-                BroadcastOpts::default(),
-            )
-            .await;
+            let mut error_payload = serde_json::json!({
+                "runId": run_id,
+                "sessionKey": session_key,
+                "state": "error",
+                "error": error_obj,
+            });
+            if let Some(s) = client_seq {
+                error_payload["seq"] = serde_json::json!(s);
+            }
+            broadcast(state, "chat", error_payload, BroadcastOpts::default()).await;
             None
         },
     }
@@ -3740,6 +3764,8 @@ async fn compact_session(
         output_tokens: None,
         tool_calls: None,
         audio: None,
+        seq: None,
+        run_id: None,
     };
     let compacted = vec![compacted_msg.to_value()];
 
@@ -3769,6 +3795,7 @@ async fn run_streaming(
     _skills: &[moltis_skills::types::SkillMetadata],
     runtime_context: Option<&PromptRuntimeContext>,
     session_store: Option<&Arc<SessionStore>>,
+    client_seq: Option<u64>,
 ) -> Option<(String, u32, u32, Option<String>)> {
     let persona = load_prompt_persona();
 
@@ -3861,6 +3888,9 @@ async fn run_streaming(
                 if let Some(ref audio) = audio_path {
                     final_payload["audio"] = serde_json::json!(audio);
                 }
+                if let Some(s) = client_seq {
+                    final_payload["seq"] = serde_json::json!(s);
+                }
                 broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
 
                 if !is_silent {
@@ -3886,18 +3916,16 @@ async fn run_streaming(
                 let error_obj = parse_chat_error(&msg, Some(provider_name));
                 mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
                     .await;
-                broadcast(
-                    state,
-                    "chat",
-                    serde_json::json!({
-                        "runId": run_id,
-                        "sessionKey": session_key,
-                        "state": "error",
-                        "error": error_obj,
-                    }),
-                    BroadcastOpts::default(),
-                )
-                .await;
+                let mut error_payload = serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": session_key,
+                    "state": "error",
+                    "error": error_obj,
+                });
+                if let Some(s) = client_seq {
+                    error_payload["seq"] = serde_json::json!(s);
+                }
+                broadcast(state, "chat", error_payload, BroadcastOpts::default()).await;
                 return None;
             },
             // Tool events not expected in stream-only mode.

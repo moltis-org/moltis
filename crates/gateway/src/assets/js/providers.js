@@ -284,23 +284,23 @@ export function showOAuthFlow(provider) {
 	connectBtn.addEventListener("click", () => {
 		connectBtn.disabled = true;
 		connectBtn.textContent = "Starting...";
-			startProviderOAuth(provider.name).then((result) => {
-				if (result.status === "already") {
-					connectBtn.textContent = "Connected";
-					desc.classList.remove("text-error");
-					desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
-					sendRpc("models.detect_supported", {
-						background: true,
-						reason: "provider_connected",
-						provider: provider.name,
-					});
-					fetchModels();
-					if (S.refreshProvidersPage) S.refreshProvidersPage();
-					setTimeout(closeProviderModal, 1200);
-				} else if (result.status === "browser") {
-					window.open(result.authUrl, "_blank");
-					connectBtn.textContent = "Waiting for auth...";
-					pollOAuthStatus(provider);
+		startProviderOAuth(provider.name).then((result) => {
+			if (result.status === "already") {
+				connectBtn.textContent = "Connected";
+				desc.classList.remove("text-error");
+				desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
+				sendRpc("models.detect_supported", {
+					background: true,
+					reason: "provider_connected",
+					provider: provider.name,
+				});
+				fetchModels();
+				if (S.refreshProvidersPage) S.refreshProvidersPage();
+				setTimeout(closeProviderModal, 1200);
+			} else if (result.status === "browser") {
+				window.open(result.authUrl, "_blank");
+				connectBtn.textContent = "Waiting for auth...";
+				pollOAuthStatus(provider);
 			} else if (result.status === "device") {
 				connectBtn.textContent = "Waiting for auth...";
 				desc.classList.remove("text-error");

@@ -26,6 +26,12 @@ pub enum PersistedMessage {
         /// Channel metadata for UI display (e.g., Telegram sender info).
         #[serde(skip_serializing_if = "Option::is_none")]
         channel: Option<serde_json::Value>,
+        /// Client-assigned sequence number for ordering diagnostics.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
+        /// Agent run ID that processes this message (parent→child link).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Assistant {
         content: String,
@@ -44,6 +50,12 @@ pub enum PersistedMessage {
         /// Relative media path for TTS audio (e.g. "media/main/run_abc.ogg").
         #[serde(skip_serializing_if = "Option::is_none")]
         audio: Option<String>,
+        /// Sequence number matching the user message this responds to.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
+        /// Agent run ID linking this response to its parent user message.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
     },
     Tool {
         tool_call_id: String,
@@ -116,6 +128,8 @@ impl PersistedMessage {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
             channel: None,
+            seq: None,
+            run_id: None,
         }
     }
 
@@ -125,6 +139,8 @@ impl PersistedMessage {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
             channel: Some(channel),
+            seq: None,
+            run_id: None,
         }
     }
 
@@ -134,6 +150,8 @@ impl PersistedMessage {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
             channel: None,
+            seq: None,
+            run_id: None,
         }
     }
 
@@ -146,6 +164,8 @@ impl PersistedMessage {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
             channel: Some(channel),
+            seq: None,
+            run_id: None,
         }
     }
 
@@ -167,6 +187,8 @@ impl PersistedMessage {
             output_tokens: Some(output_tokens),
             tool_calls: None,
             audio,
+            seq: None,
+            run_id: None,
         }
     }
 
@@ -246,6 +268,8 @@ mod tests {
             content: MessageContent::Text("hello".to_string()),
             created_at: Some(12345),
             channel: None,
+            seq: None,
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "user");
@@ -263,6 +287,8 @@ mod tests {
             ]),
             created_at: Some(12345),
             channel: None,
+            seq: None,
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "user");
@@ -290,6 +316,8 @@ mod tests {
             output_tokens: Some(50),
             tool_calls: None,
             audio: None,
+            seq: None,
+            run_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["role"], "assistant");
