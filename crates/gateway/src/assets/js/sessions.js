@@ -585,6 +585,11 @@ export function switchSession(key, searchContext, projectId) {
 	localStorage.setItem("moltis-session", key);
 	history.replaceState(null, "", sessionPath(key));
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+	var tray = document.getElementById("queuedMessages");
+	if (tray) {
+		while (tray.firstChild) tray.removeChild(tray.firstChild);
+		tray.classList.add("hidden");
+	}
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setLastHistoryIndex(-1);

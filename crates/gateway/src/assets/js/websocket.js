@@ -86,6 +86,9 @@ function handleChatThinking(_p, isActive, isChatPage) {
 	if (tray) {
 		var firstQueued = tray.querySelector(".msg.user.queued");
 		if (firstQueued) {
+			console.debug("[queued] thinking: moving queued message from tray to chat", {
+				remaining: tray.querySelectorAll(".msg").length - 1,
+			});
 			firstQueued.classList.remove("queued");
 			var badge = firstQueued.querySelector(".queued-badge");
 			if (badge) badge.remove();
@@ -404,6 +407,8 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	var tray = document.getElementById("queuedMessages");
 	if (tray) {
+		var count = tray.querySelectorAll(".msg").length;
+		console.debug("[queued] queue_cleared: removing all from tray", { count });
 		while (tray.firstChild) tray.removeChild(tray.firstChild);
 		tray.classList.add("hidden");
 	}

@@ -801,6 +801,7 @@ function markMessageQueued(el, sessionKey) {
 	if (!el) return;
 	var tray = document.getElementById("queuedMessages");
 	if (!tray) return;
+	console.debug("[queued] marking user message as queued, moving to tray", { sessionKey });
 	// Move the user message from the main chat into the queued tray.
 	el.classList.add("queued");
 	var badge = document.createElement("div");

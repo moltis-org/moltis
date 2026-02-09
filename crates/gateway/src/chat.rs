@@ -2272,6 +2272,7 @@ impl ChatService for LiveChatService {
             .remove(session_key)
             .unwrap_or_default();
         let count = removed.len();
+        info!(session = %session_key, count, "cancel_queued: cleared message queue");
 
         broadcast(
             &self.state,
