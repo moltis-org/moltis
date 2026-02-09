@@ -1,7 +1,14 @@
 // ── Chat page ────────────────────────────────────────────
 
-import { chatAddMsg, updateTokenBar } from "./chat-ui.js";
+import { chatAddMsg, chatAddMsgWithImages, updateTokenBar } from "./chat-ui.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
+import {
+	clearPendingImages,
+	getPendingImages,
+	hasPendingImages,
+	initMediaDrop,
+	teardownMediaDrop,
+} from "./media-drop.js";
 import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -777,12 +784,33 @@ function handleSlashCommand(cmdName) {
 	}
 }
 
+// ── Build chat params (text-only or multimodal) ─────────
+function buildChatMessage(text, seq) {
+	var images = hasPendingImages() ? getPendingImages() : [];
+	if (images.length > 0) {
+		var content = [];
+		if (text) content.push({ type: "text", text: text });
+		for (var img of images) {
+			content.push({ type: "image_url", image_url: { url: img.dataUrl } });
+		}
+		var params = { content: content, _seq: seq };
+		var el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
+		clearPendingImages();
+		return { params: params, el: el };
+	}
+	return {
+		params: { text: text, _seq: seq },
+		el: chatAddMsg("user", renderMarkdown(text), true),
+	};
+}
+
 // ── Send chat message ────────────────────────────────────
 function sendChat() {
 	var text = S.chatInput.value.trim();
-	if (!(text && S.connected)) return;
+	var hasImages = hasPendingImages();
+	if (!((text || hasImages) && S.connected)) return;
 
-	if (text.charAt(0) === "/") {
+	if (text.charAt(0) === "/" && !hasImages) {
 		var cmdName = text.substring(1).toLowerCase();
 		var matched = slashCommands.find((c) => c.name === cmdName);
 		if (matched) {
@@ -794,16 +822,21 @@ function sendChat() {
 		}
 	}
 
-	S.chatHistory.push(text);
-	if (S.chatHistory.length > 200) S.setChatHistory(S.chatHistory.slice(-200));
-	localStorage.setItem("moltis-chat-history", JSON.stringify(S.chatHistory));
+	if (text) {
+		S.chatHistory.push(text);
+		if (S.chatHistory.length > 200) S.setChatHistory(S.chatHistory.slice(-200));
+		localStorage.setItem("moltis-chat-history", JSON.stringify(S.chatHistory));
+	}
 	S.setChatHistoryIdx(-1);
 	S.setChatHistoryDraft("");
 	S.chatInput.value = "";
 	chatAutoResize();
-	var userEl = chatAddMsg("user", renderMarkdown(text), true);
+
 	S.setChatSeq(S.chatSeq + 1);
-	var chatParams = { text: text, _seq: S.chatSeq };
+	var msg = buildChatMessage(text, S.chatSeq);
+	var chatParams = msg.params;
+	var userEl = msg.el;
+
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
 		chatParams.model = selectedModel;
@@ -1067,10 +1100,15 @@ registerPrefix(
 		// Initialize voice input
 		initVoiceInput(S.$("micBtn"));
 
+		// Initialize media drag-and-drop (the input area is the bottom bar)
+		var inputArea = S.chatInput?.closest(".px-4.py-3");
+		initMediaDrop(S.chatMsgBox, inputArea);
+
 		S.chatInput.focus();
 	},
 	function teardownChat() {
 		teardownVoiceInput();
+		teardownMediaDrop();
 		slashHideMenu();
 		S.setChatMsgBox(null);
 		S.setChatInput(null);

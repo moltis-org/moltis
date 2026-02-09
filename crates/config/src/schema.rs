@@ -1377,7 +1377,6 @@ fn default_sandbox_packages() -> Vec<String> {
         "pandoc",
         "poppler-utils",
         "ghostscript",
-        "wkhtmltopdf",
         "texlive-latex-base",
         "texlive-latex-extra",
         "texlive-fonts-recommended",
