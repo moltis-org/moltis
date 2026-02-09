@@ -11,7 +11,7 @@ import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { validateProviderConnection } from "./provider-validation.js";
+import { testModel, validateProviderKey } from "./provider-validation.js";
 import { fetchPhrase } from "./tts-phrases.js";
 
 // ── Step indicator ──────────────────────────────────────────
@@ -414,6 +414,12 @@ var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
 function OnboardingProviderRow({
 	provider,
 	configuring,
+	phase,
+	providerModels,
+	selectedModel,
+	modelTestError,
+	modelSearch,
+	setModelSearch,
 	oauthProvider,
 	oauthInfo,
 	localProvider,
@@ -433,14 +439,16 @@ function OnboardingProviderRow({
 	onStartConfigure,
 	onCancelConfigure,
 	onSaveKey,
+	onSelectModel,
 	onCancelOAuth,
 	onConfigureLocalModel,
 	onCancelLocal,
 }) {
-	var isApiKeyForm = configuring === provider.name;
+	var isApiKeyForm = configuring === provider.name && (phase === "form" || phase === "validating");
+	var isModelSelect = configuring === provider.name && (phase === "selectModel" || phase === "testingModel");
 	var isOAuth = oauthProvider === provider.name;
 	var isLocal = localProvider === provider.name;
-	var isExpanded = isApiKeyForm || isOAuth || isLocal;
+	var isExpanded = isApiKeyForm || isModelSelect || isOAuth || isLocal;
 	var keyInputRef = useRef(null);
 	var rowRef = useRef(null);
 
@@ -458,6 +466,14 @@ function OnboardingProviderRow({
 
 	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
 	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+
+	// Filter models for the model selector.
+	var filteredModels = (providerModels || []).filter(
+		(m) =>
+			!modelSearch ||
+			m.displayName.toLowerCase().includes(modelSearch.toLowerCase()) ||
+			m.id.toLowerCase().includes(modelSearch.toLowerCase()),
+	);
 
 	return html`<div ref=${rowRef} class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
 		<div class="flex items-center gap-3">
@@ -524,10 +540,50 @@ function OnboardingProviderRow({
 				}
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
 				<div class="flex items-center gap-2 mt-1">
-					<button type="submit" class="provider-btn provider-btn-sm" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
-					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure}>Cancel</button>
+					<button type="submit" class="provider-btn provider-btn-sm" disabled=${phase === "validating"}>${phase === "validating" ? "Validating\u2026" : "Save & Validate"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${phase === "validating"}>Cancel</button>
 				</div>
 			</form>`
+				: null
+		}
+		${
+			isModelSelect
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+				${
+					(providerModels || []).length > 5
+						? html`<input type="text" class="provider-key-input w-full text-xs"
+							placeholder="Search models\u2026"
+							value=${modelSearch}
+							onInput=${(e) => setModelSearch(e.target.value)} />`
+						: null
+				}
+				<div class="flex flex-col gap-2 max-h-56 overflow-y-auto">
+					${
+						filteredModels.length === 0
+							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
+							: filteredModels.map(
+									(m) => html`<div key=${m.id}
+									class="model-card ${selectedModel === m.id ? "selected" : ""}"
+									onClick=${() => {
+										if (phase !== "testingModel") onSelectModel(m.id);
+									}}>
+									<div class="flex items-center justify-between">
+										<span class="text-sm font-medium text-[var(--text)]">${m.displayName}</span>
+										<div class="flex gap-2">
+											${m.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
+											${phase === "testingModel" && selectedModel === m.id ? html`<span class="tier-badge">Testing\u2026</span>` : null}
+										</div>
+									</div>
+									<div class="text-xs text-[var(--muted)] mt-1 font-mono">${m.id}</div>
+								</div>`,
+								)
+					}
+				</div>
+				${modelTestError ? html`<${ErrorPanel} message=${modelTestError} />` : null}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelConfigure}>Cancel</button>
+			</div>`
 				: null
 		}
 		${
@@ -636,6 +692,13 @@ function ProviderStep({ onNext, onBack }) {
 	var [oauthProvider, setOauthProvider] = useState(null);
 	var [localProvider, setLocalProvider] = useState(null);
 
+	// Phase: "form" | "validating" | "selectModel" | "testingModel"
+	var [phase, setPhase] = useState("form");
+	var [providerModels, setProviderModels] = useState([]);
+	var [selectedModel, setSelectedModel] = useState(null);
+	var [modelTestError, setModelTestError] = useState(null);
+	var [modelSearch, setModelSearch] = useState("");
+
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
 	var [endpoint, setEndpoint] = useState("");
@@ -708,6 +771,11 @@ function ProviderStep({ onNext, onBack }) {
 		setConfiguring(null);
 		setOauthProvider(null);
 		setLocalProvider(null);
+		setPhase("form");
+		setProviderModels([]);
+		setSelectedModel(null);
+		setModelTestError(null);
+		setModelSearch("");
 		setApiKey("");
 		setEndpoint("");
 		setModel("");
@@ -751,33 +819,96 @@ function ProviderStep({ onNext, onBack }) {
 			return;
 		}
 		setError(null);
-		setSaving(true);
-		var payload = { provider: p.name, apiKey: apiKey.trim() || "ollama" };
-		if (endpoint.trim()) payload.baseUrl = endpoint.trim();
-		if (model.trim()) payload.model = model.trim();
-		sendRpc("providers.save_key", payload)
-			.then(async (res) => {
-				if (res?.ok) {
-					var validation = await validateProviderConnection(p.name);
-					setSaving(false);
-					setValidationResults((prev) => ({ ...prev, [p.name]: validation }));
-					if (!validation.ok) {
-						setError(validation.message || "Credentials were saved, but provider validation failed.");
-					}
-					setConfiguring(null);
-					setApiKey("");
-					setEndpoint("");
-					setModel("");
-					setError(null);
-					refreshProviders();
-				} else {
-					setSaving(false);
-					setError(res?.error?.message || "Failed to save");
+		setPhase("validating");
+
+		var keyVal = apiKey.trim() || "ollama";
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+
+		validateProviderKey(p.name, keyVal, endpointVal, modelVal)
+			.then((result) => {
+				if (!result.valid) {
+					// Validation failed — stay on the form.
+					setPhase("form");
+					setError(result.error || "Validation failed. Please check your credentials.");
+					return;
 				}
+
+				// BYOM providers: we already tested the specific model during validation,
+				// so save immediately without showing the model selector.
+				if (BYOM_PROVIDERS.includes(p.name)) {
+					return saveAndFinish(p.name, keyVal, endpointVal, modelVal);
+				}
+
+				// Regular providers: show the model selector.
+				setProviderModels(result.models || []);
+				setPhase("selectModel");
 			})
 			.catch((err) => {
-				setSaving(false);
-				setError(err?.message || "Failed to save");
+				setPhase("form");
+				setError(err?.message || "Validation failed.");
+			});
+	}
+
+	function onSelectModel(modelId) {
+		setSelectedModel(modelId);
+		setModelTestError(null);
+		setPhase("testingModel");
+
+		var p = providers.find((pr) => pr.name === configuring);
+		if (!p) return;
+
+		// Save credentials first so the model is available in the live registry.
+		var keyVal = apiKey.trim() || "ollama";
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+
+		saveAndFinish(p.name, keyVal, endpointVal, modelVal, modelId);
+	}
+
+	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
+		var payload = { provider: providerName, apiKey: keyVal };
+		if (endpointVal) payload.baseUrl = endpointVal;
+		if (modelVal) payload.model = modelVal;
+
+		sendRpc("providers.save_key", payload)
+			.then(async (res) => {
+				if (!res?.ok) {
+					setPhase("form");
+					setError(res?.error?.message || "Failed to save credentials.");
+					return;
+				}
+
+				// If a specific model was selected, test it from the live registry.
+				if (selectedModelId) {
+					var testResult = await testModel(selectedModelId);
+					if (!testResult.ok) {
+						// Model test failed — let user pick another.
+						setPhase("selectModel");
+						setModelTestError(testResult.error || "Model test failed. Try another model.");
+						return;
+					}
+					// Store chosen model in localStorage for the UI.
+					localStorage.setItem("moltis-model", selectedModelId);
+				}
+
+				// Success — close the form and update state.
+				setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+				setConfiguring(null);
+				setPhase("form");
+				setProviderModels([]);
+				setSelectedModel(null);
+				setModelTestError(null);
+				setModelSearch("");
+				setApiKey("");
+				setEndpoint("");
+				setModel("");
+				setError(null);
+				refreshProviders();
+			})
+			.catch((err) => {
+				setPhase("form");
+				setError(err?.message || "Failed to save credentials.");
 			});
 	}
 
@@ -816,6 +947,38 @@ function ProviderStep({ onNext, onBack }) {
 		});
 	}
 
+	async function onOAuthAuthenticated(providerName) {
+		var modelsRes = await sendRpc("models.list", {});
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		var provModels = allModels.filter((m) =>
+			m.provider?.toLowerCase().includes(providerName.replace(/-/g, "").toLowerCase()),
+		);
+
+		setOauthProvider(null);
+		setOauthInfo(null);
+
+		if (provModels.length > 0) {
+			setConfiguring(providerName);
+			setProviderModels(
+				provModels.map((m) => ({
+					id: m.id,
+					displayName: m.displayName || m.id,
+					provider: m.provider,
+					supportsTools: m.supportsTools,
+				})),
+			);
+			setPhase("selectModel");
+		} else {
+			sendRpc("models.detect_supported", {
+				background: true,
+				reason: "provider_connected",
+				provider: providerName,
+			});
+			setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+		}
+		refreshProviders();
+	}
+
 	function pollOAuth(p) {
 		var attempts = 0;
 		if (oauthTimerRef.current) clearInterval(oauthTimerRef.current);
@@ -833,15 +996,7 @@ function ProviderStep({ onNext, onBack }) {
 				if (res?.ok && res.payload?.authenticated) {
 					clearInterval(oauthTimerRef.current);
 					oauthTimerRef.current = null;
-					sendRpc("models.detect_supported", {
-						background: true,
-						reason: "provider_connected",
-						provider: p.name,
-					});
-					setOauthProvider(null);
-					setOauthInfo(null);
-					setValidationResults((prev) => ({ ...prev, [p.name]: { ok: true, message: null } }));
-					refreshProviders();
+					onOAuthAuthenticated(p.name);
 				}
 			});
 		}, 2000);
@@ -929,6 +1084,12 @@ function ProviderStep({ onNext, onBack }) {
 				key=${p.name}
 				provider=${p}
 				configuring=${configuring}
+				phase=${configuring === p.name ? phase : "form"}
+				providerModels=${configuring === p.name ? providerModels : []}
+				selectedModel=${configuring === p.name ? selectedModel : null}
+				modelTestError=${configuring === p.name ? modelTestError : null}
+				modelSearch=${configuring === p.name ? modelSearch : ""}
+				setModelSearch=${setModelSearch}
 				oauthProvider=${oauthProvider}
 				oauthInfo=${oauthInfo}
 				localProvider=${localProvider}
@@ -948,6 +1109,7 @@ function ProviderStep({ onNext, onBack }) {
 				onStartConfigure=${onStartConfigure}
 				onCancelConfigure=${closeAll}
 				onSaveKey=${onSaveKey}
+				onSelectModel=${onSelectModel}
 				onCancelOAuth=${cancelOAuth}
 				onConfigureLocalModel=${configureLocalModel}
 				onCancelLocal=${cancelLocal}

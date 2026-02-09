@@ -12,11 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Passkey onboarding**: The security setup step now offers passkey registration
   (Touch ID, Face ID, security keys) as the recommended default, with password
   as a fallback option.
+- **`providers.validate_key` RPC method**: Test provider credentials without
+  saving them — builds a temporary registry, probes with a "ping" message, and
+  returns validation status with available models.
+- **`models.test` RPC method**: Test a single model from the live registry with
+  a real LLM request before committing to it.
 
 ### Changed
 
 - Show "No LLM Providers Connected" card instead of welcome greeting when no
   providers are configured.
+- **Onboarding provider setup**: Credentials are now validated before saving.
+  After successful validation, a model selector shows available models for the
+  provider. The selected model is tested with a real request before completing
+  setup. Clear error messages are shown for common failures (invalid API key,
+  rate limits, connection issues).
+- **Settings provider setup**: The main Providers settings page now uses the
+  same validate-first flow as onboarding. Credentials are validated before
+  saving (bad keys are never persisted), a model selector appears after
+  validation, and OAuth flows show model selection after authentication.
 
 ### Fixed
 

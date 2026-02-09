@@ -125,7 +125,9 @@ const WRITE_METHODS: &[&str] = &[
     "browser.request",
     "logs.ack",
     "models.detect_supported",
+    "models.test",
     "providers.save_key",
+    "providers.validate_key",
     "providers.remove_key",
     "providers.oauth.start",
     "providers.oauth.complete",
@@ -2965,6 +2967,19 @@ impl MethodRegistry {
                 })
             }),
         );
+        self.register(
+            "models.test",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .model
+                        .test(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
 
         // Provider setup
         self.register(
@@ -2988,6 +3003,19 @@ impl MethodRegistry {
                         .services
                         .provider_setup
                         .save_key(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.validate_key",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .provider_setup
+                        .validate_key(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

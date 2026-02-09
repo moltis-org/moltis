@@ -5,7 +5,7 @@ import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { validateProviderConnection } from "./provider-validation.js";
+import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 
 var _els = null;
@@ -43,6 +43,8 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 	"venice",
 	"ollama",
 ];
+
+var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
 
 export function openProviderModal() {
 	var m = els();
@@ -158,7 +160,7 @@ export function showApiKeyForm(provider) {
 
 	// Model field for bring-your-own-model providers
 	var modelInp = null;
-	var needsModel = provider.name === "ollama" || provider.name === "openrouter" || provider.name === "venice";
+	var needsModel = BYOM_PROVIDERS.includes(provider.name);
 	if (needsModel) {
 		var modelLabel = document.createElement("label");
 		modelLabel.className = "text-xs text-[var(--muted)]";
@@ -185,7 +187,7 @@ export function showApiKeyForm(provider) {
 
 	var saveBtn = document.createElement("button");
 	saveBtn.className = "provider-btn";
-	saveBtn.textContent = "Save";
+	saveBtn.textContent = "Save & Validate";
 	saveBtn.addEventListener("click", () => {
 		var key = keyInp.value.trim();
 		// Ollama doesn't require a key
@@ -199,54 +201,37 @@ export function showApiKeyForm(provider) {
 		}
 
 		saveBtn.disabled = true;
-		saveBtn.textContent = "Saving...";
+		saveBtn.textContent = "Validating...";
 		keyLabel.classList.remove("text-error");
 		keyLabel.textContent = "API Key";
 
-		var payload = {
-			provider: provider.name,
-			apiKey: key || "ollama", // Use dummy key for Ollama
-		};
-		if (endpointInp?.value.trim()) {
-			payload.baseUrl = endpointInp.value.trim();
-		}
-		if (modelInp?.value.trim()) {
-			payload.model = modelInp.value.trim();
-		}
+		var keyVal = key || "ollama";
+		var endpointVal = endpointInp?.value.trim() || null;
+		var modelVal = modelInp?.value.trim() || null;
 
-		sendRpc("providers.save_key", payload)
-			.then(async (res) => {
-				if (res?.ok) {
-					saveBtn.textContent = "Validating...";
-					var validation = await validateProviderConnection(provider.name);
-					if (!validation.ok) {
-						saveBtn.disabled = false;
-						saveBtn.textContent = "Save";
-						keyLabel.textContent = validation.message || "Saved credentials, but validation failed.";
-						keyLabel.classList.add("text-error");
-						return;
-					}
-
-					m.body.textContent = "";
-					var status = document.createElement("div");
-					status.className = "provider-status";
-					status.textContent = `${provider.displayName} configured successfully!`;
-					m.body.appendChild(status);
-					fetchModels();
-					if (S.refreshProvidersPage) S.refreshProvidersPage();
-					setTimeout(closeProviderModal, 1500);
-				} else {
+		validateProviderKey(provider.name, keyVal, endpointVal, modelVal)
+			.then((result) => {
+				if (!result.valid) {
 					saveBtn.disabled = false;
-					saveBtn.textContent = "Save";
-					var err = res?.error?.message || "Failed to save";
-					keyLabel.textContent = err;
+					saveBtn.textContent = "Save & Validate";
+					keyLabel.textContent = result.error || "Validation failed. Please check your credentials.";
 					keyLabel.classList.add("text-error");
+					return;
 				}
+
+				// BYOM providers already tested the specific model — save directly.
+				if (needsModel) {
+					saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, null, false);
+					return;
+				}
+
+				// Regular providers — show model selector.
+				showModelSelector(provider, result.models || [], keyVal, endpointVal, modelVal);
 			})
 			.catch((err) => {
 				saveBtn.disabled = false;
-				saveBtn.textContent = "Save";
-				keyLabel.textContent = err?.message || "Failed to save";
+				saveBtn.textContent = "Save & Validate";
+				keyLabel.textContent = err?.message || "Validation failed.";
 				keyLabel.classList.add("text-error");
 			});
 	});
@@ -254,6 +239,196 @@ export function showApiKeyForm(provider) {
 	form.appendChild(btns);
 	m.body.appendChild(form);
 	keyInp.focus();
+}
+
+function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skipSave) {
+	var m = els();
+	m.title.textContent = `${provider.displayName} — Select Model`;
+	m.body.textContent = "";
+
+	var wrapper = document.createElement("div");
+	wrapper.className = "provider-key-form";
+
+	var label = document.createElement("div");
+	label.className = "text-xs font-medium text-[var(--text-strong)] mb-2";
+	label.textContent = "Choose a model to use";
+	wrapper.appendChild(label);
+
+	// Search input when >5 models
+	var searchInp = null;
+	if (models.length > 5) {
+		searchInp = document.createElement("input");
+		searchInp.type = "text";
+		searchInp.className = "provider-key-input w-full text-xs mb-2";
+		searchInp.placeholder = "Search models\u2026";
+		wrapper.appendChild(searchInp);
+	}
+
+	var list = document.createElement("div");
+	list.className = "flex flex-col gap-2 max-h-56 overflow-y-auto";
+	wrapper.appendChild(list);
+
+	var errorArea = document.createElement("div");
+	errorArea.className = "text-xs text-[var(--error)] mt-2";
+	errorArea.style.display = "none";
+	wrapper.appendChild(errorArea);
+
+	var selectedCard = null;
+
+	function renderCards(filter) {
+		list.textContent = "";
+		var filtered = models;
+		if (filter) {
+			var q = filter.toLowerCase();
+			filtered = models.filter((mdl) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q));
+		}
+		if (filtered.length === 0) {
+			var empty = document.createElement("div");
+			empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+			empty.textContent = "No models match your search.";
+			list.appendChild(empty);
+			return;
+		}
+		filtered.forEach((mdl) => {
+			var card = document.createElement("div");
+			card.className = "model-card";
+
+			var header = document.createElement("div");
+			header.className = "flex items-center justify-between";
+
+			var name = document.createElement("span");
+			name.className = "text-sm font-medium text-[var(--text)]";
+			name.textContent = mdl.displayName;
+			header.appendChild(name);
+
+			var badges = document.createElement("div");
+			badges.className = "flex gap-2";
+
+			if (mdl.supportsTools) {
+				var toolsBadge = document.createElement("span");
+				toolsBadge.className = "recommended-badge";
+				toolsBadge.textContent = "Tools";
+				badges.appendChild(toolsBadge);
+			}
+
+			header.appendChild(badges);
+			card.appendChild(header);
+
+			var idLine = document.createElement("div");
+			idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
+			idLine.textContent = mdl.id;
+			card.appendChild(idLine);
+
+			card.addEventListener("click", () => {
+				if (selectedCard) return; // prevent double-click
+				// Deselect all, select this one
+				for (var c of list.querySelectorAll(".model-card")) c.classList.remove("selected");
+				card.classList.add("selected");
+				selectedCard = card;
+
+				// Show testing state
+				var testBadge = document.createElement("span");
+				testBadge.className = "tier-badge";
+				testBadge.textContent = "Testing\u2026";
+				badges.appendChild(testBadge);
+				errorArea.style.display = "none";
+
+				saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, mdl.id, !!skipSave);
+			});
+
+			list.appendChild(card);
+		});
+	}
+
+	renderCards(null);
+
+	if (searchInp) {
+		searchInp.addEventListener("input", () => {
+			selectedCard = null;
+			renderCards(searchInp.value.trim());
+		});
+	}
+
+	// Buttons
+	var btns = document.createElement("div");
+	btns.className = "btn-row mt-3";
+
+	var backBtn = document.createElement("button");
+	backBtn.className = "provider-btn provider-btn-secondary";
+	backBtn.textContent = "Back";
+	backBtn.addEventListener("click", () => {
+		if (skipSave) {
+			// OAuth flow — go back to provider list
+			openProviderModal();
+		} else {
+			showApiKeyForm(provider);
+		}
+	});
+	btns.appendChild(backBtn);
+	wrapper.appendChild(btns);
+
+	// Expose error area for saveAndFinishProvider to use
+	wrapper._errorArea = errorArea;
+	wrapper._resetSelection = () => {
+		selectedCard = null;
+		renderCards(searchInp?.value.trim() || null);
+	};
+
+	m.body.appendChild(wrapper);
+}
+
+function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
+	var m = els();
+
+	function showError(msg) {
+		var wrapper = m.body.querySelector(".provider-key-form");
+		if (wrapper?._errorArea) {
+			wrapper._errorArea.textContent = msg;
+			wrapper._errorArea.style.display = "";
+			if (wrapper._resetSelection) wrapper._resetSelection();
+		}
+	}
+
+	var savePromise = skipSave
+		? Promise.resolve({ ok: true })
+		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, modelVal));
+
+	savePromise
+		.then(async (res) => {
+			if (!res?.ok) {
+				showError(res?.error?.message || "Failed to save credentials.");
+				return;
+			}
+
+			if (selectedModelId) {
+				var testResult = await testModel(selectedModelId);
+				if (!testResult.ok) {
+					showError(testResult.error || "Model test failed. Try another model.");
+					return;
+				}
+				localStorage.setItem("moltis-model", selectedModelId);
+			}
+
+			// Success
+			m.body.textContent = "";
+			var status = document.createElement("div");
+			status.className = "provider-status";
+			status.textContent = `${provider.displayName} configured successfully!`;
+			m.body.appendChild(status);
+			fetchModels();
+			if (S.refreshProvidersPage) S.refreshProvidersPage();
+			setTimeout(closeProviderModal, 1500);
+		})
+		.catch((err) => {
+			showError(err?.message || "Failed to save credentials.");
+		});
+}
+
+function buildSavePayload(providerName, keyVal, endpointVal, modelVal) {
+	var payload = { provider: providerName, apiKey: keyVal };
+	if (endpointVal) payload.baseUrl = endpointVal;
+	if (modelVal) payload.model = modelVal;
+	return payload;
 }
 
 export function showOAuthFlow(provider) {
@@ -289,14 +464,7 @@ export function showOAuthFlow(provider) {
 				connectBtn.textContent = "Connected";
 				desc.classList.remove("text-error");
 				desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
-				sendRpc("models.detect_supported", {
-					background: true,
-					reason: "provider_connected",
-					provider: provider.name,
-				});
-				fetchModels();
-				if (S.refreshProvidersPage) S.refreshProvidersPage();
-				setTimeout(closeProviderModal, 1200);
+				showOAuthModelSelector(provider);
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				connectBtn.textContent = "Waiting for auth...";
@@ -348,22 +516,45 @@ function pollOAuthStatus(provider) {
 		sendRpc("providers.oauth.status", { provider: provider.name }).then((res) => {
 			if (res?.ok && res.payload && res.payload.authenticated) {
 				clearInterval(timer);
-				m.body.textContent = "";
-				var status = document.createElement("div");
-				status.className = "provider-status";
-				status.textContent = `${provider.displayName} connected successfully!`;
-				m.body.appendChild(status);
-				sendRpc("models.detect_supported", {
-					background: true,
-					reason: "provider_connected",
-					provider: provider.name,
-				});
-				fetchModels();
-				if (S.refreshProvidersPage) S.refreshProvidersPage();
-				setTimeout(closeProviderModal, 1500);
+				showOAuthModelSelector(provider);
 			}
 		});
 	}, 2000);
+}
+
+function showOAuthModelSelector(provider) {
+	sendRpc("models.list", {}).then((modelsRes) => {
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		var provModels = allModels.filter((entry) =>
+			entry.provider?.toLowerCase().includes(provider.name.replace(/-/g, "").toLowerCase()),
+		);
+
+		if (provModels.length > 0) {
+			var mapped = provModels.map((entry) => ({
+				id: entry.id,
+				displayName: entry.displayName || entry.id,
+				provider: entry.provider,
+				supportsTools: entry.supportsTools,
+			}));
+			showModelSelector(provider, mapped, null, null, null, true);
+		} else {
+			// No models found yet — trigger detection in background and show success.
+			sendRpc("models.detect_supported", {
+				background: true,
+				reason: "provider_connected",
+				provider: provider.name,
+			});
+			fetchModels();
+			if (S.refreshProvidersPage) S.refreshProvidersPage();
+			var modal = els();
+			modal.body.textContent = "";
+			var status = document.createElement("div");
+			status.className = "provider-status";
+			status.textContent = `${provider.displayName} connected successfully!`;
+			modal.body.appendChild(status);
+			setTimeout(closeProviderModal, 1500);
+		}
+	});
 }
 
 // ── Local model flow ──────────────────────────────────────

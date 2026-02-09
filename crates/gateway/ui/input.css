@@ -1303,6 +1303,10 @@
     border-color: var(--border-strong);
     background: var(--bg-hover);
   }
+  .model-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+  }
 
   .tier-badge {
     font-size: 0.68rem;

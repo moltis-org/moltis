@@ -1282,6 +1282,46 @@ impl ModelService for LiveModelService {
 
         Ok(summary)
     }
+
+    async fn test(&self, params: Value) -> ServiceResult {
+        let model_id = params
+            .get("modelId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'modelId' parameter".to_string())?;
+
+        let provider = {
+            let reg = self.providers.read().await;
+            reg.get(model_id)
+                .ok_or_else(|| format!("unknown model: {model_id}"))?
+        };
+
+        let probe = [ChatMessage::user("ping")];
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            provider.complete(&probe, &[]),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(_)) => Ok(serde_json::json!({
+                "ok": true,
+                "modelId": model_id,
+            })),
+            Ok(Err(err)) => {
+                let error_text = err.to_string();
+                let error_obj =
+                    crate::chat_error::parse_chat_error(&error_text, Some(provider.name()));
+                let detail = error_obj
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&error_text)
+                    .to_string();
+
+                Err(detail)
+            },
+            Err(_) => Err("Connection timed out after 20 seconds".to_string()),
+        }
+    }
 }
 
 // ── LiveChatService ─────────────────────────────────────────────────────────
@@ -5322,6 +5362,66 @@ mod tests {
         assert_eq!(next_probe_rate_limit_backoff_ms(Some(1_000)), 2_000);
         assert_eq!(next_probe_rate_limit_backoff_ms(Some(20_000)), 30_000);
         assert_eq!(next_probe_rate_limit_backoff_ms(Some(30_000)), 30_000);
+    }
+
+    #[tokio::test]
+    async fn model_test_rejects_missing_model_id() {
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+                &moltis_config::schema::ProvidersConfig::default(),
+            ))),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service.test(serde_json::json!({})).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing 'modelId'"));
+    }
+
+    #[tokio::test]
+    async fn model_test_rejects_unknown_model() {
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+                &moltis_config::schema::ProvidersConfig::default(),
+            ))),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service
+            .test(serde_json::json!({"modelId": "nonexistent::model-xyz"}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown model"));
+    }
+
+    #[tokio::test]
+    async fn model_test_returns_error_when_provider_fails() {
+        let mut registry = ProviderRegistry::from_env_with_config(
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
+        // StaticProvider's complete() returns an error ("not implemented for test")
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "test-provider::test-model".to_string(),
+                provider: "test-provider".to_string(),
+                display_name: "Test Model".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "test-provider".to_string(),
+                id: "test-provider::test-model".to_string(),
+            }),
+        );
+
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service
+            .test(serde_json::json!({"modelId": "test-provider::test-model"}))
+            .await;
+        // StaticProvider.complete() returns Err, so test should return an error.
+        assert!(result.is_err());
     }
 
     #[test]

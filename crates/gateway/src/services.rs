@@ -1722,6 +1722,8 @@ pub trait ModelService: Send + Sync {
     async fn enable(&self, params: Value) -> ServiceResult;
     /// Probe configured models and flag unsupported ones for this account.
     async fn detect_supported(&self, params: Value) -> ServiceResult;
+    /// Test a single model by sending a probe request.
+    async fn test(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopModelService;
@@ -1745,6 +1747,10 @@ impl ModelService for NoopModelService {
     }
 
     async fn detect_supported(&self, _params: Value) -> ServiceResult {
+        Err("model service not configured".into())
+    }
+
+    async fn test(&self, _params: Value) -> ServiceResult {
         Err("model service not configured".into())
     }
 }
@@ -1848,6 +1854,9 @@ pub trait ProviderSetupService: Send + Sync {
     async fn oauth_complete(&self, params: Value) -> ServiceResult;
     async fn oauth_status(&self, params: Value) -> ServiceResult;
     async fn remove_key(&self, params: Value) -> ServiceResult;
+    /// Validate provider credentials without persisting them.
+    /// Returns `{ valid: true, models: [...] }` or `{ valid: false, error: "..." }`.
+    async fn validate_key(&self, params: Value) -> ServiceResult;
 }
 
 // ── Local LLM ───────────────────────────────────────────────────────────────
@@ -1929,6 +1938,10 @@ impl ProviderSetupService for NoopProviderSetupService {
     }
 
     async fn remove_key(&self, _p: Value) -> ServiceResult {
+        Err("provider setup not configured".into())
+    }
+
+    async fn validate_key(&self, _p: Value) -> ServiceResult {
         Err("provider setup not configured".into())
     }
 }
