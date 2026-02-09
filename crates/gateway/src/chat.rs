@@ -1962,27 +1962,25 @@ impl ChatService for LiveChatService {
                 agent_fut.await
             };
 
-            // Persist assistant response (skip silent/empty responses).
+            // Persist assistant response (even empty ones — needed for LLM history coherence).
             if let Some((response_text, input_tokens, output_tokens, audio_path)) = assistant_text {
-                if !response_text.is_empty() {
-                    let assistant_msg = PersistedMessage::assistant(
-                        response_text,
-                        &model_id,
-                        &provider_name,
-                        input_tokens,
-                        output_tokens,
-                        audio_path,
-                    );
-                    if let Err(e) = session_store
-                        .append(&session_key_clone, &assistant_msg.to_value())
-                        .await
-                    {
-                        warn!("failed to persist assistant message: {e}");
-                    }
-                    // Update metadata counts.
-                    if let Ok(count) = session_store.count(&session_key_clone).await {
-                        session_metadata.touch(&session_key_clone, count).await;
-                    }
+                let assistant_msg = PersistedMessage::assistant(
+                    response_text,
+                    &model_id,
+                    &provider_name,
+                    input_tokens,
+                    output_tokens,
+                    audio_path,
+                );
+                if let Err(e) = session_store
+                    .append(&session_key_clone, &assistant_msg.to_value())
+                    .await
+                {
+                    warn!("failed to persist assistant message: {e}");
+                }
+                // Update metadata counts.
+                if let Ok(count) = session_store.count(&session_key_clone).await {
+                    session_metadata.touch(&session_key_clone, count).await;
                 }
             }
 
@@ -2178,28 +2176,26 @@ impl ChatService for LiveChatService {
             .await
         };
 
-        // Persist assistant response (skip silent/empty responses).
+        // Persist assistant response (even empty ones — needed for LLM history coherence).
         if let Some((ref response_text, input_tokens, output_tokens, ref audio_path)) = result {
-            if !response_text.is_empty() {
-                let assistant_msg = PersistedMessage::assistant(
-                    response_text,
-                    &model_id,
-                    &provider_name,
-                    input_tokens,
-                    output_tokens,
-                    audio_path.clone(),
-                );
-                if let Err(e) = self
-                    .session_store
-                    .append(&session_key, &assistant_msg.to_value())
-                    .await
-                {
-                    warn!("send_sync: failed to persist assistant message: {e}");
-                }
-                // Update metadata message count.
-                if let Ok(count) = self.session_store.count(&session_key).await {
-                    self.session_metadata.touch(&session_key, count).await;
-                }
+            let assistant_msg = PersistedMessage::assistant(
+                response_text,
+                &model_id,
+                &provider_name,
+                input_tokens,
+                output_tokens,
+                audio_path.clone(),
+            );
+            if let Err(e) = self
+                .session_store
+                .append(&session_key, &assistant_msg.to_value())
+                .await
+            {
+                warn!("send_sync: failed to persist assistant message: {e}");
+            }
+            // Update metadata message count.
+            if let Ok(count) = self.session_store.count(&session_key).await {
+                self.session_metadata.touch(&session_key, count).await;
             }
         }
 
