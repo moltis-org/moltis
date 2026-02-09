@@ -799,6 +799,9 @@ function sendChat() {
 
 function markMessageQueued(el, sessionKey) {
 	if (!el) return;
+	var tray = document.getElementById("queuedMessages");
+	if (!tray) return;
+	// Move the user message from the main chat into the queued tray.
 	el.classList.add("queued");
 	var badge = document.createElement("div");
 	badge.className = "queued-badge";
@@ -807,7 +810,7 @@ function markMessageQueued(el, sessionKey) {
 	label.textContent = "Queued";
 	var btn = document.createElement("button");
 	btn.className = "queued-cancel";
-	btn.title = "Cancel";
+	btn.title = "Cancel all queued";
 	btn.textContent = "\u2715";
 	btn.addEventListener("click", (e) => {
 		e.stopPropagation();
@@ -816,6 +819,8 @@ function markMessageQueued(el, sessionKey) {
 	badge.appendChild(label);
 	badge.appendChild(btn);
 	el.appendChild(badge);
+	tray.appendChild(el);
+	tray.classList.remove("hidden");
 }
 
 function chatAutoResize() {
@@ -851,7 +856,7 @@ function handleHistoryDown() {
 
 // Safe: static hardcoded HTML template string — no user input is interpolated.
 var chatPageHTML =
-	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto;overflow:hidden">' +
+	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden">' +
 	'<div class="px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
@@ -903,6 +908,7 @@ var chatPageHTML =
 	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
 	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
+	'<div id="queuedMessages" class="queued-tray hidden"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
 	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
 	'<textarea id="chatInput" placeholder="Type a message..." rows="1" ' +

@@ -81,14 +81,17 @@ function makeThinkingDots() {
 
 function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	var firstQueued = S.chatMsgBox.querySelector(".msg.user.queued");
-	if (firstQueued) {
-		// Move the queued message to the bottom so it sits right before the
-		// LLM response, preserving user → assistant ordering.
-		firstQueued.classList.remove("queued");
-		var badge = firstQueued.querySelector(".queued-badge");
-		if (badge) badge.remove();
-		S.chatMsgBox.appendChild(firstQueued);
+	// Move the first queued message from the tray into the main chat flow.
+	var tray = document.getElementById("queuedMessages");
+	if (tray) {
+		var firstQueued = tray.querySelector(".msg.user.queued");
+		if (firstQueued) {
+			firstQueued.classList.remove("queued");
+			var badge = firstQueued.querySelector(".queued-badge");
+			if (badge) badge.remove();
+			S.chatMsgBox.appendChild(firstQueued);
+			if (!tray.querySelector(".msg")) tray.classList.add("hidden");
+		}
 	}
 	removeThinking();
 	var thinkEl = document.createElement("div");
@@ -399,10 +402,11 @@ function handleChatNotice(p, isActive, isChatPage) {
 
 function handleChatQueueCleared(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	var queued = S.chatMsgBox.querySelectorAll(".msg.user.queued");
-	queued.forEach((el) => {
-		el.remove();
-	});
+	var tray = document.getElementById("queuedMessages");
+	if (tray) {
+		while (tray.firstChild) tray.removeChild(tray.firstChild);
+		tray.classList.add("hidden");
+	}
 }
 
 var chatHandlers = {
