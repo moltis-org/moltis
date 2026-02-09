@@ -658,7 +658,7 @@ function dispatchFrame(frame) {
 var connectOpts = {
 	onFrame: dispatchFrame,
 	onConnected: (hello) => {
-		setStatus("connected", "live");
+		setStatus("connected", "");
 		var now = new Date();
 		var ts = now.toLocaleTimeString([], {
 			hour: "2-digit",
