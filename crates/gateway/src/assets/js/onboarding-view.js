@@ -1742,7 +1742,7 @@ function ChannelStep({ onNext, onBack }) {
 					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
 				</div>
 			</div>`
-				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto pr-3">
+				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
 				<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 					<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
 					<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
@@ -1897,7 +1897,7 @@ function SummaryStep({ onBack, onFinish }) {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Setup Summary</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
 
-		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
+		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
 			<!-- Identity -->
 			<${SummaryRow}
 				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
