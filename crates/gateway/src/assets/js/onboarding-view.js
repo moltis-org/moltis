@@ -1251,17 +1251,6 @@ function ChannelStep({ onNext, onBack }) {
 	</div>`;
 }
 
-// ── Finish screen ───────────────────────────────────────────
-
-function FinishStep() {
-	return html`<div class="flex flex-col gap-4 items-center text-center py-6">
-		<div class="text-4xl">\u{1f389}</div>
-		<h2 class="text-xl font-medium text-[var(--text-strong)]">You\u2019re all set!</h2>
-		<p class="text-sm text-[var(--muted)]">Your agent is ready to go. Start chatting or customise further in Settings.</p>
-		<button class="provider-btn" onClick=${() => window.location.assign(preferredChatPath())}>Get Started</button>
-	</div>`;
-}
-
 // ── Main page component ─────────────────────────────────────
 
 function OnboardingPage() {
@@ -1269,7 +1258,6 @@ function OnboardingPage() {
 	var [authNeeded, setAuthNeeded] = useState(false);
 	var [authSkippable, setAuthSkippable] = useState(false);
 	var [voiceAvailable, setVoiceAvailable] = useState(false);
-	var [finished, setFinished] = useState(false);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
 	var sessionsPanelRef = useRef(null);
@@ -1357,10 +1345,6 @@ function OnboardingPage() {
 		</div>`;
 	}
 
-	if (finished) {
-		return html`<div class="onboarding-card"><${FinishStep} /></div>`;
-	}
-
 	// Build step list dynamically based on auth + voice availability
 	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
@@ -1369,7 +1353,7 @@ function OnboardingPage() {
 
 	function goNext() {
 		if (step === lastStep) {
-			setFinished(true);
+			window.location.assign(preferredChatPath());
 		} else {
 			setStep(step + 1);
 		}
