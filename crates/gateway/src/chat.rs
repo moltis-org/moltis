@@ -2915,10 +2915,38 @@ impl ChatService for LiveChatService {
 
         let system_prompt_chars = system_prompt.len();
 
+        // Reconstruct `role: "tool"` messages from persisted `tool_result`
+        // entries so the context view shows what the LLM actually saw.
+        let history_with_tools: Vec<Value> = history
+            .into_iter()
+            .map(|val| {
+                if val.get("role").and_then(|r| r.as_str()) != Some("tool_result") {
+                    return val;
+                }
+                let tool_call_id = val
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let content = if let Some(err) = val.get("error").and_then(|v| v.as_str()) {
+                    format!("Error: {err}")
+                } else if let Some(res) = val.get("result") {
+                    res.to_string()
+                } else {
+                    String::new()
+                };
+                serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": content,
+                })
+            })
+            .collect();
+
         // Build the full messages array: system prompt + conversation history.
-        let mut messages = Vec::with_capacity(1 + history.len());
+        let mut messages = Vec::with_capacity(1 + history_with_tools.len());
         messages.push(ChatMessage::system(system_prompt));
-        messages.extend(values_to_chat_messages(&history));
+        messages.extend(values_to_chat_messages(&history_with_tools));
 
         let openai_messages: Vec<Value> = messages.iter().map(|m| m.to_openai_value()).collect();
         let message_count = openai_messages.len();
