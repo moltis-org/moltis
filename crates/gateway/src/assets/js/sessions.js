@@ -561,6 +561,15 @@ export function updateChatSessionHeader() {
 
 function showWelcomeCard() {
 	if (!S.chatMsgBox) return;
+
+	if (S.models.length === 0) {
+		var noProvTpl = document.getElementById("tpl-no-providers-card");
+		if (!noProvTpl) return;
+		var noProvCard = noProvTpl.content.cloneNode(true).firstElementChild;
+		S.chatMsgBox.appendChild(noProvCard);
+		return;
+	}
+
 	var tpl = document.getElementById("tpl-welcome-card");
 	if (!tpl) return;
 	var card = tpl.content.cloneNode(true).firstElementChild;
@@ -577,6 +586,22 @@ function showWelcomeCard() {
 	if (nameEl) nameEl.textContent = botName;
 
 	S.chatMsgBox.appendChild(card);
+}
+
+export function refreshWelcomeCardIfNeeded() {
+	if (!S.chatMsgBox) return;
+	var welcomeCard = S.chatMsgBox.querySelector("#welcomeCard");
+	var noProvCard = S.chatMsgBox.querySelector("#noProvidersCard");
+	var hasModels = S.models.length > 0;
+
+	// Wrong variant showing — swap it
+	if (hasModels && noProvCard) {
+		noProvCard.remove();
+		showWelcomeCard();
+	} else if (!hasModels && welcomeCard) {
+		welcomeCard.remove();
+		showWelcomeCard();
+	}
 }
 
 export function switchSession(key, searchContext, projectId) {

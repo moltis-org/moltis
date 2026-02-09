@@ -560,6 +560,27 @@ endpoint = "http://localhost:8000"</code>
   </div>
 </template>
 
+<template id="tpl-no-providers-card">
+  <div id="noProvidersCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
+    <div class="text-[var(--muted)] mb-4">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 18a4 4 0 0 0-8 0"/>
+        <circle cx="12" cy="11" r="3"/>
+        <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"/>
+        <path d="M2 12h2"/>
+        <path d="M20 12h2"/>
+        <path d="M12 2v2"/>
+        <path d="M12 20v2"/>
+      </svg>
+    </div>
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLM Providers Connected</h2>
+    <p class="text-sm text-[var(--muted)] mb-6">
+      You have not connected any LLM providers yet. Add a provider to start chatting.
+    </p>
+    <a href="/providers" class="provider-btn">Go to Providers</a>
+  </div>
+</template>
+
 <script type="module" src="/assets/js/app.js"></script>
 </body>
 </html>

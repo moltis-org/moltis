@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Show "No LLM Providers Connected" card instead of welcome greeting when no
+  providers are configured.
+
 ### Fixed
 
 - **Docker RAM detection**: Fall back to `/proc/meminfo` when `sysinfo` returns
