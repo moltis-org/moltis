@@ -634,14 +634,37 @@ function refreshFullContextPanel() {
 			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
 			return;
 		}
-		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-3");
-		header.textContent =
+		var headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
+		var headerText = ctxEl("span", "text-xs text-[var(--muted)]");
+		headerText.textContent =
 			`${res.payload.messageCount} messages \xb7 ` +
 			`system prompt ${res.payload.systemPromptChars.toLocaleString()} chars \xb7 ` +
 			`total ${res.payload.totalChars.toLocaleString()} chars`;
-		panel.appendChild(header);
+		headerRow.appendChild(headerText);
 
 		var messages = res.payload.messages || [];
+
+		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary text-xs");
+		copyBtn.textContent = "Copy";
+		copyBtn.addEventListener("click", () => {
+			var lines = messages.map((m) => {
+				var content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+				var parts = [content];
+				for (var tc of m.tool_calls || []) {
+					parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
+				}
+				return `[${m.role}] ${parts.join("\n")}`;
+			});
+			navigator.clipboard.writeText(lines.join("\n")).then(() => {
+				copyBtn.textContent = "Copied!";
+				setTimeout(() => {
+					copyBtn.textContent = "Copy";
+				}, 1500);
+			});
+		});
+		headerRow.appendChild(copyBtn);
+		panel.appendChild(headerRow);
+
 		for (var i = 0; i < messages.length; i++) {
 			panel.appendChild(renderContextMessage(messages[i], i));
 		}
