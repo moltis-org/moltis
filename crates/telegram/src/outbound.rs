@@ -122,10 +122,10 @@ impl ChannelOutbound for TelegramOutbound {
                 } else {
                     // Send this chunk first, then the suffix as a separate message.
                     let mut req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
-                    if i == 0 {
-                        if let Some(ref rp) = rp {
-                            req = req.reply_parameters(rp.clone());
-                        }
+                    if i == 0
+                        && let Some(ref rp) = rp
+                    {
+                        req = req.reply_parameters(rp.clone());
                     }
                     req.await?;
                     // Send suffix as the final message (no reply threading).
@@ -141,10 +141,10 @@ impl ChannelOutbound for TelegramOutbound {
             let mut req = bot
                 .send_message(chat_id, &content)
                 .parse_mode(ParseMode::Html);
-            if i == 0 {
-                if let Some(ref rp) = rp {
-                    req = req.reply_parameters(rp.clone());
-                }
+            if i == 0
+                && let Some(ref rp) = rp
+            {
+                req = req.reply_parameters(rp.clone());
             }
             req.await?;
         }
