@@ -1,7 +1,7 @@
 // ── Onboarding wizard ──────────────────────────────────────
 //
 // Multi-step setup page shown to first-time users.
-// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) → Channel
+// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) → Channel → Summary
 // No new Rust code — all existing RPC methods and REST endpoints.
 
 import { html } from "htm/preact";
@@ -16,8 +16,8 @@ import { fetchPhrase } from "./tts-phrases.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel"];
+var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -498,7 +498,7 @@ function OnboardingProviderRow({
 					isExpanded
 						? null
 						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick=${() => onStartConfigure(provider.name)}>${provider.configured ? "Reconfigure" : "Configure"}</button>`
+							onClick=${() => onStartConfigure(provider.name)}>${provider.configured ? "Choose Model" : "Configure"}</button>`
 				}
 			</div>
 		</div>
@@ -1687,6 +1687,8 @@ function ChannelStep({ onNext, onBack }) {
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
+	var [connected, setConnected] = useState(false);
+	var [connectedName, setConnectedName] = useState("");
 	var [error, setError] = useState(null);
 
 	function onSubmit(e) {
@@ -1718,7 +1720,8 @@ function ChannelStep({ onNext, onBack }) {
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				onNext();
+				setConnected(true);
+				setConnectedName(accountId.trim());
 			} else {
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
 			}
@@ -1728,47 +1731,308 @@ function ChannelStep({ onNext, onBack }) {
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect Telegram</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a Telegram bot so you can chat from your phone. You can set this up later in Channels.</p>
-		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
-			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
-			<span>2. Send /newbot and follow the prompts</span>
-			<span>3. Copy the bot token and paste it below</span>
+		${
+			connected
+				? html`<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<div>
+					<div class="text-sm font-medium text-[var(--text-strong)]">Bot connected</div>
+					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
+				</div>
+			</div>`
+				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto pr-3">
+				<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+					<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
+					<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
+					<span>2. Send /newbot and follow the prompts</span>
+					<span>3. Copy the bot token and paste it below</span>
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
+					<input type="text" class="provider-key-input w-full"
+						value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+						placeholder="e.g. my_assistant_bot" autofocus />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${token} onInput=${(e) => setToken(e.target.value)}
+						placeholder="123456:ABC-DEF..." />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+					<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+						<option value="allowlist">Allowlist only (recommended)</option>
+						<option value="open">Open (anyone)</option>
+						<option value="disabled">Disabled</option>
+					</select>
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
+					<textarea class="provider-key-input w-full" rows="2"
+						value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+						placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+					<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
+				</div>
+				${error && html`<${ErrorPanel} message=${error} />`}
+			</form>`
+		}
+		<div class="flex items-center gap-3 mt-1">
+			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			${
+				connected
+					? html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`
+					: html`<button type="button" class="provider-btn" disabled=${saving} onClick=${onSubmit}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>`
+			}
+			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
-		<form onSubmit=${onSubmit} class="flex flex-col gap-3">
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
-				<input type="text" class="provider-key-input w-full"
-					value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
-					placeholder="e.g. my_assistant_bot" autofocus />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${token} onInput=${(e) => setToken(e.target.value)}
-					placeholder="123456:ABC-DEF..." />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
-				<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
-					<option value="allowlist">Allowlist only (recommended)</option>
-					<option value="open">Open (anyone)</option>
-					<option value="disabled">Disabled</option>
-				</select>
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
-				<textarea class="provider-key-input w-full" rows="2"
-					value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
-					placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
-				<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
-			</div>
-			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-				<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
-				<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
-			</div>
-		</form>
+	</div>`;
+}
+
+// ── Summary step helpers ─────────────────────────────────────
+
+var LOW_MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
+
+function formatMemBytes(bytes) {
+	if (bytes == null) return "?";
+	var gb = bytes / (1024 * 1024 * 1024);
+	return `${gb.toFixed(1)} GB`;
+}
+
+function CheckIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+	</svg>`;
+}
+
+function WarnIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+	</svg>`;
+}
+
+function ErrorIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+	</svg>`;
+}
+
+function InfoIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+	</svg>`;
+}
+
+function SummaryRow({ icon, label, children }) {
+	return html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 flex gap-3 items-start">
+		<div class="mt-0.5">${icon}</div>
+		<div class="flex-1 min-w-0">
+			<div class="text-sm font-medium text-[var(--text-strong)]">${label}</div>
+			<div class="text-xs text-[var(--muted)] mt-1">${children}</div>
+		</div>
+	</div>`;
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: summary step fetches multiple data sources and renders conditional sections
+function SummaryStep({ onBack, onFinish }) {
+	var [loading, setLoading] = useState(true);
+	var [data, setData] = useState(null);
+
+	useEffect(() => {
+		var cancelled = false;
+
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: parallel data fetches and conditional gon reads
+		async function load() {
+			await refreshGon();
+
+			var identity = getGon("identity");
+			var mem = getGon("mem");
+			var update = getGon("update");
+			var voiceEnabled = getGon("voice_enabled");
+
+			var [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+				sendRpc("providers.available", {}).catch(() => null),
+				sendRpc("channels.status", {}).catch(() => null),
+				fetch("/api/tailscale/status")
+					.then((r) => (r.ok ? r.json() : null))
+					.catch(() => null),
+				voiceEnabled ? sendRpc("voice.providers.all", {}).catch(() => null) : Promise.resolve(null),
+				fetch("/api/bootstrap")
+					.then((r) => (r.ok ? r.json() : null))
+					.catch(() => null),
+			]);
+
+			if (cancelled) return;
+
+			setData({
+				identity,
+				mem,
+				update,
+				voiceEnabled,
+				providers: providersRes?.ok ? providersRes.payload || [] : [],
+				channels: channelsRes?.ok ? channelsRes.payload?.channels || [] : [],
+				tailscale: tailscaleRes,
+				voice: voiceRes?.ok ? voiceRes.payload || { tts: [], stt: [] } : null,
+				sandbox: bootstrapRes?.sandbox || null,
+			});
+			setLoading(false);
+		}
+
+		load();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	if (loading || !data) {
+		return html`<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>`;
+	}
+
+	var activeModel = localStorage.getItem("moltis-model");
+	var configuredProviders = data.providers.filter((p) => p.configured);
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Setup Summary</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
+
+		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
+			<!-- Identity -->
+			<${SummaryRow}
+				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
+				label="Identity">
+				${
+					data.identity?.user_name && data.identity?.name
+						? html`You: <span class="font-medium text-[var(--text)]">${data.identity.user_name}</span>
+						${" "}Agent: <span class="font-medium text-[var(--text)]">${data.identity.emoji || ""} ${data.identity.name}</span>`
+						: html`<span class="text-[var(--warn)]">Identity not fully configured</span>`
+				}
+			<//>
+
+			<!-- Providers -->
+			<${SummaryRow}
+				icon=${configuredProviders.length > 0 ? html`<${CheckIcon} />` : html`<${ErrorIcon} />`}
+				label="Providers">
+				${
+					configuredProviders.length > 0
+						? html`<div class="flex flex-col gap-1">
+						<div class="flex flex-wrap gap-1">
+							${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
+						</div>
+						${activeModel ? html`<div>Active model: <span class="font-mono font-medium text-[var(--text)]">${activeModel}</span></div>` : null}
+					</div>`
+						: html`<span class="text-[var(--error)]">No providers configured</span>`
+				}
+			<//>
+
+			<!-- Channels -->
+			<${SummaryRow}
+				icon=${
+					data.channels.length > 0
+						? data.channels.some((c) => c.status === "error")
+							? html`<${ErrorIcon} />`
+							: data.channels.some((c) => c.status === "disconnected")
+								? html`<${WarnIcon} />`
+								: html`<${CheckIcon} />`
+						: html`<${InfoIcon} />`
+				}
+				label="Channels">
+				${
+					data.channels.length > 0
+						? html`<div class="flex flex-col gap-1">
+						${data.channels.map((ch) => {
+							var statusColor =
+								ch.status === "connected" ? "var(--ok)" : ch.status === "error" ? "var(--error)" : "var(--warn)";
+							return html`<div key=${ch.account_id} class="flex items-center gap-1">
+								<span style="color:${statusColor}">\u25CF</span>
+								<span class="font-medium text-[var(--text)]">${ch.type}</span>: ${ch.name || ch.account_id}
+								<span>(${ch.status})</span>
+							</div>`;
+						})}
+					</div>`
+						: html`No channels configured`
+				}
+			<//>
+
+			<!-- System Memory -->
+			<${SummaryRow}
+				icon=${data.mem?.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<${WarnIcon} />` : html`<${CheckIcon} />`}
+				label="System Memory">
+				${
+					data.mem
+						? html`Total: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.total)}</span>
+						${" "}Available: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.available)}</span>
+						${data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<div class="text-[var(--warn)] mt-1">Low memory detected. Consider cloud deployment for better performance.</div>` : null}`
+						: html`Memory info unavailable`
+				}
+			<//>
+
+			<!-- Sandbox -->
+			<${SummaryRow}
+				icon=${data.sandbox?.backend && data.sandbox.backend !== "none" ? html`<${CheckIcon} />` : html`<${InfoIcon} />`}
+				label="Sandbox">
+				${
+					data.sandbox?.backend && data.sandbox.backend !== "none"
+						? html`Backend: <span class="font-medium text-[var(--text)]">${data.sandbox.backend}</span>`
+						: html`No container runtime detected`
+				}
+			<//>
+
+			<!-- Version -->
+			<${SummaryRow}
+				icon=${data.update?.available ? html`<${WarnIcon} />` : html`<${CheckIcon} />`}
+				label="Version">
+				${
+					data.update?.available
+						? html`Update available: <a href=${data.update.release_url || "#"} target="_blank" class="text-[var(--accent)] underline font-medium">${data.update.latest_version}</a>`
+						: html`You are running the latest version.`
+				}
+			<//>
+
+			<!-- Tailscale (hidden if feature not compiled) -->
+			${
+				data.tailscale !== null
+					? html`<${SummaryRow}
+					icon=${data.tailscale?.connected ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
+					label="Tailscale">
+					${
+						data.tailscale?.connected
+							? html`Connected`
+							: data.tailscale?.installed
+								? html`Installed but not connected`
+								: html`Not installed. Install Tailscale for secure remote access.`
+					}
+				<//>`
+					: null
+			}
+
+			<!-- Voice (hidden if not enabled) -->
+			${
+				data.voiceEnabled
+					? html`<${SummaryRow}
+					icon=${data.voice && ([...data.voice.tts, ...data.voice.stt].some((p) => p.enabled)) ? html`<${CheckIcon} />` : html`<${InfoIcon} />`}
+					label="Voice">
+					${(() => {
+						if (!data.voice) return html`Voice providers unavailable`;
+						var enabledStt = data.voice.stt.filter((p) => p.enabled).map((p) => p.name);
+						var enabledTts = data.voice.tts.filter((p) => p.enabled).map((p) => p.name);
+						if (enabledStt.length === 0 && enabledTts.length === 0) return html`No voice providers enabled`;
+						return html`<div class="flex flex-col gap-0.5">
+							${enabledStt.length > 0 ? html`<div>STT: <span class="font-medium text-[var(--text)]">${enabledStt.join(", ")}</span></div>` : null}
+							${enabledTts.length > 0 ? html`<div>TTS: <span class="font-medium text-[var(--text)]">${enabledTts.join(", ")}</span></div>` : null}
+						</div>`;
+					})()}
+				<//>`
+					: null
+			}
+		</div>
+
+		<div class="flex items-center gap-3 mt-1">
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<div class="flex-1" />
+			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
+		</div>
 	</div>`;
 }
 
@@ -1870,7 +2134,7 @@ function OnboardingPage() {
 	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
-	var lastStep = voiceAvailable ? 4 : 3;
+	var lastStep = voiceAvailable ? 5 : 4;
 
 	function goNext() {
 		if (step === lastStep) {
@@ -1878,6 +2142,10 @@ function OnboardingPage() {
 		} else {
 			setStep(step + 1);
 		}
+	}
+
+	function goFinish() {
+		window.location.assign(preferredChatPath());
 	}
 
 	function goBack() {
@@ -1888,9 +2156,10 @@ function OnboardingPage() {
 		}
 	}
 
-	// Determine which component to show for steps 3 and 4
+	// Determine which component to show for each step
 	var channelStep = voiceAvailable ? 4 : 3;
 	var voiceStep = voiceAvailable ? 3 : -1;
+	var summaryStep = voiceAvailable ? 5 : 4;
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
@@ -1900,6 +2169,7 @@ function OnboardingPage() {
 			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
 	</div>`;
 }
