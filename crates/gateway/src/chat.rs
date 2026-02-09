@@ -4096,11 +4096,17 @@ async fn deliver_channel_replies_to_targets(
                 ReplyMedium::Voice => build_tts_payload(&state, &session_key, &target, &text).await,
                 ReplyMedium::Text => None,
             };
+            let reply_to = target.message_id.as_deref();
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => match tts_payload {
                     Some(payload) => {
                         if let Err(e) = outbound
-                            .send_media(&target.account_id, &target.chat_id, &payload)
+                            .send_media(
+                                &target.account_id,
+                                &target.chat_id,
+                                &payload,
+                                reply_to,
+                            )
                             .await
                         {
                             warn!(
@@ -4112,7 +4118,12 @@ async fn deliver_channel_replies_to_targets(
                     },
                     None => {
                         if let Err(e) = outbound
-                            .send_text(&target.account_id, &target.chat_id, &text)
+                            .send_text(
+                                &target.account_id,
+                                &target.chat_id,
+                                &text,
+                                reply_to,
+                            )
                             .await
                         {
                             warn!(
@@ -4299,7 +4310,12 @@ async fn send_tool_status_to_channels(
         tokio::spawn(async move {
             // Send as a silent message to avoid notification spam
             if let Err(e) = outbound
-                .send_text_silent(&target.account_id, &target.chat_id, &message)
+                .send_text_silent(
+                    &target.account_id,
+                    &target.chat_id,
+                    &message,
+                    target.message_id.as_deref(),
+                )
                 .await
             {
                 debug!(
@@ -4459,8 +4475,14 @@ async fn send_screenshot_to_channels(
         tasks.push(tokio::spawn(async move {
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => {
+                    let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
-                        .send_media(&target.account_id, &target.chat_id, &payload)
+                        .send_media(
+                            &target.account_id,
+                            &target.chat_id,
+                            &payload,
+                            reply_to,
+                        )
                         .await
                     {
                         warn!(
@@ -4471,7 +4493,12 @@ async fn send_screenshot_to_channels(
                         // Notify the user of the error
                         let error_msg = format!("⚠️ Failed to send screenshot: {e}");
                         let _ = outbound
-                            .send_text(&target.account_id, &target.chat_id, &error_msg)
+                            .send_text(
+                                &target.account_id,
+                                &target.chat_id,
+                                &error_msg,
+                                reply_to,
+                            )
                             .await;
                     } else {
                         debug!(
@@ -4571,7 +4598,13 @@ mod tests {
 
     #[async_trait]
     impl moltis_channels::plugin::ChannelOutbound for MockChannelOutbound {
-        async fn send_text(&self, _account_id: &str, _to: &str, _text: &str) -> Result<()> {
+        async fn send_text(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _reply_to: Option<&str>,
+        ) -> Result<()> {
             tokio::time::sleep(self.delay).await;
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -4582,6 +4615,7 @@ mod tests {
             _account_id: &str,
             _to: &str,
             _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
         ) -> Result<()> {
             Ok(())
         }
@@ -4599,6 +4633,7 @@ mod tests {
             channel_type: moltis_channels::ChannelType::Telegram,
             account_id: "acct".to_string(),
             chat_id: "123".to_string(),
+            message_id: None,
         }];
         let state = crate::state::GatewayState::new(
             crate::auth::ResolvedAuth {

@@ -205,6 +205,7 @@ pub async fn handle_message_direct(
                     account_id,
                     &msg.chat.id.0.to_string(),
                     "I can't understand voice, you did not configure it, please visit Settings -> Voice",
+                    None,
                 )
                 .await
             {
@@ -342,6 +343,7 @@ pub async fn handle_message_direct(
             channel_type: ChannelType::Telegram,
             account_id: account_id.to_string(),
             chat_id: msg.chat.id.0.to_string(),
+            message_id: Some(msg.id.0.to_string()),
         };
 
         // Intercept slash commands before dispatching to the LLM.
@@ -470,7 +472,7 @@ pub async fn handle_message_direct(
                 };
                 if let Some(outbound) = outbound
                     && let Err(e) = outbound
-                        .send_text(account_id, &reply_target.chat_id, &response)
+                        .send_text(account_id, &reply_target.chat_id, &response, None)
                         .await
                 {
                     warn!(account_id, "failed to send command response: {e}");
@@ -1037,6 +1039,7 @@ pub async fn handle_callback_query(
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
+        message_id: None, // Callback queries don't have a message to reply-thread to.
     };
 
     // Provider selection → fetch models for that provider and show a new keyboard.
@@ -1053,7 +1056,7 @@ pub async fn handle_callback_query(
                 },
                 Err(e) => {
                     if let Err(err) = outbound
-                        .send_text(account_id, &chat_id, &format!("Error: {e}"))
+                        .send_text(account_id, &chat_id, &format!("Error: {e}"), None)
                         .await
                     {
                         warn!(account_id, "failed to send callback response: {err}");
@@ -1078,7 +1081,7 @@ pub async fn handle_callback_query(
         }
 
         // Also send as a regular message for visibility.
-        if let Err(e) = outbound.send_text(account_id, &chat_id, &response).await {
+        if let Err(e) = outbound.send_text(account_id, &chat_id, &response, None).await {
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {

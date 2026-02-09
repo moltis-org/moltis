@@ -193,7 +193,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
                             .await;
                     }
                 }
@@ -229,7 +229,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
                             .await;
                     }
                 }
@@ -294,7 +294,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let error_msg = format!("⚠️ {e}");
                     if let Err(send_err) = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg)
+                        .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg, reply_to.message_id.as_deref())
                         .await
                     {
                         warn!("failed to send error back to channel: {send_err}");
@@ -572,7 +572,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
                         .await;
                 }
             }
@@ -605,7 +605,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
                         .await;
                 }
             }
@@ -639,7 +639,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
             if let Some(outbound) = state.services.channel_outbound_arc() {
                 let error_msg = format!("⚠️ {e}");
                 if let Err(send_err) = outbound
-                    .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg)
+                    .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg, reply_to.message_id.as_deref())
                     .await
                 {
                     warn!("failed to send error back to channel: {send_err}");
@@ -1268,6 +1268,7 @@ mod tests {
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "12345".into(),
+            message_id: None,
         };
         assert_eq!(default_channel_session_key(&target), "telegram:bot1:12345");
     }
@@ -1278,6 +1279,7 @@ mod tests {
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
+            message_id: None,
         };
         assert_eq!(
             default_channel_session_key(&target),

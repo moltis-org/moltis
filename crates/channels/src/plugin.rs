@@ -196,6 +196,10 @@ pub struct ChannelReplyTarget {
     pub account_id: String,
     /// Chat/peer ID to send the reply to.
     pub chat_id: String,
+    /// Platform-specific message ID of the inbound message.
+    /// Used to thread replies (e.g. Telegram `reply_to_message_id`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 /// Core channel plugin trait. Each messaging platform implements this.
@@ -221,17 +225,38 @@ pub trait ChannelPlugin: Send + Sync {
 }
 
 /// Send messages to a channel.
+///
+/// `reply_to` is an optional platform-specific message ID that the outbound
+/// message should thread as a reply to (e.g. Telegram `reply_to_message_id`).
 #[async_trait]
 pub trait ChannelOutbound: Send + Sync {
-    async fn send_text(&self, account_id: &str, to: &str, text: &str) -> Result<()>;
-    async fn send_media(&self, account_id: &str, to: &str, payload: &ReplyPayload) -> Result<()>;
+    async fn send_text(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()>;
+    async fn send_media(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<()>;
     /// Send a "typing" indicator. No-op by default.
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())
     }
     /// Send a text message without notification (silent). Falls back to send_text by default.
-    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
-        self.send_text(account_id, to, text).await
+    async fn send_text_silent(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        self.send_text(account_id, to, text, reply_to).await
     }
 }
 
