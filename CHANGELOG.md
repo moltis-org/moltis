@@ -40,6 +40,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session override). Tool-mode prompts also add routing guidance so the agent
   asks before requesting host installs or changing sandbox mode.
 
+- **Telegram location sharing**: Telegram channels now support receiving shared
+  locations and live location updates. Live locations are tracked until they
+  expire or the user stops sharing.
+
+- **Telegram reply threading**: Telegram channel replies now use
+  `reply_to_message_id` to thread responses under the original user message,
+  keeping conversations visually grouped in the chat.
+
+- **`get_user_location` tool**: New browser-based geolocation tool lets the LLM
+  request the user's current coordinates via the Geolocation API, with a
+  permission prompt in the UI.
+
+- **`sandbox_packages` tool**: New tool for on-demand package discovery inside
+  the sandbox, allowing the LLM to query available and installable packages at
+  runtime.
+
+- **Sandbox package expansions**: Pre-built sandbox images now include expanded
+  package groups — GIS/OpenStreetMap, document/office/search,
+  image/audio/media/data-processing, and communication packages. Mise is also
+  available for runtime version management.
+
+- **Queued message UI**: When a message is submitted while the LLM is already
+  responding, it is shown in a dedicated bottom tray with cancel support.
+  Queued messages are moved into the conversation only after the current
+  response finishes rendering.
+
+- **Full context view**: New "Context" button in the chat header opens a panel
+  showing the full LLM messages array sent to the provider, with a Copy button
+  for easy debugging.
+
+- **Browser timezone auto-detection**: The gateway now auto-detects the user's
+  timezone from the browser via `Intl.DateTimeFormat` and includes it in
+  session context, removing the need for manual timezone configuration.
+
+- **Logs download**: New Download button on the logs page streams the JSONL log
+  file via `GET /api/logs/download` with gzip/zstd compression.
+
+- **Gateway middleware hardening**: Consolidated middleware into
+  `apply_middleware_stack()` with security and observability layers:
+  - Replace `allow_origin(Any)` with dynamic host-based CORS validation
+    reusing the WebSocket CSWSH `is_same_origin` logic, safe for
+    Docker/cloud deployments with unknown hostnames
+  - `CatchPanicLayer` to convert handler panics to 500 responses
+  - `RequestBodyLimitLayer` (16 MiB) to prevent memory exhaustion
+  - `SetSensitiveHeadersLayer` to redact Authorization/Cookie in traces
+  - Security response headers (`X-Content-Type-Options`, `X-Frame-Options`,
+    `Referrer-Policy`)
+  - `SetRequestIdLayer` + `PropagateRequestIdLayer` for `x-request-id`
+    correlation across HTTP request logs
+  - zstd compression alongside gzip for better ratios
+
+- **Message run tracking**: Persisted messages now carry `run_id` and `seq`
+  fields for parent/child linking across multi-turn tool runs, plus a
+  client-side sequence number for ordering diagnostics.
+
+- **Cache token metrics**: Provider responses now populate cache-hit and
+  cache-miss token counters in the metrics subsystem.
+
 ### Changed
 
 - **Provider auto-detection observability**: When no explicit provider settings are present in `moltis.toml`, startup now logs each auto-detected provider with its source (`env`, config file key, OAuth token file, provider key file, or Codex auth file). Added `server.http_request_logs` (Axum HTTP traces) and `server.ws_request_logs` (WebSocket RPC request/response traces) config options (both default `false`) for on-demand transport debugging without code changes.
@@ -61,6 +119,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kimi device-flow OAuth in web UI**: Kimi OAuth now uses provider-specific headers and prefers `verification_uri_complete` (or synthesizes `?user_code=` fallback) so mobile-device sign-in links no longer fail with missing `user_code`.
 - **Kimi Code provider authentication compatibility**: `kimi-code` is now API-key-first in the web UI (`KIMI_API_KEY`, default base URL `https://api.moonshot.ai/v1`), while still honoring previously stored OAuth tokens for backward compatibility. Provider errors now include a targeted hint to switch to API-key auth when Kimi returns `access_terminated_error`.
 - **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive "configured" state.
+- **Heartbeat/cron duplicate runs**: Skip heartbeat LLM turn when no prompt is
+  configured, and fix duplicate cron job executions that could fire the same
+  scheduled run twice.
+- **Onboarding finish screen removed**: Onboarding now skips the final
+  "congratulations" screen and redirects straight to the chat view.
+- **User message footer leak**: Model name footer and timestamp are no longer
+  incorrectly attached to user messages in the chat UI.
+- **TTS counterpart auto-enable on STT save**: Saving an ElevenLabs or Google
+  Cloud STT key now automatically enables the matching TTS provider, mirroring
+  the onboarding voice-test behavior.
+- **Voice-generating indicator removed**: The separate "voice generating"
+  spinner during TTS playback has been removed in favor of the unified
+  response indicator.
+- **Config restart crash loop prevention**: The gateway now validates the
+  configuration file before restarting, returning an error to the UI instead
+  of entering a crash loop when the config is invalid.
+- **Safari dev-mode cache busting**: Development mode now busts the Safari
+  asset cache on reload, and fixes a missing border on detected-provider cards.
+
+### Refactored
+
+- **McpManager lock consolidation**: Replaced per-field `RwLock`s in
+  `McpManager` with a single `RwLock<McpManagerInner>` to reduce lock
+  contention and simplify state management.
+- **GatewayState lock consolidation**: Replaced per-field `RwLock`s in
+  `GatewayState` with a single `RwLock<GatewayInner>` for the same reasons.
+- **Typed chat broadcast payloads**: Chat WebSocket broadcasts now use typed
+  Rust structs instead of ad-hoc `serde_json::Value` maps.
+
+### Documentation
+
+- Expanded default `SOUL.md` with the full OpenClaw reference text for agent
+  personality bootstrapping.
 
 ## [0.2.9] - 2026-02-08
 
