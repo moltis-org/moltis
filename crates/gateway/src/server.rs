@@ -538,9 +538,9 @@ fn build_cors_layer() -> CorsLayer {
         .allow_headers(Any)
 }
 
-/// 16 MiB global request body limit — small enough to prevent memory exhaustion
-/// from oversized payloads. The upload endpoint has its own higher limit.
-const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
+/// 2 MiB global request body limit — sufficient for any JSON API payload, small
+/// enough to limit abuse. The upload endpoint has its own 25 MiB limit.
+const REQUEST_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 /// Apply the full middleware stack to the router.
 ///
