@@ -31,7 +31,7 @@ jobs:
         run: cargo install cargo-codspeed --version 4.3.0
 
       - name: Build benchmarks
-        run: cargo codspeed build -p benchmarks
+        run: cargo codspeed build -p benchmarks --bench boot
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@37e4be5af911eb58190ab54b9cd1d60848a58985 # v4

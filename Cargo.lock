@@ -515,7 +515,12 @@ name = "benchmarks"
 version = "0.4.0"
 dependencies = [
  "codspeed-divan-compat",
+ "moltis-agents",
+ "moltis-config",
+ "moltis-sessions",
  "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
