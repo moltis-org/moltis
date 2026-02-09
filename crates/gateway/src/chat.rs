@@ -80,6 +80,42 @@ enum InputMediumParam {
     Voice,
 }
 
+/// Typed broadcast payload for the "final" chat event.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatFinalBroadcast {
+    run_id: String,
+    session_key: String,
+    state: &'static str,
+    text: String,
+    model: String,
+    provider: String,
+    input_tokens: u32,
+    output_tokens: u32,
+    message_index: usize,
+    reply_medium: ReplyMedium,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    iterations: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls_made: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seq: Option<u64>,
+}
+
+/// Typed broadcast payload for the "error" chat event.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatErrorBroadcast {
+    run_id: String,
+    session_key: String,
+    state: &'static str,
+    error: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seq: Option<u64>,
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3244,16 +3280,18 @@ async fn run_with_tools(
         let args_map = Arc::clone(&tool_args_map);
         let seq = client_seq;
         tokio::spawn(async move {
-            let mut payload = match &event {
+            let payload = match &event {
                 RunnerEvent::Thinking => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
                     "state": "thinking",
+                    "seq": seq,
                 }),
                 RunnerEvent::ThinkingDone => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
                     "state": "thinking_done",
+                    "seq": seq,
                 }),
                 RunnerEvent::ToolCallStart {
                     id,
@@ -3287,6 +3325,7 @@ async fn run_with_tools(
                         "toolCallId": id,
                         "toolName": name,
                         "arguments": arguments,
+                        "seq": seq,
                     });
                     // Add execution mode for browser tool (follows session sandbox mode)
                     if name == "browser" {
@@ -3312,6 +3351,7 @@ async fn run_with_tools(
                         "toolCallId": id,
                         "toolName": name,
                         "success": success,
+                        "seq": seq,
                     });
                     if let Some(err) = error {
                         payload["error"] = serde_json::json!(parse_chat_error(err, None));
@@ -3444,18 +3484,21 @@ async fn run_with_tools(
                     "sessionKey": sk,
                     "state": "thinking_text",
                     "text": text,
+                    "seq": seq,
                 }),
                 RunnerEvent::TextDelta(text) => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
                     "state": "delta",
                     "text": text,
+                    "seq": seq,
                 }),
                 RunnerEvent::Iteration(n) => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
                     "state": "iteration",
                     "iteration": n,
+                    "seq": seq,
                 }),
                 RunnerEvent::SubAgentStart { task, model, depth } => serde_json::json!({
                     "runId": run_id,
@@ -3464,6 +3507,7 @@ async fn run_with_tools(
                     "task": task,
                     "model": model,
                     "depth": depth,
+                    "seq": seq,
                 }),
                 RunnerEvent::SubAgentEnd {
                     task,
@@ -3480,11 +3524,9 @@ async fn run_with_tools(
                     "depth": depth,
                     "iterations": iterations,
                     "toolCallsMade": tool_calls_made,
+                    "seq": seq,
                 }),
             };
-            if let Some(s) = seq {
-                payload["seq"] = serde_json::json!(s);
-            }
             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
         });
     });
@@ -3646,27 +3688,29 @@ async fn run_with_tools(
                 None
             };
 
-            let mut final_payload = serde_json::json!({
-                "runId": run_id,
-                "sessionKey": session_key,
-                "state": "final",
-                "text": display_text,
-                "iterations": result.iterations,
-                "toolCallsMade": result.tool_calls_made,
-                "model": provider_ref.id(),
-                "provider": provider_name,
-                "inputTokens": result.usage.input_tokens,
-                "outputTokens": result.usage.output_tokens,
-                "messageIndex": assistant_message_index,
-                "replyMedium": desired_reply_medium,
-            });
-            if let Some(ref audio) = audio_path {
-                final_payload["audio"] = serde_json::json!(audio);
-            }
-            if let Some(s) = client_seq {
-                final_payload["seq"] = serde_json::json!(s);
-            }
-            broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
+            let final_payload = ChatFinalBroadcast {
+                run_id: run_id.to_string(),
+                session_key: session_key.to_string(),
+                state: "final",
+                text: display_text.clone(),
+                model: provider_ref.id().to_string(),
+                provider: provider_name.to_string(),
+                input_tokens: result.usage.input_tokens,
+                output_tokens: result.usage.output_tokens,
+                message_index: assistant_message_index,
+                reply_medium: desired_reply_medium,
+                iterations: Some(result.iterations),
+                tool_calls_made: Some(result.tool_calls_made),
+                audio: audio_path.clone(),
+                seq: client_seq,
+            };
+            broadcast(
+                state,
+                "chat",
+                serde_json::to_value(&final_payload).unwrap(),
+                BroadcastOpts::default(),
+            )
+            .await;
 
             if !is_silent {
                 // Send push notification when chat response completes
@@ -3691,16 +3735,20 @@ async fn run_with_tools(
             state.set_run_error(run_id, error_str.clone()).await;
             let error_obj = parse_chat_error(&error_str, Some(provider_name));
             mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj).await;
-            let mut error_payload = serde_json::json!({
-                "runId": run_id,
-                "sessionKey": session_key,
-                "state": "error",
-                "error": error_obj,
-            });
-            if let Some(s) = client_seq {
-                error_payload["seq"] = serde_json::json!(s);
-            }
-            broadcast(state, "chat", error_payload, BroadcastOpts::default()).await;
+            let error_payload = ChatErrorBroadcast {
+                run_id: run_id.to_string(),
+                session_key: session_key.to_string(),
+                state: "error",
+                error: error_obj,
+                seq: client_seq,
+            };
+            broadcast(
+                state,
+                "chat",
+                serde_json::to_value(&error_payload).unwrap(),
+                BroadcastOpts::default(),
+            )
+            .await;
             None
         },
     }
@@ -3873,25 +3921,29 @@ async fn run_streaming(
                     None
                 };
 
-                let mut final_payload = serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": session_key,
-                    "state": "final",
-                    "text": accumulated,
-                    "model": provider.id(),
-                    "provider": provider_name,
-                    "inputTokens": usage.input_tokens,
-                    "outputTokens": usage.output_tokens,
-                    "messageIndex": assistant_message_index,
-                    "replyMedium": desired_reply_medium,
-                });
-                if let Some(ref audio) = audio_path {
-                    final_payload["audio"] = serde_json::json!(audio);
-                }
-                if let Some(s) = client_seq {
-                    final_payload["seq"] = serde_json::json!(s);
-                }
-                broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
+                let final_payload = ChatFinalBroadcast {
+                    run_id: run_id.to_string(),
+                    session_key: session_key.to_string(),
+                    state: "final",
+                    text: accumulated.clone(),
+                    model: provider.id().to_string(),
+                    provider: provider_name.to_string(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    message_index: assistant_message_index,
+                    reply_medium: desired_reply_medium,
+                    iterations: None,
+                    tool_calls_made: None,
+                    audio: audio_path.clone(),
+                    seq: client_seq,
+                };
+                broadcast(
+                    state,
+                    "chat",
+                    serde_json::to_value(&final_payload).unwrap(),
+                    BroadcastOpts::default(),
+                )
+                .await;
 
                 if !is_silent {
                     // Send push notification when chat response completes
@@ -3916,16 +3968,20 @@ async fn run_streaming(
                 let error_obj = parse_chat_error(&msg, Some(provider_name));
                 mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
                     .await;
-                let mut error_payload = serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": session_key,
-                    "state": "error",
-                    "error": error_obj,
-                });
-                if let Some(s) = client_seq {
-                    error_payload["seq"] = serde_json::json!(s);
-                }
-                broadcast(state, "chat", error_payload, BroadcastOpts::default()).await;
+                let error_payload = ChatErrorBroadcast {
+                    run_id: run_id.to_string(),
+                    session_key: session_key.to_string(),
+                    state: "error",
+                    error: error_obj,
+                    seq: client_seq,
+                };
+                broadcast(
+                    state,
+                    "chat",
+                    serde_json::to_value(&error_payload).unwrap(),
+                    BroadcastOpts::default(),
+                )
+                .await;
                 return None;
             },
             // Tool events not expected in stream-only mode.
