@@ -162,11 +162,12 @@ impl AgentTool for SpawnAgentTool {
         }
 
         // Run the sub-agent loop (no event forwarding, no hooks, no history).
+        let user_content = moltis_agents::UserContent::text(task);
         let result = run_agent_loop_with_context(
             provider,
             &sub_tools,
             &system_prompt,
-            task,
+            &user_content,
             None,
             None, // no history
             Some(tool_context),

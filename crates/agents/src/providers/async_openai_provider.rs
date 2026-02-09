@@ -5,8 +5,11 @@ use {
         config::OpenAIConfig,
         types::chat::{
             ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+            ChatCompletionRequestMessageContentPartImage,
+            ChatCompletionRequestMessageContentPartText,
             ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
-            CreateChatCompletionRequestArgs,
+            ChatCompletionRequestUserMessageContent,
+            ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs, ImageUrl,
         },
     },
     async_trait::async_trait,
@@ -91,20 +94,36 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
             ChatMessage::User {
                 content: UserContent::Multimodal(parts),
             } => {
-                // Flatten multimodal parts into a single text for async-openai.
-                let combined: String = parts
+                let content_parts: Vec<ChatCompletionRequestUserMessageContentPart> = parts
                     .iter()
-                    .filter_map(|p| match p {
-                        crate::model::ContentPart::Text(t) => Some(t.as_str()),
-                        _ => None,
+                    .map(|p| match p {
+                        crate::model::ContentPart::Text(t) => {
+                            ChatCompletionRequestUserMessageContentPart::Text(
+                                ChatCompletionRequestMessageContentPartText {
+                                    text: t.clone(),
+                                },
+                            )
+                        },
+                        crate::model::ContentPart::Image { media_type, data } => {
+                            let data_uri = format!("data:{media_type};base64,{data}");
+                            ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                                ChatCompletionRequestMessageContentPartImage {
+                                    image_url: ImageUrl {
+                                        url: data_uri,
+                                        detail: None,
+                                    },
+                                },
+                            )
+                        },
                     })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                    .collect();
                 out.push(
-                    ChatCompletionRequestUserMessageArgs::default()
-                        .content(combined)
-                        .build()?
-                        .into(),
+                    ChatCompletionRequestMessage::User(
+                        async_openai::types::chat::ChatCompletionRequestUserMessage {
+                            content: ChatCompletionRequestUserMessageContent::Array(content_parts),
+                            name: None,
+                        },
+                    ),
                 );
             },
             ChatMessage::Tool { content, .. } => {

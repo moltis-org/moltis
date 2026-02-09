@@ -187,11 +187,12 @@ pub async fn run_silent_memory_turn(
         "running silent memory turn before compaction"
     );
 
+    let user_content = crate::model::UserContent::Text(conversation_text);
     let result = run_agent_loop(
         provider,
         &tools,
         MEMORY_FLUSH_SYSTEM_PROMPT,
-        &conversation_text,
+        &user_content,
         None, // no event callbacks — silent
         None, // no history
     )

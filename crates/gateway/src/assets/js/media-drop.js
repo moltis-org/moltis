@@ -148,11 +148,11 @@ function onPaste(e) {
 export function initMediaDrop(msgBox, inputArea) {
 	chatMsgBoxRef = msgBox;
 
-	// Create preview strip
+	// Create preview strip above the input row (not inside it)
 	previewStrip = document.createElement("div");
 	previewStrip.className = "media-preview-strip hidden";
-	if (inputArea) {
-		inputArea.insertBefore(previewStrip, inputArea.firstChild);
+	if (inputArea?.parentElement) {
+		inputArea.parentElement.insertBefore(previewStrip, inputArea);
 	}
 
 	// Bind drag-and-drop to messages area

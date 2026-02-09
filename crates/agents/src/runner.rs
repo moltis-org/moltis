@@ -11,7 +11,9 @@ use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage},
+    model::{
+        ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
+    },
     tool_registry::ToolRegistry,
 };
 
@@ -386,7 +388,7 @@ pub async fn run_agent_loop(
     provider: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     system_prompt: &str,
-    user_message: &str,
+    user_content: &UserContent,
     on_event: Option<&OnEvent>,
     history: Option<Vec<ChatMessage>>,
 ) -> Result<AgentRunResult, AgentRunError> {
@@ -394,7 +396,7 @@ pub async fn run_agent_loop(
         provider,
         tools,
         system_prompt,
-        user_message,
+        user_content,
         on_event,
         history,
         None,
@@ -409,7 +411,7 @@ pub async fn run_agent_loop_with_context(
     provider: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     system_prompt: &str,
-    user_message: &str,
+    user_content: &UserContent,
     on_event: Option<&OnEvent>,
     history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
@@ -421,11 +423,13 @@ pub async fn run_agent_loop_with_context(
         .max_tool_result_bytes;
     let tool_schemas = tools.list_schemas();
 
+    let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
     info!(
         provider = provider.name(),
         model = provider.id(),
         native_tools,
         tools_count = tool_schemas.len(),
+        is_multimodal,
         "starting agent loop"
     );
 
@@ -436,7 +440,9 @@ pub async fn run_agent_loop_with_context(
         messages.extend(hist);
     }
 
-    messages.push(ChatMessage::user(user_message));
+    messages.push(ChatMessage::User {
+        content: user_content.clone(),
+    });
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -758,7 +764,7 @@ pub async fn run_agent_loop_streaming(
     provider: Arc<dyn LlmProvider>,
     tools: &ToolRegistry,
     system_prompt: &str,
-    user_message: &str,
+    user_content: &UserContent,
     on_event: Option<&OnEvent>,
     history: Option<Vec<ChatMessage>>,
     tool_context: Option<serde_json::Value>,
@@ -770,11 +776,13 @@ pub async fn run_agent_loop_streaming(
         .max_tool_result_bytes;
     let tool_schemas = tools.list_schemas();
 
+    let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
     info!(
         provider = provider.name(),
         model = provider.id(),
         native_tools,
         tools_count = tool_schemas.len(),
+        is_multimodal,
         "starting streaming agent loop"
     );
 
@@ -785,7 +793,9 @@ pub async fn run_agent_loop_streaming(
         messages.extend(hist);
     }
 
-    messages.push(ChatMessage::user(user_message));
+    messages.push(ChatMessage::User {
+        content: user_content.clone(),
+    });
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -1485,7 +1495,8 @@ mod tests {
             response_text: "Hello!".into(),
         });
         let tools = ToolRegistry::new();
-        let result = run_agent_loop(provider, &tools, "You are a test bot.", "Hi", None, None)
+        let uc = UserContent::text("Hi");
+        let result = run_agent_loop(provider, &tools, "You are a test bot.", &uc, None, None)
             .await
             .unwrap();
         assert_eq!(result.text, "Hello!");
@@ -1501,16 +1512,10 @@ mod tests {
         let mut tools = ToolRegistry::new();
         tools.register(Box::new(EchoTool));
 
-        let result = run_agent_loop(
-            provider,
-            &tools,
-            "You are a test bot.",
-            "Use the tool",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let uc = UserContent::text("Use the tool");
+        let result = run_agent_loop(provider, &tools, "You are a test bot.", &uc, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(result.text, "Done!");
         assert_eq!(result.iterations, 2);
@@ -1608,11 +1613,12 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
+        let uc = UserContent::text("Run echo hello");
         let result = run_agent_loop(
             provider,
             &tools,
             "You are a test bot.",
-            "Run echo hello",
+            &uc,
             Some(&on_event),
             None,
         )
@@ -1663,11 +1669,12 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
+        let uc = UserContent::text("Run echo hello");
         let result = run_agent_loop(
             provider,
             &tools,
             "You are a test bot.",
-            "Run echo hello",
+            &uc,
             Some(&on_event),
             None,
         )
@@ -1843,16 +1850,10 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
-        let result = run_agent_loop(
-            provider,
-            &tools,
-            "Test bot",
-            "Use all tools",
-            Some(&on_event),
-            None,
-        )
-        .await
-        .unwrap();
+        let uc = UserContent::text("Use all tools");
+        let result = run_agent_loop(provider, &tools, "Test bot", &uc, Some(&on_event), None)
+            .await
+            .unwrap();
 
         assert_eq!(result.text, "All done");
         assert_eq!(result.tool_calls_made, 3);
@@ -1920,16 +1921,10 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
-        let result = run_agent_loop(
-            provider,
-            &tools,
-            "Test bot",
-            "Use all tools",
-            Some(&on_event),
-            None,
-        )
-        .await
-        .unwrap();
+        let uc = UserContent::text("Use all tools");
+        let result = run_agent_loop(provider, &tools, "Test bot", &uc, Some(&on_event), None)
+            .await
+            .unwrap();
 
         assert_eq!(result.text, "All done");
         assert_eq!(result.tool_calls_made, 3);
@@ -1986,7 +1981,8 @@ mod tests {
         }));
 
         let start = std::time::Instant::now();
-        let result = run_agent_loop(provider, &tools, "Test bot", "Use all tools", None, None)
+        let uc = UserContent::text("Use all tools");
+        let result = run_agent_loop(provider, &tools, "Test bot", &uc, None, None)
             .await
             .unwrap();
         let elapsed = start.elapsed();
@@ -2324,16 +2320,10 @@ mod tests {
         let mut tools = ToolRegistry::new();
         tools.register(Box::new(ScreenshotTool));
 
-        let result = run_agent_loop(
-            provider,
-            &tools,
-            "You are a test bot.",
-            "Take a screenshot",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        let uc = UserContent::text("Take a screenshot");
+        let result = run_agent_loop(provider, &tools, "You are a test bot.", &uc, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(result.text, "Screenshot processed successfully");
         assert_eq!(result.tool_calls_made, 1);
@@ -2356,11 +2346,12 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
+        let uc = UserContent::text("Take a screenshot");
         let result = run_agent_loop(
             provider,
             &tools,
             "You are a test bot.",
-            "Take a screenshot",
+            &uc,
             Some(&on_event),
             None,
         )
@@ -2619,11 +2610,12 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
+        let user_content = UserContent::Text("Create something".to_string());
         let result = run_agent_loop_streaming(
             provider,
             &tools,
             "You are a test bot.",
-            "Create something",
+            &user_content,
             Some(&on_event),
             None,
             None,
@@ -2769,11 +2761,12 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
+        let user_content = UserContent::Text("Do two things".to_string());
         let result = run_agent_loop_streaming(
             provider,
             &tools,
             "You are a test bot.",
-            "Do two things",
+            &user_content,
             Some(&on_event),
             None,
             None,

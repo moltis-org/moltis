@@ -23,8 +23,9 @@ use moltis_config::MessageQueueMode;
 
 use {
     moltis_agents::{
-        AgentRunError, ChatMessage,
+        AgentRunError, ChatMessage, ContentPart, UserContent,
         model::{StreamEvent, values_to_chat_messages},
+        multimodal::parse_data_uri,
         prompt::{
             PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
             build_system_prompt_minimal_runtime, build_system_prompt_with_session_runtime,
@@ -50,6 +51,62 @@ use crate::{
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, histogram, labels, llm as llm_metrics};
+
+/// Convert session-crate `MessageContent` to agents-crate `UserContent`.
+///
+/// The two types have different image representations:
+/// - `ContentBlock::ImageUrl` stores a data URI string
+/// - `ContentPart::Image` stores separated `media_type` + `data` fields
+fn to_user_content(mc: &MessageContent) -> UserContent {
+    match mc {
+        MessageContent::Text(text) => UserContent::Text(text.clone()),
+        MessageContent::Multimodal(blocks) => {
+            let parts: Vec<ContentPart> = blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(ContentPart::Text(text.clone())),
+                    ContentBlock::ImageUrl { image_url } => {
+                        match parse_data_uri(&image_url.url) {
+                            Some((media_type, data)) => {
+                                debug!(
+                                    media_type,
+                                    data_len = data.len(),
+                                    "to_user_content: parsed image from data URI"
+                                );
+                                Some(ContentPart::Image {
+                                    media_type: media_type.to_string(),
+                                    data: data.to_string(),
+                                })
+                            },
+                            None => {
+                                warn!(
+                                    url_prefix = &image_url.url[..image_url.url.len().min(80)],
+                                    "to_user_content: failed to parse data URI, dropping image"
+                                );
+                                None
+                            },
+                        }
+                    },
+                })
+                .collect();
+            let text_count = parts
+                .iter()
+                .filter(|p| matches!(p, ContentPart::Text(_)))
+                .count();
+            let image_count = parts
+                .iter()
+                .filter(|p| matches!(p, ContentPart::Image { .. }))
+                .count();
+            debug!(
+                text_count,
+                image_count,
+                total_blocks = blocks.len(),
+                "to_user_content: converted multimodal content"
+            );
+            UserContent::Multimodal(parts)
+        },
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -1695,6 +1752,10 @@ impl ChatService for LiveChatService {
         // Generate run_id early so we can link the user message to its agent run.
         let run_id = uuid::Uuid::new_v4().to_string();
 
+        // Convert session-crate content to agents-crate content for the LLM.
+        // Must happen before `message_content` is moved into `user_msg`.
+        let user_content = to_user_content(&message_content);
+
         // Build the user message for later persistence (deferred until we
         // know the message won't be queued — avoids double-persist when a
         // queued message is replayed via send()).
@@ -1998,7 +2059,7 @@ impl ChatService for LiveChatService {
                         &run_id_clone,
                         provider,
                         &model_id,
-                        &text,
+                        &user_content,
                         &provider_name,
                         &history,
                         &session_key_clone,
@@ -2019,7 +2080,7 @@ impl ChatService for LiveChatService {
                         provider,
                         &model_id,
                         &tool_registry,
-                        &text,
+                        &user_content,
                         &provider_name,
                         &history,
                         &session_key_clone,
@@ -2269,6 +2330,8 @@ impl ChatService for LiveChatService {
             .await;
         }
 
+        // send_sync is text-only (used by API calls and channels).
+        let user_content = UserContent::text(&text);
         let result = if stream_only {
             run_streaming(
                 &state,
@@ -2276,7 +2339,7 @@ impl ChatService for LiveChatService {
                 &run_id,
                 provider,
                 &model_id,
-                &text,
+                &user_content,
                 &provider_name,
                 &history,
                 &session_key,
@@ -2297,7 +2360,7 @@ impl ChatService for LiveChatService {
                 provider,
                 &model_id,
                 &tool_registry,
-                &text,
+                &user_content,
                 &provider_name,
                 &history,
                 &session_key,
@@ -3264,7 +3327,7 @@ async fn run_with_tools(
     provider: Arc<dyn moltis_agents::model::LlmProvider>,
     model_id: &str,
     tool_registry: &Arc<RwLock<ToolRegistry>>,
-    text: &str,
+    user_content: &UserContent,
     provider_name: &str,
     history_raw: &[serde_json::Value],
     session_key: &str,
@@ -3622,7 +3685,7 @@ async fn run_with_tools(
         provider,
         &filtered_registry,
         &system_prompt,
-        text,
+        user_content,
         Some(&on_event),
         hist,
         Some(tool_context.clone()),
@@ -3685,7 +3748,7 @@ async fn run_with_tools(
                         provider_ref.clone(),
                         &filtered_registry,
                         &system_prompt,
-                        text,
+                        user_content,
                         Some(&on_event),
                         retry_hist,
                         Some(tool_context),
@@ -3900,7 +3963,7 @@ async fn run_streaming(
     run_id: &str,
     provider: Arc<dyn moltis_agents::model::LlmProvider>,
     model_id: &str,
-    text: &str,
+    user_content: &UserContent,
     provider_name: &str,
     history_raw: &[serde_json::Value],
     session_key: &str,
@@ -3928,7 +3991,9 @@ async fn run_streaming(
     messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
     messages.extend(values_to_chat_messages(history_raw));
-    messages.push(ChatMessage::user(text));
+    messages.push(ChatMessage::User {
+        content: user_content.clone(),
+    });
 
     #[cfg(feature = "metrics")]
     let stream_start = Instant::now();
@@ -5335,5 +5400,79 @@ mod tests {
             probe_max_parallel_per_provider(&serde_json::json!({"maxParallelPerProvider": 99})),
             8
         );
+    }
+
+    // ── to_user_content tests ─────────────────────────────────────────
+
+    #[test]
+    fn to_user_content_text_only() {
+        let mc = MessageContent::Text("hello".to_string());
+        let uc = to_user_content(&mc);
+        match uc {
+            UserContent::Text(t) => assert_eq!(t, "hello"),
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn to_user_content_multimodal_with_image() {
+        use moltis_sessions::message::{ContentBlock, ImageUrl as SessionImageUrl};
+
+        let mc = MessageContent::Multimodal(vec![
+            ContentBlock::Text {
+                text: "describe this".to_string(),
+            },
+            ContentBlock::ImageUrl {
+                image_url: SessionImageUrl {
+                    url: "data:image/png;base64,AAAA".to_string(),
+                },
+            },
+        ]);
+        let uc = to_user_content(&mc);
+        match uc {
+            UserContent::Multimodal(parts) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    ContentPart::Text(t) => assert_eq!(t, "describe this"),
+                    _ => panic!("expected Text part"),
+                }
+                match &parts[1] {
+                    ContentPart::Image { media_type, data } => {
+                        assert_eq!(media_type, "image/png");
+                        assert_eq!(data, "AAAA");
+                    },
+                    _ => panic!("expected Image part"),
+                }
+            },
+            _ => panic!("expected Multimodal variant"),
+        }
+    }
+
+    #[test]
+    fn to_user_content_drops_invalid_data_uri() {
+        use moltis_sessions::message::{ContentBlock, ImageUrl as SessionImageUrl};
+
+        let mc = MessageContent::Multimodal(vec![
+            ContentBlock::Text {
+                text: "just text".to_string(),
+            },
+            ContentBlock::ImageUrl {
+                image_url: SessionImageUrl {
+                    url: "https://example.com/image.png".to_string(),
+                },
+            },
+        ]);
+        let uc = to_user_content(&mc);
+        match uc {
+            UserContent::Multimodal(parts) => {
+                // The https URL is not a data URI, so it should be dropped
+                assert_eq!(parts.len(), 1);
+                match &parts[0] {
+                    ContentPart::Text(t) => assert_eq!(t, "just text"),
+                    _ => panic!("expected Text part"),
+                }
+            },
+            _ => panic!("expected Multimodal variant"),
+        }
     }
 }
