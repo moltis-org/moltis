@@ -95,15 +95,17 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
     async fn request_location(
         &self,
         conn_id: &str,
+        precision: moltis_tools::location::LocationPrecision,
     ) -> anyhow::Result<moltis_tools::location::LocationResult> {
         use moltis_tools::location::{LocationError, LocationResult};
 
         let request_id = uuid::Uuid::new_v4().to_string();
 
-        // Send a location.request event to the browser client.
+        // Send a location.request event to the browser client, including
+        // the requested precision so JS can adjust geolocation options.
         let event = moltis_protocol::EventFrame::new(
             "location.request",
-            serde_json::json!({ "requestId": request_id }),
+            serde_json::json!({ "requestId": request_id, "precision": precision }),
             self.state.next_seq(),
         );
         let event_json = serde_json::to_string(&event)?;
@@ -2198,6 +2200,9 @@ pub async fn start_gateway(
         tool_registry.register(Box::new(moltis_tools::location::LocationTool::new(
             location_requester,
         )));
+
+        // Register map tool for showing static map images with links.
+        tool_registry.register(Box::new(moltis_tools::map::ShowMapTool::new()));
 
         // Register spawn_agent tool for sub-agent support.
         // The tool gets a snapshot of the current registry (without itself)

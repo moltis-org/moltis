@@ -14,6 +14,7 @@ import { eventListeners } from "./events.js";
 import {
 	formatTokens,
 	renderAudioPlayer,
+	renderMapLinks,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
@@ -166,6 +167,10 @@ function appendToolResult(toolCard, result) {
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
 		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
+	}
+	// Map link buttons (show_map tool)
+	if (result.map_links) {
+		renderMapLinks(toolCard, result.map_links, result.label);
 	}
 }
 
@@ -644,6 +649,12 @@ function handleLocationRequest(payload) {
 		return;
 	}
 
+	// Coarse: city-level, fast, longer cache. Precise: GPS-level, fresh.
+	var coarse = payload.precision === "coarse";
+	var geoOpts = coarse
+		? { enableHighAccuracy: false, timeout: 10000, maximumAge: 1800000 }
+		: { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 };
+
 	navigator.geolocation.getCurrentPosition(
 		(pos) => {
 			sendRpc("location.result", {
@@ -661,7 +672,7 @@ function handleLocationRequest(payload) {
 				error: { code: err.code, message: err.message },
 			});
 		},
-		{ enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 },
+		geoOpts,
 	);
 }
 

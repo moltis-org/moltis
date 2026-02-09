@@ -468,6 +468,38 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 	}
 }
 
+/**
+ * Render clickable map link buttons into `container`.
+ * @param {HTMLElement} container - parent element to append into
+ * @param {object} links - { google_maps, apple_maps, openstreetmap }
+ * @param {string} [label] - optional location label
+ */
+export function renderMapLinks(container, links, label) {
+	var row = document.createElement("div");
+	row.className = "flex flex-wrap gap-2 mt-2";
+
+	var services = [
+		{ key: "google_maps", name: "Google Maps", icon: "\uD83C\uDF0D" },
+		{ key: "apple_maps", name: "Apple Maps", icon: "\uD83D\uDDFA\uFE0F" },
+		{ key: "openstreetmap", name: "OpenStreetMap", icon: "\uD83D\uDCCD" },
+	];
+
+	for (var svc of services) {
+		var url = links[svc.key];
+		if (!url) continue;
+		var btn = document.createElement("a");
+		btn.href = url;
+		btn.target = "_blank";
+		btn.rel = "noopener noreferrer";
+		btn.className = "provider-btn provider-btn-secondary text-xs";
+		btn.textContent = `${svc.icon} ${svc.name}`;
+		if (label) btn.title = `Open "${label}" in ${svc.name}`;
+		row.appendChild(btn);
+	}
+
+	container.appendChild(row);
+}
+
 export function createEl(tag, attrs, children) {
 	var el = document.createElement(tag);
 	if (attrs) {

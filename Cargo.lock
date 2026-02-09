@@ -4689,6 +4689,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "futures",
+ "image",
  "mockito",
  "moltis-agents",
  "moltis-browser",

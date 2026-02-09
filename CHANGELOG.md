@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`show_map` tool**: New LLM-callable tool that composes a static map image
+  from OSM tiles with red/blue marker pins (destination + user location), plus
+  clickable links to Google Maps, Apple Maps, and OpenStreetMap. Supports
+  `user_latitude`/`user_longitude` to show both positions with auto-zoom.
+  Solves the "I can't share links" problem in voice mode.
+- **Location precision modes**: The `get_user_location` tool now accepts a
+  `precision` parameter — `"precise"` (GPS-level, default) for nearby places
+  and directions, or `"coarse"` (city-level, faster) for flights, weather, and
+  time zones. The LLM picks the appropriate mode based on the user's query.
+
 ## [0.3.1] - 2026-02-09
 
 ### Fixed

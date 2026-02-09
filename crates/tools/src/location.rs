@@ -16,6 +16,20 @@ use {
     tracing::warn,
 };
 
+// ── Precision ───────────────────────────────────────────────────────────────
+
+/// How accurate the location fix should be.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocationPrecision {
+    /// City-level (~1-5 km). Fast, low-power. Good for flights, weather, time zone.
+    Coarse,
+    /// GPS-level (~5-20 m). May take a few seconds. Good for nearby places,
+    /// walking directions, "closest X".
+    #[default]
+    Precise,
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /// Location coordinates returned by the browser Geolocation API.
@@ -74,7 +88,13 @@ pub trait LocationRequester: Send + Sync {
     ///
     /// The implementation creates a pending‐invoke, sends a WebSocket event to
     /// the browser, and awaits the response with a timeout.
-    async fn request_location(&self, conn_id: &str) -> Result<LocationResult>;
+    ///
+    /// `precision` controls the browser's `enableHighAccuracy` and cache age.
+    async fn request_location(
+        &self,
+        conn_id: &str,
+        precision: LocationPrecision,
+    ) -> Result<LocationResult>;
 
     /// Return a previously cached location (from `USER.md` or in-memory cache).
     fn cached_location(&self) -> Option<GeoLocation>;
@@ -260,13 +280,25 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
          IMPORTANT: For web searches, map lookups, and Google queries always \
          use the numeric `latitude` and `longitude` (e.g. \"lunch near \
          37.76,-122.42\") — place names are too imprecise for search engines. \
-         Only use `place_short` when speaking aloud to the user."
+         Only use `place_short` when speaking aloud to the user. \
+         Use `show_map` to display a map image with links to the user — \
+         always pass the user's coordinates as `user_latitude`/`user_longitude` \
+         so both positions appear on the map. \
+         Set `precision` to choose accuracy: \"precise\" (default, GPS-level, \
+         best for nearby places / walking directions / show_map) or \"coarse\" \
+         (city-level, faster, good for flights / weather / time zones)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {},
+            "properties": {
+                "precision": {
+                    "type": "string",
+                    "enum": ["precise", "coarse"],
+                    "description": "Location accuracy: \"precise\" (GPS, ~5-20m, default) or \"coarse\" (city-level, ~1-5km, faster)"
+                }
+            },
             "required": [],
             "additionalProperties": false
         })
@@ -298,9 +330,15 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
             return Ok(resp);
         }
 
+        // Parse requested precision (default: Precise).
+        let precision: LocationPrecision = params
+            .get("precision")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         // Try browser geolocation if a connection ID is available.
         if let Some(conn_id) = params.get("_conn_id").and_then(|v| v.as_str()) {
-            let result = self.requester.request_location(conn_id).await?;
+            let result = self.requester.request_location(conn_id, precision).await?;
             return match result.location {
                 Some(loc) => {
                     let geocoded = reverse_geocode(loc.latitude, loc.longitude).await;
@@ -377,7 +415,11 @@ mod tests {
 
     #[async_trait]
     impl LocationRequester for MockRequester {
-        async fn request_location(&self, _conn_id: &str) -> Result<LocationResult> {
+        async fn request_location(
+            &self,
+            _conn_id: &str,
+            _precision: LocationPrecision,
+        ) -> Result<LocationResult> {
             Ok(self.response.clone())
         }
 
@@ -491,6 +533,67 @@ mod tests {
         assert_eq!(tool.name(), "get_user_location");
         let schema = tool.parameters_schema();
         assert_eq!(schema["type"], "object");
+        // Precision enum must be in schema.
+        let precision = &schema["properties"]["precision"];
+        assert_eq!(precision["type"], "string");
+    }
+
+    /// Mock that captures the precision value passed to `request_location`.
+    struct PrecisionCapturingRequester {
+        captured: std::sync::Mutex<Option<LocationPrecision>>,
+    }
+
+    #[async_trait]
+    impl LocationRequester for PrecisionCapturingRequester {
+        async fn request_location(
+            &self,
+            _conn_id: &str,
+            precision: LocationPrecision,
+        ) -> Result<LocationResult> {
+            *self.captured.lock().unwrap() = Some(precision);
+            Ok(LocationResult {
+                location: Some(BrowserLocation {
+                    latitude: 1.0,
+                    longitude: 2.0,
+                    accuracy: 100.0,
+                }),
+                error: None,
+            })
+        }
+
+        fn cached_location(&self) -> Option<GeoLocation> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn precision_defaults_to_precise() {
+        let req = Arc::new(PrecisionCapturingRequester {
+            captured: std::sync::Mutex::new(None),
+        });
+        let tool = LocationTool::new(req.clone());
+        tool.execute(serde_json::json!({ "_conn_id": "c1" }))
+            .await
+            .unwrap();
+        assert_eq!(
+            *req.captured.lock().unwrap(),
+            Some(LocationPrecision::Precise)
+        );
+    }
+
+    #[tokio::test]
+    async fn precision_coarse_is_forwarded() {
+        let req = Arc::new(PrecisionCapturingRequester {
+            captured: std::sync::Mutex::new(None),
+        });
+        let tool = LocationTool::new(req.clone());
+        tool.execute(serde_json::json!({ "_conn_id": "c2", "precision": "coarse" }))
+            .await
+            .unwrap();
+        assert_eq!(
+            *req.captured.lock().unwrap(),
+            Some(LocationPrecision::Coarse)
+        );
     }
 
     #[tokio::test]
@@ -562,7 +665,11 @@ mod tests {
 
         #[async_trait]
         impl LocationRequester for MinimalRequester {
-            async fn request_location(&self, _conn_id: &str) -> Result<LocationResult> {
+            async fn request_location(
+                &self,
+                _conn_id: &str,
+                _precision: LocationPrecision,
+            ) -> Result<LocationResult> {
                 Ok(LocationResult {
                     location: None,
                     error: None,
@@ -706,10 +813,7 @@ mod tests {
         // Point at the mock by calling the inner function with a custom URL.
         // Since `reverse_geocode_with_client` uses the real Nominatim URL, we
         // test the parse/fallback path directly here.
-        let url = format!(
-            "{}/reverse?lat=0&lon=0&format=json&zoom=14",
-            server.url()
-        );
+        let url = format!("{}/reverse?lat=0&lon=0&format=json&zoom=14", server.url());
         let resp = client
             .get(&url)
             .header("User-Agent", "moltis/0.3-test")

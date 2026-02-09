@@ -2875,7 +2875,9 @@ mod tests {
         ));
         assert!(is_retryable_server_error("HTTP 502 Bad Gateway"));
         assert!(is_retryable_server_error("HTTP 503 Service Unavailable"));
-        assert!(is_retryable_server_error("overloaded_error: server is overloaded"));
+        assert!(is_retryable_server_error(
+            "overloaded_error: server is overloaded"
+        ));
         assert!(!is_retryable_server_error("context_length_exceeded"));
         assert!(!is_retryable_server_error("invalid API key"));
     }
