@@ -7,6 +7,7 @@
 **A personal AI gateway written in Rust. One binary, no runtime, no npm.**
 
 [![CI](https://github.com/moltis-org/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/moltis-org/moltis/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/moltis-org/moltis/graph/badge.svg)](https://codecov.io/gh/moltis-org/moltis)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&style=flat&label=CodSpeed)](https://codspeed.io/moltis-org/moltis)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
@@ -104,7 +105,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 - **Configurable directories** — `--config-dir` / `--data-dir` CLI flags and
   `MOLTIS_CONFIG_DIR` / `MOLTIS_DATA_DIR` environment variables
 - **Cloud deployment** — one-click deploy configs for Fly.io, DigitalOcean,
-  Render, and Railway with `--no-tls` flag for cloud TLS termination
+  and Render with `--no-tls` flag for cloud TLS termination
 - **Tailscale integration** — expose the gateway over your tailnet via Tailscale
   Serve (private HTTPS) or Funnel (public HTTPS), with status monitoring and
   mode switching from the web UI (optional `tailscale` feature flag)
@@ -187,7 +188,9 @@ Deploy the pre-built Docker image to your favorite cloud provider:
 |----------|--------|
 | DigitalOcean | [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main) |
 | Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/moltis-org/moltis) |
+<!-- TODO: Railway deploy does not work yet
 | Railway | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?repo=moltis-org/moltis) |
+-->
 
 **Fly.io** (CLI):
 

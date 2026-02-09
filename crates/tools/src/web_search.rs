@@ -40,6 +40,9 @@ pub struct WebSearchTool {
     /// Always `true` in production; set to `false` in unit tests to avoid
     /// network calls.
     fallback_enabled: bool,
+    /// When DuckDuckGo returns a CAPTCHA, block it until this instant so
+    /// subsequent calls fail fast instead of wasting network round-trips.
+    ddg_blocked_until: Mutex<Option<Instant>>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +157,7 @@ impl WebSearchTool {
             cache_ttl,
             cache: Mutex::new(HashMap::new()),
             fallback_enabled,
+            ddg_blocked_until: Mutex::new(None),
         }
     }
 
@@ -312,8 +316,32 @@ impl WebSearchTool {
         }))
     }
 
+    /// Check whether DuckDuckGo is temporarily blocked due to a prior CAPTCHA.
+    fn is_ddg_blocked(&self) -> bool {
+        self.ddg_blocked_until
+            .lock()
+            .ok()
+            .and_then(|guard| *guard)
+            .is_some_and(|until| Instant::now() < until)
+    }
+
+    /// Block DuckDuckGo for `duration` after a CAPTCHA response.
+    fn block_ddg(&self, duration: Duration) {
+        if let Ok(mut guard) = self.ddg_blocked_until.lock() {
+            *guard = Some(Instant::now() + duration);
+        }
+    }
+
     /// Fallback: search DuckDuckGo's HTML endpoint when no API key is configured.
     async fn search_duckduckgo(&self, query: &str, count: u8) -> Result<serde_json::Value> {
+        // Fail fast if DDG recently returned a CAPTCHA.
+        if self.is_ddg_blocked() {
+            bail!(
+                "Web search unavailable: DuckDuckGo is rate-limited (CAPTCHA) and no search \
+                 API key is configured. Set BRAVE_API_KEY or PERPLEXITY_API_KEY to enable search."
+            );
+        }
+
         let client = reqwest::Client::builder().timeout(self.timeout).build()?;
 
         let resp = client
@@ -332,7 +360,13 @@ impl WebSearchTool {
         let html = resp.text().await?;
 
         if html.contains("challenge-form") || html.contains("not a Robot") {
-            bail!("DuckDuckGo returned a CAPTCHA challenge");
+            // Block DDG for 1 hour so subsequent calls fail instantly.
+            self.block_ddg(Duration::from_secs(3600));
+            warn!("DuckDuckGo CAPTCHA detected — blocking fallback for 1 hour");
+            bail!(
+                "Web search unavailable: DuckDuckGo returned a CAPTCHA challenge. \
+                 Configure BRAVE_API_KEY or PERPLEXITY_API_KEY for reliable search."
+            );
         }
 
         let results = parse_duckduckgo_html(&html, count);
@@ -566,35 +600,27 @@ impl AgentTool for WebSearchTool {
         let accept_language = params.get("_accept_language").and_then(|v| v.as_str());
 
         debug!("web_search: {query} (count={count})");
-        let result = match &self.provider {
-            SearchProvider::Brave => {
-                self.search_brave(query, count, &params, accept_language)
-                    .await?
-            },
-            SearchProvider::Perplexity { base_url, model } => {
-                self.search_perplexity(query, base_url, model).await?
-            },
-        };
 
-        // When the configured provider can't run (no API key), try DuckDuckGo
-        // HTML search as a transparent fallback so the LLM never has to ask.
-        let result = if self.fallback_enabled
-            && result.get("error").is_some()
-            && self.api_key.expose_secret().is_empty()
-        {
+        // When no API key is configured, skip the provider entirely and go
+        // straight to the DuckDuckGo fallback. This avoids a pointless
+        // round-trip that always returns an error and prevents the LLM from
+        // retrying repeatedly.
+        let result = if self.fallback_enabled && self.api_key.expose_secret().is_empty() {
             warn!(
                 provider = ?self.provider,
-                "search API key not configured, falling back to DuckDuckGo"
+                "search API key not configured, using DuckDuckGo directly"
             );
-            match self.search_duckduckgo(query, count).await {
-                Ok(ddg_result) => ddg_result,
-                Err(e) => {
-                    warn!(%e, "DuckDuckGo fallback failed, returning original error");
-                    result
+            self.search_duckduckgo(query, count).await?
+        } else {
+            match &self.provider {
+                SearchProvider::Brave => {
+                    self.search_brave(query, count, &params, accept_language)
+                        .await?
+                },
+                SearchProvider::Perplexity { base_url, model } => {
+                    self.search_perplexity(query, base_url, model).await?
                 },
             }
-        } else {
-            result
         };
 
         self.cache_set(cache_key, result.clone());
@@ -877,6 +903,24 @@ mod tests {
         assert_eq!(decode_html_entities("a &amp; b"), "a & b");
         assert_eq!(decode_html_entities("&lt;div&gt;"), "<div>");
         assert_eq!(decode_html_entities("it&#39;s"), "it's");
+    }
+
+    #[test]
+    fn test_ddg_cooldown_blocks_after_captcha() {
+        let tool = brave_tool();
+        // Initially not blocked.
+        assert!(!tool.is_ddg_blocked());
+        // Simulate a CAPTCHA cooldown.
+        tool.block_ddg(Duration::from_secs(3600));
+        assert!(tool.is_ddg_blocked());
+    }
+
+    #[test]
+    fn test_ddg_cooldown_expires() {
+        let tool = brave_tool();
+        // Block for zero seconds — should expire immediately.
+        tool.block_ddg(Duration::ZERO);
+        assert!(!tool.is_ddg_blocked());
     }
 
     #[test]

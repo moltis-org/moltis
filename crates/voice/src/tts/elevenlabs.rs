@@ -89,6 +89,7 @@ impl ElevenLabsTts {
             AudioFormat::Opus => "opus_48000_64", // Good for Telegram voice notes
             AudioFormat::Aac => "aac_44100",
             AudioFormat::Pcm => "pcm_44100",
+            AudioFormat::Webm => "opus_48000_64", // WebM uses Opus codec
         }
     }
 }

@@ -80,6 +80,9 @@ impl<'de> Deserialize<'de> for Timezone {
 pub struct GeoLocation {
     pub latitude: f64,
     pub longitude: f64,
+    /// Human-readable place name from reverse geocoding (e.g. "Noe Valley, San Francisco, CA").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
     /// Unix epoch seconds when the location was last updated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
@@ -87,7 +90,7 @@ pub struct GeoLocation {
 
 impl GeoLocation {
     /// Create a new `GeoLocation` stamped with the current time.
-    pub fn now(latitude: f64, longitude: f64) -> Self {
+    pub fn now(latitude: f64, longitude: f64, place: Option<String>) -> Self {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -95,6 +98,7 @@ impl GeoLocation {
         Self {
             latitude,
             longitude,
+            place,
             updated_at: Some(ts),
         }
     }
@@ -102,7 +106,11 @@ impl GeoLocation {
 
 impl std::fmt::Display for GeoLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{},{}", self.latitude, self.longitude)?;
+        if let Some(ref place) = self.place {
+            write!(f, "{place}")?;
+        } else {
+            write!(f, "{},{}", self.latitude, self.longitude)?;
+        }
         if let Some(ts) = self.updated_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1377,7 +1385,6 @@ fn default_sandbox_packages() -> Vec<String> {
         "pandoc",
         "poppler-utils",
         "ghostscript",
-        "wkhtmltopdf",
         "texlive-latex-base",
         "texlive-latex-extra",
         "texlive-fonts-recommended",
@@ -1565,5 +1572,61 @@ impl ProvidersConfig {
     /// Get the configured entry for a provider, if any.
     pub fn get(&self, name: &str) -> Option<&ProviderEntry> {
         self.providers.get(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn geolocation_display_with_place() {
+        let loc = GeoLocation {
+            latitude: 37.759,
+            longitude: -122.433,
+            place: Some("Noe Valley, San Francisco, CA".to_string()),
+            updated_at: None,
+        };
+        assert_eq!(loc.to_string(), "Noe Valley, San Francisco, CA");
+    }
+
+    #[test]
+    fn geolocation_display_without_place() {
+        let loc = GeoLocation {
+            latitude: 37.759,
+            longitude: -122.433,
+            place: None,
+            updated_at: None,
+        };
+        assert_eq!(loc.to_string(), "37.759,-122.433");
+    }
+
+    #[test]
+    fn geolocation_serde_backward_compat() {
+        // Old JSON without `place` field should deserialize fine.
+        let json = r#"{"latitude":48.8566,"longitude":2.3522,"updated_at":1700000000}"#;
+        let loc: GeoLocation = serde_json::from_str(json).unwrap();
+        assert!((loc.latitude - 48.8566).abs() < 1e-6);
+        assert!(loc.place.is_none());
+    }
+
+    #[test]
+    fn geolocation_serde_with_place() {
+        let loc = GeoLocation {
+            latitude: 48.8566,
+            longitude: 2.3522,
+            place: Some("Paris, France".to_string()),
+            updated_at: Some(1_700_000_000),
+        };
+        let json = serde_json::to_string(&loc).unwrap();
+        let parsed: GeoLocation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.place.as_deref(), Some("Paris, France"));
+    }
+
+    #[test]
+    fn geolocation_now_stores_place() {
+        let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
+        assert_eq!(loc.place.as_deref(), Some("San Francisco"));
+        assert!(loc.updated_at.is_some());
     }
 }

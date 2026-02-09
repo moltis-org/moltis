@@ -1424,6 +1424,81 @@
     color: #a855f7;
   }
 
+  /* Drag-and-drop overlay on chat messages area */
+  .drag-over {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background: var(--accent-subtle);
+  }
+
+  /* Image preview strip above input area */
+  .media-preview-strip {
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    overflow-x: auto;
+    flex-wrap: wrap;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .media-preview-strip.hidden {
+    display: none;
+  }
+  .media-preview-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    max-width: 200px;
+  }
+  .media-preview-thumb {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .media-preview-name {
+    font-size: 0.72rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .media-preview-remove {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+  }
+  .media-preview-remove:hover {
+    color: var(--error);
+  }
+
+  /* Image thumbnails in sent user messages */
+  .msg-image-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .msg-image-thumb {
+    max-width: 120px;
+    max-height: 90px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    object-fit: cover;
+  }
+
   /* Onboarding wizard */
   .onboarding-card {
     width: 100%;

@@ -12,6 +12,7 @@ axum               = { workspace = true }
 axum-extra         = { features = ["cookie"], workspace = true }
 axum-server        = { optional = true, workspace = true }
 base64             = { workspace = true }
+bytes              = { workspace = true }
 chrono             = { features = ["serde"], optional = true, workspace = true }
 chrono-tz          = { workspace = true }
 dashmap            = { workspace = true }

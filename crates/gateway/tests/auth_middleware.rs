@@ -543,6 +543,63 @@ async fn localhost_set_password_without_current() {
     assert!(store.verify_password("newpass123").await.unwrap());
 }
 
+/// Unauthenticated POST to /api/sessions/:key/upload returns 401.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn upload_endpoint_requires_auth() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    // Unauthenticated POST should get 401.
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/sessions/main/upload"))
+        .header("Content-Type", "audio/webm")
+        .body(vec![0u8; 100])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Authenticated POST should NOT get 401 (may get 503 since session store
+    // is noop, but definitely not 401).
+    let token = store.create_session().await.unwrap();
+    let resp = client
+        .post(format!("http://{addr}/api/sessions/main/upload"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .header("Content-Type", "audio/webm")
+        .body(vec![0u8; 100])
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), 401);
+}
+
+/// Unauthenticated GET to /api/sessions/:key/media/:file returns 401.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn media_endpoint_requires_auth() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    // Unauthenticated GET should get 401.
+    let resp = reqwest::get(format!("http://{addr}/api/sessions/main/media/test.png"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Authenticated GET should NOT get 401.
+    let token = store.create_session().await.unwrap();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/api/sessions/main/media/test.png"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), 401);
+}
+
 /// On localhost with password set, status returns has_password: true.
 #[cfg(feature = "web-ui")]
 #[tokio::test]

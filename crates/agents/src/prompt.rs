@@ -95,6 +95,24 @@ If you change this file, tell the user — it's your soul, and they should know.
 \n\
 _This file is yours to evolve. As you learn who you are, update it._";
 
+/// Suffix appended to the system prompt when the user's reply medium is voice.
+///
+/// Instructs the LLM to produce speech-friendly output: no raw URLs, no markdown
+/// formatting, concise conversational prose. This is Layer 1 of the voice-friendly
+/// response pipeline; Layer 2 (`sanitize_text_for_tts`) catches anything the model
+/// misses.
+pub const VOICE_REPLY_SUFFIX: &str = "\n\n\
+## Voice Reply Mode\n\n\
+The user will hear your response as spoken audio. Write for speech, not for reading:\n\
+- Use natural, conversational sentences. No bullet lists, numbered lists, or headings.\n\
+- NEVER include raw URLs. Instead describe the resource by name \
+(e.g. \"the Rust documentation website\" instead of \"https://doc.rust-lang.org\").\n\
+- No markdown formatting: no bold, italic, headers, code fences, or inline backticks.\n\
+- Spell out abbreviations that a text-to-speech engine might mispronounce \
+(e.g. \"API\" → \"A-P-I\", \"CLI\" → \"C-L-I\").\n\
+- Keep responses concise — two to three short paragraphs at most.\n\
+- Use complete sentences and natural transitions between ideas.\n";
+
 /// Build the system prompt for an agent run, including available tools.
 ///
 /// When `native_tools` is true, tool schemas are sent via the API's native

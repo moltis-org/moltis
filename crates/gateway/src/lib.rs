@@ -56,6 +56,7 @@ pub mod tls;
 pub mod tools_routes;
 pub mod tts_phrases;
 pub mod update_check;
+pub mod upload_routes;
 pub mod voice;
 pub mod voice_agent_tools;
 pub mod ws;

@@ -1,0 +1,124 @@
+name: Model / Agent Behavior Issue
+description: Report unexpected LLM or agent behavior (wrong actions, ignored instructions, tool misuse)
+title: "[Model]: "
+labels:
+  - model-behavior
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when the agent or LLM does something unexpected — makes unwanted changes, misuses tools, ignores your prompt, or behaves inconsistently.
+
+        **Use this for:** unexpected actions, tool call errors, ignored system prompts, agent loop issues.
+        **Not for:** crashes, API errors, or installation problems — use the Bug Report template instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight Checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Amodel-behavior) for similar reports
+          required: true
+        - label: This report does NOT contain sensitive information (API keys, passwords, personal data)
+          required: true
+
+  - type: dropdown
+    id: behavior_type
+    attributes:
+      label: Type of behavior issue
+      options:
+        - Agent performed an action I didn't ask for
+        - Agent ignored instructions or system prompt
+        - Agent called the wrong tool or used tools incorrectly
+        - Agent got stuck in a loop
+        - Agent gave a hallucinated or factually wrong answer
+        - Agent behavior changed between sessions
+        - Unexpected behavior with a specific LLM provider
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_you_asked
+    attributes:
+      label: What you asked the agent to do
+      description: Provide the exact prompt or instruction.
+      placeholder: |
+        I asked: "Summarize the contents of README.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What the agent actually did
+      description: Describe step-by-step what happened instead.
+      placeholder: |
+        1. The agent read README.md
+        2. Instead of summarizing, it rewrote the entire file
+        3. It also modified CHANGELOG.md without being asked
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should the agent have done?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Can you reproduce this?
+      options:
+        - "Yes, every time with the same prompt"
+        - Sometimes (intermittent)
+        - Only happened once
+        - Haven't tried to reproduce
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: LLM provider and model
+      description: Which provider and model were you using?
+      placeholder: "e.g., Anthropic / claude-sonnet-4-5-20250929"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Moltis version
+      description: Run `moltis --version` and paste the output.
+      placeholder: "e.g., moltis 0.3.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Channel
+      description: How were you interacting with the agent?
+      options:
+        - Web UI
+        - Telegram
+        - Discord
+        - API
+        - Other
+
+  - type: textarea
+    id: conversation
+    attributes:
+      label: Relevant conversation excerpt
+      description: Include the agent's responses that show the unexpected behavior (redact any secrets).
+      render: markdown
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: System prompt customizations, tool configuration, MCP servers involved, or anything else relevant.

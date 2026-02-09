@@ -767,7 +767,7 @@ impl MethodRegistry {
                             loc.get("latitude").and_then(|v| v.as_f64()),
                             loc.get("longitude").and_then(|v| v.as_f64()),
                         ) {
-                            let geo = moltis_config::GeoLocation::now(lat, lon);
+                            let geo = moltis_config::GeoLocation::now(lat, lon, None);
                             ctx.state.inner.write().await.cached_location = Some(geo.clone());
 
                             // Persist to USER.md (best-effort).

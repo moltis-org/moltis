@@ -124,7 +124,7 @@ impl TtsProvider for GoogleTts {
         // Map output format to Google's encoding
         let audio_encoding = match request.output_format {
             AudioFormat::Mp3 => "MP3",
-            AudioFormat::Opus => "OGG_OPUS",
+            AudioFormat::Opus | AudioFormat::Webm => "OGG_OPUS",
             AudioFormat::Aac => "MP3", // AAC not supported, fallback to MP3
             AudioFormat::Pcm => "LINEAR16",
         };

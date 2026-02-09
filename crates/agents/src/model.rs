@@ -36,6 +36,13 @@ pub enum UserContent {
     Multimodal(Vec<ContentPart>),
 }
 
+impl UserContent {
+    /// Create a text-only user content.
+    pub fn text(s: impl Into<String>) -> Self {
+        Self::Text(s.into())
+    }
+}
+
 /// A single part of a multimodal content array.
 #[derive(Debug, Clone)]
 pub enum ContentPart {

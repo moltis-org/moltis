@@ -37,6 +37,44 @@ export function chatAddMsg(cls, content, isHtml) {
 	return el;
 }
 
+/**
+ * Add a user message with image thumbnails below the text.
+ * @param {string} cls - CSS class for the message (e.g. "user")
+ * @param {string} htmlContent - Pre-rendered HTML text (from renderMarkdown)
+ * @param {Array<{dataUrl: string, name: string}>} images - Images to display
+ * @returns {HTMLElement|null}
+ */
+export function chatAddMsgWithImages(cls, htmlContent, images) {
+	if (!S.chatMsgBox) return null;
+	var welcome = document.getElementById("welcomeCard");
+	if (welcome) welcome.remove();
+	var el = document.createElement("div");
+	el.className = `msg ${cls}`;
+	if (htmlContent) {
+		var textDiv = document.createElement("div");
+		// Safe: htmlContent is produced by renderMarkdown which escapes user
+		// input via esc() first, then only adds our own formatting tags.
+		// This is the same pattern used in chatAddMsg above.
+		textDiv.innerHTML = htmlContent; // eslint-disable-line no-unsanitized/property
+		el.appendChild(textDiv);
+	}
+	if (images && images.length > 0) {
+		var thumbRow = document.createElement("div");
+		thumbRow.className = "msg-image-row";
+		for (var img of images) {
+			var thumb = document.createElement("img");
+			thumb.className = "msg-image-thumb";
+			thumb.src = img.dataUrl;
+			thumb.alt = img.name;
+			thumbRow.appendChild(thumb);
+		}
+		el.appendChild(thumbRow);
+	}
+	S.chatMsgBox.appendChild(el);
+	if (!S.chatBatchLoading) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	return el;
+}
+
 export function stripChannelPrefix(text) {
 	return text.replace(/^\[Telegram(?:\s+from\s+[^\]]+)?\]\s*/, "");
 }

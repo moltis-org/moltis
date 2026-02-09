@@ -117,7 +117,6 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
         "pandoc",
         "poppler-utils",
         "ghostscript",
-        "wkhtmltopdf",
         "texlive-latex-base",
         "texlive-latex-extra",
         "texlive-fonts-recommended",

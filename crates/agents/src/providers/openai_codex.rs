@@ -114,23 +114,51 @@ impl OpenAiCodexProvider {
                         vec![]
                     },
                     ChatMessage::User { content } => {
-                        let text = match content {
-                            UserContent::Text(t) => t.clone(),
+                        let content_blocks = match content {
+                            UserContent::Text(t) => {
+                                vec![serde_json::json!({"type": "input_text", "text": t})]
+                            },
                             UserContent::Multimodal(parts) => {
-                                // Flatten multimodal to text for the Codex API
+                                let text_count = parts
+                                    .iter()
+                                    .filter(|p| matches!(p, crate::model::ContentPart::Text(_)))
+                                    .count();
+                                let image_count = parts
+                                    .iter()
+                                    .filter(|p| {
+                                        matches!(p, crate::model::ContentPart::Image { .. })
+                                    })
+                                    .count();
+                                debug!(
+                                    text_count,
+                                    image_count, "codex convert_messages: multimodal user content"
+                                );
                                 parts
                                     .iter()
-                                    .filter_map(|p| match p {
-                                        crate::model::ContentPart::Text(t) => Some(t.as_str()),
-                                        _ => None,
+                                    .map(|p| match p {
+                                        crate::model::ContentPart::Text(t) => {
+                                            serde_json::json!({"type": "input_text", "text": t})
+                                        },
+                                        crate::model::ContentPart::Image { media_type, data } => {
+                                            let data_uri =
+                                                format!("data:{media_type};base64,{data}");
+                                            debug!(
+                                                media_type,
+                                                data_len = data.len(),
+                                                "codex convert_messages: including input_image"
+                                            );
+                                            serde_json::json!({
+                                                "type": "input_image",
+                                                "image_url": data_uri,
+                                            })
+                                        },
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
+                                    .collect()
                             },
                         };
                         vec![serde_json::json!({
                             "role": "user",
-                            "content": [{"type": "input_text", "text": text}]
+                            "content": content_blocks,
                         })]
                     },
                     ChatMessage::Assistant {
@@ -1074,6 +1102,29 @@ mod tests {
             converted[3]["content"][0]["text"],
             "Here is the screenshot."
         );
+    }
+
+    #[test]
+    fn convert_messages_user_multimodal_with_image() {
+        use crate::model::ContentPart;
+
+        let messages = vec![ChatMessage::User {
+            content: UserContent::Multimodal(vec![
+                ContentPart::Text("describe this image".to_string()),
+                ContentPart::Image {
+                    media_type: "image/png".to_string(),
+                    data: "ABC123".to_string(),
+                },
+            ]),
+        }];
+        let converted = OpenAiCodexProvider::convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["role"], "user");
+        let content = &converted[0]["content"];
+        assert_eq!(content[0]["type"], "input_text");
+        assert_eq!(content[0]["text"], "describe this image");
+        assert_eq!(content[1]["type"], "input_image");
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,ABC123");
     }
 
     #[test]

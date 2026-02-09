@@ -1045,6 +1045,59 @@ impl AppleContainerSandbox {
     }
 }
 
+/// Check whether the Apple Container system service is running.
+#[cfg(target_os = "macos")]
+fn is_apple_container_service_running() -> bool {
+    std::process::Command::new("container")
+        .args(["system", "status"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Try to start the Apple Container system service.
+/// Returns `true` if the service was successfully started.
+#[cfg(target_os = "macos")]
+fn try_start_apple_container_service() -> bool {
+    tracing::info!("apple container service is not running, starting it automatically");
+    let result = std::process::Command::new("container")
+        .args(["system", "start"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status();
+    match result {
+        Ok(status) if status.success() => {
+            tracing::info!("apple container service started successfully");
+            true
+        },
+        Ok(status) => {
+            tracing::warn!(
+                exit_code = status.code(),
+                "failed to start apple container service; run `container system start` manually"
+            );
+            false
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to start apple container service; run `container system start` manually"
+            );
+            false
+        },
+    }
+}
+
+/// Ensure the Apple Container system service is running, starting it if needed.
+/// Returns `true` if the service is running (either already or after starting).
+#[cfg(target_os = "macos")]
+fn ensure_apple_container_service() -> bool {
+    if is_apple_container_service_running() {
+        return true;
+    }
+    try_start_apple_container_service()
+}
+
 #[cfg(target_os = "macos")]
 #[async_trait]
 impl Sandbox for AppleContainerSandbox {
@@ -1135,6 +1188,12 @@ impl Sandbox for AppleContainerSandbox {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("XPC connection error") || stderr.contains("Connection invalid") {
+                anyhow::bail!(
+                    "apple container service is not running. \
+                     Start it with `container system start` and restart moltis"
+                );
+            }
             anyhow::bail!(
                 "container run failed for {name} (image={image}): {}",
                 stderr.trim()
@@ -1284,6 +1343,12 @@ WORKDIR /home/sandbox\n"
         let output = output?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("XPC connection error") || stderr.contains("Connection invalid") {
+                anyhow::bail!(
+                    "apple container service is not running. \
+                     Start it with `container system start` and restart moltis"
+                );
+            }
             anyhow::bail!("container build failed for {tag}: {}", stderr.trim());
         }
 
@@ -1332,7 +1397,15 @@ fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     match config.backend.as_str() {
         "docker" => Arc::new(DockerSandbox::new(config)),
         #[cfg(target_os = "macos")]
-        "apple-container" => Arc::new(AppleContainerSandbox::new(config)),
+        "apple-container" => {
+            if !ensure_apple_container_service() {
+                tracing::warn!(
+                    "apple container service could not be started; \
+                     run `container system start` manually, then restart moltis"
+                );
+            }
+            Arc::new(AppleContainerSandbox::new(config))
+        },
         _ => auto_detect_backend(config),
     }
 }
@@ -1341,8 +1414,14 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     #[cfg(target_os = "macos")]
     {
         if is_cli_available("container") {
-            tracing::info!("sandbox backend: apple-container (VM-isolated, preferred)");
-            return Arc::new(AppleContainerSandbox::new(config));
+            if ensure_apple_container_service() {
+                tracing::info!("sandbox backend: apple-container (VM-isolated, preferred)");
+                return Arc::new(AppleContainerSandbox::new(config));
+            }
+            tracing::warn!(
+                "apple container CLI found but service could not be started; \
+                 falling back to docker"
+            );
         }
     }
 
