@@ -306,6 +306,15 @@ fn build_system_prompt_full(
             "- If a command or browser action fails, analyze the error and suggest fixes.\n",
             "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
             "- Be careful with destructive operations — confirm with the user first.\n",
+            "- IMPORTANT: The user's UI already displays tool execution results (stdout, stderr, exit code) ",
+            "in a dedicated panel. Do NOT repeat or echo raw tool output in your response. Instead, ",
+            "summarize what happened, highlight key findings, or explain errors. ",
+            "Simply parroting the output wastes the user's time.\n\n",
+            "## Silent Replies\n\n",
+            "When you have nothing meaningful to add after a tool call — the output ",
+            "speaks for itself — do NOT produce any text. Simply return an empty response.\n",
+            "The user's UI already shows tool results, so there is no need to repeat or ",
+            "acknowledge them. Stay silent when the output answers the user's question.\n",
         ));
     } else {
         prompt.push_str(concat!(
@@ -686,5 +695,20 @@ mod tests {
         assert!(prompt.contains("Host: host=moltis-devbox"));
         assert!(prompt.contains("Sandbox(exec): enabled=false"));
         assert!(!prompt.contains("Execution routing:"));
+    }
+
+    #[test]
+    fn test_silent_replies_section_in_tool_prompt() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt(&tools, true, None);
+        assert!(prompt.contains("## Silent Replies"));
+        assert!(prompt.contains("empty response"));
+        assert!(!prompt.contains("__SILENT__"));
+    }
+
+    #[test]
+    fn test_silent_replies_not_in_minimal_prompt() {
+        let prompt = build_system_prompt_minimal_runtime(None, None, None, None, None, None, None);
+        assert!(!prompt.contains("## Silent Replies"));
     }
 }

@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -313,6 +313,11 @@ pub struct GatewayState {
     /// Push notification service for sending notifications to subscribed devices.
     #[cfg(feature = "push-notifications")]
     pub push_service: RwLock<Option<Arc<crate::push::PushService>>>,
+    /// Sequential counter for TTS test phrase round-robin picking.
+    pub tts_phrase_counter: AtomicUsize,
+    /// LLM provider registry for lightweight generation (e.g. TTS phrases).
+    pub llm_providers:
+        RwLock<Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>>,
 }
 
 impl GatewayState {
@@ -434,6 +439,8 @@ impl GatewayState {
             metrics_store,
             #[cfg(feature = "push-notifications")]
             push_service: RwLock::new(None),
+            tts_phrase_counter: AtomicUsize::new(0),
+            llm_providers: RwLock::new(None),
         })
     }
 
@@ -452,6 +459,14 @@ impl GatewayState {
     #[cfg(feature = "push-notifications")]
     pub async fn get_push_service(&self) -> Option<Arc<crate::push::PushService>> {
         self.push_service.read().await.clone()
+    }
+
+    /// Return the next sequential index for TTS phrase round-robin picking.
+    pub fn next_tts_phrase_index(&self, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        self.tts_phrase_counter.fetch_add(1, Ordering::Relaxed) % len
     }
 
     /// Get the active chat service (override or default).

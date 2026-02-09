@@ -9,7 +9,15 @@ import {
 	stripChannelPrefix,
 	updateTokenBar,
 } from "./chat-ui.js";
-import { formatTokens, renderAudioPlayer, renderMarkdown, sendRpc } from "./helpers.js";
+import * as gon from "./gon.js";
+import {
+	formatTokens,
+	renderAudioPlayer,
+	renderMarkdown,
+	renderScreenshot,
+	sendRpc,
+	toolCallSummary,
+} from "./helpers.js";
 import { makeBranchIcon, makeChatIcon, makeCronIcon, makeForkIcon, makeTelegramIcon } from "./icons.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
@@ -316,6 +324,66 @@ function renderHistoryAssistantMessage(msg) {
 	return el;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Sequential result field rendering
+function renderHistoryToolResult(msg) {
+	var tpl = document.getElementById("tpl-exec-card");
+	var frag = tpl.content.cloneNode(true);
+	var card = frag.firstElementChild;
+
+	// Remove the "running…" status element — this is a completed result.
+	var statusEl = card.querySelector(".exec-status");
+	if (statusEl) statusEl.remove();
+
+	// Set command summary from arguments.
+	var cmd = toolCallSummary(msg.tool_name, msg.arguments);
+	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
+
+	// Set success/error CSS class (replace the default "running" class).
+	card.className = `msg exec-card ${msg.success ? "exec-ok" : "exec-err"}`;
+
+	// Append result output if present.
+	if (msg.result) {
+		var out = (msg.result.stdout || "").replace(/\n+$/, "");
+		if (out) {
+			var outEl = document.createElement("pre");
+			outEl.className = "exec-output";
+			outEl.textContent = out;
+			card.appendChild(outEl);
+		}
+		var stderrText = (msg.result.stderr || "").replace(/\n+$/, "");
+		if (stderrText) {
+			var errEl = document.createElement("pre");
+			errEl.className = "exec-output exec-stderr";
+			errEl.textContent = stderrText;
+			card.appendChild(errEl);
+		}
+		if (msg.result.exit_code !== undefined && msg.result.exit_code !== 0) {
+			var codeEl = document.createElement("div");
+			codeEl.className = "exec-exit";
+			codeEl.textContent = `exit ${msg.result.exit_code}`;
+			card.appendChild(codeEl);
+		}
+		// Render persisted screenshot from the media API.
+		if (msg.result.screenshot && !msg.result.screenshot.startsWith("data:")) {
+			var filename = msg.result.screenshot.split("/").pop();
+			var sessionKey = S.activeSessionKey || "main";
+			var mediaSrc = `/api/sessions/${encodeURIComponent(sessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderScreenshot(card, mediaSrc);
+		}
+	}
+
+	// Append error detail if present.
+	if (!msg.success && msg.error) {
+		var errMsg = document.createElement("div");
+		errMsg.className = "exec-error-detail";
+		errMsg.textContent = msg.error;
+		card.appendChild(errMsg);
+	}
+
+	if (S.chatMsgBox) S.chatMsgBox.appendChild(card);
+	return card;
+}
+
 export function appendLastMessageTimestamp(epochMs) {
 	if (!S.chatMsgBox) return;
 	// Remove any previous last-message timestamp
@@ -491,6 +559,26 @@ export function updateChatSessionHeader() {
 	}
 }
 
+function showWelcomeCard() {
+	if (!S.chatMsgBox) return;
+	var tpl = document.getElementById("tpl-welcome-card");
+	if (!tpl) return;
+	var card = tpl.content.cloneNode(true).firstElementChild;
+	var identity = gon.get("identity");
+	var userName = identity?.user_name;
+	var botName = identity?.name || "moltis";
+	var botEmoji = identity?.emoji || "";
+
+	var greetingEl = card.querySelector("[data-welcome-greeting]");
+	if (greetingEl) greetingEl.textContent = userName ? `Hello, ${userName}!` : "Hello!";
+	var emojiEl = card.querySelector("[data-welcome-emoji]");
+	if (emojiEl) emojiEl.textContent = botEmoji;
+	var nameEl = card.querySelector("[data-welcome-bot-name]");
+	if (nameEl) nameEl.textContent = botName;
+
+	S.chatMsgBox.appendChild(card);
+}
+
 export function switchSession(key, searchContext, projectId) {
 	var sessionList = S.$("sessionList");
 	S.setActiveSessionKey(key);
@@ -499,7 +587,6 @@ export function switchSession(key, searchContext, projectId) {
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setStreamEl(null);
 	S.setStreamText("");
-	S.setVoicePending(false);
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionContextWindow(0);
@@ -529,12 +616,17 @@ export function switchSession(key, searchContext, projectId) {
 					msgEls.push(renderHistoryUserMessage(msg));
 				} else if (msg.role === "assistant") {
 					msgEls.push(renderHistoryAssistantMessage(msg));
+				} else if (msg.role === "tool_result") {
+					msgEls.push(renderHistoryToolResult(msg));
 				} else {
 					msgEls.push(null);
 				}
 			});
 			S.setChatBatchLoading(false);
 			S.setLastHistoryIndex(history.length > 0 ? history.length - 1 : -1);
+			if (history.length === 0) {
+				showWelcomeCard();
+			}
 			if (history.length > 0) {
 				var lastMsg = history[history.length - 1];
 				var ts = lastMsg.created_at;

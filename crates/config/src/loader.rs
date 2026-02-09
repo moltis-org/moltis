@@ -188,7 +188,11 @@ pub fn user_global_config_dir() -> Option<PathBuf> {
 pub fn user_global_config_dir_if_different() -> Option<PathBuf> {
     let home = user_global_config_dir()?;
     let current = config_dir()?;
-    if home == current { None } else { Some(home) }
+    if home == current {
+        None
+    } else {
+        Some(home)
+    }
 }
 
 /// Finds a config file in the user-global config directory only.

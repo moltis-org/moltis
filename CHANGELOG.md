@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Silent replies**: The system prompt instructs the LLM to return an empty
+  response when tool output speaks for itself, suppressing empty chat bubbles,
+  push notifications, and channel replies. Empty assistant messages are not
+  persisted to session history.
+
+- **Persist TTS audio to session media**: When TTS is enabled and the reply
+  medium is `voice`, the server generates TTS audio, saves it to the session
+  media directory, and includes the media path in the persisted assistant
+  message. On session reload the frontend renders an `<audio>` player from
+  the media API instead of re-generating audio via RPC.
+
+- **Per-session media directory**: Screenshots from the browser tool are now
+  persisted to `sessions/media/<key>/` and served via
+  `GET /api/sessions/:key/media/:filename`. Session history reload renders
+  screenshots from the API instead of losing them. Media files are cleaned
+  up when a session is deleted.
+
 - **Process tool for interactive terminal sessions**: New `process` tool lets
   the LLM manage interactive/TUI programs (htop, vim, REPLs, etc.) via tmux
   sessions inside the sandbox. Supports start, poll, send_keys, paste, kill,

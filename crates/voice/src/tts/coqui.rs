@@ -188,5 +188,6 @@ mod tests {
         let tts = CoquiTts::new(&config);
         assert_eq!(tts.id(), "coqui");
         assert_eq!(tts.name(), "Coqui TTS");
+        assert!(!tts.supports_ssml());
     }
 }

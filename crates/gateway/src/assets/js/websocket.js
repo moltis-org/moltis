@@ -11,7 +11,14 @@ import {
 	updateTokenBar,
 } from "./chat-ui.js";
 import { eventListeners } from "./events.js";
-import { formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
+import {
+	formatTokens,
+	renderAudioPlayer,
+	renderMarkdown,
+	renderScreenshot,
+	sendRpc,
+	toolCallSummary,
+} from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
@@ -113,28 +120,6 @@ function handleChatVoicePending(_p, isActive, isChatPage) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
-/** Build a short summary string for a tool call card. */
-function toolCallSummary(name, args, executionMode) {
-	if (!args) return name || "tool";
-	switch (name) {
-		case "exec":
-			return args.command || "exec";
-		case "web_fetch":
-			return `web_fetch ${args.url || ""}`.trim();
-		case "web_search":
-			return `web_search "${args.query || ""}"`;
-		case "browser": {
-			// Format: browser action (mode) url
-			var action = args.action || "browser";
-			var mode = executionMode ? ` (${executionMode})` : "";
-			var url = args.url ? ` ${args.url}` : "";
-			return `browser ${action}${mode}${url}`.trim();
-		}
-		default:
-			return name || "tool";
-	}
-}
-
 function handleChatToolCallStart(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
@@ -178,122 +163,10 @@ function appendToolResult(toolCard, result) {
 	}
 	// Browser screenshot support - display as thumbnail with lightbox and download
 	if (result.screenshot) {
-		var imgContainer = document.createElement("div");
-		imgContainer.className = "screenshot-container";
-		var img = document.createElement("img");
-		// Handle both raw base64 and data URI formats
 		var imgSrc = result.screenshot.startsWith("data:")
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
-		img.src = imgSrc;
-		img.className = "screenshot-thumbnail";
-		img.alt = "Browser screenshot";
-		img.title = "Click to view full size";
-
-		// Scale factor for HiDPI/Retina displays (default to 1 if not provided)
-		var scale = result.screenshot_scale || 1;
-
-		// Once image loads, set display size based on scale factor
-		// This makes 2x screenshots display at their logical size (crisp on Retina)
-		img.onload = () => {
-			if (scale > 1) {
-				var logicalWidth = img.naturalWidth / scale;
-				var logicalHeight = img.naturalHeight / scale;
-				// Cap thumbnail at max-width from CSS, but set aspect ratio
-				img.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
-			}
-		};
-
-		// Helper to trigger download
-		var downloadScreenshot = (e) => {
-			e.stopPropagation();
-			var link = document.createElement("a");
-			link.href = imgSrc;
-			link.download = `screenshot-${Date.now()}.png`;
-			link.click();
-		};
-
-		img.onclick = () => {
-			// Create fullscreen lightbox overlay
-			var overlay = document.createElement("div");
-			overlay.className = "screenshot-lightbox";
-
-			// Container for image and controls
-			var lightboxContent = document.createElement("div");
-			lightboxContent.className = "screenshot-lightbox-content";
-
-			// Header with close button and download button
-			var header = document.createElement("div");
-			header.className = "screenshot-lightbox-header";
-			header.onclick = (e) => e.stopPropagation();
-
-			var closeBtn = document.createElement("button");
-			closeBtn.className = "screenshot-lightbox-close";
-			closeBtn.innerHTML = "✕";
-			closeBtn.title = "Close (Esc)";
-			closeBtn.onclick = () => overlay.remove();
-
-			var downloadBtn = document.createElement("button");
-			downloadBtn.className = "screenshot-download-btn";
-			downloadBtn.innerHTML = "⬇ Download";
-			downloadBtn.onclick = downloadScreenshot;
-
-			header.appendChild(closeBtn);
-			header.appendChild(downloadBtn);
-
-			// Scrollable container for the image
-			var scrollContainer = document.createElement("div");
-			scrollContainer.className = "screenshot-lightbox-scroll";
-			scrollContainer.onclick = (e) => e.stopPropagation();
-
-			var fullImg = document.createElement("img");
-			fullImg.src = img.src;
-			fullImg.className = "screenshot-lightbox-img";
-
-			// Scale lightbox image for proper display on HiDPI screens
-			// For tall screenshots, use a reasonable width to allow vertical scrolling
-			fullImg.onload = () => {
-				var logicalWidth = fullImg.naturalWidth / scale;
-				var logicalHeight = fullImg.naturalHeight / scale;
-				var viewportWidth = window.innerWidth - 80; // Account for padding
-
-				// Use logical width, but cap at viewport width minus padding
-				var displayWidth = Math.min(logicalWidth, viewportWidth);
-				fullImg.style.width = `${displayWidth}px`;
-
-				// Height scales proportionally - will overflow and scroll for tall images
-				var displayHeight = (displayWidth / logicalWidth) * logicalHeight;
-				fullImg.style.height = `${displayHeight}px`;
-			};
-
-			scrollContainer.appendChild(fullImg);
-			lightboxContent.appendChild(header);
-			lightboxContent.appendChild(scrollContainer);
-			overlay.appendChild(lightboxContent);
-
-			// Close on click outside image
-			overlay.onclick = () => overlay.remove();
-			// Close on Escape key
-			var closeOnEscape = (e) => {
-				if (e.key === "Escape") {
-					overlay.remove();
-					document.removeEventListener("keydown", closeOnEscape);
-				}
-			};
-			document.addEventListener("keydown", closeOnEscape);
-			document.body.appendChild(overlay);
-		};
-
-		// Download button next to thumbnail
-		var thumbDownloadBtn = document.createElement("button");
-		thumbDownloadBtn.className = "screenshot-download-btn-small";
-		thumbDownloadBtn.innerHTML = "⬇";
-		thumbDownloadBtn.title = "Download screenshot";
-		thumbDownloadBtn.onclick = downloadScreenshot;
-
-		imgContainer.appendChild(img);
-		imgContainer.appendChild(thumbDownloadBtn);
-		toolCard.appendChild(imgContainer);
+		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
 	}
 }
 
@@ -375,31 +248,25 @@ function handleChatDelta(p, isActive, isChatPage) {
 }
 
 function resolveFinalMessageEl(p) {
-	// Empty / whitespace-only responses are persisted for LLM history but hidden from the UI.
-	if (!(p.text && p.text.trim())) {
-		if (S.streamEl) S.streamEl.remove();
-		return null;
-	}
 	var isEcho =
 		S.lastToolOutput &&
+		p.text &&
 		p.text.replace(/[`\s]/g, "").indexOf(S.lastToolOutput.replace(/\s/g, "").substring(0, 80)) !== -1;
 	if (!isEcho) {
-		if (S.streamEl) {
+		if (p.text && S.streamEl) {
 			setSafeMarkdownHtml(S.streamEl, p.text);
 			return S.streamEl;
 		}
-		return chatAddMsg("assistant", renderMarkdown(p.text), true);
+		if (p.text) return chatAddMsg("assistant", renderMarkdown(p.text), true);
+		// No text (silent reply) — remove any leftover stream element.
+		if (S.streamEl) S.streamEl.remove();
+		return null;
 	}
 	if (S.streamEl) S.streamEl.remove();
 	return null;
 }
 
 function appendFinalFooter(msgEl, p) {
-	// When the LLM says nothing (empty response), fall back to the last
-	// visible element (typically the exec card) so the footer is still shown.
-	if (!msgEl && p.model && S.chatMsgBox) {
-		msgEl = S.chatMsgBox.lastElementChild;
-	}
 	if (!(msgEl && p.model)) return;
 	var footer = document.createElement("div");
 	footer.className = "msg-model-footer";
@@ -449,7 +316,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 			var audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
 			renderAudioPlayer(msgEl, audioSrc, true);
 		}
-		// Render transcript text below the audio
+		// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
 		var textWrap = document.createElement("div");
 		textWrap.className = "mt-2";
 		setSafeMarkdownHtml(textWrap, p.text);
@@ -474,7 +341,9 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 					.finally(() => appendFinalFooter(resolvedEl, p));
 			}
 		} else {
-			appendFinalFooter(resolvedEl, p);
+			// Silent reply — attach footer to the last visible element (e.g. exec card).
+			var target = resolvedEl || S.chatMsgBox?.lastElementChild;
+			appendFinalFooter(target, p);
 		}
 	}
 	if (p.inputTokens || p.outputTokens) {
@@ -607,6 +476,24 @@ function handleSandboxImageProvision(payload) {
 	}
 }
 
+function handleSandboxHostProvision(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	if (payload.phase === "start") {
+		var msg = `Installing ${payload.count || ""} package${payload.count === 1 ? "" : "s"} on host\u2026`;
+		chatAddMsg("system", msg);
+	} else if (payload.phase === "done") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		var parts = [];
+		if (payload.installed > 0) parts.push(`${payload.installed} installed`);
+		if (payload.skipped > 0) parts.push(`${payload.skipped} already present`);
+		chatAddMsg("system", `Host packages ready (${parts.join(", ") || "done"})`);
+	} else if (payload.phase === "error") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("error", `Host package install failed: ${payload.error || "unknown"}`);
+	}
+}
+
 function handleBrowserImagePull(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
@@ -726,6 +613,7 @@ var eventHandlers = {
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
+	"sandbox.host.provision": handleSandboxHostProvision,
 	"browser.image.pull": handleBrowserImagePull,
 	"local-llm.download": handleLocalLlmDownload,
 	"models.updated": handleModelsUpdated,
@@ -778,7 +666,6 @@ var connectOpts = {
 		}
 		S.setStreamEl(null);
 		S.setStreamText("");
-		S.setVoicePending(false);
 	},
 };
 

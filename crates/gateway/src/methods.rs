@@ -90,6 +90,7 @@ const READ_METHODS: &[&str] = &[
     "mcp.list",
     "mcp.status",
     "mcp.tools",
+    "tts.generate_phrase",
     "voice.config.get",
     "voice.config.voxtral_requirements",
     "voice.providers.all",
@@ -2133,6 +2134,77 @@ impl MethodRegistry {
                 }),
             );
             self.register(
+                "tts.generate_phrase",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let context = ctx
+                            .params
+                            .get("context")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("settings");
+
+                        let config = moltis_config::discover_and_load();
+                        let identity = moltis_config::ResolvedIdentity::from_config(&config);
+                        let user = identity
+                            .user_name
+                            .unwrap_or_else(|| "friend".into());
+                        let bot = identity.name;
+
+                        // Try LLM generation with a 3-second timeout.
+                        // Clone the Arc out so we don't hold the outer RwLock across awaits.
+                        let providers = ctx.state.llm_providers.read().await.clone();
+                        if let Some(providers) = providers {
+                            let provider = providers.read().await.first();
+                            if let Some(provider) = provider {
+                                let system_prompt = format!(
+                                    "You generate short, funny TTS test phrases for a voice assistant.\n\
+                                     The user's name is {user}. The bot's name is {bot}.\n\
+                                     Include SSML <break time=\"0.5s\"/> tags for natural pauses.\n\
+                                     Reply with ONLY the phrase text — no quotes, no markdown. Under 200 chars."
+                                );
+                                let messages = vec![
+                                    moltis_agents::model::ChatMessage::system(system_prompt),
+                                    moltis_agents::model::ChatMessage::user(format!(
+                                        "Generate a {context} TTS test phrase."
+                                    )),
+                                ];
+                                let result = tokio::time::timeout(
+                                    Duration::from_secs(3),
+                                    provider.complete(&messages, &[]),
+                                )
+                                .await;
+
+                                if let Ok(Ok(response)) = result {
+                                    if let Some(text) = response.text {
+                                        let text = text.trim().to_string();
+                                        if !text.is_empty() {
+                                            return Ok(serde_json::json!({
+                                                "phrase": text,
+                                                "source": "llm",
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fall back to static phrases with sequential picking.
+                        let phrases =
+                            crate::tts_phrases::static_phrases(&user, &bot, context);
+                        let idx = ctx.state.next_tts_phrase_index(phrases.len());
+                        let phrase = phrases
+                            .into_iter()
+                            .nth(idx)
+                            .unwrap_or_default();
+
+                        Ok(serde_json::json!({
+                            "phrase": phrase,
+                            "source": "static",
+                        }))
+                    })
+                }),
+            );
+            self.register(
                 "tts.setProvider",
                 Box::new(|ctx| {
                     Box::pin(async move {
@@ -4154,9 +4226,7 @@ impl VoiceProviderId {
                 key_placeholder: Some("API key"),
                 key_url: Some("https://elevenlabs.io/app/settings/api-keys"),
                 key_url_label: Some("elevenlabs.io"),
-                hint: Some(
-                    "This API key also enables ElevenLabs Scribe for speech-to-text.",
-                ),
+                hint: Some("This API key also enables ElevenLabs Scribe for speech-to-text."),
             },
             Self::OpenaiTts => VoiceProviderMeta {
                 description: "Good quality, shares API key with Whisper STT",

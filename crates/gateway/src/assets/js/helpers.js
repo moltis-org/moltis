@@ -133,6 +133,148 @@ export function updateCountdown(el, resetsAtMs) {
 	return false;
 }
 
+/** Build a short summary string for a tool call card. */
+export function toolCallSummary(name, args, executionMode) {
+	if (!args) return name || "tool";
+	switch (name) {
+		case "exec":
+			return args.command || "exec";
+		case "web_fetch":
+			return `web_fetch ${args.url || ""}`.trim();
+		case "web_search":
+			return `web_search "${args.query || ""}"`;
+		case "browser": {
+			var action = args.action || "browser";
+			var mode = executionMode ? ` (${executionMode})` : "";
+			var url = args.url ? ` ${args.url}` : "";
+			return `browser ${action}${mode}${url}`.trim();
+		}
+		default:
+			return name || "tool";
+	}
+}
+
+/**
+ * Render a screenshot thumbnail with lightbox and download into `container`.
+ * @param {HTMLElement} container - parent element to append into
+ * @param {string} imgSrc - image URL (data URI or HTTP URL)
+ * @param {number} [scale=1] - HiDPI scale factor
+ */
+export function renderScreenshot(container, imgSrc, scale) {
+	if (!scale) scale = 1;
+	var imgContainer = document.createElement("div");
+	imgContainer.className = "screenshot-container";
+	var img = document.createElement("img");
+	img.src = imgSrc;
+	img.className = "screenshot-thumbnail";
+	img.alt = "Browser screenshot";
+	img.title = "Click to view full size";
+
+	img.onload = () => {
+		if (scale > 1) {
+			var logicalWidth = img.naturalWidth / scale;
+			var logicalHeight = img.naturalHeight / scale;
+			img.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
+		}
+	};
+
+	var downloadScreenshot = (e) => {
+		e.stopPropagation();
+		var link = document.createElement("a");
+		link.href = imgSrc;
+		link.download = `screenshot-${Date.now()}.png`;
+		link.click();
+	};
+
+	img.onclick = () => {
+		var overlay = document.createElement("div");
+		overlay.className = "screenshot-lightbox";
+
+		var lightboxContent = document.createElement("div");
+		lightboxContent.className = "screenshot-lightbox-content";
+
+		var header = document.createElement("div");
+		header.className = "screenshot-lightbox-header";
+		header.onclick = (e) => e.stopPropagation();
+
+		var closeBtn = document.createElement("button");
+		closeBtn.className = "screenshot-lightbox-close";
+		closeBtn.textContent = "\u2715";
+		closeBtn.title = "Close (Esc)";
+		closeBtn.onclick = () => overlay.remove();
+
+		var downloadBtn = document.createElement("button");
+		downloadBtn.className = "screenshot-download-btn";
+		downloadBtn.textContent = "\u2B07 Download";
+		downloadBtn.onclick = downloadScreenshot;
+
+		header.appendChild(closeBtn);
+		header.appendChild(downloadBtn);
+
+		var scrollContainer = document.createElement("div");
+		scrollContainer.className = "screenshot-lightbox-scroll";
+		scrollContainer.onclick = (e) => e.stopPropagation();
+
+		var fullImg = document.createElement("img");
+		fullImg.src = img.src;
+		fullImg.className = "screenshot-lightbox-img";
+
+		fullImg.onload = () => {
+			var logicalWidth = fullImg.naturalWidth / scale;
+			var logicalHeight = fullImg.naturalHeight / scale;
+			var viewportWidth = window.innerWidth - 80;
+			var displayWidth = Math.min(logicalWidth, viewportWidth);
+			fullImg.style.width = `${displayWidth}px`;
+			var displayHeight = (displayWidth / logicalWidth) * logicalHeight;
+			fullImg.style.height = `${displayHeight}px`;
+		};
+
+		scrollContainer.appendChild(fullImg);
+		lightboxContent.appendChild(header);
+		lightboxContent.appendChild(scrollContainer);
+		overlay.appendChild(lightboxContent);
+
+		overlay.onclick = () => overlay.remove();
+		var closeOnEscape = (e) => {
+			if (e.key === "Escape") {
+				overlay.remove();
+				document.removeEventListener("keydown", closeOnEscape);
+			}
+		};
+		document.addEventListener("keydown", closeOnEscape);
+		document.body.appendChild(overlay);
+	};
+
+	var thumbDownloadBtn = document.createElement("button");
+	thumbDownloadBtn.className = "screenshot-download-btn-small";
+	thumbDownloadBtn.textContent = "\u2B07";
+	thumbDownloadBtn.title = "Download screenshot";
+	thumbDownloadBtn.onclick = downloadScreenshot;
+
+	imgContainer.appendChild(img);
+	imgContainer.appendChild(thumbDownloadBtn);
+	container.appendChild(imgContainer);
+}
+
+/**
+ * Render an `<audio>` player into `container`.
+ * @param {HTMLElement} container - parent element to append into
+ * @param {string} audioSrc - audio URL (HTTP or data URI)
+ * @param {boolean} [autoplay=false] - start playback immediately
+ */
+export function renderAudioPlayer(container, audioSrc, autoplay) {
+	var wrap = document.createElement("div");
+	wrap.className = "mt-2";
+	var audio = document.createElement("audio");
+	audio.controls = true;
+	audio.preload = "none";
+	audio.src = audioSrc;
+	audio.className = "w-full max-w-md";
+	wrap.appendChild(audio);
+	container.appendChild(wrap);
+	if (autoplay) audio.play().catch(() => undefined);
+}
+
 export function createEl(tag, attrs, children) {
 	var el = document.createElement(tag);
 	if (attrs) {

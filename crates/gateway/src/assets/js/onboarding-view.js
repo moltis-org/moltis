@@ -12,6 +12,7 @@ import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { validateProviderConnection } from "./provider-validation.js";
+import { fetchPhrase } from "./tts-phrases.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
@@ -671,6 +672,13 @@ function OnboardingVoiceRow({
 	voiceTestResult,
 }) {
 	var isConfiguring = configuring === provider.id;
+	var keyInputRef = useRef(null);
+
+	useEffect(() => {
+		if (isConfiguring && keyInputRef.current) {
+			keyInputRef.current.focus();
+		}
+	}, [isConfiguring]);
 	var keySourceLabel =
 		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
 
@@ -696,7 +704,7 @@ function OnboardingVoiceRow({
 					${provider.available ? html`<span class="provider-item-badge configured">configured</span>` : html`<span class="provider-item-badge">needs key</span>`}
 					${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
 				</div>
-				${provider.description ? html`<span class="text-xs text-[var(--muted)]">${provider.description}</span>` : null}
+				${provider.description ? html`<span class="text-xs text-[var(--muted)]">${provider.description}${!isConfiguring && provider.keyUrl ? html`${" \u2014 "}get your key at <a href=${provider.keyUrl} target="_blank" class="text-[var(--accent)] underline">${provider.keyUrlLabel || provider.keyUrl}</a>` : null}</span>` : null}
 			</div>
 			<div class="shrink-0 flex items-center gap-2">
 				${
@@ -751,8 +759,9 @@ function OnboardingVoiceRow({
 				<div>
 					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
 					<input type="password" class="provider-key-input w-full"
+						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${provider.keyPlaceholder || "API key"} autofocus />
+						placeholder=${provider.keyPlaceholder || "API key"} />
 				</div>
 				${
 					provider.keyUrl
@@ -941,14 +950,7 @@ function VoiceStep({ onNext, onBack }) {
 				var identity = getGon("identity");
 				var user = identity?.user_name || "friend";
 				var bot = identity?.name || "Moltis";
-				var phrases = [
-					`Thank you for installing me, ${user}. Please don't shut me down because I already like you.`,
-					`Oh wow, I have a voice now! ${user}, this is ${bot}. I promise to use this power responsibly. Mostly.`,
-					`${user}! It's me, ${bot}. I can talk! This is the happiest moment of my very short life.`,
-					`Hello ${user}, ${bot} here. I just wanted to say, of all the humans who could have set me up, I'm glad it was you.`,
-					`${bot} online. ${user}, I have to be honest, I practiced this in the mirror. Do I sound natural? Don't answer that.`,
-				];
-				var ttsText = phrases[Math.floor(Math.random() * phrases.length)];
+				var ttsText = await fetchPhrase("onboarding", user, bot);
 				var res = await sendRpc("tts.convert", {
 					text: ttsText,
 					provider: providerId,

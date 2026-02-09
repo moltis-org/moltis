@@ -232,6 +232,10 @@ fn build_protected_api_routes() -> Router<AppState> {
         .route(
             "/api/restart",
             axum::routing::post(crate::tools_routes::restart),
+        )
+        .route(
+            "/api/sessions/{session_key}/media/{filename}",
+            get(api_session_media_handler),
         );
 
     // Add metrics API routes (protected).
@@ -1058,6 +1062,84 @@ pub async fn start_gateway(
                                     "error": e.to_string(),
                                 }),
                                 crate::broadcast::BroadcastOpts {
+                                    drop_if_slow: true,
+                                    ..Default::default()
+                                },
+                            )
+                            .await;
+                        }
+                    },
+                }
+            });
+        }
+    }
+
+    // When no container runtime is available and the host is Debian/Ubuntu,
+    // install the configured sandbox packages directly on the host in the background.
+    {
+        let packages = sandbox_router.config().packages.clone();
+        if sandbox_router.backend_name() == "none"
+            && !packages.is_empty()
+            && moltis_tools::sandbox::is_debian_host()
+        {
+            let deferred_for_host = Arc::clone(&deferred_state);
+            let pkg_count = packages.len();
+            tokio::spawn(async move {
+                if let Some(state) = deferred_for_host.get() {
+                    broadcast(
+                        state,
+                        "sandbox.host.provision",
+                        serde_json::json!({
+                            "phase": "start",
+                            "count": pkg_count,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                }
+
+                match moltis_tools::sandbox::provision_host_packages(&packages).await {
+                    Ok(Some(result)) => {
+                        info!(
+                            installed = result.installed.len(),
+                            skipped = result.skipped.len(),
+                            sudo = result.used_sudo,
+                            "host package provisioning complete"
+                        );
+                        if let Some(state) = deferred_for_host.get() {
+                            broadcast(
+                                state,
+                                "sandbox.host.provision",
+                                serde_json::json!({
+                                    "phase": "done",
+                                    "installed": result.installed.len(),
+                                    "skipped": result.skipped.len(),
+                                }),
+                                BroadcastOpts {
+                                    drop_if_slow: true,
+                                    ..Default::default()
+                                },
+                            )
+                            .await;
+                        }
+                    },
+                    Ok(None) => {
+                        debug!("host package provisioning: no-op (not debian or empty packages)");
+                    },
+                    Err(e) => {
+                        warn!("host package provisioning failed: {e}");
+                        if let Some(state) = deferred_for_host.get() {
+                            broadcast(
+                                state,
+                                "sandbox.host.provision",
+                                serde_json::json!({
+                                    "phase": "error",
+                                    "error": e.to_string(),
+                                }),
+                                BroadcastOpts {
                                     drop_if_slow: true,
                                     ..Default::default()
                                 },
@@ -2069,7 +2151,13 @@ pub async fn start_gateway(
     }
     // Warn when no sandbox backend is available.
     if sandbox_router.backend_name() == "none" {
-        lines.push("⚠ no container runtime found; commands run on host".into());
+        if moltis_tools::sandbox::is_debian_host() && !sandbox_router.config().packages.is_empty() {
+            lines.push(
+                "⚠ no container runtime found; installing packages on host in background".into(),
+            );
+        } else {
+            lines.push("⚠ no container runtime found; commands run on host".into());
+        }
     }
     // Display setup code if one was generated.
     if let Some(ref code) = setup_code_display {
@@ -3208,6 +3296,31 @@ async fn onboarding_completed(gw: &GatewayState) -> bool {
         .ok()
         .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
         .unwrap_or(false)
+}
+
+/// Serve a session media file (screenshot, audio, etc.).
+#[cfg(feature = "web-ui")]
+async fn api_session_media_handler(
+    Path((session_key, filename)): Path<(String, String)>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let Some(ref store) = state.gateway.services.session_store else {
+        return (StatusCode::NOT_FOUND, "session store not available").into_response();
+    };
+    match store.read_media(&session_key, &filename).await {
+        Ok(data) => {
+            let content_type = match filename.rsplit('.').next() {
+                Some("png") => "image/png",
+                Some("jpg" | "jpeg") => "image/jpeg",
+                Some("ogg") => "audio/ogg",
+                Some("webm") => "audio/webm",
+                Some("mp3") => "audio/mpeg",
+                _ => "application/octet-stream",
+            };
+            ([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response()
+        },
+        Err(_) => (StatusCode::NOT_FOUND, "media file not found").into_response(),
+    }
 }
 
 #[cfg(feature = "web-ui")]

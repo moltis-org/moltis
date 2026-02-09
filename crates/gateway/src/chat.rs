@@ -317,17 +317,14 @@ async fn run_single_probe(
                     display_name,
                     provider_name,
                     status: ProbeStatus::Error {
-                        message: format!(
-                            "{detail} (probe backoff {}ms)",
-                            backoff.as_millis()
-                        ),
+                        message: format!("{detail} (probe backoff {}ms)", backoff.as_millis()),
                     },
                 };
             }
 
             rate_limiter.clear(&provider_name).await;
-            let is_unsupported = error_obj.get("type").and_then(|v| v.as_str())
-                == Some("unsupported_model");
+            let is_unsupported =
+                error_obj.get("type").and_then(|v| v.as_str()) == Some("unsupported_model");
 
             if is_unsupported {
                 let detail = error_obj
@@ -1896,6 +1893,7 @@ impl ChatService for LiveChatService {
                         user_message_index,
                         &discovered_skills,
                         Some(&runtime_context),
+                        Some(&session_store),
                     )
                     .await
                 } else {
@@ -1964,24 +1962,27 @@ impl ChatService for LiveChatService {
                 agent_fut.await
             };
 
-            // Persist assistant response.
-            if let Some((response_text, input_tokens, output_tokens)) = assistant_text {
-                let assistant_msg = PersistedMessage::assistant(
-                    response_text,
-                    &model_id,
-                    &provider_name,
-                    input_tokens,
-                    output_tokens,
-                );
-                if let Err(e) = session_store
-                    .append(&session_key_clone, &assistant_msg.to_value())
-                    .await
-                {
-                    warn!("failed to persist assistant message: {e}");
-                }
-                // Update metadata counts.
-                if let Ok(count) = session_store.count(&session_key_clone).await {
-                    session_metadata.touch(&session_key_clone, count).await;
+            // Persist assistant response (skip silent/empty responses).
+            if let Some((response_text, input_tokens, output_tokens, audio_path)) = assistant_text {
+                if !response_text.is_empty() {
+                    let assistant_msg = PersistedMessage::assistant(
+                        response_text,
+                        &model_id,
+                        &provider_name,
+                        input_tokens,
+                        output_tokens,
+                        audio_path,
+                    );
+                    if let Err(e) = session_store
+                        .append(&session_key_clone, &assistant_msg.to_value())
+                        .await
+                    {
+                        warn!("failed to persist assistant message: {e}");
+                    }
+                    // Update metadata counts.
+                    if let Ok(count) = session_store.count(&session_key_clone).await {
+                        session_metadata.touch(&session_key_clone, count).await;
+                    }
                 }
             }
 
@@ -2149,6 +2150,7 @@ impl ChatService for LiveChatService {
                 user_message_index,
                 &[],
                 Some(&runtime_context),
+                Some(&self.session_store),
             )
             .await
         } else {
@@ -2176,34 +2178,39 @@ impl ChatService for LiveChatService {
             .await
         };
 
-        // Persist assistant response.
-        if let Some((ref response_text, input_tokens, output_tokens)) = result {
-            let assistant_msg = PersistedMessage::assistant(
-                response_text,
-                &model_id,
-                &provider_name,
-                input_tokens,
-                output_tokens,
-            );
-            if let Err(e) = self
-                .session_store
-                .append(&session_key, &assistant_msg.to_value())
-                .await
-            {
-                warn!("send_sync: failed to persist assistant message: {e}");
-            }
-            // Update metadata message count.
-            if let Ok(count) = self.session_store.count(&session_key).await {
-                self.session_metadata.touch(&session_key, count).await;
+        // Persist assistant response (skip silent/empty responses).
+        if let Some((ref response_text, input_tokens, output_tokens, ref audio_path)) = result {
+            if !response_text.is_empty() {
+                let assistant_msg = PersistedMessage::assistant(
+                    response_text,
+                    &model_id,
+                    &provider_name,
+                    input_tokens,
+                    output_tokens,
+                    audio_path.clone(),
+                );
+                if let Err(e) = self
+                    .session_store
+                    .append(&session_key, &assistant_msg.to_value())
+                    .await
+                {
+                    warn!("send_sync: failed to persist assistant message: {e}");
+                }
+                // Update metadata message count.
+                if let Ok(count) = self.session_store.count(&session_key).await {
+                    self.session_metadata.touch(&session_key, count).await;
+                }
             }
         }
 
         match result {
-            Some((response_text, input_tokens, output_tokens)) => Ok(serde_json::json!({
-                "text": response_text,
-                "inputTokens": input_tokens,
-                "outputTokens": output_tokens,
-            })),
+            Some((response_text, input_tokens, output_tokens, _audio_path)) => {
+                Ok(serde_json::json!({
+                    "text": response_text,
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                }))
+            },
             None => {
                 // Check the last broadcast for this run to get the actual error message.
                 let error_msg = state
@@ -2407,6 +2414,7 @@ impl ChatService for LiveChatService {
             input_tokens: None,
             output_tokens: None,
             tool_calls: None,
+            audio: None,
         };
         let compacted = vec![compacted_msg.to_value()];
 
@@ -2916,7 +2924,7 @@ async fn run_with_tools(
     accept_language: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
-) -> Option<(String, u32, u32)> {
+) -> Option<(String, u32, u32, Option<String>)> {
     let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
@@ -2969,10 +2977,16 @@ async fn run_with_tools(
     let state_for_events = Arc::clone(state);
     let run_id_for_events = run_id.to_string();
     let session_key_for_events = session_key.to_string();
+    let session_store_for_events = session_store.map(Arc::clone);
+    // Track tool call arguments from ToolCallStart so we can persist them with ToolCallEnd.
+    let tool_args_map: Arc<std::sync::Mutex<HashMap<String, Value>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
     let on_event: Box<dyn Fn(RunnerEvent) + Send + Sync> = Box::new(move |event| {
         let state = Arc::clone(&state_for_events);
         let run_id = run_id_for_events.clone();
         let sk = session_key_for_events.clone();
+        let store = session_store_for_events.clone();
+        let args_map = Arc::clone(&tool_args_map);
         tokio::spawn(async move {
             let payload = match &event {
                 RunnerEvent::Thinking => serde_json::json!({
@@ -2990,6 +3004,11 @@ async fn run_with_tools(
                     name,
                     arguments,
                 } => {
+                    // Track arguments for persistence in ToolCallEnd.
+                    if let Ok(mut map) = args_map.lock() {
+                        map.insert(id.clone(), arguments.clone());
+                    }
+
                     // Send tool status to channels (Telegram, etc.)
                     let state_clone = Arc::clone(&state);
                     let sk_clone = sk.clone();
@@ -3074,6 +3093,91 @@ async fn run_with_tools(
                         tokio::spawn(async move {
                             send_screenshot_to_channels(&state_clone, &sk_clone, &screenshot_data)
                                 .await;
+                        });
+                    }
+
+                    // Persist tool result to the session JSONL file.
+                    if let Some(ref store) = store {
+                        let tracked_args = args_map.lock().ok().and_then(|mut m| m.remove(id));
+                        // Save screenshot to media dir (if present) and replace
+                        // with a lightweight path reference. Strip screenshot_scale
+                        // (only needed for live rendering). Cap stdout/stderr at
+                        // 10 KB, matching the WS broadcast cap.
+                        let store_media = Arc::clone(store);
+                        let sk_media = sk.clone();
+                        let tool_call_id = id.clone();
+                        let persisted_result = result.as_ref().map(|res| {
+                            let mut r = res.clone();
+                            // Try to decode and persist the screenshot to the media
+                            // directory. Extract base64 into an owned Vec first to
+                            // release the borrow on `r`.
+                            let decoded_screenshot = r
+                                .get("screenshot")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| s.starts_with("data:image/"))
+                                .and_then(|uri| uri.split(',').nth(1))
+                                .and_then(|b64| {
+                                    use base64::Engine;
+                                    base64::engine::general_purpose::STANDARD.decode(b64).ok()
+                                });
+                            if let Some(bytes) = decoded_screenshot {
+                                let filename = format!("{tool_call_id}.png");
+                                let store_ref = Arc::clone(&store_media);
+                                let sk_ref = sk_media.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) =
+                                        store_ref.save_media(&sk_ref, &filename, &bytes).await
+                                    {
+                                        warn!("failed to save screenshot media: {e}");
+                                    }
+                                });
+                                let sanitized = SessionStore::key_to_filename(&sk_media);
+                                r["screenshot"] = serde_json::Value::String(format!(
+                                    "media/{sanitized}/{tool_call_id}.png"
+                                ));
+                            }
+                            // If screenshot is still a data URI (decode failed), strip it.
+                            let strip_screenshot = r
+                                .get("screenshot")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| s.starts_with("data:"));
+                            if let Some(obj) = r.as_object_mut() {
+                                if strip_screenshot {
+                                    obj.remove("screenshot");
+                                }
+                                obj.remove("screenshot_scale");
+                            }
+                            for field in &["stdout", "stderr"] {
+                                if let Some(s) = r.get(*field).and_then(|v| v.as_str())
+                                    && s.len() > 10_000
+                                {
+                                    let truncated = format!(
+                                        "{}\n\n... [truncated — {} bytes total]",
+                                        &s[..10_000],
+                                        s.len()
+                                    );
+                                    r[*field] = serde_json::Value::String(truncated);
+                                }
+                            }
+                            r
+                        });
+                        let tool_result_msg = PersistedMessage::tool_result(
+                            id,
+                            name,
+                            tracked_args,
+                            *success,
+                            persisted_result,
+                            error.clone(),
+                        );
+                        let store_clone = Arc::clone(store);
+                        let sk_persist = sk.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = store_clone
+                                .append(&sk_persist, &tool_result_msg.to_value())
+                                .await
+                            {
+                                warn!("failed to persist tool result: {e}");
+                            }
                         });
                     }
 
@@ -3247,45 +3351,76 @@ async fn run_with_tools(
     match result {
         Ok(result) => {
             clear_unsupported_model(state, model_store, model_id).await;
+
+            let is_silent = result.text.trim().is_empty();
+            let display_text = result.text;
+
             info!(
                 run_id,
                 iterations = result.iterations,
                 tool_calls = result.tool_calls_made,
-                response = %result.text,
+                response = %display_text,
+                silent = is_silent,
                 "agent run complete"
             );
             let assistant_message_index = user_message_index + 1;
-            broadcast(
-                state,
-                "chat",
-                serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": session_key,
-                    "state": "final",
-                    "text": result.text,
-                    "iterations": result.iterations,
-                    "toolCallsMade": result.tool_calls_made,
-                    "model": provider_ref.id(),
-                    "provider": provider_name,
-                    "inputTokens": result.usage.input_tokens,
-                    "outputTokens": result.usage.output_tokens,
-                    "messageIndex": assistant_message_index,
-                    "replyMedium": desired_reply_medium,
-                }),
-                BroadcastOpts::default(),
-            )
-            .await;
-            // Send push notification when chat response completes
-            #[cfg(feature = "push-notifications")]
-            {
-                tracing::info!("push: checking push notification (agent mode)");
-                send_chat_push_notification(state, session_key, &result.text).await;
+
+            // Generate & persist TTS audio for voice-medium web UI replies.
+            let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
+                if let Some(bytes) = generate_tts_audio(state, session_key, &display_text).await {
+                    let filename = format!("{run_id}.ogg");
+                    if let Some(store) = session_store {
+                        match store.save_media(session_key, &filename, &bytes).await {
+                            Ok(path) => Some(path),
+                            Err(e) => {
+                                warn!(run_id, error = %e, "failed to save TTS audio to media dir");
+                                None
+                            },
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let mut final_payload = serde_json::json!({
+                "runId": run_id,
+                "sessionKey": session_key,
+                "state": "final",
+                "text": display_text,
+                "iterations": result.iterations,
+                "toolCallsMade": result.tool_calls_made,
+                "model": provider_ref.id(),
+                "provider": provider_name,
+                "inputTokens": result.usage.input_tokens,
+                "outputTokens": result.usage.output_tokens,
+                "messageIndex": assistant_message_index,
+                "replyMedium": desired_reply_medium,
+            });
+            if let Some(ref audio) = audio_path {
+                final_payload["audio"] = serde_json::json!(audio);
             }
-            deliver_channel_replies(state, session_key, &result.text, desired_reply_medium).await;
+            broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
+
+            if !is_silent {
+                // Send push notification when chat response completes
+                #[cfg(feature = "push-notifications")]
+                {
+                    tracing::info!("push: checking push notification (agent mode)");
+                    send_chat_push_notification(state, session_key, &display_text).await;
+                }
+                deliver_channel_replies(state, session_key, &display_text, desired_reply_medium)
+                    .await;
+            }
             Some((
-                result.text,
+                display_text,
                 result.usage.input_tokens,
                 result.usage.output_tokens,
+                audio_path,
             ))
         },
         Err(e) => {
@@ -3368,6 +3503,7 @@ async fn compact_session(
         input_tokens: None,
         output_tokens: None,
         tool_calls: None,
+        audio: None,
     };
     let compacted = vec![compacted_msg.to_value()];
 
@@ -3396,7 +3532,8 @@ async fn run_streaming(
     user_message_index: usize,
     _skills: &[moltis_skills::types::SkillMetadata],
     runtime_context: Option<&PromptRuntimeContext>,
-) -> Option<(String, u32, u32)> {
+    session_store: Option<&Arc<SessionStore>>,
+) -> Option<(String, u32, u32, Option<String>)> {
     let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
@@ -3437,40 +3574,75 @@ async fn run_streaming(
             },
             StreamEvent::Done(usage) => {
                 clear_unsupported_model(state, model_store, model_id).await;
-                debug!(
+
+                let is_silent = accumulated.trim().is_empty();
+
+                info!(
                     run_id,
                     input_tokens = usage.input_tokens,
                     output_tokens = usage.output_tokens,
+                    response = %accumulated,
+                    silent = is_silent,
                     "chat stream done"
                 );
                 let assistant_message_index = user_message_index + 1;
-                broadcast(
-                    state,
-                    "chat",
-                    serde_json::json!({
-                        "runId": run_id,
-                        "sessionKey": session_key,
-                        "state": "final",
-                        "text": accumulated,
-                        "model": provider.id(),
-                        "provider": provider_name,
-                        "inputTokens": usage.input_tokens,
-                        "outputTokens": usage.output_tokens,
-                        "messageIndex": assistant_message_index,
-                        "replyMedium": desired_reply_medium,
-                    }),
-                    BroadcastOpts::default(),
-                )
-                .await;
-                // Send push notification when chat response completes
-                #[cfg(feature = "push-notifications")]
-                {
-                    tracing::info!("push: checking push notification");
-                    send_chat_push_notification(state, session_key, &accumulated).await;
+
+                // Generate & persist TTS audio for voice-medium web UI replies.
+                let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
+                    if let Some(bytes) = generate_tts_audio(state, session_key, &accumulated).await
+                    {
+                        let filename = format!("{run_id}.ogg");
+                        if let Some(store) = session_store {
+                            match store.save_media(session_key, &filename, &bytes).await {
+                                Ok(path) => Some(path),
+                                Err(e) => {
+                                    warn!(run_id, error = %e, "failed to save TTS audio to media dir");
+                                    None
+                                },
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let mut final_payload = serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": session_key,
+                    "state": "final",
+                    "text": accumulated,
+                    "model": provider.id(),
+                    "provider": provider_name,
+                    "inputTokens": usage.input_tokens,
+                    "outputTokens": usage.output_tokens,
+                    "messageIndex": assistant_message_index,
+                    "replyMedium": desired_reply_medium,
+                });
+                if let Some(ref audio) = audio_path {
+                    final_payload["audio"] = serde_json::json!(audio);
                 }
-                deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
-                    .await;
-                return Some((accumulated, usage.input_tokens, usage.output_tokens));
+                broadcast(state, "chat", final_payload, BroadcastOpts::default()).await;
+
+                if !is_silent {
+                    // Send push notification when chat response completes
+                    #[cfg(feature = "push-notifications")]
+                    {
+                        tracing::info!("push: checking push notification");
+                        send_chat_push_notification(state, session_key, &accumulated).await;
+                    }
+                    deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
+                        .await;
+                }
+                return Some((
+                    accumulated,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    audio_path,
+                ));
             },
             StreamEvent::Error(msg) => {
                 warn!(run_id, error = %msg, "chat stream error");
@@ -3665,6 +3837,54 @@ struct TtsConvertResponse {
     audio: String,
     #[serde(default)]
     mime_type: Option<String>,
+}
+
+/// Generate TTS audio bytes for a web UI response.
+///
+/// Uses the session-level TTS override if configured, otherwise the global TTS
+/// config. Returns raw audio bytes (OGG format) on success, `None` if TTS is
+/// disabled or generation fails.
+async fn generate_tts_audio(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    text: &str,
+) -> Option<Vec<u8>> {
+    use base64::Engine;
+
+    let tts_status = state.services.tts.status().await.ok()?;
+    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
+    if !status.enabled {
+        return None;
+    }
+
+    let session_override = {
+        state
+            .tts_session_overrides
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
+    };
+
+    let request = TtsConvertRequest {
+        text,
+        format: "ogg",
+        provider: session_override.as_ref().and_then(|o| o.provider.clone()),
+        voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
+        model: session_override.as_ref().and_then(|o| o.model.clone()),
+    };
+
+    let tts_result = state
+        .services
+        .tts
+        .convert(serde_json::to_value(request).ok()?)
+        .await
+        .ok()?;
+
+    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
+    base64::engine::general_purpose::STANDARD
+        .decode(&response.audio)
+        .ok()
 }
 
 async fn build_tts_payload(
