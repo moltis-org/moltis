@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-02-09
+
+### Changed
+
+- **Release CI parallelization**: Split clippy and test into separate parallel
+  jobs in the release workflow for faster feedback on GitHub-hosted runners.
+
+### Fixed
+
+- **CodSpeed workflow zizmor audit**: Pinned `CodSpeedHQ/action@v4` to commit
+  SHA to satisfy zizmor's `unpinned-uses` audit.
+
 ## [0.3.7] - 2026-02-09
 
 ### Fixed
