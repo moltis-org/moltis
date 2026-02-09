@@ -29,7 +29,7 @@ function sandboxRuntimeAvailable() {
 
 function fetchImages() {
 	loading.value = true;
-	fetch("/api/images/cached")
+	fetch("/api/sandboxes/cached")
 		.then((r) => (r.ok ? r.json() : { images: [] }))
 		.then((data) => {
 			images.value = data.images || [];
@@ -45,7 +45,7 @@ function fetchImages() {
 
 function deleteImage(tag) {
 	var encoded = encodeURIComponent(tag);
-	fetch(`/api/images/cached/${encoded}`, { method: "DELETE" })
+	fetch(`/api/sandboxes/cached/${encoded}`, { method: "DELETE" })
 		.then((r) => {
 			if (r.ok) fetchImages();
 		})
@@ -56,7 +56,7 @@ function deleteImage(tag) {
 
 function pruneAll() {
 	pruning.value = true;
-	fetch("/api/images/cached", { method: "DELETE" })
+	fetch("/api/sandboxes/cached", { method: "DELETE" })
 		.then((r) => {
 			if (r.ok) fetchImages();
 		})
@@ -70,7 +70,7 @@ function pruneAll() {
 
 function doBuild(name, base, pkgs) {
 	buildStatus.value = "Building image\u2026";
-	fetch("/api/images/build", {
+	fetch("/api/sandboxes/build", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name, base, packages: pkgs }),
@@ -110,7 +110,7 @@ function buildImage() {
 	buildWarning.value = "";
 	buildStatus.value = "Checking packages in base image\u2026";
 
-	fetch("/api/images/check-packages", {
+	fetch("/api/sandboxes/check-packages", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ base, packages: pkgs }),
@@ -229,7 +229,7 @@ function DefaultImageSelector() {
 	function onSave() {
 		var val = defaultImage.value.trim();
 		savingDefault.value = true;
-		fetch("/api/images/default", {
+		fetch("/api/sandboxes/default", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ image: val || null }),
@@ -374,7 +374,7 @@ function ImagesPage() {
 }
 
 registerPage(
-	"/images",
+	"/sandboxes",
 	function initImages(container) {
 		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
 		images.value = [];

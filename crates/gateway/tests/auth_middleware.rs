@@ -186,14 +186,14 @@ async fn api_key_auth_succeeds() {
     assert_eq!(resp.status(), 200);
 }
 
-/// Unauthenticated request to /api/images/cached returns 401 when auth is set up.
+/// Unauthenticated request to /api/sandboxes/cached returns 401 when auth is set up.
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn images_endpoint_returns_401() {
+async fn sandboxes_endpoint_returns_401() {
     let (addr, store) = start_auth_server().await;
     store.set_initial_password("testpass123").await.unwrap();
 
-    let resp = reqwest::get(format!("http://{addr}/api/images/cached"))
+    let resp = reqwest::get(format!("http://{addr}/api/sandboxes/cached"))
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);

@@ -133,7 +133,7 @@ function populateImageDropdown() {
 	addImageOption(DEFAULT_IMAGE, !S.sessionSandboxImage);
 
 	// Fetch cached images
-	fetch("/api/images/cached")
+	fetch("/api/sandboxes/cached")
 		.then((r) => r.json())
 		.then((data) => {
 			var images = data.images || [];

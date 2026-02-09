@@ -78,7 +78,7 @@ function PathInput(props) {
 var cachedImages = signal([]);
 
 function fetchCachedImages() {
-	fetch("/api/images/cached")
+	fetch("/api/sandboxes/cached")
 		.then((r) => (r.ok ? r.json() : { images: [] }))
 		.then((data) => {
 			cachedImages.value = data.images || [];

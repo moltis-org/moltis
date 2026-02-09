@@ -47,7 +47,7 @@ gon.onChange("counts", updateNavCounts);
 // Images count is loaded asynchronously because listing Docker images
 // can be slow (or hang if Docker is not running). The server excludes it
 // from gon counts to avoid blocking every page load.
-fetch("/api/images/cached")
+fetch("/api/sandboxes/cached")
 	.then((r) => (r.ok ? r.json() : null))
 	.then((data) => {
 		if (data?.images) updateNavCount("images", data.images.length);

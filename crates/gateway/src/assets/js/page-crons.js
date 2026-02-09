@@ -35,7 +35,7 @@ var heartbeatModel = signal(gon.get("heartbeat_config")?.model || "");
 var heartbeatSandboxImage = signal(gon.get("heartbeat_config")?.sandbox_image || "");
 
 function loadSandboxImages() {
-	fetch("/api/images/cached")
+	fetch("/api/sandboxes/cached")
 		.then((r) => r.json())
 		.then((data) => {
 			sandboxImages.value = data?.images || [];

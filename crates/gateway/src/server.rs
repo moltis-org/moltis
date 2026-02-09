@@ -189,23 +189,23 @@ fn build_protected_api_routes() -> Router<AppState> {
         .route("/api/mcp", get(api_mcp_handler))
         .route("/api/hooks", get(api_hooks_handler))
         .route(
-            "/api/images/cached",
+            "/api/sandboxes/cached",
             get(api_cached_images_handler).delete(api_prune_cached_images_handler),
         )
         .route(
-            "/api/images/cached/{tag}",
+            "/api/sandboxes/cached/{tag}",
             axum::routing::delete(api_delete_cached_image_handler),
         )
         .route(
-            "/api/images/build",
+            "/api/sandboxes/build",
             axum::routing::post(api_build_image_handler),
         )
         .route(
-            "/api/images/check-packages",
+            "/api/sandboxes/check-packages",
             axum::routing::post(api_check_packages_handler),
         )
         .route(
-            "/api/images/default",
+            "/api/sandboxes/default",
             get(api_get_default_image_handler).put(api_set_default_image_handler),
         )
         .route(
