@@ -50,17 +50,43 @@ function StepDot({ index, label, state }) {
 	</div>`;
 }
 
+// ── Base64url helpers for WebAuthn ───────────────────────────
+
+function base64ToBuffer(b64) {
+	var str = b64.replace(/-/g, "+").replace(/_/g, "/");
+	while (str.length % 4) str += "=";
+	var bin = atob(str);
+	var buf = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+	return buf.buffer;
+}
+
+function bufferToBase64(buf) {
+	var bytes = new Uint8Array(buf);
+	var str = "";
+	for (var b of bytes) str += String.fromCharCode(b);
+	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 // ── Auth step ───────────────────────────────────────────────
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth step handles passkey+password+code flows
 function AuthStep({ onNext, skippable }) {
+	var [method, setMethod] = useState(null); // null | "passkey" | "password"
 	var [password, setPassword] = useState("");
 	var [confirm, setConfirm] = useState("");
 	var [setupCode, setSetupCode] = useState("");
+	var [passkeyName, setPasskeyName] = useState("");
 	var [codeRequired, setCodeRequired] = useState(false);
 	var [localhostOnly, setLocalhostOnly] = useState(false);
+	var [webauthnAvailable, setWebauthnAvailable] = useState(false);
 	var [error, setError] = useState(null);
 	var [saving, setSaving] = useState(false);
 	var [loading, setLoading] = useState(true);
+
+	var isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[");
+	var browserSupportsWebauthn = !!window.PublicKeyCredential;
+	var passkeyEnabled = webauthnAvailable && browserSupportsWebauthn && !isIpAddress;
 
 	useEffect(() => {
 		fetch("/api/auth/status")
@@ -68,13 +94,14 @@ function AuthStep({ onNext, skippable }) {
 			.then((data) => {
 				if (data.setup_code_required) setCodeRequired(true);
 				if (data.localhost_only) setLocalhostOnly(true);
+				if (data.webauthn_available) setWebauthnAvailable(true);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
 	}, []);
 
-	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth form handles password+code validation
-	function onSubmit(e) {
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: password+code validation
+	function onPasswordSubmit(e) {
 		e.preventDefault();
 		setError(null);
 		if (password.length > 0 || !localhostOnly) {
@@ -115,16 +142,149 @@ function AuthStep({ onNext, skippable }) {
 			});
 	}
 
+	function onPasskeyRegister() {
+		setError(null);
+		if (codeRequired && setupCode.trim().length === 0) {
+			setError("Enter the setup code shown in the process log (stdout).");
+			return;
+		}
+		setSaving(true);
+		var codeBody = codeRequired ? { setup_code: setupCode.trim() } : {};
+		fetch("/api/auth/setup/passkey/register/begin", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(codeBody),
+		})
+			.then((r) => {
+				if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t || "Failed to start passkey registration")));
+				return r.json();
+			})
+			.then((data) => {
+				var options = data.options;
+				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
+				options.publicKey.user.id = base64ToBuffer(options.publicKey.user.id);
+				if (options.publicKey.excludeCredentials) {
+					for (var c of options.publicKey.excludeCredentials) {
+						c.id = base64ToBuffer(c.id);
+					}
+				}
+				return navigator.credentials
+					.create({ publicKey: options.publicKey })
+					.then((cred) => ({ cred, challengeId: data.challenge_id }));
+			})
+			.then(({ cred, challengeId }) => {
+				var body = {
+					challenge_id: challengeId,
+					name: passkeyName.trim() || "Passkey",
+					credential: {
+						id: cred.id,
+						rawId: bufferToBase64(cred.rawId),
+						type: cred.type,
+						response: {
+							attestationObject: bufferToBase64(cred.response.attestationObject),
+							clientDataJSON: bufferToBase64(cred.response.clientDataJSON),
+						},
+					},
+				};
+				if (codeRequired) body.setup_code = setupCode.trim();
+				return fetch("/api/auth/setup/passkey/register/finish", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				});
+			})
+			.then((r) => {
+				if (r.ok) {
+					onNext();
+				} else {
+					return r.text().then((t) => {
+						setError(t || "Passkey registration failed");
+						setSaving(false);
+					});
+				}
+			})
+			.catch((err) => {
+				if (err.name === "NotAllowedError") {
+					setError("Passkey registration was cancelled.");
+				} else {
+					setError(err.message || "Passkey registration failed");
+				}
+				setSaving(false);
+			});
+	}
+
 	if (loading) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
 	}
 
+	var passkeyDisabledReason = webauthnAvailable
+		? browserSupportsWebauthn
+			? isIpAddress
+				? "Requires domain name"
+				: null
+			: "Browser not supported"
+		: "Not available on this server";
+
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly ? "Set a password to secure your instance, or skip for now." : "Set a password to secure your instance."}
+			${localhostOnly ? "Choose how to secure your instance, or skip for now." : "Choose how to secure your instance."}
 		</p>
-		<form onSubmit=${onSubmit} class="flex flex-col gap-3">
+
+		${
+			codeRequired &&
+			html`<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Setup code</label>
+			<input type="text" class="provider-key-input w-full" inputmode="numeric" pattern="[0-9]*"
+				value=${setupCode} onInput=${(e) => setSetupCode(e.target.value)}
+				placeholder="6-digit code from terminal" />
+			<div class="text-xs text-[var(--muted)] mt-1">Find this code in the moltis process log (stdout).</div>
+		</div>`
+		}
+
+		<div class="flex flex-col gap-2">
+			<div class=${`backend-card ${method === "passkey" ? "selected" : ""} ${passkeyEnabled ? "" : "disabled"}`}
+				onClick=${passkeyEnabled ? () => setMethod("passkey") : null}>
+				<div class="flex items-center justify-between">
+					<span class="text-sm font-medium text-[var(--text)]">Passkey</span>
+					<div class="flex gap-2">
+						${passkeyEnabled ? html`<span class="recommended-badge">Recommended</span>` : null}
+						${passkeyDisabledReason ? html`<span class="tier-badge">${passkeyDisabledReason}</span>` : null}
+					</div>
+				</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Use Touch ID, Face ID, or a security key</div>
+			</div>
+			<div class=${`backend-card ${method === "password" ? "selected" : ""}`}
+				onClick=${() => setMethod("password")}>
+				<div class="flex items-center justify-between">
+					<span class="text-sm font-medium text-[var(--text)]">Password</span>
+				</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
+			</div>
+		</div>
+
+		${
+			method === "passkey" &&
+			html`<div class="flex flex-col gap-3">
+			<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Passkey name</label>
+				<input type="text" class="provider-key-input w-full"
+					value=${passkeyName} onInput=${(e) => setPasskeyName(e.target.value)}
+					placeholder="e.g. MacBook Touch ID (optional)" />
+			</div>
+			${error && html`<${ErrorPanel} message=${error} />`}
+			<div class="flex items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
+					${saving ? "Registering\u2026" : "Register passkey"}
+				</button>
+				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+			</div>
+		</div>`
+		}
+
+		${
+			method === "password" &&
+			html`<form onSubmit=${onPasswordSubmit} class="flex flex-col gap-3">
 			<div>
 				<label class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
 				<input type="password" class="provider-key-input w-full"
@@ -137,16 +297,6 @@ function AuthStep({ onNext, skippable }) {
 					value=${confirm} onInput=${(e) => setConfirm(e.target.value)}
 					placeholder="Repeat password" />
 			</div>
-			${
-				codeRequired &&
-				html`<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Setup code</label>
-				<input type="text" class="provider-key-input w-full" inputmode="numeric" pattern="[0-9]*"
-					value=${setupCode} onInput=${(e) => setSetupCode(e.target.value)}
-					placeholder="6-digit code from terminal" />
-				<div class="text-xs text-[var(--muted)] mt-1">Hint: find this code in the moltis process log (stdout).</div>
-			</div>`
-			}
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
@@ -154,7 +304,15 @@ function AuthStep({ onNext, skippable }) {
 				</button>
 				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 			</div>
-		</form>
+		</form>`
+		}
+
+		${
+			method === null &&
+			html`<div class="flex items-center gap-3 mt-1">
+			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+		</div>`
+		}
 	</div>`;
 }
 

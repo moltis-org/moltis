@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Passkey onboarding**: The security setup step now offers passkey registration
+  (Touch ID, Face ID, security keys) as the recommended default, with password
+  as a fallback option.
+
 ### Changed
 
 - Show "No LLM Providers Connected" card instead of welcome greeting when no

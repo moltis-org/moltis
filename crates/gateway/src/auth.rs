@@ -114,7 +114,7 @@ impl CredentialStore {
             auth_disabled: AtomicBool::new(false),
         };
         store.init().await?;
-        let has = store.has_password().await?;
+        let has = store.has_password().await? || store.has_passkeys().await?;
         store.setup_complete.store(has, Ordering::Relaxed);
         store
             .auth_disabled
@@ -235,6 +235,21 @@ impl CredentialStore {
             .bind(&hash)
             .execute(&self.pool)
             .await?;
+        self.setup_complete.store(true, Ordering::Relaxed);
+        self.auth_disabled.store(false, Ordering::Relaxed);
+        self.persist_auth_disabled(false)?;
+        Ok(())
+    }
+
+    /// Mark initial setup as complete without setting a password (e.g. passkey-only setup).
+    ///
+    /// Requires at least one credential (password or passkey) to already exist.
+    pub async fn mark_setup_complete(&self) -> anyhow::Result<()> {
+        let has_password = self.has_password().await?;
+        let has_passkeys = self.has_passkeys().await?;
+        if !has_password && !has_passkeys {
+            anyhow::bail!("cannot mark setup complete without any credentials");
+        }
         self.setup_complete.store(true, Ordering::Relaxed);
         self.auth_disabled.store(false, Ordering::Relaxed);
         self.persist_auth_disabled(false)?;
@@ -995,5 +1010,42 @@ mod tests {
 
         store.remove_passkey(id).await.unwrap();
         assert!(!store.has_passkeys().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_mark_setup_complete_with_passkey_only() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        assert!(!store.is_setup_complete());
+
+        // Cannot mark complete without any credentials.
+        assert!(store.mark_setup_complete().await.is_err());
+
+        // Store a passkey, then mark complete.
+        store
+            .store_passkey(b"cred-1", "My Passkey", b"data")
+            .await
+            .unwrap();
+        store.mark_setup_complete().await.unwrap();
+        assert!(store.is_setup_complete());
+        assert!(!store.is_auth_disabled());
+    }
+
+    #[tokio::test]
+    async fn test_setup_complete_persists_with_passkey_only() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool.clone()).await.unwrap();
+
+        store
+            .store_passkey(b"cred-1", "My Passkey", b"data")
+            .await
+            .unwrap();
+        store.mark_setup_complete().await.unwrap();
+        assert!(store.is_setup_complete());
+
+        // Simulate restart: create a new store from the same DB.
+        let store2 = CredentialStore::new(pool).await.unwrap();
+        assert!(store2.is_setup_complete());
     }
 }

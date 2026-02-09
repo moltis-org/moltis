@@ -65,6 +65,14 @@ pub fn auth_router() -> axum::Router<AuthState> {
         )
         .route("/passkey/auth/begin", post(passkey_auth_begin_handler))
         .route("/passkey/auth/finish", post(passkey_auth_finish_handler))
+        .route(
+            "/setup/passkey/register/begin",
+            post(setup_passkey_register_begin_handler),
+        )
+        .route(
+            "/setup/passkey/register/finish",
+            post(setup_passkey_register_finish_handler),
+        )
         .route("/reset", post(reset_auth_handler))
 }
 
@@ -100,6 +108,8 @@ async fn status_handler(
 
     let setup_code_required = state.gateway_state.inner.read().await.setup_code.is_some();
 
+    let webauthn_available = state.webauthn_state.is_some();
+
     Json(serde_json::json!({
         "setup_required": setup_required,
         "has_passkeys": has_passkeys,
@@ -108,6 +118,7 @@ async fn status_handler(
         "setup_code_required": setup_code_required,
         "has_password": has_password,
         "localhost_only": localhost_only,
+        "webauthn_available": webauthn_available,
     }))
 }
 
@@ -524,6 +535,124 @@ async fn passkey_auth_finish_handler(
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
         Err(e) => (StatusCode::UNAUTHORIZED, e.to_string()).into_response(),
+    }
+}
+
+// ── Setup-time passkey registration (setup code instead of session) ───────────
+
+#[derive(serde::Deserialize)]
+struct SetupPasskeyBeginRequest {
+    setup_code: Option<String>,
+}
+
+async fn setup_passkey_register_begin_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<SetupPasskeyBeginRequest>,
+) -> impl IntoResponse {
+    if state.credential_store.is_setup_complete() {
+        return (StatusCode::FORBIDDEN, "setup already completed").into_response();
+    }
+
+    // Validate setup code if one was generated at startup.
+    {
+        let inner = state.gateway_state.inner.read().await;
+        if let Some(ref expected) = inner.setup_code
+            && body.setup_code.as_deref() != Some(expected.expose_secret().as_str())
+        {
+            return (StatusCode::FORBIDDEN, "invalid or missing setup code").into_response();
+        }
+    }
+
+    let Some(ref wa) = state.webauthn_state else {
+        return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+
+    let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
+        .await
+        .unwrap_or_default();
+
+    match wa.start_registration(&existing) {
+        Ok((challenge_id, ccr)) => Json(serde_json::json!({
+            "challenge_id": challenge_id,
+            "options": ccr,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SetupPasskeyFinishRequest {
+    challenge_id: String,
+    name: String,
+    setup_code: Option<String>,
+    credential: webauthn_rs::prelude::RegisterPublicKeyCredential,
+}
+
+async fn setup_passkey_register_finish_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<SetupPasskeyFinishRequest>,
+) -> impl IntoResponse {
+    if state.credential_store.is_setup_complete() {
+        return (StatusCode::FORBIDDEN, "setup already completed").into_response();
+    }
+
+    // Validate setup code if one was generated at startup.
+    {
+        let inner = state.gateway_state.inner.read().await;
+        if let Some(ref expected) = inner.setup_code
+            && body.setup_code.as_deref() != Some(expected.expose_secret().as_str())
+        {
+            return (StatusCode::FORBIDDEN, "invalid or missing setup code").into_response();
+        }
+    }
+
+    let Some(ref wa) = state.webauthn_state else {
+        return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+
+    let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
+        Ok(pk) => pk,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
+
+    let cred_id = passkey.cred_id().as_ref();
+    let data = match serde_json::to_vec(&passkey) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let name = if body.name.trim().is_empty() {
+        "Passkey"
+    } else {
+        body.name.trim()
+    };
+
+    if let Err(e) = state
+        .credential_store
+        .store_passkey(cred_id, name, &data)
+        .await
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+
+    if let Err(e) = state.credential_store.mark_setup_complete().await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to mark setup complete: {e}"),
+        )
+            .into_response();
+    }
+
+    // Clear setup code and create session.
+    state.gateway_state.inner.write().await.setup_code = None;
+    match state.credential_store.create_session().await {
+        Ok(token) => session_response(token),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to create session: {e}"),
+        )
+            .into_response(),
     }
 }
 
