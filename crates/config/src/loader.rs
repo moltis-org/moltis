@@ -399,6 +399,9 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     if let Some(ref loc) = user.location {
         yaml_lines.push(format!("latitude: {}", loc.latitude));
         yaml_lines.push(format!("longitude: {}", loc.longitude));
+        if let Some(ref place) = loc.place {
+            yaml_lines.push(format!("location_place: {}", yaml_scalar(place)));
+        }
         if let Some(ts) = loc.updated_at {
             yaml_lines.push(format!("location_updated_at: {ts}"));
         }
@@ -454,6 +457,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
     let mut latitude: Option<f64> = None;
     let mut longitude: Option<f64> = None;
     let mut location_updated_at: Option<i64> = None;
+    let mut location_place: Option<String> = None;
 
     for raw in frontmatter.lines() {
         let line = raw.trim();
@@ -478,6 +482,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
             "latitude" => latitude = value.parse().ok(),
             "longitude" => longitude = value.parse().ok(),
             "location_updated_at" => location_updated_at = value.parse().ok(),
+            "location_place" => location_place = Some(value.to_string()),
             _ => {},
         }
     }
@@ -486,6 +491,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
         user.location = Some(crate::schema::GeoLocation {
             latitude: lat,
             longitude: lon,
+            place: location_place,
             updated_at: location_updated_at,
         });
     }
@@ -1034,7 +1040,8 @@ mod tests {
             location: Some(crate::schema::GeoLocation {
                 latitude: 48.8566,
                 longitude: 2.3522,
-                updated_at: Some(1700000000),
+                place: Some("Paris, France".to_string()),
+                updated_at: Some(1_700_000_000),
             }),
         };
 
@@ -1049,6 +1056,7 @@ mod tests {
         let loc = loaded.location.expect("location should be present");
         assert!((loc.latitude - 48.8566).abs() < 1e-6);
         assert!((loc.longitude - 2.3522).abs() < 1e-6);
+        assert_eq!(loc.place.as_deref(), Some("Paris, France"));
 
         clear_data_dir();
     }

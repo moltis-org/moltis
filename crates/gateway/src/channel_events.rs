@@ -453,7 +453,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
         };
 
         // Update in-memory cache.
-        let geo = moltis_config::GeoLocation::now(latitude, longitude);
+        let geo = moltis_config::GeoLocation::now(latitude, longitude, None);
         state.inner.write().await.cached_location = Some(geo.clone());
 
         // Persist to USER.md (best-effort).
