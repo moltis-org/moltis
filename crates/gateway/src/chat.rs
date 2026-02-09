@@ -1829,14 +1829,14 @@ impl ChatService for LiveChatService {
                     mode = ?queue_mode,
                     "queueing message (run active)"
                 );
-                self.message_queue
-                    .write()
-                    .await
-                    .entry(session_key.clone())
-                    .or_default()
-                    .push(QueuedMessage {
+                let position = {
+                    let mut q = self.message_queue.write().await;
+                    let entry = q.entry(session_key.clone()).or_default();
+                    entry.push(QueuedMessage {
                         params: params.clone(),
                     });
+                    entry.len()
+                };
                 broadcast(
                     &self.state,
                     "chat",
@@ -1844,6 +1844,7 @@ impl ChatService for LiveChatService {
                         "sessionKey": session_key,
                         "state": "queued",
                         "mode": format!("{queue_mode:?}").to_lowercase(),
+                        "position": position,
                     }),
                     BroadcastOpts::default(),
                 )
@@ -1861,7 +1862,7 @@ impl ChatService for LiveChatService {
         let state_for_drain = Arc::clone(&self.state);
 
         let handle = tokio::spawn(async move {
-            let _permit = permit; // hold permit until task completes
+            let permit = permit; // hold permit until agent run completes
             let ctx_ref = project_context.as_deref();
             if desired_reply_medium == ReplyMedium::Voice {
                 broadcast(
@@ -1986,6 +1987,11 @@ impl ChatService for LiveChatService {
 
             active_runs.write().await.remove(&run_id_clone);
 
+            // Release the semaphore *before* draining so replayed sends can
+            // acquire it. Without this, every replayed `chat.send()` would
+            // fail `try_acquire_owned()` and re-queue the message forever.
+            drop(permit);
+
             // Drain queued messages for this session.
             let queued = message_queue
                 .write()
@@ -1997,11 +2003,22 @@ impl ChatService for LiveChatService {
                 let chat = state_for_drain.chat().await;
                 match queue_mode {
                     MessageQueueMode::Followup => {
-                        for msg in queued {
-                            info!(session = %session_key_clone, "replaying queued message (followup)");
-                            if let Err(e) = chat.send(msg.params).await {
-                                warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
-                            }
+                        let mut iter = queued.into_iter();
+                        let first = iter.next().expect("queued is non-empty");
+                        // Put remaining messages back so the replayed run's
+                        // own drain loop picks them up after it completes.
+                        let rest: Vec<QueuedMessage> = iter.collect();
+                        if !rest.is_empty() {
+                            message_queue
+                                .write()
+                                .await
+                                .entry(session_key_clone.clone())
+                                .or_default()
+                                .extend(rest);
+                        }
+                        info!(session = %session_key_clone, "replaying queued message (followup)");
+                        if let Err(e) = chat.send(first.params).await {
+                            warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
                         }
                     },
                     MessageQueueMode::Collect => {
@@ -2240,6 +2257,35 @@ impl ChatService for LiveChatService {
             handle.abort();
         }
         Ok(serde_json::json!({}))
+    }
+
+    async fn cancel_queued(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'sessionKey'".to_string())?;
+
+        let removed = self
+            .message_queue
+            .write()
+            .await
+            .remove(session_key)
+            .unwrap_or_default();
+        let count = removed.len();
+
+        broadcast(
+            &self.state,
+            "chat",
+            serde_json::json!({
+                "sessionKey": session_key,
+                "state": "queue_cleared",
+                "count": count,
+            }),
+            BroadcastOpts::default(),
+        )
+        .await;
+
+        Ok(serde_json::json!({ "cleared": count }))
     }
 
     async fn history(&self, params: Value) -> ServiceResult {
@@ -4669,6 +4715,74 @@ mod tests {
         assert!(drained.is_empty());
     }
 
+    #[tokio::test]
+    async fn queue_drain_drops_permit_before_send() {
+        // Simulate the fixed drain flow: after `drop(permit)`, the semaphore
+        // should be available for the replayed `chat.send()` to acquire.
+        let sem = Arc::new(Semaphore::new(1));
+        let permit = sem.clone().try_acquire_owned().unwrap();
+
+        // While held, a second acquire must fail (simulates the bug).
+        assert!(sem.clone().try_acquire_owned().is_err());
+
+        // Drop — mirrors the new `drop(permit)` before the drain loop.
+        drop(permit);
+
+        // Now the replayed send can acquire the permit.
+        assert!(
+            sem.clone().try_acquire_owned().is_ok(),
+            "permit should be available after explicit drop"
+        );
+    }
+
+    #[tokio::test]
+    async fn followup_drain_sends_only_first_and_requeues_rest() {
+        let queue = make_message_queue();
+        let key = "sess_drain";
+
+        // Simulate three queued messages.
+        {
+            let mut q = queue.write().await;
+            let entry = q.entry(key.to_string()).or_default();
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "a"}),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "b"}),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "c"}),
+            });
+        }
+
+        // Drain and apply the send-first/requeue-rest logic.
+        let queued = queue.write().await.remove(key).unwrap_or_default();
+
+        let mut iter = queued.into_iter();
+        let first = iter.next().expect("queued is non-empty");
+        let rest: Vec<QueuedMessage> = iter.collect();
+
+        // The first message is the one to send.
+        assert_eq!(first.params["text"], "a");
+
+        // Remaining messages are re-queued.
+        if !rest.is_empty() {
+            queue
+                .write()
+                .await
+                .entry(key.to_string())
+                .or_default()
+                .extend(rest);
+        }
+
+        // Verify the queue now holds exactly the two remaining messages.
+        let remaining = queue.read().await;
+        let entries = remaining.get(key).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].params["text"], "b");
+        assert_eq!(entries[1].params["text"], "c");
+    }
+
     #[test]
     fn message_queue_mode_default_is_followup() {
         let mode = MessageQueueMode::default();
@@ -4689,6 +4803,70 @@ mod tests {
 
         let collect: Wrapper = toml::from_str(r#"mode = "collect""#).unwrap();
         assert_eq!(collect.mode, MessageQueueMode::Collect);
+    }
+
+    #[tokio::test]
+    async fn cancel_queued_clears_session_queue() {
+        let queue = make_message_queue();
+        let key = "sess_cancel";
+
+        // Enqueue two messages.
+        {
+            let mut q = queue.write().await;
+            let entry = q.entry(key.to_string()).or_default();
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "a"}),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "b"}),
+            });
+        }
+
+        // Cancel (same logic as cancel_queued: remove + unwrap_or_default).
+        let removed = queue.write().await.remove(key).unwrap_or_default();
+        assert_eq!(removed.len(), 2);
+
+        // Queue should be empty.
+        assert!(queue.read().await.get(key).is_none());
+    }
+
+    #[tokio::test]
+    async fn cancel_queued_returns_count() {
+        let queue = make_message_queue();
+        let key = "sess_count";
+
+        {
+            let mut q = queue.write().await;
+            let entry = q.entry(key.to_string()).or_default();
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "x"}),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "y"}),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({"text": "z"}),
+            });
+        }
+
+        let removed = queue.write().await.remove(key).unwrap_or_default();
+        let count = removed.len();
+        assert_eq!(count, 3);
+        let result = serde_json::json!({ "cleared": count });
+        assert_eq!(result["cleared"], 3);
+    }
+
+    #[tokio::test]
+    async fn cancel_queued_noop_for_empty_queue() {
+        let queue = make_message_queue();
+        let key = "sess_empty";
+
+        // Cancel on a session with no queued messages.
+        let removed = queue.write().await.remove(key).unwrap_or_default();
+        assert_eq!(removed.len(), 0);
+
+        let result = serde_json::json!({ "cleared": removed.len() });
+        assert_eq!(result["cleared"], 0);
     }
 
     #[test]

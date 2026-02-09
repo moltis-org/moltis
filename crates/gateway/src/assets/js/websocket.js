@@ -81,6 +81,12 @@ function makeThinkingDots() {
 
 function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
+	var firstQueued = S.chatMsgBox.querySelector(".msg.user.queued");
+	if (firstQueued) {
+		firstQueued.classList.remove("queued");
+		var badge = firstQueued.querySelector(".queued-badge");
+		if (badge) badge.remove();
+	}
 	removeThinking();
 	var thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
@@ -388,6 +394,14 @@ function handleChatNotice(p, isActive, isChatPage) {
 	chatAddMsg("system", msg);
 }
 
+function handleChatQueueCleared(_p, isActive, isChatPage) {
+	if (!(isActive && isChatPage)) return;
+	var queued = S.chatMsgBox.querySelectorAll(".msg.user.queued");
+	queued.forEach((el) => {
+		el.remove();
+	});
+}
+
 var chatHandlers = {
 	thinking: handleChatThinking,
 	thinking_text: handleChatThinkingText,
@@ -401,6 +415,7 @@ var chatHandlers = {
 	auto_compact: handleChatAutoCompact,
 	error: handleChatError,
 	notice: handleChatNotice,
+	queue_cleared: handleChatQueueCleared,
 };
 
 function handleChatEvent(p) {

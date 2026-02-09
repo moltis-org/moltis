@@ -778,7 +778,7 @@ function sendChat() {
 	S.setChatHistoryDraft("");
 	S.chatInput.value = "";
 	chatAutoResize();
-	chatAddMsg("user", renderMarkdown(text), true);
+	var userEl = chatAddMsg("user", renderMarkdown(text), true);
 	var chatParams = { text: text };
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
@@ -788,11 +788,34 @@ function sendChat() {
 	bumpSessionCount(S.activeSessionKey, 1);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
-		if (res && !res.ok && res.error) {
+		if (res?.queued) {
+			markMessageQueued(userEl, S.activeSessionKey);
+		} else if (res && !res.ok && res.error) {
 			chatAddMsg("error", res.error.message || "Request failed");
 		}
 	});
 	maybeRefreshFullContext();
+}
+
+function markMessageQueued(el, sessionKey) {
+	if (!el) return;
+	el.classList.add("queued");
+	var badge = document.createElement("div");
+	badge.className = "queued-badge";
+	var label = document.createElement("span");
+	label.className = "queued-label";
+	label.textContent = "Queued";
+	var btn = document.createElement("button");
+	btn.className = "queued-cancel";
+	btn.title = "Cancel";
+	btn.textContent = "\u2715";
+	btn.addEventListener("click", (e) => {
+		e.stopPropagation();
+		sendRpc("chat.cancel_queued", { sessionKey });
+	});
+	badge.appendChild(label);
+	badge.appendChild(btn);
+	el.appendChild(badge);
 }
 
 function chatAutoResize() {

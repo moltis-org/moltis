@@ -432,6 +432,7 @@ pub trait ChatService: Send + Sync {
         self.send(params).await
     }
     async fn abort(&self, params: Value) -> ServiceResult;
+    async fn cancel_queued(&self, params: Value) -> ServiceResult;
     async fn history(&self, params: Value) -> ServiceResult;
     async fn inject(&self, params: Value) -> ServiceResult;
     async fn clear(&self, params: Value) -> ServiceResult;
@@ -453,6 +454,10 @@ impl ChatService for NoopChatService {
 
     async fn abort(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn cancel_queued(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "cleared": 0 }))
     }
 
     async fn history(&self, _p: Value) -> ServiceResult {

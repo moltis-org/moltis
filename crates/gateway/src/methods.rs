@@ -119,6 +119,7 @@ const WRITE_METHODS: &[&str] = &[
     "node.invoke",
     "chat.send",
     "chat.abort",
+    "chat.cancel_queued",
     "chat.clear",
     "chat.compact",
     "browser.request",
@@ -1822,6 +1823,19 @@ impl MethodRegistry {
                         .chat()
                         .await
                         .abort(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "chat.cancel_queued",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .chat()
+                        .await
+                        .cancel_queued(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
