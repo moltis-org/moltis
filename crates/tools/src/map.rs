@@ -1002,8 +1002,8 @@ mod tests {
         let result = compose_static_map_magick(37.76, -122.42, 15, &markers).await;
         // On dev machines with network, this should succeed.
         // In CI without network, it gracefully returns None.
-        if result.is_some() {
-            assert!(result.unwrap().starts_with("data:image/png;base64,"));
+        if let Some(data) = result {
+            assert!(data.starts_with("data:image/png;base64,"));
         }
     }
 }
