@@ -14,6 +14,7 @@ import { eventListeners } from "./events.js";
 import {
 	formatTokens,
 	renderAudioPlayer,
+	renderMapLinks,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
@@ -61,16 +62,7 @@ async function appendAssistantVoiceIfEnabled(msgEl, text) {
 
 	var mimeType = tts.payload.mimeType || "audio/ogg";
 	var src = `data:${mimeType};base64,${tts.payload.audio}`;
-	var wrap = document.createElement("div");
-	wrap.className = "mt-2";
-	var audio = document.createElement("audio");
-	audio.controls = true;
-	audio.preload = "none";
-	audio.src = src;
-	audio.className = "w-full max-w-md";
-	wrap.appendChild(audio);
-	msgEl.appendChild(wrap);
-	audio.play().catch(() => undefined);
+	renderAudioPlayer(msgEl, src, true);
 	return true;
 }
 
@@ -175,6 +167,10 @@ function appendToolResult(toolCard, result) {
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
 		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
+	}
+	// Map link buttons (show_map tool)
+	if (result.map_links) {
+		renderMapLinks(toolCard, result.map_links, result.label);
 	}
 }
 
@@ -311,6 +307,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
 		// Voice pending path: we suppressed streaming, so render everything at once.
+		console.debug("[audio] voice-pending path, audio:", !!p.audio, "text:", p.text.substring(0, 40));
 		var msgEl = S.streamEl || document.createElement("div");
 		msgEl.className = "msg assistant";
 		msgEl.textContent = "";
@@ -319,6 +316,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		if (p.audio) {
 			var filename = p.audio.split("/").pop();
 			var audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			console.debug("[audio] rendering persisted audio:", filename);
 			renderAudioPlayer(msgEl, audioSrc, true);
 		}
 		// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
@@ -331,13 +329,23 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	} else {
 		var resolvedEl = resolveFinalMessageEl(p);
 		if (resolvedEl && p.text && p.replyMedium === "voice") {
+			console.debug(
+				"[audio] streamed path, audio:",
+				!!p.audio,
+				"voicePending:",
+				S.voicePending,
+				"text:",
+				p.text.substring(0, 40),
+			);
 			if (p.audio) {
 				var fn2 = p.audio.split("/").pop();
 				var src2 = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(fn2)}`;
+				console.debug("[audio] rendering persisted audio (streamed):", fn2);
 				resolvedEl.textContent = "";
 				renderAudioPlayer(resolvedEl, src2, true);
 				appendFinalFooter(resolvedEl, p);
 			} else {
+				console.debug("[audio] no persisted audio, trying web TTS");
 				appendAssistantVoiceIfEnabled(resolvedEl, p.text)
 					.catch((err) => {
 						console.warn("Web UI TTS playback failed:", err);
@@ -635,6 +643,12 @@ function handleModelsUpdated(payload) {
 
 // ── Location request handler ─────────────────────────────────
 
+function handleWsError(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	chatAddErrorMsg(payload.message || "Unknown error");
+}
+
 function handleLocationRequest(payload) {
 	var requestId = payload.requestId;
 	if (!requestId) return;
@@ -646,6 +660,12 @@ function handleLocationRequest(payload) {
 		});
 		return;
 	}
+
+	// Coarse: city-level, fast, longer cache. Precise: GPS-level, fresh.
+	var coarse = payload.precision === "coarse";
+	var geoOpts = coarse
+		? { enableHighAccuracy: false, timeout: 10000, maximumAge: 1800000 }
+		: { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 };
 
 	navigator.geolocation.getCurrentPosition(
 		(pos) => {
@@ -664,12 +684,13 @@ function handleLocationRequest(payload) {
 				error: { code: err.code, message: err.message },
 			});
 		},
-		{ enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 },
+		geoOpts,
 	);
 }
 
 var eventHandlers = {
 	chat: handleChatEvent,
+	error: handleWsError,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,

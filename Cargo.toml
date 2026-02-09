@@ -91,6 +91,7 @@ fd-lock      = "4"
 genai        = "0.5"
 gix          = "0.78"
 llama-cpp-2  = "0.1"
+mockito      = "1.7"
 open         = "5.3"
 rand         = "0.9"
 secrecy      = { features = ["serde"], version = "0.8" }
@@ -127,7 +128,7 @@ image          = { default-features = false, features = ["jpeg", "png", "webp"],
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Filesystem / archiving
 chrono                = "0.4"
-chrono-tz             = { version = "0.10", features = ["serde"] }
+chrono-tz             = { features = ["serde"], version = "0.10" }
 cron                  = "0.13"
 dirs-next             = "2"
 flate2                = "1"

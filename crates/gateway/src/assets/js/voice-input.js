@@ -3,7 +3,7 @@
 
 import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
-import { renderMarkdown, sendRpc } from "./helpers.js";
+import { renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import { bumpSessionCount, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
@@ -51,9 +51,22 @@ function updateMicButton() {
 			: "Click to start recording";
 }
 
+/** Pause all currently playing audio elements on the page. */
+function stopAllAudio() {
+	for (var audio of document.querySelectorAll("audio")) {
+		if (!audio.paused) {
+			audio.pause();
+			console.debug("[voice] paused playing audio");
+		}
+	}
+}
+
 /** Start recording audio from the microphone. */
 async function startRecording() {
 	if (isRecording || isStarting || !sttConfigured) return;
+
+	// Stop any playing audio so the mic doesn't pick up speaker output.
+	stopAllAudio();
 
 	isStarting = true;
 	micBtn.classList.add("starting");
@@ -145,6 +158,26 @@ function stopRecording() {
 	mediaRecorder.stop();
 }
 
+/** Cancel recording without sending — discards audio chunks. */
+function cancelRecording() {
+	if (!(isRecording && mediaRecorder)) return;
+
+	console.debug("[voice] recording cancelled via Escape");
+
+	// Prevent onstop from transcribing by clearing chunks first.
+	audioChunks = [];
+
+	isStarting = false;
+	isRecording = false;
+	micBtn.classList.remove("starting", "recording");
+	micBtn.removeAttribute("aria-busy");
+	micBtn.setAttribute("aria-pressed", "false");
+	micBtn.title = "Click to start recording";
+
+	// Stop the recorder — onstop will see empty chunks and bail out.
+	mediaRecorder.stop();
+}
+
 /** Create transcribing indicator element. */
 function createTranscribingIndicator(message, isError) {
 	var el = document.createElement("div");
@@ -200,6 +233,9 @@ function cleanupTranscribingState() {
 
 /** Send transcribed text as a chat message. */
 function sendTranscribedMessage(text) {
+	// Unlock audio playback while we still have user-gesture context.
+	warmAudioPlayback();
+
 	// Add user message to chat (like sendChat does)
 	chatAddMsg("user", renderMarkdown(text), true);
 
@@ -218,16 +254,7 @@ function sendTranscribedMessage(text) {
 	});
 }
 
-function encodeBase64Safe(bytes) {
-	var chunk = 0x8000;
-	var str = "";
-	for (var i = 0; i < bytes.length; i += chunk) {
-		str += String.fromCharCode(...bytes.subarray(i, i + chunk));
-	}
-	return btoa(str);
-}
-
-/** Send recorded audio to STT service for transcription. */
+/** Send recorded audio to STT service for transcription via upload endpoint. */
 async function transcribeAudio() {
 	if (audioChunks.length === 0) {
 		cleanupTranscribingState();
@@ -245,26 +272,30 @@ async function transcribeAudio() {
 		var blob = new Blob(audioChunks, { type: "audio/webm" });
 		audioChunks = [];
 
-		// Convert to base64
-		var buffer = await blob.arrayBuffer();
-		var base64 = encodeBase64Safe(new Uint8Array(buffer));
-
-		var res = await sendRpc("stt.transcribe", { audio: base64, format: "webm" });
+		var resp = await fetch(`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true`, {
+			method: "POST",
+			headers: { "Content-Type": blob.type || "audio/webm" },
+			body: blob,
+		});
+		var res = await resp.json();
 
 		micBtn.classList.remove("transcribing");
 		micBtn.title = "Click to start recording";
 
-		if (res?.ok && res.payload?.text) {
-			var text = res.payload.text.trim();
+		if (res.ok && res.transcription?.text) {
+			var text = res.transcription.text.trim();
 			if (text) {
 				cleanupTranscribingState();
 				sendTranscribedMessage(text);
 			} else {
 				showTemporaryMessage("No speech detected", false, 2000);
 			}
-		} else if (res?.error) {
-			console.error("Transcription failed:", res.error.message);
-			showTemporaryMessage(`Transcription failed: ${res.error.message || "Unknown error"}`, true, 4000);
+		} else if (res.transcriptionError) {
+			console.error("Transcription failed:", res.transcriptionError);
+			showTemporaryMessage(`Transcription failed: ${res.transcriptionError}`, true, 4000);
+		} else if (!res.ok) {
+			console.error("Upload failed:", res.error);
+			showTemporaryMessage(`Upload failed: ${res.error || "Unknown error"}`, true, 4000);
 		}
 	} catch (err) {
 		console.error("Transcription error:", err);
@@ -301,6 +332,14 @@ export function initVoiceInput(btn) {
 		if (e.key === " " || e.key === "Enter") {
 			e.preventDefault();
 			onMicClick(e);
+		}
+	});
+
+	// Escape cancels recording without sending.
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Escape" && isRecording) {
+			e.preventDefault();
+			cancelRecording();
 		}
 	});
 

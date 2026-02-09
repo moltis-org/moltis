@@ -4253,6 +4253,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockito"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90820618712cab19cfc46b274c6c22546a82affcb3c3bdf0f29e3db8e1bb92c0"
+dependencies = [
+ "assert-json-diff",
+ "bytes",
+ "colored",
+ "futures-core",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.8.1",
+ "hyper-util",
+ "log",
+ "pin-project-lite",
+ "rand 0.9.2",
+ "regex",
+ "serde_json",
+ "serde_urlencoded",
+ "similar",
+ "tokio",
+]
+
+[[package]]
 name = "moltis"
 version = "0.3.8"
 dependencies = [
@@ -4450,6 +4475,7 @@ dependencies = [
  "axum-extra",
  "axum-server",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "chrono-tz",
  "dashmap",
@@ -4768,6 +4794,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "futures",
+ "image",
+ "mockito",
  "moltis-agents",
  "moltis-browser",
  "moltis-common",
@@ -6542,6 +6571,12 @@ name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "siphasher"

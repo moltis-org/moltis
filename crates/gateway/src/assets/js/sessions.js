@@ -3,6 +3,7 @@
 import {
 	appendChannelFooter,
 	chatAddMsg,
+	chatAddMsgWithImages,
 	highlightAndScroll,
 	removeThinking,
 	scrollChatToBottom,
@@ -275,12 +276,32 @@ function restoreSessionState(entry, projectId) {
 	updateChatSessionHeader();
 }
 
+/** Extract text and images from a multimodal content array. */
+function parseMultimodalContent(blocks) {
+	var text = "";
+	var images = [];
+	for (var block of blocks) {
+		if (block.type === "text") {
+			text = block.text || "";
+		} else if (block.type === "image_url" && block.image_url?.url) {
+			images.push({ dataUrl: block.image_url.url, name: "image" });
+		}
+	}
+	return { text: text, images: images };
+}
+
 function renderHistoryUserMessage(msg) {
-	var userContent = msg.content || "";
-	if (msg.channel) userContent = stripChannelPrefix(userContent);
-	var userEl = chatAddMsg("user", renderMarkdown(userContent), true);
-	if (userEl && msg.channel) appendChannelFooter(userEl, msg.channel);
-	return userEl;
+	var el;
+	if (Array.isArray(msg.content)) {
+		var parsed = parseMultimodalContent(msg.content);
+		var text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
+		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", parsed.images);
+	} else {
+		var userContent = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
+		el = chatAddMsg("user", renderMarkdown(userContent), true);
+	}
+	if (el && msg.channel) appendChannelFooter(el, msg.channel);
+	return el;
 }
 
 function createModelFooter(msg) {

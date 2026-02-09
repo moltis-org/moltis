@@ -102,6 +102,7 @@ impl ElevenLabsStt {
             AudioFormat::Opus => "opus",
             AudioFormat::Aac => "aac",
             AudioFormat::Pcm => "wav",
+            AudioFormat::Webm => "webm",
         }
     }
 }
