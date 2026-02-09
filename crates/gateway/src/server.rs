@@ -1047,13 +1047,46 @@ pub async fn start_gateway(
     };
     let rp_origin_str = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
         .unwrap_or_else(|_| format!("{default_scheme}://{rp_id}:{port}"));
+    // Build extra allowed origins so passkeys work when accessed via mDNS
+    // hostname (e.g. http://m4max.local:18080) in addition to localhost.
+    let mut extra_origins = Vec::new();
+    if let Ok(hn) = hostname::get() {
+        let hn_str = hn.to_string_lossy();
+        if hn_str != rp_id && hn_str != "localhost" {
+            if let Ok(url) =
+                webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://{hn_str}:{port}"))
+            {
+                extra_origins.push(url);
+            }
+            // Also accept the .local mDNS variant if the hostname doesn't
+            // already end with .local.
+            if !hn_str.ends_with(".local")
+                && let Ok(url) = webauthn_rs::prelude::Url::parse(&format!(
+                    "{default_scheme}://{hn_str}.local:{port}"
+                ))
+            {
+                extra_origins.push(url);
+            }
+        }
+    }
+
     let webauthn_state = match webauthn_rs::prelude::Url::parse(&rp_origin_str) {
-        Ok(rp_origin) => match crate::auth_webauthn::WebAuthnState::new(&rp_id, &rp_origin) {
-            Ok(wa) => Some(Arc::new(wa)),
-            Err(e) => {
-                tracing::warn!("failed to init WebAuthn: {e}");
-                None
-            },
+        Ok(rp_origin) => {
+            match crate::auth_webauthn::WebAuthnState::new(
+                &rp_id,
+                &rp_origin,
+                &extra_origins,
+            ) {
+                Ok(wa) => {
+                    let origins = wa.get_allowed_origins();
+                    info!(rp_id = %rp_id, origins = ?origins, "WebAuthn passkeys enabled");
+                    Some(Arc::new(wa))
+                },
+                Err(e) => {
+                    tracing::warn!("failed to init WebAuthn: {e}");
+                    None
+                },
+            }
         },
         Err(e) => {
             tracing::warn!("invalid WebAuthn origin URL '{rp_origin_str}': {e}");

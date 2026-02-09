@@ -110,6 +110,12 @@ async fn status_handler(
 
     let webauthn_available = state.webauthn_state.is_some();
 
+    let passkey_origins: Vec<String> = state
+        .webauthn_state
+        .as_ref()
+        .map(|wa| wa.get_allowed_origins())
+        .unwrap_or_default();
+
     Json(serde_json::json!({
         "setup_required": setup_required,
         "has_passkeys": has_passkeys,
@@ -119,6 +125,7 @@ async fn status_handler(
         "has_password": has_password,
         "localhost_only": localhost_only,
         "webauthn_available": webauthn_available,
+        "passkey_origins": passkey_origins,
     }))
 }
 
@@ -265,10 +272,10 @@ async fn change_password_handler(
     let has_password = state.credential_store.has_password().await.unwrap_or(false);
 
     if !has_password {
-        // No password set yet — use set_initial_password (no current password needed).
+        // No password set yet — add one (works even after passkey-only setup).
         return match state
             .credential_store
-            .set_initial_password(&body.new_password)
+            .add_password(&body.new_password)
             .await
         {
             Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),

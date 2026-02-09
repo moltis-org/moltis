@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { detectPasskeyName } from "./passkey-detect.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
@@ -84,6 +85,11 @@ function AuthStep({ onNext, skippable }) {
 	var [error, setError] = useState(null);
 	var [saving, setSaving] = useState(false);
 	var [loading, setLoading] = useState(true);
+	var [passkeyOrigins, setPasskeyOrigins] = useState([]);
+	var [passkeyDone, setPasskeyDone] = useState(false);
+	var [optPw, setOptPw] = useState("");
+	var [optPwConfirm, setOptPwConfirm] = useState("");
+	var [optPwSaving, setOptPwSaving] = useState(false);
 
 	var isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[");
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
@@ -96,6 +102,7 @@ function AuthStep({ onNext, skippable }) {
 				if (data.setup_code_required) setCodeRequired(true);
 				if (data.localhost_only) setLocalhostOnly(true);
 				if (data.webauthn_available) setWebauthnAvailable(true);
+				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
@@ -176,7 +183,7 @@ function AuthStep({ onNext, skippable }) {
 			.then(({ cred, challengeId }) => {
 				var body = {
 					challenge_id: challengeId,
-					name: passkeyName.trim() || "Passkey",
+					name: passkeyName.trim() || detectPasskeyName(cred),
 					credential: {
 						id: cred.id,
 						rawId: bufferToBase64(cred.rawId),
@@ -196,7 +203,8 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((r) => {
 				if (r.ok) {
-					onNext();
+					setSaving(false);
+					setPasskeyDone(true);
 				} else {
 					return r.text().then((t) => {
 						setError(t || "Passkey registration failed");
@@ -214,6 +222,39 @@ function AuthStep({ onNext, skippable }) {
 			});
 	}
 
+	function onOptionalPassword(e) {
+		e.preventDefault();
+		setError(null);
+		if (optPw.length < 8) {
+			setError("Password must be at least 8 characters.");
+			return;
+		}
+		if (optPw !== optPwConfirm) {
+			setError("Passwords do not match.");
+			return;
+		}
+		setOptPwSaving(true);
+		fetch("/api/auth/password/change", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ new_password: optPw }),
+		})
+			.then((r) => {
+				if (r.ok) {
+					onNext();
+				} else {
+					return r.text().then((t) => {
+						setError(t || "Failed to set password");
+						setOptPwSaving(false);
+					});
+				}
+			})
+			.catch((err) => {
+				setError(err.message);
+				setOptPwSaving(false);
+			});
+	}
+
 	if (loading) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
 	}
@@ -226,6 +267,48 @@ function AuthStep({ onNext, skippable }) {
 			: "Browser not supported"
 		: "Not available on this server";
 
+	var originsHint =
+		passkeyOrigins.length > 1 ? passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ") : null;
+
+	// ── After passkey registration: optional password ────────
+	if (passkeyDone) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7" /></svg>
+				Passkey registered successfully!
+			</div>
+
+			<p class="text-xs text-[var(--muted)] leading-relaxed">
+				Optionally set a password as a fallback for when passkeys aren't available.
+			</p>
+
+			<form onSubmit=${onOptionalPassword} class="flex flex-col gap-3">
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${optPw} onInput=${(e) => setOptPw(e.target.value)}
+						placeholder="At least 8 characters" autofocus />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${optPwConfirm} onInput=${(e) => setOptPwConfirm(e.target.value)}
+						placeholder="Repeat password" />
+				</div>
+				${error && html`<${ErrorPanel} message=${error} />`}
+				<div class="flex items-center gap-3 mt-1">
+					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
+						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
+					</button>
+					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip</button>
+				</div>
+			</form>
+		</div>`;
+	}
+
+	// ── Method selection ─────────────────────────────────────
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
@@ -273,6 +356,7 @@ function AuthStep({ onNext, skippable }) {
 					value=${passkeyName} onInput=${(e) => setPasskeyName(e.target.value)}
 					placeholder="e.g. MacBook Touch ID (optional)" />
 			</div>
+			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex items-center gap-3 mt-1">
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>

@@ -241,6 +241,22 @@ impl CredentialStore {
         Ok(())
     }
 
+    /// Add a password when none exists yet (e.g. after passkey-only setup).
+    ///
+    /// Unlike [`set_initial_password`] this does **not** check or modify the
+    /// setup-complete flag — it only inserts the password row.
+    pub async fn add_password(&self, password: &str) -> anyhow::Result<()> {
+        if self.has_password().await? {
+            anyhow::bail!("password already set");
+        }
+        let hash = hash_password(password)?;
+        sqlx::query("INSERT INTO auth_password (id, password_hash) VALUES (1, ?)")
+            .bind(&hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Mark initial setup as complete without setting a password (e.g. passkey-only setup).
     ///
     /// Requires at least one credential (password or passkey) to already exist.

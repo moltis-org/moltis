@@ -32,9 +32,18 @@ impl WebAuthnState {
     ///
     /// `rp_id` is typically the hostname (e.g. "localhost" or "moltis.example.com").
     /// `rp_origin` is the full origin URL (e.g. "https://localhost:18080").
-    pub fn new(rp_id: &str, rp_origin: &webauthn_rs::prelude::Url) -> anyhow::Result<Self> {
-        let builder = WebauthnBuilder::new(rp_id, rp_origin)
+    /// `extra_origins` are additional origins accepted during verification (e.g.
+    /// `http://m4max.local:18080` when accessing via mDNS hostname).
+    pub fn new(
+        rp_id: &str,
+        rp_origin: &webauthn_rs::prelude::Url,
+        extra_origins: &[webauthn_rs::prelude::Url],
+    ) -> anyhow::Result<Self> {
+        let mut builder = WebauthnBuilder::new(rp_id, rp_origin)
             .map_err(|e| anyhow::anyhow!("webauthn builder error: {e}"))?;
+        for origin in extra_origins {
+            builder = builder.append_allowed_origin(origin);
+        }
         let webauthn = builder
             .rp_name("moltis")
             .build()
@@ -153,6 +162,21 @@ impl WebAuthnState {
             .map_err(|e| anyhow::anyhow!("finish_passkey_authentication: {e}"))?;
 
         Ok(result)
+    }
+
+    /// Return all allowed WebAuthn origins as strings (primary + extras).
+    ///
+    /// Strips the trailing `/` that `Url::to_string()` appends for path-less
+    /// URLs so the frontend can display clean `host:port` values.
+    pub fn get_allowed_origins(&self) -> Vec<String> {
+        self.webauthn
+            .get_allowed_origins()
+            .iter()
+            .map(|url| {
+                let s = url.to_string();
+                s.strip_suffix('/').unwrap_or(&s).to_string()
+            })
+            .collect()
     }
 
     fn cleanup_expired(&self) {
