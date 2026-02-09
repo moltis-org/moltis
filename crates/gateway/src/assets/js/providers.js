@@ -527,9 +527,8 @@ function pollOAuthStatus(provider) {
 function showOAuthModelSelector(provider) {
 	sendRpc("models.list", {}).then((modelsRes) => {
 		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var provModels = allModels.filter((entry) =>
-			entry.provider?.toLowerCase().includes(provider.name.replace(/-/g, "").toLowerCase()),
-		);
+		var needle = provider.name.replace(/-/g, "").toLowerCase();
+		var provModels = allModels.filter((entry) => entry.provider?.toLowerCase().replace(/-/g, "").includes(needle));
 
 		if (provModels.length > 0) {
 			var mapped = provModels.map((entry) => ({
@@ -569,9 +568,8 @@ export function openModelSelectorForProvider(providerName, providerDisplayName) 
 
 	sendRpc("models.list", {}).then((modelsRes) => {
 		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var provModels = allModels.filter((entry) =>
-			entry.provider?.toLowerCase().includes(providerName.replace(/-/g, "").toLowerCase()),
-		);
+		var needle = providerName.replace(/-/g, "").toLowerCase();
+		var provModels = allModels.filter((entry) => entry.provider?.toLowerCase().replace(/-/g, "").includes(needle));
 
 		if (provModels.length > 0) {
 			var mapped = provModels.map((entry) => ({

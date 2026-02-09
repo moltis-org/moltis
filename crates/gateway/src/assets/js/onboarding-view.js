@@ -699,6 +699,9 @@ function ProviderStep({ onNext, onBack }) {
 	var [modelTestError, setModelTestError] = useState(null);
 	var [modelSearch, setModelSearch] = useState("");
 
+	// Track when model selection originated from OAuth (provider name or null)
+	var [oauthModelSelect, setOauthModelSelect] = useState(null);
+
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
 	var [endpoint, setEndpoint] = useState("");
@@ -771,6 +774,7 @@ function ProviderStep({ onNext, onBack }) {
 		setConfiguring(null);
 		setOauthProvider(null);
 		setLocalProvider(null);
+		setOauthModelSelect(null);
 		setPhase("form");
 		setProviderModels([]);
 		setSelectedModel(null);
@@ -855,6 +859,31 @@ function ProviderStep({ onNext, onBack }) {
 		setModelTestError(null);
 		setPhase("testingModel");
 
+		if (oauthModelSelect) {
+			// OAuth flow: credentials already saved, just test + save model preference.
+			testModel(modelId).then((testResult) => {
+				if (!testResult.ok) {
+					setPhase("selectModel");
+					setModelTestError(testResult.error || "Model test failed. Try another model.");
+					return;
+				}
+				sendRpc("providers.save_model", { provider: oauthModelSelect, model: modelId }).then(() => {
+					localStorage.setItem("moltis-model", modelId);
+					setValidationResults((prev) => ({ ...prev, [oauthModelSelect]: { ok: true } }));
+					setOauthModelSelect(null);
+					setConfiguring(null);
+					setPhase("form");
+					setProviderModels([]);
+					setSelectedModel(null);
+					setModelTestError(null);
+					setModelSearch("");
+					setError(null);
+					refreshProviders();
+				});
+			});
+			return;
+		}
+
 		var p = providers.find((pr) => pr.name === configuring);
 		if (!p) return;
 
@@ -888,6 +917,8 @@ function ProviderStep({ onNext, onBack }) {
 						setModelTestError(testResult.error || "Model test failed. Try another model.");
 						return;
 					}
+					// Persist model preference for the provider.
+					await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
 					// Store chosen model in localStorage for the UI.
 					localStorage.setItem("moltis-model", selectedModelId);
 				}
@@ -919,15 +950,7 @@ function ProviderStep({ onNext, onBack }) {
 		setOauthInfo({ status: "starting" });
 		startProviderOAuth(p.name).then((result) => {
 			if (result.status === "already") {
-				sendRpc("models.detect_supported", {
-					background: true,
-					reason: "provider_connected",
-					provider: p.name,
-				});
-				setOauthProvider(null);
-				setOauthInfo(null);
-				setValidationResults((prev) => ({ ...prev, [p.name]: { ok: true, message: null } }));
-				refreshProviders();
+				onOAuthAuthenticated(p.name);
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				setOauthInfo({ status: "waiting" });
@@ -950,14 +973,14 @@ function ProviderStep({ onNext, onBack }) {
 	async function onOAuthAuthenticated(providerName) {
 		var modelsRes = await sendRpc("models.list", {});
 		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var provModels = allModels.filter((m) =>
-			m.provider?.toLowerCase().includes(providerName.replace(/-/g, "").toLowerCase()),
-		);
+		var needle = providerName.replace(/-/g, "").toLowerCase();
+		var provModels = allModels.filter((m) => m.provider?.toLowerCase().replace(/-/g, "").includes(needle));
 
 		setOauthProvider(null);
 		setOauthInfo(null);
 
 		if (provModels.length > 0) {
+			setOauthModelSelect(providerName);
 			setConfiguring(providerName);
 			setProviderModels(
 				provModels.map((m) => ({
