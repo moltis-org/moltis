@@ -61,16 +61,7 @@ async function appendAssistantVoiceIfEnabled(msgEl, text) {
 
 	var mimeType = tts.payload.mimeType || "audio/ogg";
 	var src = `data:${mimeType};base64,${tts.payload.audio}`;
-	var wrap = document.createElement("div");
-	wrap.className = "mt-2";
-	var audio = document.createElement("audio");
-	audio.controls = true;
-	audio.preload = "none";
-	audio.src = src;
-	audio.className = "w-full max-w-md";
-	wrap.appendChild(audio);
-	msgEl.appendChild(wrap);
-	audio.play().catch(() => undefined);
+	renderAudioPlayer(msgEl, src, true);
 	return true;
 }
 

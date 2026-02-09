@@ -256,22 +256,184 @@ export function renderScreenshot(container, imgSrc, scale) {
 	container.appendChild(imgContainer);
 }
 
+// ── Waveform audio player ───────────────────────────────────
+
+var WAVEFORM_BAR_COUNT = 48;
+var WAVEFORM_MIN_HEIGHT = 0.08;
+
+async function extractWaveform(audioSrc, barCount) {
+	var ctx = new (window.AudioContext || window.webkitAudioContext)();
+	try {
+		var response = await fetch(audioSrc);
+		var buf = await response.arrayBuffer();
+		var audioBuffer = await ctx.decodeAudioData(buf);
+		var data = audioBuffer.getChannelData(0);
+		if (data.length < barCount) {
+			return new Array(barCount).fill(WAVEFORM_MIN_HEIGHT);
+		}
+		var step = Math.floor(data.length / barCount);
+		var peaks = [];
+		for (var i = 0; i < barCount; i++) {
+			var start = i * step;
+			var end = Math.min(start + step, data.length);
+			var max = 0;
+			for (var j = start; j < end; j++) {
+				var abs = Math.abs(data[j]);
+				if (abs > max) max = abs;
+			}
+			peaks.push(max);
+		}
+		var maxPeak = 0;
+		for (var pk of peaks) {
+			if (pk > maxPeak) maxPeak = pk;
+		}
+		maxPeak = maxPeak || 1;
+		return peaks.map((v) => Math.max(WAVEFORM_MIN_HEIGHT, v / maxPeak));
+	} finally {
+		ctx.close();
+	}
+}
+
+function formatAudioDuration(seconds) {
+	var m = Math.floor(seconds / 60);
+	var s = Math.floor(seconds % 60);
+	return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function svgEl(tag, attrs) {
+	var el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+	if (attrs) {
+		for (var key in attrs) el.setAttribute(key, attrs[key]);
+	}
+	return el;
+}
+
+function createPlaySvg() {
+	var svg = svgEl("svg", { viewBox: "0 0 24 24", fill: "currentColor" });
+	svg.appendChild(svgEl("path", { d: "M8 5v14l11-7z" }));
+	return svg;
+}
+
+function createPauseSvg() {
+	var svg = svgEl("svg", { viewBox: "0 0 24 24", fill: "currentColor" });
+	svg.appendChild(svgEl("rect", { x: "6", y: "4", width: "4", height: "16", rx: "1" }));
+	svg.appendChild(svgEl("rect", { x: "14", y: "4", width: "4", height: "16", rx: "1" }));
+	return svg;
+}
+
 /**
- * Render an `<audio>` player into `container`.
+ * Render a waveform audio player (Telegram-style bars) into `container`.
  * @param {HTMLElement} container - parent element to append into
  * @param {string} audioSrc - audio URL (HTTP or data URI)
  * @param {boolean} [autoplay=false] - start playback immediately
  */
 export function renderAudioPlayer(container, audioSrc, autoplay) {
 	var wrap = document.createElement("div");
-	wrap.className = "mt-2";
+	wrap.className = "waveform-player mt-2";
+
 	var audio = document.createElement("audio");
-	audio.controls = true;
-	audio.preload = "none";
+	audio.preload = "auto";
 	audio.src = audioSrc;
-	audio.className = "w-full max-w-md";
-	wrap.appendChild(audio);
+
+	var playBtn = document.createElement("button");
+	playBtn.className = "waveform-play-btn";
+	playBtn.type = "button";
+	playBtn.appendChild(createPlaySvg());
+
+	var barsWrap = document.createElement("div");
+	barsWrap.className = "waveform-bars";
+
+	var durEl = document.createElement("span");
+	durEl.className = "waveform-duration";
+	durEl.textContent = "";
+
+	wrap.appendChild(playBtn);
+	wrap.appendChild(barsWrap);
+	wrap.appendChild(durEl);
 	container.appendChild(wrap);
+
+	var bars = [];
+	for (var i = 0; i < WAVEFORM_BAR_COUNT; i++) {
+		var bar = document.createElement("div");
+		bar.className = "waveform-bar";
+		bar.style.height = "20%";
+		barsWrap.appendChild(bar);
+		bars.push(bar);
+	}
+
+	extractWaveform(audioSrc, WAVEFORM_BAR_COUNT)
+		.then((peaks) => {
+			peaks.forEach((p, idx) => {
+				bars[idx].style.height = `${p * 100}%`;
+			});
+		})
+		.catch(() => {
+			for (var b of bars) {
+				b.style.height = `${20 + Math.random() * 60}%`;
+			}
+		});
+
+	audio.addEventListener("loadedmetadata", () => {
+		durEl.textContent = formatAudioDuration(audio.duration);
+	});
+
+	playBtn.onclick = () => {
+		if (audio.paused) {
+			audio.play().catch(() => undefined);
+		} else {
+			audio.pause();
+		}
+	};
+
+	var rafId = 0;
+	var prevPlayed = -1;
+
+	function tick() {
+		if (!audio.duration) {
+			rafId = requestAnimationFrame(tick);
+			return;
+		}
+		var progress = audio.currentTime / audio.duration;
+		var playedCount = Math.floor(progress * WAVEFORM_BAR_COUNT);
+		if (playedCount !== prevPlayed) {
+			var lo = Math.min(playedCount, prevPlayed < 0 ? 0 : prevPlayed);
+			var hi = Math.max(playedCount, prevPlayed < 0 ? WAVEFORM_BAR_COUNT : prevPlayed);
+			for (var idx = lo; idx < hi; idx++) {
+				bars[idx].classList.toggle("played", idx < playedCount);
+			}
+			prevPlayed = playedCount;
+		}
+		durEl.textContent = formatAudioDuration(audio.currentTime);
+		rafId = requestAnimationFrame(tick);
+	}
+
+	audio.addEventListener("play", () => {
+		playBtn.replaceChildren(createPauseSvg());
+		prevPlayed = -1;
+		rafId = requestAnimationFrame(tick);
+	});
+
+	audio.addEventListener("pause", () => {
+		playBtn.replaceChildren(createPlaySvg());
+		cancelAnimationFrame(rafId);
+	});
+
+	audio.addEventListener("ended", () => {
+		playBtn.replaceChildren(createPlaySvg());
+		cancelAnimationFrame(rafId);
+		for (var b of bars) b.classList.remove("played");
+		prevPlayed = -1;
+		if (audio.duration) durEl.textContent = formatAudioDuration(audio.duration);
+	});
+
+	barsWrap.onclick = (e) => {
+		if (!audio.duration) return;
+		var rect = barsWrap.getBoundingClientRect();
+		var fraction = (e.clientX - rect.left) / rect.width;
+		audio.currentTime = Math.max(0, Math.min(1, fraction)) * audio.duration;
+		if (audio.paused) audio.play().catch(() => undefined);
+	};
+
 	if (autoplay) audio.play().catch(() => undefined);
 }
 

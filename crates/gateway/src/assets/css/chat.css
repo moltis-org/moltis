@@ -451,3 +451,69 @@
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* ── Waveform Audio Player ── */
+
+.waveform-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 320px;
+}
+
+.waveform-play-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.waveform-play-btn:hover {
+  background: var(--accent-hover);
+}
+
+.waveform-play-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.waveform-bars {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.waveform-bar {
+  flex: 1;
+  min-width: 2px;
+  background: var(--border-strong);
+  border-radius: 1px;
+}
+
+.waveform-bar.played {
+  background: var(--accent);
+}
+
+.waveform-duration {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  min-width: 2.5em;
+  text-align: right;
+}
