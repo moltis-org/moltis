@@ -6,7 +6,7 @@ use std::{
 
 use secrecy::{ExposeSecret, Secret};
 
-use {async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::info};
+use {async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::{debug, info}};
 
 use {
     moltis_agents::providers::ProviderRegistry,
@@ -526,6 +526,57 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
         .and_then(|t| t.get("access_token"))
         .and_then(|v| v.as_str())
         .is_some_and(|token| !token.trim().is_empty())
+}
+
+/// Parse Codex CLI `auth.json` content into `OAuthTokens`.
+fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
+    let json: serde_json::Value = serde_json::from_str(data).ok()?;
+    let tokens = json.get("tokens")?;
+    let access_token = tokens.get("access_token")?.as_str()?.to_string();
+    if access_token.trim().is_empty() {
+        return None;
+    }
+    let refresh_token = tokens
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Some(moltis_oauth::OAuthTokens {
+        access_token: Secret::new(access_token),
+        refresh_token: refresh_token.map(Secret::new),
+        expires_at: None,
+    })
+}
+
+/// Import auto-detected external OAuth tokens into the token store so all
+/// providers read from a single location. Currently handles Codex CLI
+/// `~/.codex/auth.json` → `openai-codex` in the token store.
+pub(crate) fn import_detected_oauth_tokens(
+    detected: &[AutoDetectedProviderSource],
+    token_store: &TokenStore,
+) {
+    for source in detected {
+        if source.provider == "openai-codex"
+            && source.source.contains(".codex/auth.json")
+            && token_store.load("openai-codex").is_none()
+        {
+            if let Some(path) = codex_cli_auth_path() {
+                if let Ok(data) = std::fs::read_to_string(&path) {
+                    if let Some(tokens) = parse_codex_cli_tokens(&data) {
+                        match token_store.save("openai-codex", &tokens) {
+                            Ok(()) => info!(
+                                source = %path.display(),
+                                "imported openai-codex tokens from Codex CLI auth"
+                            ),
+                            Err(e) => debug!(
+                                error = %e,
+                                "failed to import openai-codex tokens"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> Result<(), String> {

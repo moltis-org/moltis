@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auto-import external OAuth tokens**: At startup, auto-detected provider
+  tokens (e.g. Codex CLI `~/.codex/auth.json`) are imported into the central
+  `oauth_tokens.json` store so users can manage all providers from the UI.
 - **Passkey onboarding**: The security setup step now offers passkey registration
   (Touch ID, Face ID, security keys) as the recommended default, with password
   as a fallback option.

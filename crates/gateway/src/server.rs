@@ -818,6 +818,13 @@ pub async fn start_gateway(
                     "llm auto-detected provider source"
                 );
             }
+            // Import external tokens (e.g. Codex CLI auth.json) into the
+            // token store so all providers read from a single location.
+            let import_token_store = moltis_oauth::TokenStore::new();
+            crate::provider_setup::import_detected_oauth_tokens(
+                &auto_detected_provider_sources,
+                &import_token_store,
+            );
         }
     }
 

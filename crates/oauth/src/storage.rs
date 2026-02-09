@@ -62,7 +62,7 @@ impl TokenStore {
                 Some(tokens)
             },
             None => {
-                debug!(path = %path, provider, "provider not found in token store");
+                warn!(path = %path, provider, "provider not found in token store");
                 None
             },
         }
