@@ -1,0 +1,57 @@
+name: Documentation Issue
+description: Report missing, unclear, or incorrect documentation
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve the docs! Let us know what's missing, confusing, or wrong.
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: Type of issue
+      options:
+        - Missing documentation
+        - Unclear or confusing documentation
+        - Incorrect or outdated documentation
+        - Missing code examples
+        - Broken links
+        - Typo or formatting issue
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Where did you find this?
+      description: A URL or file path, if applicable.
+      placeholder: "e.g., https://docs.moltis.org/configuration.html"
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's wrong or missing?
+      description: Explain the problem with the current documentation.
+      placeholder: |
+        The MCP server configuration page doesn't explain how to
+        set environment variables for stdio transports...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: How should the documentation be improved? Provide suggested text if possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, links to related docs, or examples from other projects.

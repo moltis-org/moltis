@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://docs.moltis.org
+    about: Read the official Moltis documentation
+  - name: Discord Community
+    url: https://discord.gg/t873en2E
+    about: Get help, ask questions, and chat with other Moltis users
