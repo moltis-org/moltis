@@ -1827,6 +1827,8 @@ pub trait LogsService: Send + Sync {
     async fn list(&self, params: Value) -> ServiceResult;
     async fn status(&self) -> ServiceResult;
     async fn ack(&self) -> ServiceResult;
+    /// Return the path to the persisted JSONL log file, if available.
+    fn log_file_path(&self) -> Option<std::path::PathBuf>;
 }
 
 pub struct NoopLogsService;
@@ -1847,6 +1849,10 @@ impl LogsService for NoopLogsService {
 
     async fn ack(&self) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    fn log_file_path(&self) -> Option<std::path::PathBuf> {
+        None
     }
 }
 
