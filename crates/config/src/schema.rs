@@ -1317,6 +1317,35 @@ fn default_sandbox_packages() -> Vec<String> {
         "libxrandr2",
         "libxkbcommon0",
         "fonts-liberation",
+        // Image processing (headless)
+        "imagemagick",
+        "graphicsmagick",
+        "libvips-tools",
+        "pngquant",
+        "optipng",
+        "jpegoptim",
+        "webp",
+        "libimage-exiftool-perl",
+        "libheif-dev",
+        // Audio / video / media
+        "ffmpeg",
+        "sox",
+        "lame",
+        "flac",
+        "vorbis-tools",
+        "opus-tools",
+        "mediainfo",
+        // Data processing & conversion
+        "csvtool",
+        "xmlstarlet",
+        "pandoc",
+        "poppler-utils",
+        "ghostscript",
+        "wkhtmltopdf",
+        "html2text",
+        "dos2unix",
+        "miller",
+        "datamash",
     ]
     .iter()
     .map(|s| (*s).to_string())
