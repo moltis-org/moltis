@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-02-09
+
+### Fixed
+
+- **Release CI zizmor audit**: Removed `rust-cache` from the release workflow's
+  clippy-test job entirely instead of using `save-if: false`, which zizmor does
+  not recognize as a cache-poisoning mitigation.
+
 ## [0.3.5] - 2026-02-09
 
 ### Fixed
