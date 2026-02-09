@@ -283,8 +283,7 @@ pub struct GatewayInner {
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
     /// LLM provider registry for lightweight generation (e.g. TTS phrases).
-    pub llm_providers:
-        Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
+    pub llm_providers: Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
     /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
     pub cached_location: Option<moltis_config::GeoLocation>,
 }
@@ -342,7 +341,6 @@ impl GatewayInner {
 /// single `RwLock`.
 pub struct GatewayState {
     // ── Immutable (set at construction, never changes) ──────────────────────
-
     /// Server version string.
     pub version: String,
     /// Hostname for HelloOk.
@@ -379,14 +377,12 @@ pub struct GatewayState {
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
-
     /// Monotonically increasing sequence counter for broadcast events.
     pub seq: AtomicU64,
     /// Sequential counter for TTS test phrase round-robin picking.
     pub tts_phrase_counter: AtomicUsize,
 
     // ── Mutable runtime state (single lock) ─────────────────────────────────
-
     /// All mutable runtime state, behind a single lock.
     pub inner: RwLock<GatewayInner>,
 }
