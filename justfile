@@ -22,6 +22,10 @@ build:
 build-release:
     cargo build --release
 
+# Run local dev server with workspace-local config/data dirs.
+dev-server:
+    MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
+
 # Build Debian package for the current architecture
 deb: build-release
     cargo deb -p moltis --no-build

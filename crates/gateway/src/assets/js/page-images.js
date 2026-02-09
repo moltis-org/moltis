@@ -299,7 +299,7 @@ function ImagesPage() {
 				html`<div class="alert-warning-text"><span class="alert-label-warn">Warning:</span> ${" "}${SANDBOX_DISABLED_HINT}</div>`
 			}
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">Images</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">Sandboxes</h2>
         <button class="text-xs text-[var(--muted)] border border-[var(--border)] px-2.5 py-1 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
 			  onClick=${pruneAll} disabled=${pruning.value || !sandboxRuntimeAvailable()}
 			  title=${sandboxRuntimeAvailable() ? "Prune all" : SANDBOX_DISABLED_HINT}>
@@ -374,7 +374,7 @@ function ImagesPage() {
 }
 
 registerPage(
-	"/images",
+	"/sandboxes",
 	function initImages(container) {
 		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
 		images.value = [];

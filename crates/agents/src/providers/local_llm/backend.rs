@@ -459,6 +459,7 @@ pub mod gguf {
                 usage: Usage {
                     input_tokens,
                     output_tokens,
+                    ..Default::default()
                 },
             })
         }
@@ -602,6 +603,7 @@ pub mod gguf {
                 let _ = tx.blocking_send(StreamEvent::Done(Usage {
                     input_tokens,
                     output_tokens,
+                    ..Default::default()
                 }));
             },
             Err(e) => {
@@ -871,6 +873,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
                 usage: Usage {
                     input_tokens,
                     output_tokens,
+                    ..Default::default()
                 },
             })
         }
@@ -930,6 +933,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
                 let _ = tx.blocking_send(StreamEvent::Done(Usage {
                     input_tokens,
                     output_tokens,
+                    ..Default::default()
                 }));
             },
             Err(e) => {

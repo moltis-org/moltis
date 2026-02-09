@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -69,7 +69,7 @@ pub struct MetricsUpdatePayload {
 
 use moltis_protocol::ConnectParams;
 
-use moltis_tools::{approval::ApprovalManager, sandbox::SandboxRouter};
+use moltis_tools::sandbox::SandboxRouter;
 
 use moltis_channels::ChannelReplyTarget;
 
@@ -102,6 +102,12 @@ pub struct ConnectedClient {
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
     /// to web tools so fetched pages and search results match the user's locale.
     pub accept_language: Option<String>,
+    /// The client's public IP address (extracted from proxy headers or direct
+    /// connection). `None` when the client connects from a private/loopback address.
+    pub remote_ip: Option<String>,
+    /// The client's IANA timezone (e.g. `Europe/Lisbon`), sent by the browser
+    /// via `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+    pub timezone: Option<String>,
 }
 
 impl ConnectedClient {
@@ -227,103 +233,165 @@ pub struct DiscoveredHookInfo {
     pub avg_latency_ms: u64,
 }
 
+// ── Mutable runtime state ────────────────────────────────────────────────────
+
+/// All mutable runtime state, protected by the single `RwLock` on `GatewayState`.
+pub struct GatewayInner {
+    /// All connected WebSocket clients, keyed by conn_id.
+    pub clients: HashMap<String, ConnectedClient>,
+    /// Idempotency cache.
+    pub dedupe: DedupeCache,
+    /// Connected device nodes.
+    pub nodes: NodeRegistry,
+    /// Device pairing state.
+    pub pairing: PairingState,
+    /// Pending node invoke requests awaiting results.
+    pub pending_invokes: HashMap<String, PendingInvoke>,
+    /// Late-bound chat service override (for circular init).
+    pub chat_override: Option<Arc<dyn crate::services::ChatService>>,
+    /// Active session key per connection (conn_id → session key).
+    pub active_sessions: HashMap<String, String>,
+    /// Active project id per connection (conn_id → project id).
+    pub active_projects: HashMap<String, String>,
+    /// Heartbeat configuration (for gon data and RPC methods).
+    pub heartbeat_config: moltis_config::schema::HeartbeatConfig,
+    /// Pending channel reply targets: when a channel message triggers a chat
+    /// send, we queue the reply target so the "final" response can be routed
+    /// back to the originating channel.
+    pub channel_reply_queue: HashMap<String, Vec<ChannelReplyTarget>>,
+    /// Per-session TTS runtime overrides (session_key -> override).
+    pub tts_session_overrides: HashMap<String, TtsRuntimeOverride>,
+    /// Per-channel-account TTS runtime overrides ((channel, account) -> override).
+    pub tts_channel_overrides: HashMap<String, TtsRuntimeOverride>,
+    /// Hook registry for dispatching lifecycle events.
+    pub hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
+    /// Discovered hook metadata for the web UI.
+    pub discovered_hooks: Vec<DiscoveredHookInfo>,
+    /// Hook names that have been manually disabled via the UI.
+    pub disabled_hooks: HashSet<String>,
+    /// One-time setup code displayed at startup, required during initial setup.
+    /// Cleared after successful setup.
+    pub setup_code: Option<secrecy::Secret<String>>,
+    /// Auto-update availability state from GitHub releases.
+    pub update: crate::update_check::UpdateAvailability,
+    /// Last error per run_id (short-lived, for send_sync to retrieve).
+    pub run_errors: HashMap<String, String>,
+    /// Historical metrics data for time-series charts (in-memory cache).
+    #[cfg(feature = "metrics")]
+    pub metrics_history: MetricsHistory,
+    /// Push notification service for sending notifications to subscribed devices.
+    #[cfg(feature = "push-notifications")]
+    pub push_service: Option<Arc<crate::push::PushService>>,
+    /// LLM provider registry for lightweight generation (e.g. TTS phrases).
+    pub llm_providers: Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
+    /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
+    pub cached_location: Option<moltis_config::GeoLocation>,
+}
+
+impl GatewayInner {
+    fn new(hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>) -> Self {
+        Self {
+            clients: HashMap::new(),
+            dedupe: DedupeCache::new(),
+            nodes: NodeRegistry::new(),
+            pairing: PairingState::new(),
+            pending_invokes: HashMap::new(),
+            chat_override: None,
+            active_sessions: HashMap::new(),
+            active_projects: HashMap::new(),
+            heartbeat_config: moltis_config::schema::HeartbeatConfig::default(),
+            channel_reply_queue: HashMap::new(),
+            tts_session_overrides: HashMap::new(),
+            tts_channel_overrides: HashMap::new(),
+            hook_registry,
+            discovered_hooks: Vec::new(),
+            disabled_hooks: HashSet::new(),
+            setup_code: None,
+            update: crate::update_check::UpdateAvailability::default(),
+            run_errors: HashMap::new(),
+            #[cfg(feature = "metrics")]
+            metrics_history: MetricsHistory::default(),
+            #[cfg(feature = "push-notifications")]
+            push_service: None,
+            llm_providers: None,
+            cached_location: moltis_config::load_user().and_then(|u| u.location),
+        }
+    }
+
+    /// Insert a client, returning the new client count.
+    pub fn register_client(&mut self, client: ConnectedClient) -> usize {
+        let conn_id = client.conn_id.clone();
+        self.clients.insert(conn_id, client);
+        self.clients.len()
+    }
+
+    /// Remove a client by conn_id. Returns the removed client and the new count.
+    pub fn remove_client(&mut self, conn_id: &str) -> (Option<ConnectedClient>, usize) {
+        let removed = self.clients.remove(conn_id);
+        (removed, self.clients.len())
+    }
+}
+
 // ── Gateway state ────────────────────────────────────────────────────────────
 
-/// Shared gateway runtime state, wrapped in Arc for use across async tasks.
+/// Shared gateway runtime state, wrapped in `Arc` for use across async tasks.
+///
+/// Immutable fields and atomics live directly on this struct (no lock needed).
+/// All mutable runtime state is consolidated in [`GatewayInner`] behind a
+/// single `RwLock`.
 pub struct GatewayState {
-    /// All connected WebSocket clients, keyed by conn_id.
-    pub clients: RwLock<HashMap<String, ConnectedClient>>,
-    /// Monotonically increasing sequence counter for broadcast events.
-    pub seq: AtomicU64,
-    /// Idempotency cache.
-    pub dedupe: RwLock<DedupeCache>,
+    // ── Immutable (set at construction, never changes) ──────────────────────
     /// Server version string.
     pub version: String,
     /// Hostname for HelloOk.
     pub hostname: String,
     /// Auth configuration.
     pub auth: ResolvedAuth,
-    /// Connected device nodes.
-    pub nodes: RwLock<NodeRegistry>,
-    /// Device pairing state.
-    pub pairing: RwLock<PairingState>,
-    /// Pending node invoke requests awaiting results.
-    pub pending_invokes: RwLock<HashMap<String, PendingInvoke>>,
     /// Domain services.
     pub services: GatewayServices,
-    /// Approval manager for exec command gating.
-    pub approval_manager: Arc<ApprovalManager>,
-    /// Late-bound chat service override (for circular init).
-    pub chat_override: RwLock<Option<Arc<dyn crate::services::ChatService>>>,
-    /// Active session key per connection (conn_id → session key).
-    pub active_sessions: RwLock<HashMap<String, String>>,
-    /// Active project id per connection (conn_id → project id).
-    pub active_projects: RwLock<HashMap<String, String>>,
     /// Credential store for authentication (password, passkeys, API keys).
+    /// `Arc` because it is shared cross-crate (e.g. `ExecTool` as `dyn EnvVarProvider`).
     pub credential_store: Option<Arc<CredentialStore>>,
-    /// WebAuthn state for passkey registration/authentication.
-    pub webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
     /// Per-session sandbox router (None if sandbox is not configured).
+    /// `Arc` because it is shared with `ExecTool`/`ProcessTool` in `moltis-tools`.
     pub sandbox_router: Option<Arc<SandboxRouter>>,
-    /// Heartbeat configuration (for gon data and RPC methods).
-    pub heartbeat_config: RwLock<moltis_config::schema::HeartbeatConfig>,
-    /// Pending channel reply targets: when a channel message triggers a chat
-    /// send, we queue the reply target so the "final" response can be routed
-    /// back to the originating channel.
-    pub channel_reply_queue: RwLock<HashMap<String, Vec<ChannelReplyTarget>>>,
-    /// Per-session TTS runtime overrides (session_key -> override).
-    pub tts_session_overrides: RwLock<HashMap<String, TtsRuntimeOverride>>,
-    /// Per-channel-account TTS runtime overrides ((channel, account) -> override).
-    pub tts_channel_overrides: RwLock<HashMap<String, TtsRuntimeOverride>>,
-    /// Hook registry for dispatching lifecycle events.
-    pub hook_registry: RwLock<Option<Arc<moltis_common::hooks::HookRegistry>>>,
-    /// Discovered hook metadata for the web UI.
-    pub discovered_hooks: RwLock<Vec<DiscoveredHookInfo>>,
-    /// Hook names that have been manually disabled via the UI.
-    pub disabled_hooks: RwLock<HashSet<String>>,
     /// Memory manager for long-term memory search (None if no embedding provider).
+    /// `Arc` because it is cloned into background tokio tasks.
     pub memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
-    /// One-time setup code displayed at startup, required during initial setup.
-    /// Cleared after successful setup.
-    pub setup_code: RwLock<Option<secrecy::Secret<String>>>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether TLS is active on the gateway listener.
     pub tls_active: bool,
+    /// Whether WebSocket request/response logging is enabled.
+    pub ws_request_logs: bool,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
-    /// Auto-update availability state from GitHub releases.
-    pub update: RwLock<crate::update_check::UpdateAvailability>,
-    /// Last error per run_id (short-lived, for send_sync to retrieve).
-    pub run_errors: RwLock<HashMap<String, String>>,
     /// Metrics handle for Prometheus export (None if metrics disabled).
     #[cfg(feature = "metrics")]
     pub metrics_handle: Option<MetricsHandle>,
-    /// Historical metrics data for time-series charts (in-memory cache).
-    #[cfg(feature = "metrics")]
-    pub metrics_history: RwLock<MetricsHistory>,
     /// Persistent metrics store (SQLite or other backend).
     #[cfg(feature = "metrics")]
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
-    /// Push notification service for sending notifications to subscribed devices.
-    #[cfg(feature = "push-notifications")]
-    pub push_service: RwLock<Option<Arc<crate::push::PushService>>>,
+
+    // ── Atomics (lock-free) ─────────────────────────────────────────────────
+    /// Monotonically increasing sequence counter for broadcast events.
+    pub seq: AtomicU64,
+    /// Sequential counter for TTS test phrase round-robin picking.
+    pub tts_phrase_counter: AtomicUsize,
+
+    // ── Mutable runtime state (single lock) ─────────────────────────────────
+    /// All mutable runtime state, behind a single lock.
+    pub inner: RwLock<GatewayInner>,
 }
 
 impl GatewayState {
-    pub fn new(
-        auth: ResolvedAuth,
-        services: GatewayServices,
-        approval_manager: Arc<ApprovalManager>,
-    ) -> Arc<Self> {
+    pub fn new(auth: ResolvedAuth, services: GatewayServices) -> Arc<Self> {
         Self::with_options(
             auth,
             services,
-            approval_manager,
-            None,
             None,
             None,
             false,
@@ -331,32 +399,7 @@ impl GatewayState {
             None,
             None,
             18789,
-            None,
-            #[cfg(feature = "metrics")]
-            None,
-            #[cfg(feature = "metrics")]
-            None,
-        )
-    }
-
-    pub fn with_sandbox_router(
-        auth: ResolvedAuth,
-        services: GatewayServices,
-        approval_manager: Arc<ApprovalManager>,
-        sandbox_router: Option<Arc<SandboxRouter>>,
-    ) -> Arc<Self> {
-        Self::with_options(
-            auth,
-            services,
-            approval_manager,
-            sandbox_router,
-            None,
-            None,
             false,
-            false,
-            None,
-            None,
-            18789,
             None,
             #[cfg(feature = "metrics")]
             None,
@@ -369,15 +412,14 @@ impl GatewayState {
     pub fn with_options(
         auth: ResolvedAuth,
         services: GatewayServices,
-        approval_manager: Arc<ApprovalManager>,
         sandbox_router: Option<Arc<SandboxRouter>>,
         credential_store: Option<Arc<CredentialStore>>,
-        webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
         localhost_only: bool,
         tls_active: bool,
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
         port: u16,
+        ws_request_logs: bool,
         deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
@@ -388,69 +430,56 @@ impl GatewayState {
             .unwrap_or_else(|| "unknown".into());
 
         Arc::new(Self {
-            clients: RwLock::new(HashMap::new()),
-            seq: AtomicU64::new(0),
-            dedupe: RwLock::new(DedupeCache::new()),
             version: env!("CARGO_PKG_VERSION").to_string(),
             hostname,
             auth,
-            nodes: RwLock::new(NodeRegistry::new()),
-            pairing: RwLock::new(PairingState::new()),
-            pending_invokes: RwLock::new(HashMap::new()),
             services,
-            approval_manager,
             credential_store,
-            webauthn_state,
-            chat_override: RwLock::new(None),
-            active_sessions: RwLock::new(HashMap::new()),
-            active_projects: RwLock::new(HashMap::new()),
             sandbox_router,
-            channel_reply_queue: RwLock::new(HashMap::new()),
-            tts_session_overrides: RwLock::new(HashMap::new()),
-            tts_channel_overrides: RwLock::new(HashMap::new()),
-            hook_registry: RwLock::new(hook_registry),
-            discovered_hooks: RwLock::new(Vec::new()),
-            disabled_hooks: RwLock::new(HashSet::new()),
             memory_manager,
-            setup_code: RwLock::new(None),
             localhost_only,
             tls_active,
+            ws_request_logs,
             deploy_platform,
             port,
-            update: RwLock::new(crate::update_check::UpdateAvailability::default()),
-            heartbeat_config: RwLock::new(moltis_config::schema::HeartbeatConfig::default()),
-            run_errors: RwLock::new(HashMap::new()),
             #[cfg(feature = "metrics")]
             metrics_handle,
             #[cfg(feature = "metrics")]
-            metrics_history: RwLock::new(MetricsHistory::default()),
-            #[cfg(feature = "metrics")]
             metrics_store,
-            #[cfg(feature = "push-notifications")]
-            push_service: RwLock::new(None),
+            seq: AtomicU64::new(0),
+            tts_phrase_counter: AtomicUsize::new(0),
+            inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
     }
 
     /// Set a late-bound chat service (for circular init).
     pub async fn set_chat(&self, chat: Arc<dyn crate::services::ChatService>) {
-        *self.chat_override.write().await = Some(chat);
+        self.inner.write().await.chat_override = Some(chat);
     }
 
     /// Set the push notification service (late-bound initialization).
     #[cfg(feature = "push-notifications")]
     pub async fn set_push_service(&self, service: Arc<crate::push::PushService>) {
-        *self.push_service.write().await = Some(service);
+        self.inner.write().await.push_service = Some(service);
     }
 
     /// Get the push notification service if configured.
     #[cfg(feature = "push-notifications")]
     pub async fn get_push_service(&self) -> Option<Arc<crate::push::PushService>> {
-        self.push_service.read().await.clone()
+        self.inner.read().await.push_service.clone()
+    }
+
+    /// Return the next sequential index for TTS phrase round-robin picking.
+    pub fn next_tts_phrase_index(&self, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        self.tts_phrase_counter.fetch_add(1, Ordering::Relaxed) % len
     }
 
     /// Get the active chat service (override or default).
     pub async fn chat(&self) -> Arc<dyn crate::services::ChatService> {
-        if let Some(c) = self.chat_override.read().await.as_ref() {
+        if let Some(c) = self.inner.read().await.chat_override.as_ref() {
             return Arc::clone(c);
         }
         Arc::clone(&self.services.chat)
@@ -462,24 +491,38 @@ impl GatewayState {
 
     /// Register a new client connection.
     pub async fn register_client(&self, client: ConnectedClient) {
-        let conn_id = client.conn_id.clone();
-        self.clients.write().await.insert(conn_id, client);
+        let count = self.inner.write().await.register_client(client);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
     }
 
     /// Remove a client by conn_id. Returns the removed client if found.
     pub async fn remove_client(&self, conn_id: &str) -> Option<ConnectedClient> {
-        self.clients.write().await.remove(conn_id)
+        let (removed, count) = self.inner.write().await.remove_client(conn_id);
+
+        #[cfg(feature = "metrics")]
+        {
+            let _ = count;
+            moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = count;
+
+        removed
     }
 
     /// Number of connected clients.
     pub async fn client_count(&self) -> usize {
-        self.clients.read().await.len()
+        self.inner.read().await.clients.len()
     }
 
     /// Push a reply target for a session (used when a channel message triggers chat.send).
     pub async fn push_channel_reply(&self, session_key: &str, target: ChannelReplyTarget) {
-        let mut queue = self.channel_reply_queue.write().await;
-        queue
+        self.inner
+            .write()
+            .await
+            .channel_reply_queue
             .entry(session_key.to_string())
             .or_default()
             .push(target);
@@ -487,33 +530,51 @@ impl GatewayState {
 
     /// Drain all pending reply targets for a session.
     pub async fn drain_channel_replies(&self, session_key: &str) -> Vec<ChannelReplyTarget> {
-        let mut queue = self.channel_reply_queue.write().await;
-        queue.remove(session_key).unwrap_or_default()
+        self.inner
+            .write()
+            .await
+            .channel_reply_queue
+            .remove(session_key)
+            .unwrap_or_default()
     }
 
     /// Get a copy of pending reply targets without removing them.
     pub async fn peek_channel_replies(&self, session_key: &str) -> Vec<ChannelReplyTarget> {
-        let queue = self.channel_reply_queue.read().await;
-        queue.get(session_key).cloned().unwrap_or_default()
+        self.inner
+            .read()
+            .await
+            .channel_reply_queue
+            .get(session_key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Record a run error (for send_sync to retrieve).
     pub async fn set_run_error(&self, run_id: &str, error: String) {
-        self.run_errors
+        self.inner
             .write()
             .await
+            .run_errors
             .insert(run_id.to_string(), error);
     }
 
     /// Take (and remove) the last error for a run_id.
     pub async fn last_run_error(&self, run_id: &str) -> Option<String> {
-        self.run_errors.write().await.remove(run_id)
+        self.inner.write().await.run_errors.remove(run_id)
     }
 
-    /// Close a client: remove from registry, abort if needed.
+    /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
-        // Also unregister from node registry if it was a node.
-        self.nodes.write().await.unregister_by_conn(conn_id);
-        self.remove_client(conn_id).await
+        let mut inner = self.inner.write().await;
+        inner.nodes.unregister_by_conn(conn_id);
+        let (removed, count) = inner.remove_client(conn_id);
+        drop(inner);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
+        #[cfg(not(feature = "metrics"))]
+        let _ = count;
+
+        removed
     }
 }

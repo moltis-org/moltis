@@ -186,6 +186,7 @@ mod tests {
         let tts = PiperTts::new(&config);
         assert_eq!(tts.id(), "piper");
         assert_eq!(tts.name(), "Piper");
+        assert!(!tts.supports_ssml());
     }
 
     #[test]

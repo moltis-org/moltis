@@ -207,10 +207,51 @@ pub async fn config_save(
 ///
 /// This re-runs the current binary with the same arguments. On Unix, it uses the exec
 /// syscall to replace the current process. On other platforms, it spawns a new process.
+///
+/// Before restarting, the saved config is loaded from disk and validated. If the config
+/// is invalid the restart is refused so the server doesn't crash on startup.
 pub async fn restart(State(state): State<crate::server::AppState>) -> impl IntoResponse {
     // Extra security check for config access (restart is a privileged operation)
     if let Err(resp) = require_config_access(&state).await {
         return resp.into_response();
+    }
+
+    // Validate the on-disk config before restarting to avoid crash loops.
+    let config_path = moltis_config::find_or_default_config_path();
+    if config_path.exists() {
+        match std::fs::read_to_string(&config_path) {
+            Ok(toml_str) => {
+                if let Err(e) = toml::from_str::<moltis_config::MoltisConfig>(&toml_str) {
+                    tracing::warn!(
+                        path = %config_path.display(),
+                        error = %e,
+                        "restart refused: saved config is invalid"
+                    );
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("Config is invalid, refusing to restart: {e}"),
+                            "valid": false,
+                        })),
+                    )
+                        .into_response();
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    path = %config_path.display(),
+                    error = %e,
+                    "restart refused: cannot read config file"
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("Cannot read config file: {e}"),
+                    })),
+                )
+                    .into_response();
+            },
+        }
     }
 
     tracing::info!("restart requested via API");

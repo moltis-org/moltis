@@ -205,6 +205,7 @@ pub async fn handle_message_direct(
                     account_id,
                     &msg.chat.id.0.to_string(),
                     "I can't understand voice, you did not configure it, please visit Settings -> Voice",
+                    None,
                 )
                 .await
             {
@@ -321,6 +322,58 @@ pub async fn handle_message_direct(
                 )
             },
         }
+    } else if let Some(loc_info) = extract_location(&msg) {
+        let lat = loc_info.latitude;
+        let lon = loc_info.longitude;
+
+        // Handle location sharing: update stored location and resolve any pending tool request.
+        let resolved = if let Some(ref sink) = event_sink {
+            let reply_target = ChannelReplyTarget {
+                channel_type: ChannelType::Telegram,
+                account_id: account_id.to_string(),
+                chat_id: msg.chat.id.0.to_string(),
+                message_id: Some(msg.id.0.to_string()),
+            };
+            sink.update_location(&reply_target, lat, lon).await
+        } else {
+            false
+        };
+
+        if resolved {
+            // Pending tool request was resolved — the LLM will respond via the tool flow.
+            if let Err(e) = outbound
+                .send_text_silent(
+                    account_id,
+                    &msg.chat.id.0.to_string(),
+                    "Location updated.",
+                    None,
+                )
+                .await
+            {
+                warn!(account_id, "failed to send location confirmation: {e}");
+            }
+            return Ok(());
+        }
+
+        if loc_info.is_live {
+            // Live location share — acknowledge silently, subsequent updates arrive
+            // as EditedMessage and are handled by handle_edited_location().
+            if let Err(e) = outbound
+                .send_text_silent(
+                    account_id,
+                    &msg.chat.id.0.to_string(),
+                    "Live location tracking started. Your location will be updated automatically.",
+                    None,
+                )
+                .await
+            {
+                warn!(account_id, "failed to send live location ack: {e}");
+            }
+            return Ok(());
+        }
+
+        // Static location share — dispatch to LLM so it can acknowledge.
+        (format!("I'm sharing my location: {lat}, {lon}"), Vec::new())
     } else {
         // Log unhandled media types so we know when users are sending attachments we don't process
         if let Some(media_type) = describe_media_kind(&msg) {
@@ -342,6 +395,7 @@ pub async fn handle_message_direct(
             channel_type: ChannelType::Telegram,
             account_id: account_id.to_string(),
             chat_id: msg.chat.id.0.to_string(),
+            message_id: Some(msg.id.0.to_string()),
         };
 
         // Intercept slash commands before dispatching to the LLM.
@@ -470,7 +524,7 @@ pub async fn handle_message_direct(
                 };
                 if let Some(outbound) = outbound
                     && let Err(e) = outbound
-                        .send_text(account_id, &reply_target.chat_id, &response)
+                        .send_text(account_id, &reply_target.chat_id, &response, None)
                         .await
                 {
                     warn!(account_id, "failed to send command response: {e}");
@@ -719,6 +773,49 @@ async fn handle_otp_flow(
             },
         }
     }
+}
+
+/// Handle an edited message — only processes live location updates.
+///
+/// Telegram sends live location updates as `EditedMessage` with `MediaKind::Location`.
+/// We silently update the cached location without dispatching to the LLM or
+/// re-checking access (the user was already approved on the initial share).
+pub async fn handle_edited_location(
+    msg: Message,
+    account_id: &str,
+    accounts: &AccountStateMap,
+) -> anyhow::Result<()> {
+    let Some(loc_info) = extract_location(&msg) else {
+        // Not a location edit — ignore (could be a text edit, etc.).
+        return Ok(());
+    };
+    let lat = loc_info.latitude;
+    let lon = loc_info.longitude;
+
+    debug!(
+        account_id,
+        lat,
+        lon,
+        chat_id = msg.chat.id.0,
+        "live location update"
+    );
+
+    let event_sink = {
+        let accts = accounts.read().unwrap();
+        accts.get(account_id).and_then(|s| s.event_sink.clone())
+    };
+
+    if let Some(ref sink) = event_sink {
+        let reply_target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: account_id.to_string(),
+            chat_id: msg.chat.id.0.to_string(),
+            message_id: Some(msg.id.0.to_string()),
+        };
+        sink.update_location(&reply_target, lat, lon).await;
+    }
+
+    Ok(())
 }
 
 /// Handle a single inbound Telegram message (teloxide dispatcher endpoint).
@@ -1037,6 +1134,7 @@ pub async fn handle_callback_query(
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
+        message_id: None, // Callback queries don't have a message to reply-thread to.
     };
 
     // Provider selection → fetch models for that provider and show a new keyboard.
@@ -1053,7 +1151,7 @@ pub async fn handle_callback_query(
                 },
                 Err(e) => {
                     if let Err(err) = outbound
-                        .send_text(account_id, &chat_id, &format!("Error: {e}"))
+                        .send_text(account_id, &chat_id, &format!("Error: {e}"), None)
                         .await
                     {
                         warn!(account_id, "failed to send callback response: {err}");
@@ -1078,7 +1176,10 @@ pub async fn handle_callback_query(
         }
 
         // Also send as a regular message for visibility.
-        if let Err(e) = outbound.send_text(account_id, &chat_id, &response).await {
+        if let Err(e) = outbound
+            .send_text(account_id, &chat_id, &response, None)
+            .await
+        {
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {
@@ -1198,6 +1299,29 @@ fn extract_photo_file(msg: &Message) -> Option<PhotoFileInfo> {
     }
 }
 
+/// Extracted location info from a Telegram message.
+struct LocationInfo {
+    latitude: f64,
+    longitude: f64,
+    /// Whether this is a live location share (has `live_period` set).
+    is_live: bool,
+}
+
+/// Extract location coordinates from a message.
+fn extract_location(msg: &Message) -> Option<LocationInfo> {
+    match &msg.kind {
+        MessageKind::Common(common) => match &common.media_kind {
+            MediaKind::Location(loc) => Some(LocationInfo {
+                latitude: loc.location.latitude,
+                longitude: loc.location.longitude,
+                is_live: loc.location.live_period.is_some(),
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Describe a media kind for logging purposes.
 fn describe_media_kind(msg: &Message) -> Option<&'static str> {
     match &msg.kind {
@@ -1242,6 +1366,7 @@ impl ToChannelMessageKind for MediaKind {
             MediaKind::Photo(_) => ChannelMessageKind::Photo,
             MediaKind::Document(_) => ChannelMessageKind::Document,
             MediaKind::Video(_) | MediaKind::VideoNote(_) => ChannelMessageKind::Video,
+            MediaKind::Location(_) => ChannelMessageKind::Location,
             _ => ChannelMessageKind::Other,
         }
     }
@@ -1708,5 +1833,98 @@ mod tests {
 
         let _ = shutdown_tx.send(());
         server.await.expect("server join");
+    }
+
+    #[test]
+    fn extract_location_from_message() {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "location": {
+                "latitude": 48.8566,
+                "longitude": 2.3522
+            }
+        }))
+        .expect("deserialize location message");
+
+        let loc = extract_location(&msg);
+        assert!(loc.is_some(), "should extract location from message");
+        let info = loc.unwrap();
+        assert!((info.latitude - 48.8566).abs() < 1e-4);
+        assert!((info.longitude - 2.3522).abs() < 1e-4);
+        assert!(!info.is_live, "static location should not be live");
+    }
+
+    #[test]
+    fn extract_location_returns_none_for_text() {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice"
+            },
+            "text": "hello"
+        }))
+        .expect("deserialize text message");
+
+        assert!(extract_location(&msg).is_none());
+    }
+
+    #[test]
+    fn location_messages_are_marked_with_location_message_kind() {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice"
+            },
+            "location": {
+                "latitude": 48.8566,
+                "longitude": 2.3522
+            }
+        }))
+        .expect("deserialize location message");
+
+        assert!(matches!(
+            message_kind(&msg),
+            Some(ChannelMessageKind::Location)
+        ));
+    }
+
+    #[test]
+    fn extract_location_detects_live_period() {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice"
+            },
+            "location": {
+                "latitude": 48.8566,
+                "longitude": 2.3522,
+                "live_period": 3600
+            }
+        }))
+        .expect("deserialize live location message");
+
+        let info = extract_location(&msg).expect("should extract live location");
+        assert!(info.is_live, "location with live_period should be live");
+        assert!((info.latitude - 48.8566).abs() < 1e-4);
     }
 }

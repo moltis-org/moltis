@@ -10,7 +10,7 @@ use {
 
 use moltis_gateway::{
     auth,
-    chat::{LiveChatService, LiveModelService},
+    chat::{DisabledModelsStore, LiveChatService, LiveModelService},
     methods::MethodRegistry,
     server::build_gateway_app,
     services::GatewayServices,
@@ -23,16 +23,12 @@ use moltis_agents::providers::ProviderRegistry;
 async fn start_test_server() -> SocketAddr {
     let resolved_auth = auth::resolve_auth(None, None);
     let services = GatewayServices::noop();
-    let state = GatewayState::new(
-        resolved_auth,
-        services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None);
+    let app = build_gateway_app(state, methods, None, false, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods);
+    let app = build_gateway_app(state, methods, false, None);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -49,14 +45,14 @@ async fn start_test_server() -> SocketAddr {
 
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn root_serves_chat_ui_html() {
+async fn root_redirects_to_onboarding_when_not_onboarded() {
     let addr = start_test_server().await;
+    // A fresh (non-onboarded) server redirects `/` → `/onboarding`.
     let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("<title>moltis</title>"));
-    assert!(body.contains("id=\"pageContent\""));
-    assert!(body.contains("id=\"navPanel\""));
+    assert!(body.contains("<title>moltis onboarding</title>"));
+    assert!(body.contains("id=\"onboardingRoot\""));
 }
 
 #[tokio::test]
@@ -223,14 +219,14 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
 
     let mut services = GatewayServices::noop();
     if !registry.read().await.is_empty() {
-        services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
+        services = services.with_model(Arc::new(LiveModelService::new(
+            Arc::clone(&registry),
+            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
+            Vec::new(),
+        )));
     }
 
-    let state = GatewayState::new(
-        resolved_auth,
-        services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state = GatewayState::new(resolved_auth, services);
 
     // This is the call that used to panic with blocking_write inside async.
     let tmp1 = tempfile::tempdir().unwrap();
@@ -252,6 +248,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         state
             .set_chat(Arc::new(LiveChatService::new(
                 Arc::clone(&registry),
+                Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
                 Arc::clone(&state),
                 Arc::clone(&session_store1),
                 Arc::clone(&session_metadata1),
@@ -263,11 +260,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     // Force it with an empty registry to exercise set_chat unconditionally.
     let resolved_auth2 = auth::resolve_auth(None, None);
     let registry2 = Arc::new(tokio::sync::RwLock::new(ProviderRegistry::from_env()));
-    let state2 = GatewayState::new(
-        resolved_auth2,
-        GatewayServices::noop(),
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state2 = GatewayState::new(resolved_auth2, GatewayServices::noop());
     let tmp2 = tempfile::tempdir().unwrap();
     let session_store2 = Arc::new(moltis_sessions::store::SessionStore::new(
         tmp2.path().to_path_buf(),
@@ -286,6 +279,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     state2
         .set_chat(Arc::new(LiveChatService::new(
             Arc::clone(&registry2),
+            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
             Arc::clone(&state2),
             Arc::clone(&session_store2),
             Arc::clone(&session_metadata2),

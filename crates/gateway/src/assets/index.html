@@ -73,7 +73,6 @@
 <link rel="modulepreload" href="/assets/js/page-hooks.js">
 <link rel="modulepreload" href="/assets/js/page-settings.js">
 <link rel="modulepreload" href="/assets/js/page-images.js">
-<link rel="modulepreload" href="/assets/js/page-onboarding.js">
 <link rel="modulepreload" href="/assets/js/emoji-picker.js">
 <link rel="modulepreload" href="/assets/js/vendor/preact.mjs">
 <link rel="modulepreload" href="/assets/js/vendor/preact-hooks.mjs">
@@ -169,9 +168,9 @@
         Crons
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountCrons"></span>
       </a>
-      <a href="/images" data-nav class="nav-link">
+      <a href="/sandboxes" data-nav class="nav-link">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
-        Images
+        Sandboxes
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountImages"></span>
       </a>
       <a href="/logs" data-nav class="nav-link relative" id="navLogs">
@@ -441,6 +440,7 @@ endpoint = "http://localhost:8000"</code>
   <span class="thinking-dots"><span></span><span></span><span></span></span>
 </template>
 
+
 <template id="tpl-exec-card">
   <div class="msg exec-card running">
     <div class="exec-prompt">
@@ -509,6 +509,53 @@ endpoint = "http://localhost:8000"</code>
       <div class="ctx-disabled" style="margin-top:8px">
         Tools disabled — file operations, shell commands, and memory search are not available.
       </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-welcome-card">
+  <div id="welcomeCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
+    <div data-welcome-emoji class="text-4xl mb-4"></div>
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">
+      <span data-welcome-greeting></span>
+    </h2>
+    <p class="text-sm text-[var(--muted)] mb-6">
+      I'm <span data-welcome-bot-name class="font-medium text-[var(--text)]"></span>. How can I help?
+    </p>
+    <ul class="text-left text-sm text-[var(--muted)] flex flex-col gap-3 w-full">
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </span>
+        <span>Chat with multiple AI providers and models</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </span>
+        <span>Run commands in a sandboxed environment</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
+        <span>Browse the web and fetch content</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </span>
+        <span>Remember context across sessions with long-term memory</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </span>
+        <span>Extend with MCP tools, skills, and plugins</span>
+      </li>
+    </ul>
+    <div class="mt-6 text-xs text-[var(--muted)]">
+      Type a message or use <kbd class="px-1.5 py-0.5 bg-[var(--surface2)] border border-[var(--border)] rounded text-[var(--text)] text-xs font-mono">/</kbd> for commands
     </div>
   </div>
 </template>

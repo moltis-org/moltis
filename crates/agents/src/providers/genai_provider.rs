@@ -33,9 +33,21 @@ impl GenaiProvider {
 }
 
 fn genai_usage_to_usage(u: &genai::chat::Usage) -> Usage {
+    let (cache_read, cache_write) = u
+        .prompt_tokens_details
+        .as_ref()
+        .map(|d| {
+            (
+                d.cached_tokens.unwrap_or(0) as u32,
+                d.cache_creation_tokens.unwrap_or(0) as u32,
+            )
+        })
+        .unwrap_or((0, 0));
     Usage {
         input_tokens: u.prompt_tokens.unwrap_or(0) as u32,
         output_tokens: u.completion_tokens.unwrap_or(0) as u32,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
     }
 }
 
@@ -132,7 +144,7 @@ impl LlmProvider for GenaiProvider {
                         let usage = end.captured_usage
                             .as_ref()
                             .map(genai_usage_to_usage)
-                            .unwrap_or(Usage { input_tokens: 0, output_tokens: 0 });
+                            .unwrap_or_default();
                         yield StreamEvent::Done(usage);
                         return;
                     }

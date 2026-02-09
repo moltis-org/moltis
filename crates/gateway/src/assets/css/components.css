@@ -90,6 +90,16 @@
   color: var(--ok);
 }
 
+.provider-item-badge.warning {
+  background: var(--warning-bg, rgba(234, 179, 8, 0.15));
+  color: var(--warning, #eab308);
+}
+
+.provider-item-badge.muted {
+  background: var(--surface2);
+  color: var(--muted);
+}
+
 .provider-key-form {
   flex-direction: column;
   gap: 10px;

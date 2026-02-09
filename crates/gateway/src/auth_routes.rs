@@ -98,7 +98,7 @@ async fn status_handler(
 
     let setup_required = !auth_bypassed && !state.credential_store.is_setup_complete();
 
-    let setup_code_required = state.gateway_state.setup_code.read().await.is_some();
+    let setup_code_required = state.gateway_state.inner.read().await.setup_code.is_some();
 
     Json(serde_json::json!({
         "setup_required": setup_required,
@@ -129,8 +129,8 @@ async fn setup_handler(
 
     // Validate setup code if one was generated at startup.
     {
-        let expected_code = state.gateway_state.setup_code.read().await;
-        if let Some(ref expected) = *expected_code
+        let inner = state.gateway_state.inner.read().await;
+        if let Some(ref expected) = inner.setup_code
             && body.setup_code.as_deref() != Some(expected.expose_secret().as_str())
         {
             return (StatusCode::FORBIDDEN, "invalid or missing setup code").into_response();
@@ -160,7 +160,7 @@ async fn setup_handler(
     }
 
     // Clear setup code and create session.
-    *state.gateway_state.setup_code.write().await = None;
+    state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
         Ok(token) => session_response(token),
         Err(e) => (
@@ -223,7 +223,7 @@ async fn reset_auth_handler(
             // Generate a new setup code so the re-setup flow is protected.
             let code = generate_setup_code();
             tracing::info!("setup code: {code} (enter this in the browser to set your password)");
-            *state.gateway_state.setup_code.write().await = Some(secrecy::Secret::new(code));
+            state.gateway_state.inner.write().await.setup_code = Some(secrecy::Secret::new(code));
             clear_session_response()
         },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

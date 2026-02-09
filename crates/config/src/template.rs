@@ -23,6 +23,8 @@ pub fn default_config_template(port: u16) -> String {
 [server]
 bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interfaces)
 port = {port}                           # Port number (auto-generated for this installation)
+http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
+ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
 update_repository_url = "https://github.com/moltis-org/moltis"    # GitHub repo used for update checks (comment out to disable)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -40,7 +42,7 @@ disabled = false                  # true = disable auth entirely (DANGEROUS if e
 [tls]
 enabled = true                    # Enable HTTPS (recommended)
 auto_generate = true              # Auto-generate local CA and server certificate
-http_redirect_port = 18790        # Port for plain HTTP redirect/CA download server
+# http_redirect_port = 18790      # Optional override (default: server.port + 1)
 # cert_path = "/path/to/cert.pem"     # Custom certificate file (overrides auto-gen)
 # key_path = "/path/to/key.pem"       # Custom private key file
 # ca_cert_path = "/path/to/ca.pem"    # CA certificate for trust instructions
@@ -81,6 +83,7 @@ http_redirect_port = 18790        # Port for plain HTTP redirect/CA download ser
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
+offered = ["openai", "github-copilot"]      # Providers shown in onboarding/picker UI ([] = show all)
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
@@ -142,6 +145,7 @@ http_redirect_port = 18790        # Port for plain HTTP redirect/CA download ser
 message_queue_mode = "followup"   # How to handle messages during an active agent run:
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
+# priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS

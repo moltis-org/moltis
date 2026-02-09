@@ -157,11 +157,9 @@ impl LlmProvider for AsyncOpenAiProvider {
             .map(|u| Usage {
                 input_tokens: u.prompt_tokens,
                 output_tokens: u.completion_tokens,
+                ..Default::default()
             })
-            .unwrap_or(Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            });
+            .unwrap_or_default();
 
         Ok(CompletionResponse {
             text,
@@ -218,6 +216,7 @@ impl LlmProvider for AsyncOpenAiProvider {
                             yield StreamEvent::Done(Usage {
                                 input_tokens: u.prompt_tokens,
                                 output_tokens: u.completion_tokens,
+                                ..Default::default()
                             });
                             return;
                         }
@@ -229,7 +228,7 @@ impl LlmProvider for AsyncOpenAiProvider {
                 }
             }
 
-            yield StreamEvent::Done(Usage { input_tokens: 0, output_tokens: 0 });
+            yield StreamEvent::Done(Usage::default());
         })
     }
 }

@@ -112,19 +112,15 @@ The repository includes a `render.yaml` blueprint. Click the button above or:
 
 ## Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?repo=moltis-org/moltis)
+The repository includes a `railway.json` configuration that sets the required
+environment variables (`MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`,
+`MOLTIS_DEPLOY_PLATFORM`) automatically.
 
-The repository includes a `railway.json` configuration. Click the button above
-or:
-
-1. Create a new project on Railway
+1. Create a new project on [Railway](https://railway.com)
 2. Add a service from **Docker Image**: `ghcr.io/moltis-org/moltis:latest`
-3. Railway injects the `$PORT` variable automatically
-4. Set environment variables:
-   - `MOLTIS_NO_TLS` = `true`
-   - `MOLTIS_CONFIG_DIR` = `/data/config`
-   - `MOLTIS_DATA_DIR` = `/data`
-   - `MOLTIS_DEPLOY_PLATFORM` = `railway`
+3. Railway injects the `$PORT` variable automatically; the `railway.json` start
+   command handles the rest
+4. Set additional environment variables in the Railway dashboard:
    - `MOLTIS_PASSWORD` = your password
 
 ### Persistent storage

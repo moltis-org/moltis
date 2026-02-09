@@ -134,7 +134,6 @@ impl TtsProvider for OpenAiTts {
         let api_key = self.get_api_key()?;
         let voice = request.voice_id.as_deref().unwrap_or(&self.default_voice);
         let model = request.model.as_deref().unwrap_or(&self.default_model);
-
         let body = TtsRequest {
             model,
             input: &request.text,
@@ -198,6 +197,7 @@ mod tests {
         assert_eq!(provider.id(), "openai");
         assert_eq!(provider.name(), "OpenAI");
         assert!(!provider.is_configured());
+        assert!(!provider.supports_ssml());
 
         let configured = OpenAiTts::new(Some(Secret::new("test-key".into())));
         assert!(configured.is_configured());

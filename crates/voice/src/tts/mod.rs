@@ -16,6 +16,7 @@ use {
     async_trait::async_trait,
     bytes::Bytes,
     serde::{Deserialize, Serialize},
+    std::borrow::Cow,
 };
 
 /// A voice available from a TTS provider.
@@ -114,11 +115,57 @@ pub trait TtsProvider: Send + Sync {
     /// Check if the provider is configured and ready.
     fn is_configured(&self) -> bool;
 
+    /// Whether this provider supports SSML tags natively.
+    ///
+    /// Providers that return `true` will receive SSML-tagged text as-is.
+    /// Providers that return `false` will have SSML tags stripped before
+    /// synthesis (handled centrally in the gateway's `convert()` handler).
+    fn supports_ssml(&self) -> bool {
+        false
+    }
+
     /// List available voices from this provider.
     async fn voices(&self) -> Result<Vec<Voice>>;
 
     /// Convert text to speech.
     async fn synthesize(&self, request: SynthesizeRequest) -> Result<AudioOutput>;
+}
+
+/// Check whether text contains SSML tags (currently `<break`).
+#[must_use]
+pub fn contains_ssml(text: &str) -> bool {
+    text.contains("<break")
+}
+
+/// Strip SSML tags (`<break .../>`) so non-SSML providers don't speak them
+/// literally. Returns the input unchanged (no allocation) when no tags are
+/// present.
+#[must_use]
+pub fn strip_ssml_tags(text: &str) -> Cow<'_, str> {
+    if !contains_ssml(text) {
+        return Cow::Borrowed(text);
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find("<break") {
+        result.push_str(&rest[..start]);
+        // Find the closing `/>` or `>`
+        if let Some(end) = rest[start..].find("/>") {
+            rest = &rest[start + end + 2..];
+        } else if let Some(end) = rest[start..].find('>') {
+            rest = &rest[start + end + 1..];
+        } else {
+            // Malformed tag — keep the rest as-is
+            result.push_str(&rest[start..]);
+            rest = "";
+            break;
+        }
+    }
+    result.push_str(rest);
+
+    Cow::Owned(result)
 }
 
 #[cfg(test)]
@@ -142,5 +189,52 @@ mod tests {
         let req = SynthesizeRequest::default();
         assert!(req.text.is_empty());
         assert_eq!(req.output_format, AudioFormat::Mp3);
+    }
+
+    #[test]
+    fn test_contains_ssml() {
+        assert!(contains_ssml("Hello <break time=\"0.5s\"/> world"));
+        assert!(contains_ssml("text<break/>more"));
+        assert!(!contains_ssml("Hello world"));
+        assert!(!contains_ssml("a <b>bold</b> tag"));
+    }
+
+    #[test]
+    fn test_strip_ssml_tags_no_tags() {
+        let text = "Hello world, no tags here";
+        let result = strip_ssml_tags(text);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "Hello world, no tags here");
+    }
+
+    #[test]
+    fn test_strip_ssml_tags_self_closing() {
+        assert_eq!(
+            strip_ssml_tags("Hello...<break time=\"0.5s\"/>...world"),
+            "Hello......world"
+        );
+    }
+
+    #[test]
+    fn test_strip_ssml_tags_multiple() {
+        assert_eq!(
+            strip_ssml_tags("A<break time=\"0.5s\"/> B<break time=\"0.7s\"/> C"),
+            "A B C"
+        );
+    }
+
+    #[test]
+    fn test_strip_ssml_tags_at_boundaries() {
+        assert_eq!(strip_ssml_tags("<break time=\"0.3s\"/>Hello"), "Hello");
+        assert_eq!(strip_ssml_tags("Hello<break time=\"0.3s\"/>"), "Hello");
+    }
+
+    #[test]
+    fn test_strip_ssml_tags_malformed() {
+        // Malformed tag with no closing — kept as-is
+        assert_eq!(
+            strip_ssml_tags("Hello <break time=\"0.5s\""),
+            "Hello <break time=\"0.5s\""
+        );
     }
 }

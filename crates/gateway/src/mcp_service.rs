@@ -160,7 +160,7 @@ impl McpService for LiveMcpService {
 
         // If a server with this name already exists, append a numeric suffix.
         let final_name = {
-            let reg = self.manager.registry_read().await;
+            let reg = self.manager.registry_snapshot().await;
             let mut candidate = name.to_string();
             let mut n = 2u32;
             while reg.servers.contains_key(&candidate) {

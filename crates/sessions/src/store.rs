@@ -30,13 +30,46 @@ impl SessionStore {
     }
 
     /// Sanitize a session key for use as a filename.
-    fn key_to_filename(key: &str) -> String {
+    pub fn key_to_filename(key: &str) -> String {
         key.replace(':', "_")
     }
 
     fn path_for(&self, key: &str) -> PathBuf {
         self.base_dir
             .join(format!("{}.jsonl", Self::key_to_filename(key)))
+    }
+
+    /// Directory for session media files (screenshots, audio, etc.).
+    fn media_dir_for(&self, key: &str) -> PathBuf {
+        self.base_dir.join("media").join(Self::key_to_filename(key))
+    }
+
+    /// Save a media file for a session. Returns the relative path from base_dir.
+    pub async fn save_media(&self, key: &str, filename: &str, data: &[u8]) -> Result<String> {
+        let dir = self.media_dir_for(key);
+        let file_path = dir.join(filename);
+        let data = data.to_vec();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            fs::create_dir_all(&dir)?;
+            fs::write(&file_path, &data)?;
+            Ok(())
+        })
+        .await??;
+
+        let sanitized = Self::key_to_filename(key);
+        Ok(format!("media/{sanitized}/{filename}"))
+    }
+
+    /// Read a media file. Returns raw bytes.
+    pub async fn read_media(&self, key: &str, filename: &str) -> Result<Vec<u8>> {
+        let file_path = self.media_dir_for(key).join(filename);
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+            let data = fs::read(&file_path)?;
+            Ok(data)
+        })
+        .await?
     }
 
     /// Append a message (JSON value) as a single line to the session file.
@@ -117,13 +150,17 @@ impl SessionStore {
         .await?
     }
 
-    /// Delete the session file.
+    /// Delete the session file and its media directory.
     pub async fn clear(&self, key: &str) -> Result<()> {
         let path = self.path_for(key);
+        let media_dir = self.media_dir_for(key);
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             if path.exists() {
                 fs::remove_file(&path)?;
+            }
+            if media_dir.exists() {
+                let _ = fs::remove_dir_all(&media_dir);
             }
             Ok(())
         })
@@ -500,5 +537,62 @@ mod tests {
             .unwrap();
         let msgs = store.read("session:abc-123").await.unwrap();
         assert_eq!(msgs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_and_read_media() {
+        let (store, _dir) = temp_store();
+        let data = b"fake png data";
+
+        let path = store.save_media("main", "call_1.png", data).await.unwrap();
+        assert_eq!(path, "media/main/call_1.png");
+
+        let read_back = store.read_media("main", "call_1.png").await.unwrap();
+        assert_eq!(read_back, data);
+    }
+
+    #[tokio::test]
+    async fn test_save_media_with_colon_key() {
+        let (store, _dir) = temp_store();
+        let data = b"screenshot bytes";
+
+        let path = store
+            .save_media("session:abc", "shot.png", data)
+            .await
+            .unwrap();
+        assert_eq!(path, "media/session_abc/shot.png");
+
+        let read_back = store.read_media("session:abc", "shot.png").await.unwrap();
+        assert_eq!(read_back, data);
+    }
+
+    #[tokio::test]
+    async fn test_read_media_missing_file() {
+        let (store, _dir) = temp_store();
+        let result = store.read_media("main", "nonexistent.png").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_clear_removes_media_dir() {
+        let (store, dir) = temp_store();
+
+        // Create a session and media.
+        store
+            .append("main", &json!({"role": "user", "content": "hello"}))
+            .await
+            .unwrap();
+        store
+            .save_media("main", "shot.png", b"img data")
+            .await
+            .unwrap();
+
+        let media_dir = dir.path().join("media").join("main");
+        assert!(media_dir.exists());
+
+        store.clear("main").await.unwrap();
+
+        assert!(!media_dir.exists());
+        assert!(store.read("main").await.unwrap().is_empty());
     }
 }

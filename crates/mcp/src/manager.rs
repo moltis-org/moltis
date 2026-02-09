@@ -32,32 +32,40 @@ pub struct ServerStatus {
     pub url: Option<String>,
 }
 
+/// Mutable state behind the single `RwLock` on [`McpManager`].
+pub struct McpManagerInner {
+    pub clients: HashMap<String, Arc<RwLock<dyn McpClientTrait>>>,
+    pub tools: HashMap<String, Vec<McpToolDef>>,
+    pub registry: McpRegistry,
+}
+
 /// Manages the lifecycle of multiple MCP server connections.
 pub struct McpManager {
-    clients: RwLock<HashMap<String, Arc<RwLock<dyn McpClientTrait>>>>,
-    /// Cached tools per server.
-    tools: RwLock<HashMap<String, Vec<McpToolDef>>>,
-    registry: RwLock<McpRegistry>,
+    pub inner: RwLock<McpManagerInner>,
 }
 
 impl McpManager {
     pub fn new(registry: McpRegistry) -> Self {
         Self {
-            clients: RwLock::new(HashMap::new()),
-            tools: RwLock::new(HashMap::new()),
-            registry: RwLock::new(registry),
+            inner: RwLock::new(McpManagerInner {
+                clients: HashMap::new(),
+                tools: HashMap::new(),
+                registry,
+            }),
         }
     }
 
     /// Start all enabled servers from the registry.
     pub async fn start_enabled(&self) -> Vec<String> {
-        let registry = self.registry.read().await;
-        let enabled: Vec<(String, McpServerConfig)> = registry
-            .enabled_servers()
-            .into_iter()
-            .map(|(name, cfg)| (name.to_string(), cfg.clone()))
-            .collect();
-        drop(registry);
+        let enabled: Vec<(String, McpServerConfig)> = {
+            let inner = self.inner.read().await;
+            inner
+                .registry
+                .enabled_servers()
+                .into_iter()
+                .map(|(name, cfg)| (name.to_string(), cfg.clone()))
+                .collect()
+        };
 
         let mut started = Vec::new();
         for (name, config) in enabled {
@@ -76,6 +84,7 @@ impl McpManager {
         // Shut down existing connection if any.
         self.stop_server(name).await;
 
+        // Network work happens outside the lock.
         let mut client = match config.transport {
             TransportType::Sse => {
                 let url = config
@@ -97,27 +106,36 @@ impl McpManager {
             "MCP server started with tools"
         );
 
+        // Atomic insert of both client and tools.
         let client: Arc<RwLock<dyn McpClientTrait>> = Arc::new(RwLock::new(client));
-        self.clients.write().await.insert(name.to_string(), client);
-        self.tools.write().await.insert(name.to_string(), tool_defs);
+        let mut inner = self.inner.write().await;
+        inner.clients.insert(name.to_string(), client);
+        inner.tools.insert(name.to_string(), tool_defs);
 
         Ok(())
     }
 
     /// Stop a server connection.
     pub async fn stop_server(&self, name: &str) {
-        if let Some(client) = self.clients.write().await.remove(name) {
+        // Atomically remove client and tools, then drop the lock before async shutdown.
+        let client = {
+            let mut inner = self.inner.write().await;
+            inner.tools.remove(name);
+            inner.clients.remove(name)
+        };
+        if let Some(client) = client {
             let mut c = client.write().await;
             c.shutdown().await;
         }
-        self.tools.write().await.remove(name);
     }
 
     /// Restart a server.
     pub async fn restart_server(&self, name: &str) -> Result<()> {
         let config = {
-            let reg = self.registry.read().await;
-            reg.get(name)
+            let inner = self.inner.read().await;
+            inner
+                .registry
+                .get(name)
                 .cloned()
                 .with_context(|| format!("MCP server '{name}' not found in registry"))?
         };
@@ -126,13 +144,11 @@ impl McpManager {
 
     /// Get the status of all configured servers.
     pub async fn status_all(&self) -> Vec<ServerStatus> {
-        let registry = self.registry.read().await;
-        let clients = self.clients.read().await;
-        let tools = self.tools.read().await;
+        let inner = self.inner.read().await;
 
         let mut statuses = Vec::new();
-        for (name, config) in &registry.servers {
-            let state = if let Some(client) = clients.get(name) {
+        for (name, config) in &inner.registry.servers {
+            let state = if let Some(client) = inner.clients.get(name) {
                 let c = client.read().await;
                 match c.state() {
                     McpClientState::Ready => {
@@ -153,7 +169,7 @@ impl McpManager {
                 name: name.clone(),
                 state: state.into(),
                 enabled: config.enabled,
-                tool_count: tools.get(name).map_or(0, |t| t.len()),
+                tool_count: inner.tools.get(name).map_or(0, |t| t.len()),
                 server_info: None,
                 command: config.command.clone(),
                 args: config.args.clone(),
@@ -172,12 +188,11 @@ impl McpManager {
 
     /// Get tool bridges for all running servers (for registration into ToolRegistry).
     pub async fn tool_bridges(&self) -> Vec<McpToolBridge> {
-        let clients = self.clients.read().await;
-        let tools = self.tools.read().await;
+        let inner = self.inner.read().await;
         let mut bridges = Vec::new();
 
-        for (name, client) in clients.iter() {
-            if let Some(tool_defs) = tools.get(name) {
+        for (name, client) in inner.clients.iter() {
+            if let Some(tool_defs) = inner.tools.get(name) {
                 bridges.extend(McpToolBridge::from_client(
                     name,
                     tool_defs,
@@ -191,7 +206,7 @@ impl McpManager {
 
     /// Get tools for a specific server.
     pub async fn server_tools(&self, name: &str) -> Option<Vec<McpToolDef>> {
-        self.tools.read().await.get(name).cloned()
+        self.inner.read().await.tools.get(name).cloned()
     }
 
     // ── Registry operations ─────────────────────────────────────────
@@ -205,8 +220,8 @@ impl McpManager {
     ) -> Result<()> {
         let enabled = config.enabled;
         {
-            let mut reg = self.registry.write().await;
-            reg.add(name.clone(), config.clone())?;
+            let mut inner = self.inner.write().await;
+            inner.registry.add(name.clone(), config.clone())?;
         }
         if start && enabled {
             self.start_server(&name, &config).await?;
@@ -217,18 +232,18 @@ impl McpManager {
     /// Remove a server from the registry and stop it.
     pub async fn remove_server(&self, name: &str) -> Result<bool> {
         self.stop_server(name).await;
-        let mut reg = self.registry.write().await;
-        reg.remove(name)
+        let mut inner = self.inner.write().await;
+        inner.registry.remove(name)
     }
 
     /// Enable a server and start it.
     pub async fn enable_server(&self, name: &str) -> Result<bool> {
         let config = {
-            let mut reg = self.registry.write().await;
-            if !reg.enable(name)? {
+            let mut inner = self.inner.write().await;
+            if !inner.registry.enable(name)? {
                 return Ok(false);
             }
-            reg.get(name).cloned()
+            inner.registry.get(name).cloned()
         };
         if let Some(config) = config {
             self.start_server(name, &config).await?;
@@ -239,37 +254,27 @@ impl McpManager {
     /// Disable a server and stop it.
     pub async fn disable_server(&self, name: &str) -> Result<bool> {
         self.stop_server(name).await;
-        let mut reg = self.registry.write().await;
-        reg.disable(name)
+        let mut inner = self.inner.write().await;
+        inner.registry.disable(name)
     }
 
     /// Get a snapshot of the registry for serialization.
     pub async fn registry_snapshot(&self) -> McpRegistry {
-        self.registry.read().await.clone()
-    }
-
-    /// Get read access to the registry.
-    pub async fn registry_read(&self) -> tokio::sync::RwLockReadGuard<'_, McpRegistry> {
-        self.registry.read().await
-    }
-
-    /// Get write access to the registry.
-    pub async fn registry_write(&self) -> tokio::sync::RwLockWriteGuard<'_, McpRegistry> {
-        self.registry.write().await
+        self.inner.read().await.registry.clone()
     }
 
     /// Update a server's configuration and restart it if running.
     pub async fn update_server(&self, name: &str, config: McpServerConfig) -> Result<()> {
         let was_running = {
-            let clients = self.clients.read().await;
-            clients.contains_key(name)
+            let inner = self.inner.read().await;
+            inner.clients.contains_key(name)
         };
         {
-            let mut reg = self.registry.write().await;
-            let enabled = reg.get(name).is_none_or(|c| c.enabled);
+            let mut inner = self.inner.write().await;
+            let enabled = inner.registry.get(name).is_none_or(|c| c.enabled);
             let mut new_config = config;
             new_config.enabled = enabled;
-            reg.add(name.to_string(), new_config)?;
+            inner.registry.add(name.to_string(), new_config)?;
         }
         if was_running {
             self.restart_server(name).await?;
@@ -279,7 +284,7 @@ impl McpManager {
 
     /// Shut down all servers.
     pub async fn shutdown_all(&self) {
-        let names: Vec<String> = self.clients.read().await.keys().cloned().collect();
+        let names: Vec<String> = self.inner.read().await.clients.keys().cloned().collect();
         for name in names {
             self.stop_server(&name).await;
         }

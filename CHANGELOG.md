@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Silent replies**: The system prompt instructs the LLM to return an empty
+  response when tool output speaks for itself, suppressing empty chat bubbles,
+  push notifications, and channel replies. Empty assistant messages are not
+  persisted to session history.
+
+- **Persist TTS audio to session media**: When TTS is enabled and the reply
+  medium is `voice`, the server generates TTS audio, saves it to the session
+  media directory, and includes the media path in the persisted assistant
+  message. On session reload the frontend renders an `<audio>` player from
+  the media API instead of re-generating audio via RPC.
+
+- **Per-session media directory**: Screenshots from the browser tool are now
+  persisted to `sessions/media/<key>/` and served via
+  `GET /api/sessions/:key/media/:filename`. Session history reload renders
+  screenshots from the API instead of losing them. Media files are cleaned
+  up when a session is deleted.
+
 - **Process tool for interactive terminal sessions**: New `process` tool lets
   the LLM manage interactive/TUI programs (htop, vim, REPLs, etc.) via tmux
   sessions inside the sandbox. Supports start, poll, send_keys, paste, kill,
@@ -20,6 +37,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (enabled state, mode, backend, scope, image, workspace mount, network policy,
   session override). Tool-mode prompts also add routing guidance so the agent
   asks before requesting host installs or changing sandbox mode.
+
+### Changed
+
+- **Provider auto-detection observability**: When no explicit provider settings are present in `moltis.toml`, startup now logs each auto-detected provider with its source (`env`, config file key, OAuth token file, provider key file, or Codex auth file). Added `server.http_request_logs` (Axum HTTP traces) and `server.ws_request_logs` (WebSocket RPC request/response traces) config options (both default `false`) for on-demand transport debugging without code changes.
+- **Dynamic OpenAI Codex model catalog**: OpenAI Codex providers now load model IDs from `https://chatgpt.com/backend-api/codex/models` at startup (with fallback defaults), and the gateway refreshes Codex models hourly so long-running sessions pick up newly available models (for example `gpt-5.3`) without restart.
+- **Model availability probing UX**: Model support probing now runs in parallel with bounded concurrency, starts automatically after provider connect/startup, and streams live progress (`start`/`progress`/`complete`) over WebSocket so the Providers page can render a progress bar.
+- **Provider-scoped probing on connect**: Connecting a provider from the Providers UI now probes only that provider's models (instead of all providers), reducing noise and startup load when adding accounts one by one.
+- **Configurable model ordering**: Added `chat.priority_models` in `moltis.toml` to pin preferred models at the top of model selectors without rebuilding. Runtime model selectors (`models.list`, chat model dropdown, Telegram `/model`) hide unsupported models, while Providers diagnostics continue to show full catalog entries (including unsupported flags).
+- **Configurable provider offerings in UI**: Added `[providers] offered = [...]` allowlist in `moltis.toml` to control which providers are shown in onboarding/provider-picker UI. New config templates default this to `["openai", "github-copilot"]`; setting `offered = []` shows all known providers. Configured providers remain visible for management.
+
+### Fixed
+
+- **Web search DuckDuckGo fallback**: When no search API key (Brave or
+  Perplexity) is configured, `web_search` now automatically falls back to
+  DuckDuckGo HTML search instead of returning an error and forcing the LLM
+  to ask the user about using the browser.
+
+- **Web onboarding flash and redirect timing**: The web server now performs onboarding redirects before rendering the main app shell. When onboarding is incomplete, non-onboarding routes redirect directly to `/onboarding`; once onboarding is complete, `/onboarding` redirects back to `/`. The onboarding route now serves a dedicated onboarding HTML/JS entry instead of the full app bundle, preventing duplicate bootstrap/navigation flashes in Safari.
+- **Local model cache path visibility**: Startup logs for local LLM providers now explicitly print the model cache directory and cached model IDs, making `MOLTIS_DATA_DIR` behavior easier to verify without noisy model-catalog output.
+- **Kimi device-flow OAuth in web UI**: Kimi OAuth now uses provider-specific headers and prefers `verification_uri_complete` (or synthesizes `?user_code=` fallback) so mobile-device sign-in links no longer fail with missing `user_code`.
+- **Kimi Code provider authentication compatibility**: `kimi-code` is now API-key-first in the web UI (`KIMI_API_KEY`, default base URL `https://api.moonshot.ai/v1`), while still honoring previously stored OAuth tokens for backward compatibility. Provider errors now include a targeted hint to switch to API-key auth when Kimi returns `access_terminated_error`.
+- **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive "configured" state.
 
 ## [0.2.9] - 2026-02-08
 
@@ -36,7 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Chat UI reply badge visibility**: Assistant footer now reliably shows the selected reply medium badge.
 - **Voice UX polish**: Improved microphone timing behavior and preserved settings scroll state in voice configuration views.
-
 ## [0.2.8] - 2026-02-07
 
 ### Changed

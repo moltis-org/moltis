@@ -12,7 +12,7 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-use super::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice};
+use super::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice, contains_ssml};
 
 /// ElevenLabs API base URL.
 const API_BASE: &str = "https://api.elevenlabs.io/v1";
@@ -107,6 +107,10 @@ impl TtsProvider for ElevenLabsTts {
         self.api_key.is_some()
     }
 
+    fn supports_ssml(&self) -> bool {
+        true
+    }
+
     async fn voices(&self) -> Result<Vec<Voice>> {
         let api_key = self.get_api_key()?;
 
@@ -152,6 +156,7 @@ impl TtsProvider for ElevenLabsTts {
             .as_deref()
             .unwrap_or(&self.default_voice_id);
         let model = request.model.as_deref().unwrap_or(&self.default_model);
+        let has_ssml = contains_ssml(&request.text);
 
         let body = TtsRequest {
             text: &request.text,
@@ -162,6 +167,7 @@ impl TtsProvider for ElevenLabsTts {
                 style: None,
                 use_speaker_boost: Some(true),
             }),
+            enable_ssml_parsing: has_ssml,
         };
 
         let output_format = Self::output_format_param(request.output_format);
@@ -204,12 +210,18 @@ impl TtsProvider for ElevenLabsTts {
 
 // ── API Types ──────────────────────────────────────────────────────────────
 
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
 #[derive(Debug, Serialize)]
 struct TtsRequest<'a> {
     text: &'a str,
     model_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     voice_settings: Option<VoiceSettings>,
+    #[serde(skip_serializing_if = "is_false")]
+    enable_ssml_parsing: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -253,6 +265,7 @@ mod tests {
         assert_eq!(provider.id(), "elevenlabs");
         assert_eq!(provider.name(), "ElevenLabs");
         assert!(!provider.is_configured());
+        assert!(provider.supports_ssml());
 
         let configured = ElevenLabsTts::new(Some(Secret::new("test-key".into())));
         assert!(configured.is_configured());
@@ -333,5 +346,29 @@ mod tests {
         );
         assert_eq!(provider.default_voice_id, "custom-voice");
         assert_eq!(provider.default_model, "custom-model");
+    }
+
+    #[test]
+    fn test_ssml_detection_enables_parsing() {
+        let body = TtsRequest {
+            text: "Hello <break time=\"0.5s\"/> world",
+            model_id: "eleven_flash_v2_5",
+            voice_settings: None,
+            enable_ssml_parsing: true,
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(json.contains("\"enable_ssml_parsing\":true"));
+    }
+
+    #[test]
+    fn test_no_ssml_skips_parsing_field() {
+        let body = TtsRequest {
+            text: "Hello world",
+            model_id: "eleven_flash_v2_5",
+            voice_settings: None,
+            enable_ssml_parsing: false,
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("enable_ssml_parsing"));
     }
 }
