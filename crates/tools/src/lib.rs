@@ -16,6 +16,7 @@ pub mod location;
 pub mod policy;
 pub mod process;
 pub mod sandbox;
+pub mod sandbox_packages;
 pub mod session_state;
 pub mod skill_tools;
 pub mod spawn_agent;

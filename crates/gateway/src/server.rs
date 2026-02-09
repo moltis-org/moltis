@@ -110,9 +110,9 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
 
         {
             let clients = self.state.clients.read().await;
-            let client = clients.get(conn_id).ok_or_else(|| {
-                anyhow::anyhow!("no client connection for conn_id {conn_id}")
-            })?;
+            let client = clients
+                .get(conn_id)
+                .ok_or_else(|| anyhow::anyhow!("no client connection for conn_id {conn_id}"))?;
             if !client.send(&event_json) {
                 anyhow::bail!("failed to send location request to client {conn_id}");
             }
@@ -122,14 +122,11 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut invokes = self.state.pending_invokes.write().await;
-            invokes.insert(
-                request_id.clone(),
-                crate::state::PendingInvoke {
-                    request_id: request_id.clone(),
-                    sender: tx,
-                    created_at: std::time::Instant::now(),
-                },
-            );
+            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
+                request_id: request_id.clone(),
+                sender: tx,
+                created_at: std::time::Instant::now(),
+            });
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -137,11 +134,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             Ok(Ok(value)) => value,
             Ok(Err(_)) => {
                 // Sender dropped — clean up.
-                self.state
-                    .pending_invokes
-                    .write()
-                    .await
-                    .remove(&request_id);
+                self.state.pending_invokes.write().await.remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -149,11 +142,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             },
             Err(_) => {
                 // Timeout — clean up.
-                self.state
-                    .pending_invokes
-                    .write()
-                    .await
-                    .remove(&request_id);
+                self.state.pending_invokes.write().await.remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -444,7 +433,11 @@ const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 /// 7. Security response headers — X-Content-Type-Options, X-Frame-Options, etc.
 /// 8. `RequestBodyLimitLayer` — rejects oversized bodies
 /// 9. `CompressionLayer` (innermost) — compresses response body
-fn apply_middleware_stack<S>(router: Router<S>, cors: CorsLayer, http_request_logs: bool) -> Router<S>
+fn apply_middleware_stack<S>(
+    router: Router<S>,
+    cors: CorsLayer,
+    http_request_logs: bool,
+) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -1193,7 +1186,11 @@ pub async fn start_gateway(
 
     // Build sandbox router from config (shared across sessions).
     let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
-    sandbox_config.timezone = config.user.timezone.as_ref().map(|tz| tz.name().to_string());
+    sandbox_config.timezone = config
+        .user
+        .timezone
+        .as_ref()
+        .map(|tz| tz.name().to_string());
     let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(sandbox_config));
 
     // Spawn background image pre-build. This bakes configured packages into a
@@ -2005,8 +2002,12 @@ pub async fn start_gateway(
         let process_tool = moltis_tools::process::ProcessTool::new()
             .with_sandbox_router(Arc::clone(&sandbox_router));
 
+        let sandbox_packages_tool = moltis_tools::sandbox_packages::SandboxPackagesTool::new()
+            .with_sandbox_router(Arc::clone(&sandbox_router));
+
         tool_registry.register(Box::new(exec_tool));
         tool_registry.register(Box::new(process_tool));
+        tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
         if let Some(t) =
             moltis_tools::web_search::WebSearchTool::from_config(&config.tools.web.search)
@@ -2880,9 +2881,7 @@ pub async fn start_gateway(
                 tracing::info!("heartbeat job removed (no prompt configured)");
             }
         } else if hb.enabled && !has_prompt {
-            tracing::info!(
-                "heartbeat skipped: no prompt in config and HEARTBEAT.md is empty"
-            );
+            tracing::info!("heartbeat skipped: no prompt in config and HEARTBEAT.md is empty");
         }
     }
 
@@ -3632,8 +3631,7 @@ async fn api_session_media_handler(
 
 #[cfg(feature = "web-ui")]
 async fn api_logs_download_handler(State(state): State<AppState>) -> impl IntoResponse {
-    use axum::http::header;
-    use tokio_util::io::ReaderStream;
+    use {axum::http::header, tokio_util::io::ReaderStream};
 
     let Some(path) = state.gateway.services.logs.log_file_path() else {
         return (StatusCode::NOT_FOUND, "log file not available").into_response();
