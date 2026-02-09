@@ -788,7 +788,7 @@ function sendChat() {
 	bumpSessionCount(S.activeSessionKey, 1);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
-		if (res?.queued) {
+		if (res?.payload?.queued) {
 			markMessageQueued(userEl, S.activeSessionKey);
 		} else if (res && !res.ok && res.error) {
 			chatAddMsg("error", res.error.message || "Request failed");

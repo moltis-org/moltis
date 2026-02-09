@@ -83,9 +83,12 @@ function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	var firstQueued = S.chatMsgBox.querySelector(".msg.user.queued");
 	if (firstQueued) {
+		// Move the queued message to the bottom so it sits right before the
+		// LLM response, preserving user → assistant ordering.
 		firstQueued.classList.remove("queued");
 		var badge = firstQueued.querySelector(".queued-badge");
 		if (badge) badge.remove();
+		S.chatMsgBox.appendChild(firstQueued);
 	}
 	removeThinking();
 	var thinkEl = document.createElement("div");
