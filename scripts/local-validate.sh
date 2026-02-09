@@ -98,6 +98,31 @@ else
   SHA="$(git rev-parse HEAD)"
 fi
 
+# Auto-sync Cargo.lock if stale (common after merging main).
+# Uses `cargo fetch` (without --locked) to resolve deps without compiling
+# or upgrading existing dependency versions.
+if ! cargo fetch --locked 2>/dev/null; then
+  echo "Cargo.lock is out of sync — running cargo fetch to update..."
+  if cargo fetch 2>/dev/null; then
+    if ! git diff --quiet -- Cargo.lock 2>/dev/null; then
+      git add Cargo.lock
+      git commit -m "chore: sync Cargo.lock"
+      SHA="$(git rev-parse HEAD)"
+      echo "Auto-committed Cargo.lock sync (new HEAD: ${SHA:0:7})"
+      if [[ "$LOCAL_ONLY" -eq 0 ]]; then
+        echo "Push this commit so CI sees the updated lockfile."
+      fi
+    else
+      echo "cargo fetch --locked failed but Cargo.lock is unchanged." >&2
+      echo "Run 'cargo fetch' manually to diagnose." >&2
+      exit 1
+    fi
+  else
+    echo "cargo fetch failed — check your network or Cargo.toml for errors." >&2
+    exit 1
+  fi
+fi
+
 # Reject dirty working trees in all modes. Validating with uncommitted changes
 # gives misleading results (local-only) or publishes statuses for the wrong
 # content (PR mode).
@@ -118,6 +143,7 @@ biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
+coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
@@ -125,6 +151,9 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
     test_cmd="cargo test"
+  fi
+  if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
+    coverage_cmd="cargo llvm-cov --workspace --html"
   fi
   echo "Detected macOS without nvcc; using non-CUDA local validation commands." >&2
   echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
@@ -339,6 +368,16 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor (advisory and non-blocking).
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
+
+# Coverage (optional — requires cargo-llvm-cov).
+# Skipped silently when the tool is not installed. Disable explicitly with
+# LOCAL_VALIDATE_SKIP_COVERAGE=1.
+if [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]] && cargo llvm-cov --version >/dev/null 2>&1; then
+  run_check "local/coverage" "$coverage_cmd"
+  echo "Coverage report: target/llvm-cov/html/index.html"
+elif [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]]; then
+  echo "Skipping coverage (cargo-llvm-cov not installed). Install with: cargo install cargo-llvm-cov"
+fi
 
 # Collect local/zizmor result at the end without affecting pass/fail.
 if wait "$zizmor_pid"; then

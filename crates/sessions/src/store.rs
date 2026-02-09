@@ -84,7 +84,7 @@ impl SessionStore {
             let file = OpenOptions::new().create(true).append(true).open(&path)?;
             let mut lock = RwLock::new(file);
             let mut guard = lock
-                .try_write()
+                .write()
                 .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
             writeln!(*guard, "{line}")?;
             Ok(())
@@ -268,7 +268,7 @@ impl SessionStore {
                 .open(&path)?;
             let mut lock = RwLock::new(file);
             let mut guard = lock
-                .try_write()
+                .write()
                 .map_err(|e| anyhow::anyhow!("lock failed: {e}"))?;
             for msg in &messages {
                 let line = serde_json::to_string(msg)?;

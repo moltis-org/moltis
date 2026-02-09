@@ -1,0 +1,142 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Moltis
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this bug! Please fill out the sections below so we can reproduce and fix it.
+
+        Before submitting, please check:
+        - You're using the latest version of Moltis (`moltis --version`)
+        - This issue hasn't already been [reported](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Abug)
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight Checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Abug) and this hasn't been reported yet
+          required: true
+        - label: I am using the latest version of Moltis
+          required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly and concisely.
+      placeholder: |
+        When I start the gateway with a custom config, it panics with
+        "called unwrap() on a None value" during MCP server initialization...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide clear, numbered steps anyone can follow.
+      placeholder: |
+        1. Add an MCP server entry to `moltis.toml` with `transport = "sse"`
+        2. Run `moltis serve`
+        3. Open the web UI and start a new session
+        4. Panic appears in the terminal output
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages / logs
+      description: Paste any relevant error output, panics, or log lines.
+      render: shell
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Is this a regression?
+      description: Did this work in a previous version?
+      options:
+        - "Yes, this worked before"
+        - "No, this never worked"
+        - "I don't know"
+    validations:
+      required: true
+
+  - type: input
+    id: working_version
+    attributes:
+      label: Last working version
+      description: If this is a regression, which version last worked?
+      placeholder: "e.g., 0.3.7"
+
+  - type: input
+    id: version
+    attributes:
+      label: Moltis version
+      description: Run `moltis --version` and paste the output.
+      placeholder: "e.g., moltis 0.3.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Moltis is affected?
+      options:
+        - Gateway / Web UI
+        - CLI
+        - Sandbox (Docker / Apple Container)
+        - MCP servers
+        - Channels (Telegram, Discord, etc.)
+        - Agent / LLM providers
+        - Configuration
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - Cargo install
+        - Pre-built binary
+        - Built from source
+        - Docker
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Ubuntu / Debian
+        - Other Linux
+        - Windows (WSL)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, config snippets (redact secrets), or anything else that helps.

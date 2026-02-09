@@ -1748,8 +1748,10 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let mut config = ProvidersConfig::default();
-        config.offered = vec!["openai".into()];
+        let config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
         let svc = LiveProviderSetupService::new(registry, config, None);
 
         let result = svc.available().await.unwrap();

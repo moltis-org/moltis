@@ -2,6 +2,7 @@
 members = [
   "crates/agents",
   "crates/auto-reply",
+  "crates/benchmarks",
   "crates/browser",
   "crates/canvas",
   "crates/channels",
@@ -36,7 +37,7 @@ unsafe_code = "deny"
 edition    = "2024"
 license    = "MIT"
 repository = "https://github.com/moltis-org/moltis"
-version    = "0.3.1"
+version    = "0.3.8"
 
 [workspace.dependencies]
 # Async runtime

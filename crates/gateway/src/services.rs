@@ -160,24 +160,6 @@ fn risky_install_pattern(command: &str) -> Option<&'static str> {
         .find_map(|(needle, reason)| c.contains(needle).then_some(reason))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::risky_install_pattern;
-
-    #[test]
-    fn risky_install_pattern_detects_piped_shell() {
-        assert_eq!(
-            risky_install_pattern("curl https://example.com/install.sh | sh"),
-            Some("piped shell execution")
-        );
-    }
-
-    #[test]
-    fn risky_install_pattern_allows_plain_package_install() {
-        assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
-    }
-}
-
 /// Convert markdown to sanitized HTML using pulldown-cmark.
 pub(crate) fn markdown_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
@@ -2128,5 +2110,23 @@ impl GatewayServices {
     pub fn with_stt(mut self, stt: Arc<dyn crate::voice::SttService>) -> Self {
         self.stt = stt;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::risky_install_pattern;
+
+    #[test]
+    fn risky_install_pattern_detects_piped_shell() {
+        assert_eq!(
+            risky_install_pattern("curl https://example.com/install.sh | sh"),
+            Some("piped shell execution")
+        );
+    }
+
+    #[test]
+    fn risky_install_pattern_allows_plain_package_install() {
+        assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
     }
 }

@@ -109,13 +109,7 @@ jobs:
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
     env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_CACHE_SIZE: "5G"
       LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -131,11 +125,6 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: rust-ci-cuda-v1
-          cache-all-crates: true
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
           cargo fetch --locked
@@ -158,9 +147,57 @@ jobs:
           name: cargo-timings-rust-ci-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/cargo-timings/
           if-no-files-found: ignore
-      - name: Show sccache stats
-        if: always()
-        run: sccache --show-stats
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        with:
+          shared-key: coverage-v1
+          cache-all-crates: true
+      - name: Initialize git repo in llama-cpp source to satisfy cmake
+        run: |
+          cargo fetch --locked
+          LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
+          if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
+            cd "$LLAMA_SRC"
+            git init
+            git config user.email "ci@example.com"
+            git config user.name "CI"
+            git add -A
+            git commit -m "init" --allow-empty
+            git tag v0.0.0
+          fi
+      - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        with:
+          tool: cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --exclude moltis-tools --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   rust-full-targets:
     name: Rust Full Targets (scheduled)
@@ -173,13 +210,7 @@ jobs:
     container:
       image: nvidia/cuda:12.4.1-devel-ubuntu22.04
     env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_CACHE_SIZE: "5G"
       LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -195,11 +226,6 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - uses: mozilla-actions/sccache-action@65101d47ea8028ed0c98a1cdea8dd9182e9b5133 # v0.0.8
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: rust-ci-cuda-v1
-          cache-all-crates: true
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
           cargo fetch --locked
@@ -221,6 +247,3 @@ jobs:
           name: cargo-timings-rust-full-targets-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/cargo-timings/
           if-no-files-found: ignore
-      - name: Show sccache stats
-        if: always()
-        run: sccache --show-stats

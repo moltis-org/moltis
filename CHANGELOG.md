@@ -19,12 +19,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and directions, or `"coarse"` (city-level, faster) for flights, weather, and
   time zones. The LLM picks the appropriate mode based on the user's query.
 
-## [0.3.1] - 2026-02-09
+## [0.3.8] - 2026-02-09
+
+### Changed
+
+- **Release CI parallelization**: Split clippy and test into separate parallel
+  jobs in the release workflow for faster feedback on GitHub-hosted runners.
+
+### Fixed
+
+- **CodSpeed workflow zizmor audit**: Pinned `CodSpeedHQ/action@v4` to commit
+  SHA to satisfy zizmor's `unpinned-uses` audit.
+
+## [0.3.7] - 2026-02-09
+
+### Fixed
+
+- **Clippy warnings**: Fixed `MutexGuard` held across await in telegram
+  test, `field assignment outside initializer` in provider setup test, and
+  `items after test module` in gateway services.
+
+## [0.3.6] - 2026-02-09
+
+### Fixed
+
+- **Release CI zizmor audit**: Removed `rust-cache` from the release workflow's
+  clippy-test job entirely instead of using `save-if: false`, which zizmor does
+  not recognize as a cache-poisoning mitigation.
+
+## [0.3.5] - 2026-02-09
+
+### Fixed
+
+- **Release CI cache-poisoning**: Set `save-if: false` on `rust-cache` in the
+  release workflow to satisfy zizmor's cache-poisoning audit for tag-triggered
+  workflows that publish artifacts.
+
+## [0.3.4] - 2026-02-09
+
+### Fixed
+
+- **Session file lock contention**: Replaced non-blocking `try_write()` with
+  blocking `write()` in `SessionStore::append()` and `replace_history()` so
+  concurrent tool-result persists wait for the file lock instead of failing
+  with `EAGAIN` (OS error 35).
+
+### Changed
+
+- **Release CI quality gates**: The Build Packages workflow now runs biome,
+  format, clippy, and test checks before building any packages, ensuring code
+  correctness before artifacts are produced.
+
+## [0.3.3] - 2026-02-09
 
 ### Fixed
 
 - **OpenAI Codex token refresh panic**: Made `get_valid_token()` async to fix
   `block_on` inside async runtime panic when refreshing expired OAuth tokens.
+- **Channel session binding**: Ensure session row exists before setting channel
+  binding, fixing `get_user_location` failures on first Telegram message.
+- **Cargo.lock sync**: Lock file now matches workspace version.
 
 ## [0.3.0] - 2026-02-08
 

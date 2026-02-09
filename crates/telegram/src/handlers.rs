@@ -1786,44 +1786,46 @@ mod tests {
             .await
             .expect("handle message");
 
-        let requests = recorded_requests.lock().expect("requests lock");
-        assert!(
-            requests.iter().any(|request| {
-                if let CapturedTelegramRequest::SendMessage(body) = request {
-                    body.chat_id == 42
-                        && body.parse_mode.as_deref() == Some("HTML")
-                        && body
-                            .text
-                            .contains("I can't understand voice, you did not configure it")
-                } else {
-                    false
-                }
-            }),
-            "expected voice setup hint to be sent, requests={requests:?}"
-        );
-        assert!(
-            requests.iter().any(|request| {
-                if let CapturedTelegramRequest::SendChatAction(action) = request {
-                    action.chat_id == 42 && action.action == "typing"
-                } else {
-                    false
-                }
-            }),
-            "expected typing action before reply, requests={requests:?}"
-        );
-        assert!(
-            requests.iter().all(|request| {
-                if let CapturedTelegramRequest::Other { method, raw_body } = request {
-                    !matches!(
-                        method,
-                        TelegramApiMethod::SendMessage | TelegramApiMethod::SendChatAction
-                    ) || raw_body.is_empty()
-                } else {
-                    true
-                }
-            }),
-            "unexpected untyped request capture for known method, requests={requests:?}"
-        );
+        {
+            let requests = recorded_requests.lock().expect("requests lock");
+            assert!(
+                requests.iter().any(|request| {
+                    if let CapturedTelegramRequest::SendMessage(body) = request {
+                        body.chat_id == 42
+                            && body.parse_mode.as_deref() == Some("HTML")
+                            && body
+                                .text
+                                .contains("I can't understand voice, you did not configure it")
+                    } else {
+                        false
+                    }
+                }),
+                "expected voice setup hint to be sent, requests={requests:?}"
+            );
+            assert!(
+                requests.iter().any(|request| {
+                    if let CapturedTelegramRequest::SendChatAction(action) = request {
+                        action.chat_id == 42 && action.action == "typing"
+                    } else {
+                        false
+                    }
+                }),
+                "expected typing action before reply, requests={requests:?}"
+            );
+            assert!(
+                requests.iter().all(|request| {
+                    if let CapturedTelegramRequest::Other { method, raw_body } = request {
+                        !matches!(
+                            method,
+                            TelegramApiMethod::SendMessage | TelegramApiMethod::SendChatAction
+                        ) || raw_body.is_empty()
+                    } else {
+                        true
+                    }
+                }),
+                "unexpected untyped request capture for known method, requests={requests:?}"
+            );
+        }
         assert_eq!(
             sink.dispatch_calls
                 .load(std::sync::atomic::Ordering::Relaxed),

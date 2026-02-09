@@ -125,10 +125,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
             if let Ok(binding_json) = serde_json::to_string(&reply_to)
                 && let Some(ref session_meta) = state.services.session_metadata
             {
-                // Label the first session "Telegram 1" if it has no label yet.
-                if let Some(entry) = session_meta.get(&session_key).await
-                    && entry.channel_binding.is_none()
-                {
+                // Ensure the session row exists and label it on first use.
+                // `set_channel_binding` is an UPDATE, so the row must exist
+                // before we can set the binding column.
+                let entry = session_meta.get(&session_key).await;
+                if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                     let existing = session_meta
                         .list_channel_sessions(
                             reply_to.channel_type.as_str(),
@@ -571,13 +572,13 @@ impl ChannelEventSink for GatewayChannelEventSink {
             .push_channel_reply(&session_key, reply_to.clone())
             .await;
 
-        // Persist channel binding
+        // Persist channel binding (ensure session row exists first —
+        // set_channel_binding is an UPDATE so the row must already be present).
         if let Ok(binding_json) = serde_json::to_string(&reply_to)
             && let Some(ref session_meta) = state.services.session_metadata
         {
-            if let Some(entry) = session_meta.get(&session_key).await
-                && entry.channel_binding.is_none()
-            {
+            let entry = session_meta.get(&session_key).await;
+            if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                 let existing = session_meta
                     .list_channel_sessions(
                         reply_to.channel_type.as_str(),

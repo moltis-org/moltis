@@ -809,6 +809,18 @@ The Build Packages workflow derives artifact versions from the tag when running
 on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
 packaging metadata consistency, and future non-tag runs.
 
+**Cargo.lock must stay in sync.** After changing dependencies or merging
+`main`, run `cargo fetch` (without `--locked`) to sync the lockfile without
+upgrading existing dependency versions, then commit the result. Verify with
+`cargo fetch --locked`. CI uses `--locked` and will reject a stale lockfile.
+`local-validate.sh` handles this automatically — if the lockfile is stale it
+runs `cargo fetch` and auto-commits the update before proceeding.
+
+Only use `cargo update --workspace` when you intentionally want to upgrade
+dependency versions. For routine lockfile sync (e.g. after merging main or
+bumping the workspace version), `cargo fetch` is sufficient and won't change
+versions unnecessarily.
+
 **Merging main into your branch:** When merging `main` into your current branch
 and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —
@@ -899,3 +911,42 @@ Be careful about this.
 Helpful suggestion.
 \`\`\`
 ```
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+
+## Issue Tracking
+
+This project uses **bd (beads)** for issue tracking.
+Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+
+**Quick reference:**
+- `bd ready` - Find unblocked work
+- `bd create "Title" --type task --priority 2` - Create issue
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with git (run at session end)
+
+For full workflow details: `bd prime`
