@@ -22,7 +22,7 @@ import {
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
-import { renderCompactCard } from "./page-chat.js";
+import { maybeRefreshFullContext, renderCompactCard } from "./page-chat.js";
 import { fetchProjects } from "./projects.js";
 import { currentPage, currentPrefix, mount } from "./router.js";
 import {
@@ -346,6 +346,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setStreamText("");
 	S.setLastToolOutput("");
 	S.setVoicePending(false);
+	maybeRefreshFullContext();
 }
 
 function handleChatAutoCompact(p, isActive, isChatPage) {

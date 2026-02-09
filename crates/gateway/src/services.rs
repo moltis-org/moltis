@@ -439,6 +439,8 @@ pub trait ChatService: Send + Sync {
     async fn context(&self, params: Value) -> ServiceResult;
     /// Build the complete system prompt and return it for inspection.
     async fn raw_prompt(&self, params: Value) -> ServiceResult;
+    /// Return the full messages array (system prompt + history) in OpenAI format.
+    async fn full_context(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopChatService;
@@ -474,6 +476,10 @@ impl ChatService for NoopChatService {
     }
 
     async fn raw_prompt(&self, _p: Value) -> ServiceResult {
+        Err("chat not configured".into())
+    }
+
+    async fn full_context(&self, _p: Value) -> ServiceResult {
         Err("chat not configured".into())
     }
 }

@@ -532,6 +532,138 @@ function toggleRawPromptPanel() {
 	if (hidden) refreshRawPromptPanel();
 }
 
+// ── Full context panel ───────────────────────────────────
+
+var ROLE_COLORS = {
+	system: "var(--accent)",
+	user: "var(--ok, #22c55e)",
+	assistant: "var(--info, #3b82f6)",
+	tool: "var(--muted)",
+};
+
+function ctxMsgBadge(role) {
+	var color = ROLE_COLORS[role] || "var(--text)";
+	var badge = ctxEl("span", "text-xs font-semibold uppercase px-1.5 py-0.5 rounded");
+	badge.style.cssText = `color:${color};background:color-mix(in srgb, ${color} 15%, transparent)`;
+	badge.textContent = role;
+	return badge;
+}
+
+function ctxMsgMeta(msg, contentStr) {
+	var parts = [];
+	var chars = contentStr ? contentStr.length : 0;
+	if (chars > 0) parts.push(`${chars.toLocaleString()} chars`);
+	var toolCalls = msg.tool_calls || [];
+	if (toolCalls.length > 0) {
+		parts.push(`${toolCalls.length} tool call${toolCalls.length > 1 ? "s" : ""}`);
+	}
+	if (msg.role === "tool" && msg.tool_call_id) {
+		parts.push(`id: ${msg.tool_call_id}`);
+	}
+	return parts.join(" \xb7 ");
+}
+
+function ctxMsgToolCall(tc) {
+	var div = ctxEl("div", "mt-1 border border-[var(--border)] rounded-md p-2 bg-[var(--surface)]");
+	var hdr = ctxEl("div", "text-xs font-semibold text-[var(--text)] mb-1");
+	hdr.textContent = `\ud83d\udee0 ${tc.function?.name || "unknown"}`;
+	if (tc.id) {
+		hdr.appendChild(ctxEl("span", "font-normal text-[var(--muted)] ml-2", `id: ${tc.id}`));
+	}
+	div.appendChild(hdr);
+	if (tc.function?.arguments) {
+		var pre = ctxEl("pre", "text-xs font-mono whitespace-pre-wrap break-words text-[var(--text)]");
+		try {
+			pre.textContent = JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
+		} catch {
+			pre.textContent = tc.function.arguments;
+		}
+		div.appendChild(pre);
+	}
+	return div;
+}
+
+function renderContextMessage(msg, index) {
+	var wrapper = ctxEl("div", "mb-2");
+	var contentStr = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2);
+
+	// Header row: role badge + index + meta + chevron
+	var hdr = ctxEl("div", "flex items-center gap-2 cursor-pointer select-none");
+	hdr.appendChild(ctxMsgBadge(msg.role || "unknown"));
+	hdr.appendChild(ctxEl("span", "text-xs text-[var(--muted)]", `#${index}`));
+	var meta = ctxMsgMeta(msg, contentStr);
+	if (meta) hdr.appendChild(ctxEl("span", "text-xs text-[var(--muted)]", meta));
+	var chevron = ctxEl("span", "text-xs text-[var(--muted)] ml-auto");
+	var startOpen = index !== 0;
+	chevron.textContent = startOpen ? "\u25bc" : "\u25b6";
+	hdr.appendChild(chevron);
+	wrapper.appendChild(hdr);
+
+	// Collapsible body
+	var body = ctxEl("div", "mt-1");
+	body.style.display = startOpen ? "block" : "none";
+	hdr.addEventListener("click", () => {
+		var open = body.style.display !== "none";
+		body.style.display = open ? "none" : "block";
+		chevron.textContent = open ? "\u25b6" : "\u25bc";
+	});
+
+	if (contentStr) {
+		var pre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+		);
+		pre.textContent = contentStr;
+		body.appendChild(pre);
+	}
+	for (var tc of msg.tool_calls || []) body.appendChild(ctxMsgToolCall(tc));
+
+	wrapper.appendChild(body);
+	return wrapper;
+}
+
+function refreshFullContextPanel() {
+	var panel = S.$("fullContextPanel");
+	if (!panel) return;
+	panel.textContent = "";
+	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building full context\u2026"));
+
+	sendRpc("chat.full_context", {}).then((res) => {
+		panel.textContent = "";
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
+			return;
+		}
+		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-3");
+		header.textContent =
+			`${res.payload.messageCount} messages \xb7 ` +
+			`system prompt ${res.payload.systemPromptChars.toLocaleString()} chars \xb7 ` +
+			`total ${res.payload.totalChars.toLocaleString()} chars`;
+		panel.appendChild(header);
+
+		var messages = res.payload.messages || [];
+		for (var i = 0; i < messages.length; i++) {
+			panel.appendChild(renderContextMessage(messages[i], i));
+		}
+	});
+}
+
+function toggleFullContextPanel() {
+	var panel = S.$("fullContextPanel");
+	var btn = S.$("fullContextBtn");
+	if (!panel) return;
+	var hidden = panel.classList.contains("hidden");
+	panel.classList.toggle("hidden", !hidden);
+	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
+	if (hidden) refreshFullContextPanel();
+}
+
+/** Refresh the full-context panel if it is currently visible. */
+export function maybeRefreshFullContext() {
+	var panel = S.$("fullContextPanel");
+	if (panel && !panel.classList.contains("hidden")) refreshFullContextPanel();
+}
+
 // ── MCP toggle ───────────────────────────────────────────
 export function updateMcpToggleUI(enabled) {
 	var btn = S.$("mcpToggleBtn");
@@ -660,6 +792,7 @@ function sendChat() {
 			chatAddMsg("error", res.error.message || "Request failed");
 		}
 	});
+	maybeRefreshFullContext();
 }
 
 function chatAutoResize() {
@@ -730,6 +863,10 @@ var chatPageHTML =
 	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" /></svg>' +
 	'<span id="rawPromptLabel">Prompt</span>' +
 	"</button>" +
+	'<button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>' +
+	'<span id="fullContextLabel">Context</span>' +
+	"</button>" +
 	'<div class="ml-auto flex items-center gap-1.5">' +
 	'<span id="chatSessionName" class="text-xs text-[var(--muted)] cursor-default" title="Click to rename"></span>' +
 	'<input id="chatSessionRenameInput" class="hidden text-xs text-[var(--text)] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] px-1.5 py-0.5 outline-none max-w-[200px]" style="width:0" />' +
@@ -740,6 +877,7 @@ var chatPageHTML =
 	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
 	'<div id="rawPromptPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:400px;"></div>' +
+	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
 	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
@@ -820,6 +958,8 @@ registerPrefix(
 
 		var rawBtn = S.$("rawPromptBtn");
 		if (rawBtn) rawBtn.addEventListener("click", toggleRawPromptPanel);
+
+		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
 
 		if (S.models.length > 0 && S.modelComboLabel) {
 			var found = S.models.find((m) => m.id === S.selectedModelId);

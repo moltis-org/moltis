@@ -1918,6 +1918,22 @@ impl MethodRegistry {
             }),
         );
 
+        self.register(
+            "chat.full_context",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let mut params = ctx.params.clone();
+                    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    ctx.state
+                        .chat()
+                        .await
+                        .full_context(params)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
         // Session switching
         self.register(
             "sessions.switch",

@@ -2809,6 +2809,131 @@ impl ChatService for LiveChatService {
             "toolCount": tool_count,
         }))
     }
+
+    /// Return the **full messages array** that would be sent to the LLM on the
+    /// next call — system prompt + conversation history — in OpenAI format.
+    async fn full_context(&self, params: Value) -> ServiceResult {
+        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
+            sk.to_string()
+        } else {
+            let conn_id = params
+                .get("_conn_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            self.session_key_for(conn_id.as_deref()).await
+        };
+
+        let conn_id = params
+            .get("_conn_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Resolve provider.
+        let history = self
+            .session_store
+            .read(&session_key)
+            .await
+            .unwrap_or_default();
+        let provider = self.resolve_provider(&session_key, &history).await?;
+        let native_tools = provider.supports_tools();
+
+        // Load persona data.
+        let persona = load_prompt_persona();
+
+        // Build runtime context.
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
+
+        // Resolve project context.
+        let project_context = self
+            .resolve_project_context(&session_key, conn_id.as_deref())
+            .await;
+
+        // Discover skills.
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
+        let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
+        let discovered_skills = match discoverer.discover().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("failed to discover skills: {e}");
+                Vec::new()
+            },
+        };
+
+        // Check MCP disabled.
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|entry| entry.mcp_disabled)
+            .unwrap_or(false);
+
+        // Build filtered tool registry.
+        let filtered_registry = {
+            let registry_guard = self.tool_registry.read().await;
+            if native_tools {
+                apply_runtime_tool_filters(
+                    &registry_guard,
+                    &persona.config,
+                    &discovered_skills,
+                    mcp_disabled,
+                )
+            } else {
+                registry_guard.clone_without(&[])
+            }
+        };
+
+        // Build the system prompt.
+        let system_prompt = if native_tools {
+            build_system_prompt_with_session_runtime(
+                &filtered_registry,
+                native_tools,
+                project_context.as_deref(),
+                &discovered_skills,
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        } else {
+            build_system_prompt_minimal_runtime(
+                project_context.as_deref(),
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        };
+
+        let system_prompt_chars = system_prompt.len();
+
+        // Build the full messages array: system prompt + conversation history.
+        let mut messages = Vec::with_capacity(1 + history.len());
+        messages.push(ChatMessage::system(system_prompt));
+        messages.extend(values_to_chat_messages(&history));
+
+        let openai_messages: Vec<Value> = messages.iter().map(|m| m.to_openai_value()).collect();
+        let message_count = openai_messages.len();
+        let total_chars: usize = openai_messages
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap_or_default().len())
+            .sum();
+
+        Ok(serde_json::json!({
+            "messages": openai_messages,
+            "messageCount": message_count,
+            "systemPromptChars": system_prompt_chars,
+            "totalChars": total_chars,
+        }))
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
