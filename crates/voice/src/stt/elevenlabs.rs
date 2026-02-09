@@ -81,6 +81,7 @@ impl ElevenLabsStt {
     }
 
     /// Create with custom base URL (for testing).
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     #[cfg(test)]
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -210,6 +211,7 @@ struct ElevenLabsWord {
     end: f32,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, bytes::Bytes};

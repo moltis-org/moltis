@@ -1278,6 +1278,7 @@ fn format_model_list(
     lines.join("\n")
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, moltis_channels::ChannelType};

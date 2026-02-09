@@ -239,6 +239,7 @@ fn split_frontmatter(content: &str) -> anyhow::Result<(String, String)> {
     Ok((frontmatter, body))
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

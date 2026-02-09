@@ -227,6 +227,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

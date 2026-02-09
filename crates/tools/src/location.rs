@@ -402,6 +402,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, moltis_agents::tool_registry::AgentTool};

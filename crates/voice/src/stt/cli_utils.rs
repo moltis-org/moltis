@@ -64,6 +64,7 @@ pub fn is_binary_configured(binary_name: &str, config_path: Option<&str>) -> boo
     find_binary(binary_name, config_path).is_some()
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

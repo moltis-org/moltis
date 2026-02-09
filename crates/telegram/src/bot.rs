@@ -86,7 +86,7 @@ pub async fn start_polling(
     };
 
     {
-        let mut map = accounts.write().unwrap();
+        let mut map = accounts.write().unwrap_or_else(|e| e.into_inner());
         map.insert(account_id.clone(), state);
     }
 
@@ -198,7 +198,7 @@ pub async fn start_polling(
 
                         // Request the gateway to disable this channel.
                         let event_sink = {
-                            let accounts = poll_accounts.read().unwrap();
+                            let accounts = poll_accounts.read().unwrap_or_else(|e| e.into_inner());
                             accounts.get(&aid).and_then(|s| s.event_sink.clone())
                         };
                         if let Some(sink) = event_sink {

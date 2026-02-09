@@ -388,7 +388,10 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     };
 
     let addr = format!("127.0.0.1:{}", port);
-    let mut stream = TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_secs(2))?;
+    let socket_addr = addr
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid address {addr}: {e}"))?;
+    let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
@@ -492,6 +495,7 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
     Ok(())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

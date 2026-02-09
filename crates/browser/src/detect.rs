@@ -204,6 +204,7 @@ pub fn check_and_warn(custom_path: Option<&str>) -> bool {
     result.found
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

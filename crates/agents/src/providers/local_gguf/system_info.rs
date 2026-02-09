@@ -143,6 +143,7 @@ fn parse_meminfo_kb(value: &str) -> Option<u64> {
     value.split_whitespace().next()?.parse::<u64>().ok()
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

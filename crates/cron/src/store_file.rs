@@ -141,6 +141,7 @@ impl CronStore for FileStore {
 
 use tokio::io::AsyncWriteExt;
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::*, std::path::Path, tempfile::TempDir};

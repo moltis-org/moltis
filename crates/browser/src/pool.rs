@@ -186,7 +186,7 @@ impl BrowserPool {
             .device_scale_factor(self.config.device_scale_factor)
             .mobile(false)
             .build()
-            .expect("valid viewport params");
+            .map_err(|e| BrowserError::Cdp(format!("invalid viewport params: {e}")))?;
 
         if let Err(e) = page.execute(viewport_cmd).await {
             warn!(session_id, error = %e, "failed to set page viewport");

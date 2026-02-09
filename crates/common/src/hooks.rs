@@ -386,7 +386,11 @@ impl HookRegistry {
             let consecutive_failures = entry.stats.consecutive_failures.load(Ordering::Relaxed);
             if consecutive_failures >= self.circuit_breaker_threshold {
                 entry.stats.disabled.store(true, Ordering::Relaxed);
-                *entry.stats.disabled_at.lock().unwrap() = Some(Instant::now());
+                *entry
+                    .stats
+                    .disabled_at
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 warn!(
                     handler = entry.handler.name(),
                     "hook circuit breaker tripped after {} consecutive failures",
@@ -398,7 +402,11 @@ impl HookRegistry {
         }
 
         // Already disabled — check if cooldown period has elapsed.
-        let disabled_at = entry.stats.disabled_at.lock().unwrap();
+        let disabled_at = entry
+            .stats
+            .disabled_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(at) = *disabled_at
             && at.elapsed() >= self.circuit_breaker_cooldown
         {
@@ -601,6 +609,7 @@ impl Default for HookRegistry {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

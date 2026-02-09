@@ -89,13 +89,13 @@ impl LiveOnboardingService {
         }
 
         let resp = step_response(&ws);
-        *self.state.lock().unwrap() = Some(ws);
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = Some(ws);
         resp
     }
 
     /// Advance the wizard with user input.
     pub fn wizard_next(&self, input: &str) -> Result<Value, String> {
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let ws = guard.as_mut().ok_or("no active wizard session")?;
         ws.advance(input);
 
@@ -141,12 +141,12 @@ impl LiveOnboardingService {
 
     /// Cancel an active wizard session.
     pub fn wizard_cancel(&self) {
-        *self.state.lock().unwrap() = None;
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Return the current wizard status.
     pub fn wizard_status(&self) -> Value {
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let onboarded = self.is_already_onboarded();
         match guard.as_ref() {
             Some(ws) => json!({
@@ -329,6 +329,7 @@ fn current_value(ws: &WizardState) -> Option<&str> {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, std::io::Write};

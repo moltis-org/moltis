@@ -335,10 +335,9 @@ impl ChannelService for LiveChannelService {
         }
 
         // Also ensure dm_policy is set to "allowlist" so the list is enforced.
-        config
-            .as_object_mut()
-            .unwrap()
-            .insert("dm_policy".into(), serde_json::json!("allowlist"));
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("dm_policy".into(), serde_json::json!("allowlist"));
+        }
 
         // Persist.
         let now = unix_now();

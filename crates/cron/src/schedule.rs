@@ -75,6 +75,7 @@ pub fn compute_next_run(schedule: &CronSchedule, now_ms: u64) -> Result<Option<u
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

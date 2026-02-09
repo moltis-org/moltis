@@ -20,7 +20,7 @@ impl CallbackServer {
         let app = Router::new().route(
             "/auth/callback",
             get(move |Query(params): Query<HashMap<String, String>>| {
-                let tx = tx.lock().unwrap().take();
+                let tx = tx.lock().unwrap_or_else(|e| e.into_inner()).take();
                 async move {
                     let result = (|| {
                         let state = params.get("state").ok_or("missing state")?;

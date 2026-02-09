@@ -60,7 +60,7 @@ impl OpenAiCodexProvider {
         if let Some(expires_at) = tokens.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             if now + 300 >= expires_at {
                 // Token expired or expiring — try refresh
@@ -866,6 +866,7 @@ impl LlmProvider for OpenAiCodexProvider {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

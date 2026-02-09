@@ -47,7 +47,10 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                     chars.next();
                     break;
                 }
-                block.push(chars.next().unwrap());
+                let Some(c) = chars.next() else {
+                    break;
+                };
+                block.push(c);
             }
             if lang.is_empty() {
                 out.push_str("<pre>");
@@ -78,7 +81,9 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
 
         // Inside inline code, don't process markdown
         if in_code {
-            out.push(chars.next().unwrap());
+            if let Some(c) = chars.next() {
+                out.push(c);
+            }
             continue;
         }
 
@@ -96,7 +101,10 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                     chars.next();
                     break;
                 }
-                content.push(chars.next().unwrap());
+                let Some(c) = chars.next() else {
+                    break;
+                };
+                content.push(c);
             }
             out.push_str("<s>");
             out.push_str(&content);
@@ -118,7 +126,10 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                     chars.next();
                     break;
                 }
-                content.push(chars.next().unwrap());
+                let Some(c) = chars.next() else {
+                    break;
+                };
+                content.push(c);
             }
             out.push_str("<b>");
             out.push_str(&content);
@@ -138,7 +149,10 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                     chars.next();
                     break;
                 }
-                content.push(chars.next().unwrap());
+                let Some(c) = chars.next() else {
+                    break;
+                };
+                content.push(c);
             }
             out.push_str("<i>");
             out.push_str(&content);
@@ -159,7 +173,12 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                         found_close = true;
                         break;
                     },
-                    _ => text.push(chars.next().unwrap()),
+                    _ => {
+                        let Some(c) = chars.next() else {
+                            break;
+                        };
+                        text.push(c);
+                    },
                 }
             }
             if found_close && chars.peek() == Some(&'(') {
@@ -172,7 +191,12 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
                             chars.next();
                             break;
                         },
-                        _ => url.push(chars.next().unwrap()),
+                        _ => {
+                            let Some(c) = chars.next() else {
+                                break;
+                            };
+                            url.push(c);
+                        },
                     }
                 }
                 out.push_str(&format!("<a href=\"{url}\">{text}</a>"));
@@ -186,7 +210,9 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
             continue;
         }
 
-        out.push(chars.next().unwrap());
+        if let Some(c) = chars.next() {
+            out.push(c);
+        }
     }
 
     out

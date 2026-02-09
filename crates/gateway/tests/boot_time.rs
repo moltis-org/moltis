@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration test: assert the gateway boots and responds within a time budget.
 //!
 //! This spawns a real `start_gateway` against a temp directory (in-memory-like

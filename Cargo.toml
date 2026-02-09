@@ -33,6 +33,10 @@ resolver = "2"
 [workspace.lints.rust]
 unsafe_code = "deny"
 
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
 [workspace.package]
 edition    = "2024"
 license    = "MIT"

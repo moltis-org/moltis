@@ -350,6 +350,7 @@ pub fn finalize_stream(state: &StreamingToolState) -> Vec<StreamEvent> {
     events
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

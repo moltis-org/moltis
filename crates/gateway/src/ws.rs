@@ -109,6 +109,7 @@ pub async fn handle_connection(
                 ),
             ),
         );
+        #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.send(serde_json::to_string(&err).unwrap());
         drop(client_tx);
         write_handle.abort();
@@ -116,11 +117,15 @@ pub async fn handle_connection(
     }
 
     // ── Auth validation ──────────────────────────────────────────────────
-    let is_loopback = auth::is_loopback(&conn_remote_ip);
-
-    // Try credential-store auth first (API key, password hash), then fall
-    // back to legacy env-var auth.
-    let mut authenticated = is_loopback || header_authenticated;
+    // SECURITY: do NOT auto-authenticate based on the TCP source IP being
+    // loopback. Behind a reverse proxy (Caddy, nginx, etc.) running on the
+    // same machine, every external request arrives from 127.0.0.1, so an
+    // unconditional `is_loopback` bypass would let unauthenticated internet
+    // traffic through.  The localhost-no-password convenience shortcut is
+    // already handled by `websocket_header_authenticated()` in server.rs
+    // (via the `localhost_only && !has_password` check), which correctly
+    // gates on the *bind address*, not the connecting peer's IP.
+    let mut authenticated = header_authenticated;
     // Scopes from API key verification (if any).
     let mut api_key_scopes: Option<Vec<String>> = None;
 
@@ -174,6 +179,7 @@ pub async fn handle_connection(
             &request_id,
             ErrorShape::new(error_codes::INVALID_REQUEST, "authentication failed"),
         );
+        #[allow(clippy::unwrap_used)] // serializing known-valid struct
         let _ = client_tx.send(serde_json::to_string(&err).unwrap());
         drop(client_tx);
         write_handle.abort();
@@ -243,7 +249,10 @@ pub async fn handle_connection(
         auth: Some(hello_auth),
         policy: Policy::default_policy(),
     };
-    let resp = ResponseFrame::ok(&request_id, serde_json::to_value(&hello).unwrap());
+    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+    let hello_val = serde_json::to_value(&hello).unwrap();
+    let resp = ResponseFrame::ok(&request_id, hello_val);
+    #[allow(clippy::unwrap_used)] // serializing known-valid struct
     let _ = client_tx.send(serde_json::to_string(&resp).unwrap());
 
     info!(
@@ -364,6 +373,7 @@ pub async fn handle_connection(
                 serde_json::json!({ "message": "payload too large", "maxBytes": MAX_PAYLOAD_BYTES }),
                 state.next_seq(),
             );
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
             let _ = client_tx.send(serde_json::to_string(&err).unwrap());
             continue;
         }
@@ -377,6 +387,7 @@ pub async fn handle_connection(
                     serde_json::json!({ "message": "invalid frame" }),
                     state.next_seq(),
                 );
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
                 let _ = client_tx.send(serde_json::to_string(&err).unwrap());
                 continue;
             },
@@ -417,6 +428,7 @@ pub async fn handle_connection(
                         "ws: sent response frame"
                     );
                 }
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
                 let _ = client_tx.send(serde_json::to_string(&response).unwrap());
             },
             _ => {

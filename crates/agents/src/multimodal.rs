@@ -195,6 +195,7 @@ pub fn build_data_uri(media_type: &str, data: &str) -> String {
     format!("data:{media_type};base64,{data}")
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

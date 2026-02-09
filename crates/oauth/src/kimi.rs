@@ -1,6 +1,6 @@
 //! Kimi-specific helpers for OAuth device flow and API requests.
 
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::config_dir::moltis_config_dir;
 
@@ -17,7 +17,9 @@ pub fn get_or_create_device_id() -> String {
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    let dir = path.parent().unwrap();
+    let Some(dir) = path.parent() else {
+        return id;
+    };
     let _ = std::fs::create_dir_all(dir);
     let _ = std::fs::write(&path, &id);
     #[cfg(unix)]
@@ -32,17 +34,18 @@ pub fn get_or_create_device_id() -> String {
 pub fn kimi_headers() -> HeaderMap {
     let device_id = get_or_create_device_id();
     let mut headers = HeaderMap::new();
-    headers.insert("X-Msh-Platform", "web".parse().unwrap());
-    headers.insert("X-Msh-Version", "1.0.0".parse().unwrap());
-    headers.insert("X-Msh-Device-Name", "moltis".parse().unwrap());
-    headers.insert("X-Msh-Device-Model", "cli".parse().unwrap());
+    headers.insert("X-Msh-Platform", HeaderValue::from_static("web"));
+    headers.insert("X-Msh-Version", HeaderValue::from_static("1.0.0"));
+    headers.insert("X-Msh-Device-Name", HeaderValue::from_static("moltis"));
+    headers.insert("X-Msh-Device-Model", HeaderValue::from_static("cli"));
     headers.insert(
         "X-Msh-Os-Version",
-        std::env::consts::OS
-            .parse()
-            .unwrap_or_else(|_| "unknown".parse().unwrap()),
+        HeaderValue::from_str(std::env::consts::OS)
+            .unwrap_or_else(|_| HeaderValue::from_static("unknown")),
     );
-    headers.insert("X-Msh-Device-Id", device_id.parse().unwrap());
+    if let Ok(val) = HeaderValue::from_str(&device_id) {
+        headers.insert("X-Msh-Device-Id", val);
+    }
     headers
 }
 

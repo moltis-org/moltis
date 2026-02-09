@@ -49,7 +49,7 @@ impl MemoryWriteFileTool {
     }
 
     fn take_written_paths(&self) -> Vec<PathBuf> {
-        std::mem::take(&mut *self.written_paths.lock().unwrap())
+        std::mem::take(&mut *self.written_paths.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -112,7 +112,10 @@ impl AgentTool for MemoryWriteFileTool {
             tokio::fs::write(&full_path, content).await?;
         }
 
-        self.written_paths.lock().unwrap().push(full_path.clone());
+        self.written_paths
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(full_path.clone());
 
         debug!(path = %full_path.display(), "silent memory turn: wrote file");
         Ok(serde_json::json!({ "ok": true, "path": full_path.to_string_lossy() }))
@@ -215,6 +218,7 @@ pub async fn run_silent_memory_turn(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

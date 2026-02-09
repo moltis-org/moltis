@@ -95,7 +95,7 @@ impl KimiCodeProvider {
         if let Some(expires_at) = tokens.expires_at {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             if now + REFRESH_THRESHOLD_SECS >= expires_at {
                 if let Some(ref refresh_token) = tokens.refresh_token {
@@ -158,7 +158,7 @@ pub async fn refresh_access_token(
     let expires_at = body.expires_in.map(|secs| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs()
             + secs
     });
@@ -392,6 +392,7 @@ impl LlmProvider for KimiCodeProvider {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

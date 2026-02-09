@@ -128,6 +128,7 @@ fn init_prometheus_disabled() -> Result<metrics_exporter_prometheus::PrometheusH
     Ok(handle)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

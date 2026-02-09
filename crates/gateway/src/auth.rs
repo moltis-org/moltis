@@ -745,6 +745,7 @@ pub fn resolve_auth(token: Option<String>, password: Option<String>) -> Resolved
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

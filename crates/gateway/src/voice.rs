@@ -760,6 +760,7 @@ impl SttService for NoopSttService {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "voice"))]
 mod tests {
     use {super::*, serde_json::json};

@@ -291,6 +291,7 @@ async fn write_skill(skill_dir: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

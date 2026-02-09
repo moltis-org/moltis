@@ -462,6 +462,7 @@ fn redaction_needles(value: &str) -> Vec<String> {
     needles
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

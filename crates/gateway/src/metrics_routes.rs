@@ -29,6 +29,7 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     match metrics_handle {
         Some(handle) => {
             let body = handle.render();
+            #[allow(clippy::unwrap_used)] // building response with valid static headers
             Response::builder()
                 .status(StatusCode::OK)
                 .header(
@@ -38,11 +39,14 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
                 .body(body)
                 .unwrap()
         },
-        None => Response::builder()
-            .status(StatusCode::SERVICE_UNAVAILABLE)
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body("Metrics not enabled".to_string())
-            .unwrap(),
+        None => {
+            #[allow(clippy::unwrap_used)] // building response with valid static headers
+            Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body("Metrics not enabled".to_string())
+                .unwrap()
+        },
     }
 }
 

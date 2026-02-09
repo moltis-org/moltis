@@ -547,15 +547,12 @@ fn stream_generate_sync(
 
             // Record time to first token
             if first_token_time.is_none() {
-                first_token_time = Some(generation_start.elapsed());
-                debug!(
-                    ttft_secs = first_token_time.unwrap().as_secs_f64(),
-                    "time to first token"
-                );
+                let ttft = generation_start.elapsed();
+                first_token_time = Some(ttft);
+                debug!(ttft_secs = ttft.as_secs_f64(), "time to first token");
 
                 #[cfg(feature = "metrics")]
-                histogram!(llm_metrics::TIME_TO_FIRST_TOKEN_SECONDS)
-                    .record(first_token_time.unwrap().as_secs_f64());
+                histogram!(llm_metrics::TIME_TO_FIRST_TOKEN_SECONDS).record(ttft.as_secs_f64());
             }
 
             sampler.accept(token);
@@ -694,7 +691,9 @@ impl LlmProvider for LazyLocalGgufProvider {
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
         let guard = self.inner.read().await;
-        let provider = guard.as_ref().expect("provider should be loaded");
+        let provider = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("provider should be loaded after ensure_loaded"))?;
         provider.complete(messages, tools).await
     }
 
@@ -709,7 +708,10 @@ impl LlmProvider for LazyLocalGgufProvider {
             }
 
             let guard = self.inner.read().await;
-            let provider = guard.as_ref().expect("provider should be loaded");
+            let Some(provider) = guard.as_ref() else {
+                yield StreamEvent::Error("provider should be loaded after ensure_loaded".into());
+                return;
+            };
 
             // We need to create a stream from the inner provider
             // But we can't hold the guard across the stream, so we need to

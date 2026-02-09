@@ -112,6 +112,7 @@ pub async fn load_skill_from_path(skill_dir: &Path) -> anyhow::Result<SkillConte
     parse::parse_skill(&content, skill_dir)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::SkillSource, std::path::PathBuf};

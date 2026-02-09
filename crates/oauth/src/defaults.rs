@@ -98,6 +98,7 @@ pub fn callback_port(config: &OAuthConfig) -> u16 {
         .unwrap_or(1455)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

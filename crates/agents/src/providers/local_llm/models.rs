@@ -679,6 +679,7 @@ pub async fn ensure_model_for_backend(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -106,6 +106,7 @@ pub fn parse_hook_md(content: &str, source_path: &Path) -> Result<ParsedHook> {
     })
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

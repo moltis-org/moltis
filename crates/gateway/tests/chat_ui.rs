@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration tests for the embedded chat UI and WebSocket handshake.
 
 use std::{net::SocketAddr, sync::Arc};

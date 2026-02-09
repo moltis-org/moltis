@@ -252,6 +252,7 @@ pub fn new_project(id: String, label: String, directory: PathBuf) -> Project {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

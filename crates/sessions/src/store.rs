@@ -302,6 +302,7 @@ impl SessionStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, serde_json::json};

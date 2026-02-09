@@ -59,7 +59,7 @@ async fn login(provider: &str) -> Result<()> {
 
     let port = callback_port(&config);
     let flow = OAuthFlow::new(config);
-    let req = flow.start();
+    let req = flow.start()?;
 
     println!("Opening browser for authentication...");
     if open::that(&req.url).is_err() {
@@ -137,7 +137,7 @@ fn status() -> Result<()> {
             let expiry = tokens.expires_at.map_or("unknown".to_string(), |ts| {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 if ts > now {
                     let remaining = ts - now;

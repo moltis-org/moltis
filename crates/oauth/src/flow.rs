@@ -30,14 +30,15 @@ impl OAuthFlow {
     }
 
     /// Build the authorization URL and generate PKCE + state.
-    pub fn start(&self) -> AuthorizationRequest {
+    pub fn start(&self) -> Result<AuthorizationRequest> {
         #[cfg(feature = "metrics")]
         counter!(oauth_metrics::FLOW_STARTS_TOTAL).increment(1);
 
         let pkce = generate_pkce();
         let state = generate_state();
 
-        let mut url = Url::parse(&self.config.auth_url).expect("invalid auth_url");
+        let mut url = Url::parse(&self.config.auth_url)
+            .map_err(|e| anyhow::anyhow!("invalid auth_url: {e}"))?;
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.config.client_id)
@@ -58,11 +59,11 @@ impl OAuthFlow {
         // Always include originator
         url.query_pairs_mut().append_pair("originator", "pi");
 
-        AuthorizationRequest {
+        Ok(AuthorizationRequest {
             url: url.to_string(),
             pkce,
             state,
-        }
+        })
     }
 
     /// Exchange an authorization code for tokens.
@@ -138,12 +139,11 @@ fn parse_token_response(resp: &serde_json::Value) -> Result<OAuthTokens> {
 
     let refresh_token = resp["refresh_token"].as_str().map(|s| s.to_string());
 
-    let expires_at = resp["expires_in"].as_u64().map(|secs| {
+    let expires_at = resp["expires_in"].as_u64().and_then(|secs| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + secs
+            .ok()
+            .map(|d| d.as_secs() + secs)
     });
 
     Ok(OAuthTokens {

@@ -216,7 +216,7 @@ fn strip_base64_blobs(input: &str) -> String {
                 if mime_part.starts_with("image/") {
                     result.push_str("[screenshot captured and displayed in UI]");
                 } else {
-                    write!(result, "[{mime_part} data removed — {total_uri_len} bytes]").unwrap();
+                    let _ = write!(result, "[{mime_part} data removed — {total_uri_len} bytes]");
                 }
                 rest = &rest[start + total_uri_len..];
                 continue;
@@ -248,7 +248,7 @@ fn strip_hex_blobs(input: &str) -> String {
             }
             let run = end - start;
             if run >= BLOB_MIN_LEN {
-                write!(result, "[hex data removed — {run} chars]").unwrap();
+                let _ = write!(result, "[hex data removed — {run} chars]");
             } else {
                 result.push_str(&input[start..end]);
             }
@@ -280,7 +280,7 @@ pub fn sanitize_tool_result(input: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     result.truncate(end);
-    write!(result, "\n\n[truncated — {original_len} bytes total]").unwrap();
+    let _ = write!(result, "\n\n[truncated — {original_len} bytes total]");
     result
 }
 
@@ -342,6 +342,7 @@ fn extract_images_from_text_impl(input: &str) -> (Vec<ExtractedImage>, String) {
 }
 
 /// Test alias for extract_images_from_text_impl
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 fn extract_images_from_text(input: &str) -> (Vec<ExtractedImage>, String) {
     extract_images_from_text_impl(input)
@@ -1267,6 +1268,7 @@ pub async fn run_agent_loop_streaming(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

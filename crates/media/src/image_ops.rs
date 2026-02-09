@@ -271,6 +271,7 @@ fn format_to_media_type(format: Option<ImageFormat>) -> &'static str {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

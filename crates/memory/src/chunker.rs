@@ -75,6 +75,7 @@ pub fn chunk_markdown(text: &str, chunk_size: usize, overlap: usize) -> Vec<Chun
     chunks
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

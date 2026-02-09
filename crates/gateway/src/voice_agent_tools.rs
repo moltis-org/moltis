@@ -243,6 +243,7 @@ fn write_tool_audio_file(file_name: &str, bytes: &[u8]) -> Result<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::services::ServiceResult};

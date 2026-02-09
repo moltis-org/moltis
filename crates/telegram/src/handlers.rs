@@ -66,7 +66,7 @@ pub async fn handle_message_direct(
     }
 
     let (config, bot_username, outbound, message_log, event_sink) = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = match accts.get(account_id) {
             Some(s) => s,
             None => {
@@ -411,7 +411,7 @@ pub async fn handle_message_direct(
                     let context_result =
                         sink.dispatch_command("context", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -436,7 +436,7 @@ pub async fn handle_message_direct(
                 if cmd == "model" && cmd_text.trim() == "model" {
                     let list_result = sink.dispatch_command("model", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -461,7 +461,7 @@ pub async fn handle_message_direct(
                 if cmd == "sandbox" && cmd_text.trim() == "sandbox" {
                     let list_result = sink.dispatch_command("sandbox", reply_target.clone()).await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -488,7 +488,7 @@ pub async fn handle_message_direct(
                         .dispatch_command("sessions", reply_target.clone())
                         .await;
                     let bot = {
-                        let accts = accounts.read().unwrap();
+                        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                         accts.get(account_id).map(|s| s.bot.clone())
                     };
                     if let Some(bot) = bot {
@@ -519,7 +519,7 @@ pub async fn handle_message_direct(
                 };
                 // Get the outbound Arc before awaiting (avoid holding RwLockReadGuard across await).
                 let outbound = {
-                    let accts = accounts.read().unwrap();
+                    let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
                     accts.get(account_id).map(|s| Arc::clone(&s.outbound))
                 };
                 if let Some(outbound) = outbound
@@ -585,7 +585,7 @@ async fn handle_otp_flow(
 
     // Resolve bot early (needed for sending messages).
     let bot = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).map(|s| s.bot.clone())
     };
     let bot = match bot {
@@ -595,11 +595,11 @@ async fn handle_otp_flow(
 
     // Check current OTP state.
     let has_pending = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts
             .get(account_id)
             .map(|s| {
-                let otp = s.otp.lock().unwrap();
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                 otp.has_pending(peer_id)
             })
             .unwrap_or(false)
@@ -617,10 +617,10 @@ async fn handle_otp_flow(
 
         // Verify the code.
         let result = {
-            let accts = accounts.read().unwrap();
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
             match accts.get(account_id) {
                 Some(s) => {
-                    let mut otp = s.otp.lock().unwrap();
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                     otp.verify(peer_id, body)
                 },
                 None => return,
@@ -723,10 +723,10 @@ async fn handle_otp_flow(
     } else {
         // No pending challenge — initiate one.
         let init_result = {
-            let accts = accounts.read().unwrap();
+            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
             match accts.get(account_id) {
                 Some(s) => {
-                    let mut otp = s.otp.lock().unwrap();
+                    let mut otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                     otp.initiate(
                         peer_id,
                         username.map(String::from),
@@ -801,7 +801,7 @@ pub async fn handle_edited_location(
     );
 
     let event_sink = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).and_then(|s| s.event_sink.clone())
     };
 
@@ -1088,7 +1088,7 @@ pub async fn handle_callback_query(
 
     // Answer the callback to dismiss the loading spinner.
     let bot = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         accts.get(account_id).map(|s| s.bot.clone())
     };
 
@@ -1122,7 +1122,7 @@ pub async fn handle_callback_query(
     }
 
     let (event_sink, outbound) = {
-        let accts = accounts.read().unwrap();
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = match accts.get(account_id) {
             Some(s) => s,
             None => return Ok(()),
@@ -1146,8 +1146,9 @@ pub async fn handle_callback_query(
             let cmd = format!("model provider:{provider_name}");
             match sink.dispatch_command(&cmd, reply_target).await {
                 Ok(text) => {
-                    let b = bot.as_ref().unwrap();
-                    send_model_keyboard(b, &chat_id, &text).await;
+                    if let Some(ref b) = bot {
+                        send_model_keyboard(b, &chat_id, &text).await;
+                    }
                 },
                 Err(e) => {
                     if let Err(err) = outbound
@@ -1162,7 +1163,9 @@ pub async fn handle_callback_query(
         return Ok(());
     }
 
-    let cmd_text = cmd_text.unwrap();
+    let Some(cmd_text) = cmd_text else {
+        return Ok(());
+    };
 
     if let Some(ref sink) = event_sink {
         let response = match sink.dispatch_command(&cmd_text, reply_target).await {
@@ -1436,6 +1439,7 @@ fn build_session_key(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

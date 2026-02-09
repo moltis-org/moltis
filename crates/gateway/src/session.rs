@@ -276,7 +276,11 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        let entry = self.metadata.get(key).await.unwrap();
+        let entry = self
+            .metadata
+            .get(key)
+            .await
+            .ok_or_else(|| format!("session '{key}' not found after update"))?;
         Ok(serde_json::json!({
             "id": entry.id,
             "key": entry.key,

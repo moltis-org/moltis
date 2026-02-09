@@ -758,6 +758,7 @@ pub fn build_gateway_app(
 }
 
 /// Start the gateway HTTP + WebSocket server.
+#[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
 pub async fn start_gateway(
     bind: &str,
     port: u16,
@@ -1850,9 +1851,12 @@ pub async fn start_gateway(
                     .map(|(n, _)| n.as_str())
                     .collect();
                 if embedding_providers.len() == 1 {
-                    let (name, provider) = embedding_providers.into_iter().next().unwrap();
-                    info!(provider = %name, "memory: using single embedding provider");
-                    Some(provider)
+                    if let Some((name, provider)) = embedding_providers.into_iter().next() {
+                        info!(provider = %name, "memory: using single embedding provider");
+                        Some(provider)
+                    } else {
+                        None
+                    }
                 } else {
                     info!(providers = ?names, active = names[0], "memory: fallback chain configured");
                     Some(Box::new(
@@ -4984,6 +4988,7 @@ pub(crate) async fn discover_and_build_hooks(
     (Some(Arc::new(registry)), info_list)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, std::collections::HashSet};
@@ -5143,6 +5148,31 @@ mod tests {
         let headers = axum::http::HeaderMap::new();
 
         assert!(!websocket_header_authenticated(&headers, Some(&store), false).await);
+    }
+
+    /// Regression test for proxy auth bypass: when a password is set, the
+    /// localhost-no-password shortcut must NOT grant access — even when the
+    /// server is bound to localhost (`localhost_only = true`).  Behind a
+    /// reverse proxy on the same machine every request appears to come from
+    /// 127.0.0.1, so trusting loopback alone would bypass authentication
+    /// for all internet traffic.  See CVE-2026-25253 for the analogous
+    /// OpenClaw vulnerability.
+    #[tokio::test]
+    async fn websocket_header_auth_rejects_loopback_when_password_set() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(
+            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+                .await
+                .unwrap(),
+        );
+        store.set_initial_password("supersecret").await.unwrap();
+        let headers = axum::http::HeaderMap::new();
+
+        // localhost_only = true but password is set → must reject.
+        assert!(
+            !websocket_header_authenticated(&headers, Some(&store), true).await,
+            "loopback must not bypass auth when a password is configured (proxy scenario)"
+        );
     }
 
     #[test]

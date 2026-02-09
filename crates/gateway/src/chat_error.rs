@@ -10,11 +10,10 @@ use serde_json::Value;
 pub fn parse_chat_error(raw: &str, provider_name: Option<&str>) -> Value {
     let mut error = try_parse_known_error(raw);
 
-    if let Some(name) = provider_name {
-        error
-            .as_object_mut()
-            .unwrap()
-            .insert("provider".into(), Value::String(name.to_string()));
+    if let Some(name) = provider_name
+        && let Some(obj) = error.as_object_mut()
+    {
+        obj.insert("provider".into(), Value::String(name.to_string()));
     }
 
     error
@@ -204,13 +203,14 @@ fn build_error(
     });
     if let Some(ts) = resets_at {
         // Send as milliseconds for the frontend.
-        obj.as_object_mut()
-            .unwrap()
-            .insert("resetsAt".into(), Value::Number((ts * 1000).into()));
+        if let Some(map) = obj.as_object_mut() {
+            map.insert("resetsAt".into(), Value::Number((ts * 1000).into()));
+        }
     }
     obj
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

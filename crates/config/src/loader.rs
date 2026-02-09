@@ -34,31 +34,41 @@ static DATA_DIR_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Can be called multiple times (e.g. in tests) — each call replaces the
 /// previous override.
 pub fn set_config_dir(path: PathBuf) {
-    *CONFIG_DIR_OVERRIDE.lock().unwrap() = Some(path);
+    *CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 /// Clear the config directory override, restoring default discovery.
 pub fn clear_config_dir() {
-    *CONFIG_DIR_OVERRIDE.lock().unwrap() = None;
+    *CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn config_dir_override() -> Option<PathBuf> {
-    CONFIG_DIR_OVERRIDE.lock().unwrap().clone()
+    CONFIG_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 /// Set a custom data directory. When set, `data_dir()` returns this path
 /// instead of the default.
 pub fn set_data_dir(path: PathBuf) {
-    *DATA_DIR_OVERRIDE.lock().unwrap() = Some(path);
+    *DATA_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 /// Clear the data directory override, restoring default discovery.
 pub fn clear_data_dir() {
-    *DATA_DIR_OVERRIDE.lock().unwrap() = None;
+    *DATA_DIR_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn data_dir_override() -> Option<PathBuf> {
-    DATA_DIR_OVERRIDE.lock().unwrap().clone()
+    DATA_DIR_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 /// Load config from the given path (any supported format).
@@ -575,7 +585,7 @@ static CONFIG_SAVE_LOCK: Mutex<ConfigSaveState> = Mutex::new(ConfigSaveState { t
 /// Acquires a process-wide lock so concurrent callers cannot race.
 /// Returns the path written to.
 pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBuf> {
-    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
     let mut config = discover_and_load();
@@ -589,7 +599,7 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> anyhow::Result<PathBu
 ///
 /// Prefer [`update_config`] for read-modify-write cycles to avoid races.
 pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
-    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap();
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
     save_config_to_path(&target_path, config)
@@ -749,7 +759,10 @@ fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Va
         {
             map.insert(key.clone(), serde_json::Value::Object(Default::default()));
         }
-        current = current.get_mut(key).unwrap();
+        let Some(next) = current.get_mut(key) else {
+            return;
+        };
+        current = next;
     }
 }
 
@@ -781,6 +794,7 @@ fn parse_config_value(raw: &str, path: &Path) -> anyhow::Result<serde_json::Valu
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

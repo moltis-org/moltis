@@ -27,7 +27,7 @@ impl CommandLoggerHook {
     }
 
     fn ensure_file(&self) -> Result<()> {
-        let mut guard = self.file.lock().unwrap();
+        let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             if let Some(parent) = self.log_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -75,7 +75,7 @@ impl HookHandler for CommandLoggerHook {
             });
 
             use std::io::Write;
-            let mut guard = self.file.lock().unwrap();
+            let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut f) = *guard
                 && let Err(e) = writeln!(f, "{}", entry)
             {
@@ -104,7 +104,7 @@ impl HookHandler for CommandLoggerHook {
                 "sender_id": sender_id,
             });
             use std::io::Write;
-            let mut guard = self.file.lock().unwrap();
+            let mut guard = self.file.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut f) = *guard {
                 let _ = writeln!(f, "{}", entry);
             }
@@ -113,6 +113,7 @@ impl HookHandler for CommandLoggerHook {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

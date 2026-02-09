@@ -2224,7 +2224,9 @@ impl ChatService for LiveChatService {
                 match queue_mode {
                     MessageQueueMode::Followup => {
                         let mut iter = queued.into_iter();
-                        let first = iter.next().expect("queued is non-empty");
+                        let Some(first) = iter.next() else {
+                            return;
+                        };
                         // Put remaining messages back so the replayed run's
                         // own drain loop picks them up after it completes.
                         let rest: Vec<QueuedMessage> = iter.collect();
@@ -2253,7 +2255,10 @@ impl ChatService for LiveChatService {
                                 "replaying collected messages"
                             );
                             // Use the last queued message as the base params, override text.
-                            let mut merged = queued.last().unwrap().params.clone();
+                            let Some(last) = queued.last() else {
+                                return;
+                            };
+                            let mut merged = last.params.clone();
                             merged["text"] = serde_json::json!(combined.join("\n\n"));
                             if let Err(e) = chat.send(merged).await {
                                 warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
@@ -3748,7 +3753,7 @@ async fn run_with_tools(
     // On context-window overflow, compact the session and retry once.
     let result = match first_result {
         Err(AgentRunError::ContextWindowExceeded(ref msg)) if session_store.is_some() => {
-            let store = session_store.unwrap();
+            let store = session_store?;
             info!(
                 run_id,
                 session = session_key,
@@ -3886,13 +3891,9 @@ async fn run_with_tools(
                 audio: audio_path.clone(),
                 seq: client_seq,
             };
-            broadcast(
-                state,
-                "chat",
-                serde_json::to_value(&final_payload).unwrap(),
-                BroadcastOpts::default(),
-            )
-            .await;
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
+            let payload_val = serde_json::to_value(&final_payload).unwrap();
+            broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
             if !is_silent {
                 // Send push notification when chat response completes
@@ -3924,13 +3925,9 @@ async fn run_with_tools(
                 error: error_obj,
                 seq: client_seq,
             };
-            broadcast(
-                state,
-                "chat",
-                serde_json::to_value(&error_payload).unwrap(),
-                BroadcastOpts::default(),
-            )
-            .await;
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
+            let payload_val = serde_json::to_value(&error_payload).unwrap();
+            broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
             None
         },
     }
@@ -4173,13 +4170,9 @@ async fn run_streaming(
                     audio: audio_path.clone(),
                     seq: client_seq,
                 };
-                broadcast(
-                    state,
-                    "chat",
-                    serde_json::to_value(&final_payload).unwrap(),
-                    BroadcastOpts::default(),
-                )
-                .await;
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let payload_val = serde_json::to_value(&final_payload).unwrap();
+                broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
 
                 if !is_silent {
                     // Send push notification when chat response completes
@@ -4211,13 +4204,9 @@ async fn run_streaming(
                     error: error_obj,
                     seq: client_seq,
                 };
-                broadcast(
-                    state,
-                    "chat",
-                    serde_json::to_value(&error_payload).unwrap(),
-                    BroadcastOpts::default(),
-                )
-                .await;
+                #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                let payload_val = serde_json::to_value(&error_payload).unwrap();
+                broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
                 return None;
             },
             // Tool events not expected in stream-only mode.
@@ -4726,6 +4715,7 @@ async fn send_screenshot_to_channels(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

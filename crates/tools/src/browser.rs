@@ -226,6 +226,7 @@ impl AgentTool for BrowserTool {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

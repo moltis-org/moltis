@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use {
     moltis_oauth::{OAuthFlow, TokenStore, callback_port, load_oauth_config, pkce::generate_pkce},
     secrecy::{ExposeSecret, Secret},
@@ -55,7 +56,7 @@ fn callback_port_parses_from_redirect_uri() {
 fn oauth_flow_start_builds_valid_url() {
     let config = load_oauth_config("openai-codex").unwrap();
     let flow = OAuthFlow::new(config);
-    let req = flow.start();
+    let req = flow.start().unwrap();
 
     let url = url::Url::parse(&req.url).expect("should be valid URL");
     assert_eq!(url.scheme(), "https");
@@ -94,8 +95,8 @@ fn oauth_flow_start_builds_valid_url() {
 fn oauth_flow_start_generates_unique_state() {
     let config = load_oauth_config("openai-codex").unwrap();
     let flow = OAuthFlow::new(config);
-    let req1 = flow.start();
-    let req2 = flow.start();
+    let req1 = flow.start().unwrap();
+    let req2 = flow.start().unwrap();
     assert_ne!(req1.state, req2.state);
 }
 

@@ -68,13 +68,13 @@ impl TelegramPlugin {
 
     /// List all active account IDs.
     pub fn account_ids(&self) -> Vec<String> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts.keys().cloned().collect()
     }
 
     /// Get the config for a specific account (serialized to JSON).
     pub fn account_config(&self, account_id: &str) -> Option<serde_json::Value> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .and_then(|s| serde_json::to_value(&s.config).ok())
@@ -85,7 +85,7 @@ impl TelegramPlugin {
     /// re-authentication or bot restart.
     pub fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()> {
         let tg_config: TelegramAccountConfig = serde_json::from_value(config)?;
-        let mut accounts = self.accounts.write().unwrap();
+        let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
             state.config = tg_config;
             Ok(())
@@ -96,11 +96,11 @@ impl TelegramPlugin {
 
     /// List pending OTP challenges for a specific account.
     pub fn pending_otp_challenges(&self, account_id: &str) -> Vec<crate::otp::OtpChallengeInfo> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| {
-                let otp = s.otp.lock().unwrap();
+                let otp = s.otp.lock().unwrap_or_else(|e| e.into_inner());
                 otp.list_pending()
             })
             .unwrap_or_default()
@@ -146,14 +146,14 @@ impl ChannelPlugin for TelegramPlugin {
 
     async fn stop_account(&mut self, account_id: &str) -> Result<()> {
         let cancel = {
-            let accounts = self.accounts.read().unwrap();
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.cancel.clone())
         };
 
         if let Some(cancel) = cancel {
             info!(account_id, "stopping telegram account");
             cancel.cancel();
-            let mut accounts = self.accounts.write().unwrap();
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
             accounts.remove(account_id);
         } else {
             warn!(account_id, "telegram account not found");
@@ -183,7 +183,7 @@ impl ChannelStatus for TelegramPlugin {
         }
 
         let bot = {
-            let accounts = self.accounts.read().unwrap();
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.bot.clone())
         };
 
@@ -218,6 +218,7 @@ impl ChannelStatus for TelegramPlugin {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

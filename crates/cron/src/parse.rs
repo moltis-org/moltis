@@ -53,6 +53,7 @@ pub fn parse_absolute_time_ms(input: &str) -> Result<u64> {
     Ok(ms as u64)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

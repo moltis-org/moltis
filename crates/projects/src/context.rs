@@ -71,6 +71,7 @@ pub fn load_context_files(project_dir: &Path) -> Result<Vec<ContextFile>> {
     Ok(files)
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

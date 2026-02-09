@@ -87,6 +87,7 @@ fn strip_leading_html_comments(content: &str) -> &str {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

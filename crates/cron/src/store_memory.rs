@@ -36,18 +36,18 @@ impl Default for InMemoryStore {
 #[async_trait]
 impl CronStore for InMemoryStore {
     async fn load_jobs(&self) -> Result<Vec<CronJob>> {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         Ok(jobs.values().cloned().collect())
     }
 
     async fn save_job(&self, job: &CronJob) -> Result<()> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         jobs.insert(job.id.clone(), job.clone());
         Ok(())
     }
 
     async fn delete_job(&self, id: &str) -> Result<()> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         if jobs.remove(id).is_none() {
             bail!("job not found: {id}");
         }
@@ -55,7 +55,7 @@ impl CronStore for InMemoryStore {
     }
 
     async fn update_job(&self, job: &CronJob) -> Result<()> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         if !jobs.contains_key(&job.id) {
             bail!("job not found: {}", job.id);
         }
@@ -64,7 +64,7 @@ impl CronStore for InMemoryStore {
     }
 
     async fn append_run(&self, job_id: &str, run: &CronRunRecord) -> Result<()> {
-        let mut runs = self.runs.lock().unwrap();
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         runs.entry(job_id.to_string())
             .or_default()
             .push(run.clone());
@@ -72,7 +72,7 @@ impl CronStore for InMemoryStore {
     }
 
     async fn get_runs(&self, job_id: &str, limit: usize) -> Result<Vec<CronRunRecord>> {
-        let runs = self.runs.lock().unwrap();
+        let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         let records = runs.get(job_id).cloned().unwrap_or_default();
         // Return the most recent `limit` entries.
         let start = records.len().saturating_sub(limit);
@@ -80,6 +80,7 @@ impl CronStore for InMemoryStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::*};

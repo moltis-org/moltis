@@ -29,7 +29,7 @@ pub struct TelegramOutbound {
 
 impl TelegramOutbound {
     fn get_bot(&self, account_id: &str) -> Result<teloxide::Bot> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| s.bot.clone())
@@ -38,7 +38,7 @@ impl TelegramOutbound {
 
     /// Build reply parameters only when `reply_to_message` is enabled for this account.
     fn reply_params(&self, account_id: &str, reply_to: Option<&str>) -> Option<ReplyParameters> {
-        let accounts = self.accounts.read().unwrap();
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let enabled = accounts
             .get(account_id)
             .is_some_and(|s| s.config.reply_to_message);
@@ -380,7 +380,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let chat_id = ChatId(to.parse::<i64>()?);
 
         let throttle_ms = {
-            let accounts = self.accounts.read().unwrap();
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts
                 .get(account_id)
                 .map(|s| s.config.edit_throttle_ms)

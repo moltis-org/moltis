@@ -242,6 +242,7 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};

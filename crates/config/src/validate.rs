@@ -993,6 +993,7 @@ fn check_file_references(toml_str: &str, _config_path: &Path, diagnostics: &mut 
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

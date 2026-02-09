@@ -357,6 +357,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::schema::run_migrations};

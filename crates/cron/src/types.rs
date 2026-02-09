@@ -220,6 +220,7 @@ pub enum CronNotification {
     Removed { job_id: String },
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

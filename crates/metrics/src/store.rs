@@ -102,6 +102,7 @@ impl SqliteMetricsStore {
     }
 
     /// Create an in-memory SQLite metrics store (for testing).
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     #[cfg(test)]
     pub async fn in_memory() -> Result<Self> {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await?;
@@ -287,6 +288,7 @@ impl From<MetricsRow> for MetricsHistoryPoint {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

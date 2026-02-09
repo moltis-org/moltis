@@ -1146,7 +1146,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         let port = callback_port(&oauth_config);
         let oauth_config_for_pending = oauth_config.clone();
         let flow = OAuthFlow::new(oauth_config);
-        let auth_req = flow.start();
+        let auth_req = flow.start().map_err(|e| e.to_string())?;
 
         let auth_url = auth_req.url.clone();
         let verifier = auth_req.pkce.verifier.clone();
@@ -1477,6 +1477,7 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {

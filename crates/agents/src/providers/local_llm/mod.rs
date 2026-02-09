@@ -156,7 +156,9 @@ impl LlmProvider for LocalLlmProvider {
         self.ensure_loaded().await?;
 
         let guard = self.inner.read().await;
-        let backend = guard.as_ref().expect("backend should be loaded");
+        let backend = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("backend should be loaded after ensure_loaded"))?;
         backend.complete(messages).await
     }
 
@@ -171,7 +173,10 @@ impl LlmProvider for LocalLlmProvider {
             }
 
             let guard = self.inner.read().await;
-            let backend = guard.as_ref().expect("backend should be loaded");
+            let Some(backend) = guard.as_ref() else {
+                yield StreamEvent::Error("backend should be loaded after ensure_loaded".into());
+                return;
+            };
 
             let mut stream = backend.stream(&messages);
             while let Some(event) = futures::StreamExt::next(&mut stream).await {

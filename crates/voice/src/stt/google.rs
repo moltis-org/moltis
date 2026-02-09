@@ -266,6 +266,7 @@ struct GoogleWord {
     end_time: String,
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::tts::AudioFormat, bytes::Bytes};

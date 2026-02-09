@@ -99,12 +99,11 @@ pub async fn poll_for_token_with_headers(
         let body: TokenPollResponse = resp.json().await?;
 
         if let Some(token) = body.access_token {
-            let expires_at = body.expires_in.map(|secs| {
+            let expires_at = body.expires_in.and_then(|secs| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    + secs
+                    .ok()
+                    .map(|d| d.as_secs() + secs)
             });
             return Ok(OAuthTokens {
                 access_token: Secret::new(token),
@@ -125,6 +124,7 @@ pub async fn poll_for_token_with_headers(
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

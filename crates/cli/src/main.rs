@@ -182,7 +182,11 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     // - "WS Invalid message" warnings (Chrome sends CDP events the library doesn't recognize)
     // - "WS Connection error" errors (normal when idle connections are closed)
     // These are expected browser sandbox behavior, not actionable errors.
-    let filter = base_filter.add_directive("chromiumoxide=off".parse().unwrap());
+    let filter = if let Ok(directive) = "chromiumoxide=off".parse() {
+        base_filter.add_directive(directive)
+    } else {
+        base_filter
+    };
 
     let registry = tracing_subscriber::registry().with(filter);
 

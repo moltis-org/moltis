@@ -47,6 +47,7 @@ impl FsCertManager {
         Ok(Self { cert_dir: dir })
     }
 
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     #[cfg(test)]
     pub fn with_dir(dir: PathBuf) -> Self {
         Self { cert_dir: dir }
@@ -262,6 +263,7 @@ async fn redirect_to_https(
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

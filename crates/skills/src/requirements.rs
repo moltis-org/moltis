@@ -171,6 +171,7 @@ pub async fn run_install(spec: &InstallSpec) -> anyhow::Result<InstallResult> {
     })
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use {super::*, crate::types::SkillRequirements};

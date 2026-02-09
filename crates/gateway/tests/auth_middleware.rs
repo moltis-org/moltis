@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Integration tests for the auth middleware protecting API endpoints.
 
 use std::{net::SocketAddr, sync::Arc};

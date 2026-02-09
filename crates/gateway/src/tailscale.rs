@@ -117,8 +117,14 @@ impl CliTailscaleManager {
             .spawn()
             .map_err(|e| anyhow::anyhow!("failed to run tailscale CLI: {e}"))?;
 
-        let mut stdout_handle = child.stdout.take().unwrap();
-        let mut stderr_handle = child.stderr.take().unwrap();
+        let mut stdout_handle = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture tailscale stdout"))?;
+        let mut stderr_handle = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture tailscale stderr"))?;
 
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
@@ -470,6 +476,7 @@ pub fn validate_tailscale_config(
     Ok(())
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

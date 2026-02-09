@@ -83,6 +83,7 @@ pub trait SttProvider: Send + Sync {
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript>;
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

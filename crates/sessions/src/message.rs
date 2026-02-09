@@ -230,6 +230,10 @@ impl PersistedMessage {
     }
 
     /// Convert to JSON value for storage.
+    ///
+    /// This cannot fail because `PersistedMessage` only contains types with
+    /// infallible serialization (strings, numbers, booleans, vecs, options).
+    #[allow(clippy::expect_used)]
     pub fn to_value(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("PersistedMessage serialization cannot fail")
     }
@@ -258,6 +262,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
