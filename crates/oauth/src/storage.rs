@@ -58,11 +58,11 @@ impl TokenStore {
 
         match map.get(provider).cloned() {
             Some(tokens) => {
-                info!(path = %path, provider, "OAuth tokens loaded");
+                debug!(path = %path, provider, "OAuth tokens loaded");
                 Some(tokens)
             },
             None => {
-                warn!(path = %path, provider, "provider not found in token store");
+                debug!(path = %path, provider, "provider not found in token store");
                 None
             },
         }
