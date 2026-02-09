@@ -1357,6 +1357,14 @@ fn default_sandbox_packages() -> Vec<String> {
         "dos2unix",
         "miller",
         "datamash",
+        // GIS / OpenStreetMap / map generation
+        "gdal-bin",
+        "mapnik-utils",
+        "osm2pgsql",
+        "osmium-tool",
+        "osmctools",
+        "python3-mapnik",
+        "libgdal-dev",
     ]
     .iter()
     .map(|s| (*s).to_string())
