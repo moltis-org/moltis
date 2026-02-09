@@ -624,6 +624,13 @@ async fn build_prompt_runtime_context(
         .as_ref()
         .and_then(|r| r.config().timezone.clone());
 
+    let location = state
+        .cached_location
+        .read()
+        .await
+        .as_ref()
+        .map(|loc| loc.to_string());
+
     let host_ctx = PromptHostRuntimeContext {
         host: Some(state.hostname.clone()),
         os: Some(std::env::consts::OS.to_string()),
@@ -635,6 +642,7 @@ async fn build_prompt_runtime_context(
         sudo_non_interactive,
         sudo_status,
         timezone,
+        location,
         ..Default::default()
     };
 
@@ -2021,6 +2029,7 @@ impl ChatService for LiveChatService {
                         &discovered_skills,
                         hook_registry,
                         accept_language.clone(),
+                        conn_id.clone(),
                         Some(&session_store),
                         mcp_disabled,
                         client_seq,
@@ -2298,6 +2307,7 @@ impl ChatService for LiveChatService {
                 &[],
                 hook_registry,
                 None,
+                None, // send_sync: no conn_id
                 Some(&self.session_store),
                 false, // send_sync: MCP tools always enabled for API calls
                 None,  // send_sync: no client seq
@@ -3264,6 +3274,7 @@ async fn run_with_tools(
     skills: &[moltis_skills::types::SkillMetadata],
     hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
     accept_language: Option<String>,
+    conn_id: Option<String>,
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
     client_seq: Option<u64>,
@@ -3600,6 +3611,9 @@ async fn run_with_tools(
     });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
+    }
+    if let Some(cid) = conn_id.as_deref() {
+        tool_context["_conn_id"] = serde_json::json!(cid);
     }
 
     let provider_ref = provider.clone();

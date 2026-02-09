@@ -262,19 +262,21 @@ pub async fn handle_connection(
     let browser_timezone = params.timezone.clone();
 
     // Auto-persist browser timezone to USER.md on first connect (one-time).
-    if let Some(ref tz) = browser_timezone {
-        let existing_user = moltis_config::load_user();
-        if existing_user
-            .as_ref()
-            .and_then(|u| u.timezone.as_ref())
-            .is_none()
-        {
-            let mut user = existing_user.unwrap_or_default();
-            user.timezone = Some(tz.clone());
-            if let Err(e) = moltis_config::save_user(&user) {
-                warn!(conn_id = %conn_id, error = %e, "ws: failed to auto-persist timezone");
-            } else {
-                info!(conn_id = %conn_id, timezone = %tz, "ws: auto-persisted browser timezone to USER.md");
+    if let Some(ref tz_str) = browser_timezone {
+        if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
+            let existing_user = moltis_config::load_user();
+            if existing_user
+                .as_ref()
+                .and_then(|u| u.timezone.as_ref())
+                .is_none()
+            {
+                let mut user = existing_user.unwrap_or_default();
+                user.timezone = Some(moltis_config::Timezone::from(tz));
+                if let Err(e) = moltis_config::save_user(&user) {
+                    warn!(conn_id = %conn_id, error = %e, "ws: failed to auto-persist timezone");
+                } else {
+                    info!(conn_id = %conn_id, timezone = %tz_str, "ws: auto-persisted browser timezone to USER.md");
+                }
             }
         }
     }

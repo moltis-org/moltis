@@ -19,6 +19,8 @@ pub struct PromptHostRuntimeContext {
     pub timezone: Option<String>,
     pub accept_language: Option<String>,
     pub remote_ip: Option<String>,
+    /// `"lat,lon"` (e.g. `"48.8566,2.3522"`) from browser geolocation or `USER.md`.
+    pub location: Option<String>,
 }
 
 /// Runtime context for sandbox execution routing used by the `exec` tool.
@@ -357,6 +359,7 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         host.accept_language.as_deref(),
     );
     push_str(&mut parts, "remote_ip", host.remote_ip.as_deref());
+    push_str(&mut parts, "location", host.location.as_deref());
 
     if parts.is_empty() {
         None
@@ -545,6 +548,7 @@ mod tests {
         let user = UserProfile {
             name: Some("Alice".into()),
             timezone: None,
+            location: None,
         };
         let prompt = build_system_prompt_with_session_runtime(
             &tools,
@@ -650,6 +654,7 @@ mod tests {
                 timezone: Some("Europe/Paris".into()),
                 accept_language: Some("en-US,fr;q=0.9".into()),
                 remote_ip: Some("203.0.113.42".into()),
+                location: None,
             },
             sandbox: Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: true,
@@ -689,6 +694,62 @@ mod tests {
         assert!(prompt.contains("backend=docker"));
         assert!(prompt.contains("network=disabled"));
         assert!(prompt.contains("Execution routing:"));
+    }
+
+    #[test]
+    fn test_runtime_context_includes_location_when_set() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                location: Some("48.8566,2.3522".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(prompt.contains("location=48.8566,2.3522"));
+    }
+
+    #[test]
+    fn test_runtime_context_omits_location_when_none() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                location: None,
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(!prompt.contains("location="));
     }
 
     #[test]

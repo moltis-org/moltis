@@ -15,6 +15,7 @@ use {
         routing::get,
     },
     tower_http::{
+        compression::CompressionLayer,
         cors::{Any, CorsLayer},
         trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
     },
@@ -73,6 +74,125 @@ use crate::tls::CertManager;
 pub struct TailscaleOpts {
     pub mode: String,
     pub reset_on_exit: bool,
+}
+
+// ── Location requester ───────────────────────────────────────────────────────
+
+/// Gateway implementation of [`moltis_tools::location::LocationRequester`].
+///
+/// Uses the `PendingInvoke` + oneshot pattern to request the user's browser
+/// geolocation and waits for `location.result` RPC to resolve it.
+struct GatewayLocationRequester {
+    state: Arc<GatewayState>,
+}
+
+#[async_trait::async_trait]
+impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
+    async fn request_location(
+        &self,
+        conn_id: &str,
+    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+        use moltis_tools::location::{LocationError, LocationResult};
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+
+        // Send a location.request event to the browser client.
+        let event = moltis_protocol::EventFrame::new(
+            "location.request",
+            serde_json::json!({ "requestId": request_id }),
+            self.state.next_seq(),
+        );
+        let event_json = serde_json::to_string(&event)?;
+
+        {
+            let clients = self.state.clients.read().await;
+            let client = clients.get(conn_id).ok_or_else(|| {
+                anyhow::anyhow!("no client connection for conn_id {conn_id}")
+            })?;
+            if !client.send(&event_json) {
+                anyhow::bail!("failed to send location request to client {conn_id}");
+            }
+        }
+
+        // Set up a oneshot for the result with timeout.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut invokes = self.state.pending_invokes.write().await;
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
+        }
+
+        // Wait up to 30 seconds for the user to grant/deny permission.
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) => {
+                // Sender dropped — clean up.
+                self.state
+                    .pending_invokes
+                    .write()
+                    .await
+                    .remove(&request_id);
+                return Ok(LocationResult {
+                    location: None,
+                    error: Some(LocationError::Timeout),
+                });
+            },
+            Err(_) => {
+                // Timeout — clean up.
+                self.state
+                    .pending_invokes
+                    .write()
+                    .await
+                    .remove(&request_id);
+                return Ok(LocationResult {
+                    location: None,
+                    error: Some(LocationError::Timeout),
+                });
+            },
+        };
+
+        // Parse the result from the browser.
+        if let Some(loc) = result.get("location") {
+            let lat = loc.get("latitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let lon = loc.get("longitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let accuracy = loc.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            Ok(LocationResult {
+                location: Some(moltis_tools::location::BrowserLocation {
+                    latitude: lat,
+                    longitude: lon,
+                    accuracy,
+                }),
+                error: None,
+            })
+        } else if let Some(err) = result.get("error") {
+            let code = err.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
+            let error = match code {
+                1 => LocationError::PermissionDenied,
+                2 => LocationError::PositionUnavailable,
+                3 => LocationError::Timeout,
+                _ => LocationError::NotSupported,
+            };
+            Ok(LocationResult {
+                location: None,
+                error: Some(error),
+            })
+        } else {
+            Ok(LocationResult {
+                location: None,
+                error: Some(LocationError::PositionUnavailable),
+            })
+        }
+    }
+
+    fn cached_location(&self) -> Option<moltis_config::GeoLocation> {
+        self.state.cached_location.try_read().ok()?.clone()
+    }
 }
 
 fn should_prebuild_sandbox_image(
@@ -236,7 +356,8 @@ fn build_protected_api_routes() -> Router<AppState> {
         .route(
             "/api/sessions/{session_key}/media/{filename}",
             get(api_session_media_handler),
-        );
+        )
+        .route("/api/logs/download", get(api_logs_download_handler));
 
     // Add metrics API routes (protected).
     #[cfg(feature = "metrics")]
@@ -366,7 +487,10 @@ pub fn build_gateway_app(
             .fallback(spa_fallback)
     };
 
-    let router = apply_http_trace_layer(router.layer(cors), http_request_logs);
+    let router = apply_http_trace_layer(
+        router.layer(CompressionLayer::new()).layer(cors),
+        http_request_logs,
+    );
 
     router.with_state(app_state)
 }
@@ -429,7 +553,10 @@ pub fn build_gateway_app(
             .fallback(spa_fallback)
     };
 
-    let router = apply_http_trace_layer(router.layer(cors), http_request_logs);
+    let router = apply_http_trace_layer(
+        router.layer(CompressionLayer::new()).layer(cors),
+        http_request_logs,
+    );
 
     router.with_state(app_state)
 }
@@ -988,7 +1115,7 @@ pub async fn start_gateway(
 
     // Build sandbox router from config (shared across sessions).
     let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
-    sandbox_config.timezone = config.user.timezone.clone();
+    sandbox_config.timezone = config.user.timezone.as_ref().map(|tz| tz.name().to_string());
     let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(sandbox_config));
 
     // Spawn background image pre-build. This bakes configured packages into a
@@ -1860,6 +1987,14 @@ pub async fn start_gateway(
                 Arc::clone(&session_metadata),
             ),
         ));
+
+        // Register location tool for browser geolocation requests.
+        let location_requester = Arc::new(GatewayLocationRequester {
+            state: Arc::clone(&state),
+        });
+        tool_registry.register(Box::new(moltis_tools::location::LocationTool::new(
+            location_requester,
+        )));
 
         // Register spawn_agent tool for sub-agent support.
         // The tool gets a snapshot of the current registry (without itself)
@@ -3415,6 +3550,30 @@ async fn api_session_media_handler(
         },
         Err(_) => (StatusCode::NOT_FOUND, "media file not found").into_response(),
     }
+}
+
+#[cfg(feature = "web-ui")]
+async fn api_logs_download_handler(State(state): State<AppState>) -> impl IntoResponse {
+    use axum::http::header;
+    use tokio_util::io::ReaderStream;
+
+    let Some(path) = state.gateway.services.logs.log_file_path() else {
+        return (StatusCode::NOT_FOUND, "log file not available").into_response();
+    };
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::NOT_FOUND, "log file not found").into_response(),
+    };
+    let stream = ReaderStream::new(tokio::io::BufReader::new(file));
+    let body = axum::body::Body::from_stream(stream);
+    let headers = [
+        (header::CONTENT_TYPE, "application/x-ndjson"),
+        (
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"moltis-logs.jsonl\"",
+        ),
+    ];
+    (headers, body).into_response()
 }
 
 #[cfg(feature = "web-ui")]

@@ -126,7 +126,7 @@ image          = { default-features = false, features = ["jpeg", "png", "webp"],
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Filesystem / archiving
 chrono                = "0.4"
-chrono-tz             = "0.10"
+chrono-tz             = { version = "0.10", features = ["serde"] }
 cron                  = "0.13"
 dirs-next             = "2"
 flate2                = "1"

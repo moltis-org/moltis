@@ -17,12 +17,84 @@ pub struct AgentIdentity {
     pub vibe: Option<String>,
 }
 
+/// IANA timezone (e.g. `"Europe/Paris"`).
+///
+/// Wraps [`chrono_tz::Tz`] and (de)serialises as a plain string so it stays
+/// compatible with the YAML frontmatter in `USER.md`.
+#[derive(Debug, Clone)]
+pub struct Timezone(pub chrono_tz::Tz);
+
+impl Timezone {
+    /// The IANA name, e.g. `"Europe/Paris"`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    /// The inner [`chrono_tz::Tz`] value.
+    #[must_use]
+    pub fn tz(&self) -> chrono_tz::Tz {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Timezone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0.name())
+    }
+}
+
+impl std::str::FromStr for Timezone {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<chrono_tz::Tz>()
+            .map(Self)
+            .map_err(|_| format!("unknown IANA timezone: {s}"))
+    }
+}
+
+impl From<chrono_tz::Tz> for Timezone {
+    fn from(tz: chrono_tz::Tz) -> Self {
+        Self(tz)
+    }
+}
+
+impl Serialize for Timezone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Timezone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<chrono_tz::Tz>()
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Geographic coordinates (WGS 84).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoLocation {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl std::fmt::Display for GeoLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.latitude, self.longitude)
+    }
+}
+
 /// User profile collected during onboarding.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserProfile {
     pub name: Option<String>,
-    pub timezone: Option<String>,
+    pub timezone: Option<Timezone>,
+    pub location: Option<GeoLocation>,
 }
 
 /// Resolved identity combining agent identity and user profile.

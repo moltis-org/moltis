@@ -12,6 +12,7 @@ pub mod browser;
 pub mod cron_tool;
 pub mod exec;
 pub mod image_cache;
+pub mod location;
 pub mod policy;
 pub mod process;
 pub mod sandbox;

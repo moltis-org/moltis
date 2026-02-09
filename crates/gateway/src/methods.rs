@@ -174,6 +174,7 @@ const WRITE_METHODS: &[&str] = &[
     "hooks.disable",
     "hooks.save",
     "hooks.reload",
+    "location.result",
 ];
 
 const APPROVAL_METHODS: &[&str] = &["exec.approval.request", "exec.approval.resolve"];
@@ -711,6 +712,60 @@ impl MethodRegistry {
                         .unwrap_or(serde_json::json!({}));
                     broadcast(&ctx.state, event, payload, BroadcastOpts::default()).await;
                     Ok(serde_json::json!({}))
+                })
+            }),
+        );
+
+        // location.result: browser returns the result of a geolocation request
+        self.register(
+            "location.result",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let request_id = ctx
+                        .params
+                        .get("requestId")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            ErrorShape::new(error_codes::INVALID_REQUEST, "missing requestId")
+                        })?;
+
+                    // Build the result value to send through the pending invoke channel.
+                    let result = if let Some(loc) = ctx.params.get("location") {
+                        // Success: cache the location and persist to USER.md.
+                        if let (Some(lat), Some(lon)) = (
+                            loc.get("latitude").and_then(|v| v.as_f64()),
+                            loc.get("longitude").and_then(|v| v.as_f64()),
+                        ) {
+                            let geo = moltis_config::GeoLocation {
+                                latitude: lat,
+                                longitude: lon,
+                            };
+                            *ctx.state.cached_location.write().await = Some(geo.clone());
+
+                            // Persist to USER.md (best-effort).
+                            let mut user = moltis_config::load_user().unwrap_or_default();
+                            user.location = Some(geo);
+                            if let Err(e) = moltis_config::save_user(&user) {
+                                tracing::warn!(error = %e, "failed to persist location to USER.md");
+                            }
+                        }
+                        serde_json::json!({ "location": ctx.params.get("location") })
+                    } else {
+                        // Error (permission denied, timeout, etc.)
+                        serde_json::json!({ "error": ctx.params.get("error") })
+                    };
+
+                    let pending =
+                        ctx.state.pending_invokes.write().await.remove(request_id);
+                    if let Some(invoke) = pending {
+                        let _ = invoke.sender.send(result);
+                        Ok(serde_json::json!({}))
+                    } else {
+                        Err(ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "no pending location request for this id",
+                        ))
+                    }
                 })
             }),
         );

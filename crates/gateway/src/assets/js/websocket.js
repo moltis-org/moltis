@@ -633,6 +633,41 @@ function handleModelsUpdated(payload) {
 	}, 150);
 }
 
+// ── Location request handler ─────────────────────────────────
+
+function handleLocationRequest(payload) {
+	var requestId = payload.requestId;
+	if (!requestId) return;
+
+	if (!navigator.geolocation) {
+		sendRpc("location.result", {
+			requestId,
+			error: { code: 0, message: "Geolocation not supported" },
+		});
+		return;
+	}
+
+	navigator.geolocation.getCurrentPosition(
+		(pos) => {
+			sendRpc("location.result", {
+				requestId,
+				location: {
+					latitude: pos.coords.latitude,
+					longitude: pos.coords.longitude,
+					accuracy: pos.coords.accuracy,
+				},
+			});
+		},
+		(err) => {
+			sendRpc("location.result", {
+				requestId,
+				error: { code: err.code, message: err.message },
+			});
+		},
+		{ enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 },
+	);
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	"exec.approval.requested": handleApprovalEvent,
@@ -643,6 +678,7 @@ var eventHandlers = {
 	"browser.image.pull": handleBrowserImagePull,
 	"local-llm.download": handleLocalLlmDownload,
 	"models.updated": handleModelsUpdated,
+	"location.request": handleLocationRequest,
 };
 
 function dispatchFrame(frame) {

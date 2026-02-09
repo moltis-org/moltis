@@ -301,6 +301,9 @@ fn merge_user(dst: &mut UserProfile, src: &UserProfile) {
     if src.timezone.is_some() {
         dst.timezone = src.timezone.clone();
     }
+    if src.location.is_some() {
+        dst.location = src.location.clone();
+    }
 }
 
 fn step_response(ws: &WizardState) -> Value {

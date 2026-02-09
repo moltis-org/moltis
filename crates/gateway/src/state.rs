@@ -324,6 +324,8 @@ pub struct GatewayState {
     /// LLM provider registry for lightweight generation (e.g. TTS phrases).
     pub llm_providers:
         RwLock<Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>>,
+    /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
+    pub cached_location: RwLock<Option<moltis_config::GeoLocation>>,
 }
 
 impl GatewayState {
@@ -447,6 +449,9 @@ impl GatewayState {
             push_service: RwLock::new(None),
             tts_phrase_counter: AtomicUsize::new(0),
             llm_providers: RwLock::new(None),
+            cached_location: RwLock::new(
+                moltis_config::load_user().and_then(|u| u.location),
+            ),
         })
     }
 
