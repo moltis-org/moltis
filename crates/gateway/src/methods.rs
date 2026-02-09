@@ -369,11 +369,12 @@ impl MethodRegistry {
             "status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let nodes = ctx.state.nodes.read().await;
+                    let inner = ctx.state.inner.read().await;
+                    let nodes = &inner.nodes;
                     Ok(serde_json::json!({
                         "version": ctx.state.version,
                         "hostname": ctx.state.hostname,
-                        "connections": ctx.state.client_count().await,
+                        "connections": inner.clients.len(),
                         "nodes": nodes.count(),
                         "hasMobileNode": nodes.has_mobile_node(),
                     }))
@@ -386,10 +387,9 @@ impl MethodRegistry {
             "system-presence",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let clients = ctx.state.clients.read().await;
-                    let nodes = ctx.state.nodes.read().await;
+                    let inner = ctx.state.inner.read().await;
 
-                    let client_list: Vec<_> = clients
+                    let client_list: Vec<_> = inner.clients
                         .values()
                         .map(|c| {
                             serde_json::json!({
@@ -403,7 +403,7 @@ impl MethodRegistry {
                         })
                         .collect();
 
-                    let node_list: Vec<_> = nodes
+                    let node_list: Vec<_> = inner.nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -453,8 +453,8 @@ impl MethodRegistry {
             "last-heartbeat",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let clients = ctx.state.clients.read().await;
-                    if let Some(client) = clients.get(&ctx.client_conn_id) {
+                    let inner = ctx.state.inner.read().await;
+                    if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
                         Ok(serde_json::json!({
                             "lastActivitySecs": client.last_activity.elapsed().as_secs(),
                         }))
@@ -471,7 +471,7 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     if let Some(client) =
-                        ctx.state.clients.write().await.get_mut(&ctx.client_conn_id)
+                        ctx.state.inner.write().await.clients.get_mut(&ctx.client_conn_id)
                     {
                         client.touch();
                     }
@@ -489,8 +489,8 @@ impl MethodRegistry {
             "node.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let nodes = ctx.state.nodes.read().await;
-                    let list: Vec<_> = nodes
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner.nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -522,8 +522,8 @@ impl MethodRegistry {
                         .ok_or_else(|| {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing nodeId")
                         })?;
-                    let nodes = ctx.state.nodes.read().await;
-                    let node = nodes.get(node_id).ok_or_else(|| {
+                    let inner = ctx.state.inner.read().await;
+                    let node = inner.nodes.get(node_id).ok_or_else(|| {
                         ErrorShape::new(error_codes::UNAVAILABLE, "node not found")
                     })?;
                     Ok(serde_json::json!({
@@ -561,8 +561,8 @@ impl MethodRegistry {
                         .ok_or_else(|| {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing displayName")
                         })?;
-                    let mut nodes = ctx.state.nodes.write().await;
-                    nodes
+                    let mut inner = ctx.state.inner.write().await;
+                    inner.nodes
                         .rename(node_id, name)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
                     Ok(serde_json::json!({}))
@@ -600,8 +600,8 @@ impl MethodRegistry {
                     // Find the node's conn_id and send the invoke request.
                     let invoke_id = uuid::Uuid::new_v4().to_string();
                     let conn_id = {
-                        let nodes = ctx.state.nodes.read().await;
-                        let node = nodes.get(&node_id).ok_or_else(|| {
+                        let inner = ctx.state.inner.read().await;
+                        let node = inner.nodes.get(&node_id).ok_or_else(|| {
                             ErrorShape::new(error_codes::UNAVAILABLE, "node not connected")
                         })?;
                         node.conn_id.clone()
@@ -621,23 +621,24 @@ impl MethodRegistry {
                         ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string())
                     })?;
 
-                    let clients = ctx.state.clients.read().await;
-                    let node_client = clients.get(&conn_id).ok_or_else(|| {
-                        ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
-                    })?;
-                    if !node_client.send(&event_json) {
-                        return Err(ErrorShape::new(
-                            error_codes::UNAVAILABLE,
-                            "node send failed",
-                        ));
+                    {
+                        let inner = ctx.state.inner.read().await;
+                        let node_client = inner.clients.get(&conn_id).ok_or_else(|| {
+                            ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
+                        })?;
+                        if !node_client.send(&event_json) {
+                            return Err(ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                "node send failed",
+                            ));
+                        }
                     }
-                    drop(clients);
 
                     // Set up a oneshot for the result with a timeout.
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     {
-                        let mut invokes = ctx.state.pending_invokes.write().await;
-                        invokes.insert(invoke_id.clone(), crate::state::PendingInvoke {
+                        let mut inner = ctx.state.inner.write().await;
+                        inner.pending_invokes.insert(invoke_id.clone(), crate::state::PendingInvoke {
                             request_id: ctx.request_id.clone(),
                             sender: tx,
                             created_at: std::time::Instant::now(),
@@ -652,7 +653,7 @@ impl MethodRegistry {
                             "invoke cancelled",
                         )),
                         Err(_) => {
-                            ctx.state.pending_invokes.write().await.remove(&invoke_id);
+                            ctx.state.inner.write().await.pending_invokes.remove(&invoke_id);
                             Err(ErrorShape::new(
                                 error_codes::AGENT_TIMEOUT,
                                 "node invoke timeout",
@@ -681,7 +682,7 @@ impl MethodRegistry {
                         .cloned()
                         .unwrap_or(serde_json::json!(null));
 
-                    let pending = ctx.state.pending_invokes.write().await.remove(invoke_id);
+                    let pending = ctx.state.inner.write().await.pending_invokes.remove(invoke_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -740,7 +741,7 @@ impl MethodRegistry {
                                 latitude: lat,
                                 longitude: lon,
                             };
-                            *ctx.state.cached_location.write().await = Some(geo.clone());
+                            ctx.state.inner.write().await.cached_location = Some(geo.clone());
 
                             // Persist to USER.md (best-effort).
                             let mut user = moltis_config::load_user().unwrap_or_default();
@@ -755,7 +756,7 @@ impl MethodRegistry {
                         serde_json::json!({ "error": ctx.params.get("error") })
                     };
 
-                    let pending = ctx.state.pending_invokes.write().await.remove(request_id);
+                    let pending = ctx.state.inner.write().await.pending_invokes.remove(request_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -853,7 +854,7 @@ impl MethodRegistry {
                         .unwrap_or("unknown");
                     let public_key = ctx.params.get("publicKey").and_then(|v| v.as_str());
 
-                    let req = ctx.state.pairing.write().await.request_pair(
+                    let req = ctx.state.inner.write().await.pairing.request_pair(
                         device_id,
                         display_name,
                         platform,
@@ -887,8 +888,8 @@ impl MethodRegistry {
             "node.pair.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let pairing = ctx.state.pairing.read().await;
-                    let list: Vec<_> = pairing
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner.pairing
                         .list_pending()
                         .iter()
                         .map(|r| {
@@ -919,9 +920,10 @@ impl MethodRegistry {
                             })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .approve(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -956,9 +958,10 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing id")
                             })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .reject(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -988,8 +991,8 @@ impl MethodRegistry {
             "device.pair.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let pairing = ctx.state.pairing.read().await;
-                    let list: Vec<_> = pairing
+                    let inner = ctx.state.inner.read().await;
+                    let list: Vec<_> = inner.pairing
                         .list_devices()
                         .iter()
                         .map(|d| {
@@ -1019,9 +1022,10 @@ impl MethodRegistry {
                             })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .approve(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -1053,9 +1057,10 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing id")
                             })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .reject(pair_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
 
@@ -1088,9 +1093,10 @@ impl MethodRegistry {
                         })?;
                     let token = ctx
                         .state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .rotate_token(device_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
                     Ok(serde_json::json!({ "deviceToken": token.token, "scopes": token.scopes }))
@@ -1111,9 +1117,10 @@ impl MethodRegistry {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing deviceId")
                         })?;
                     ctx.state
-                        .pairing
+                        .inner
                         .write()
                         .await
+                        .pairing
                         .revoke_token(device_id)
                         .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e))?;
                     Ok(serde_json::json!({}))
@@ -1641,7 +1648,7 @@ impl MethodRegistry {
             "heartbeat.status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let config = ctx.state.heartbeat_config.read().await.clone();
+                    let config = ctx.state.inner.read().await.heartbeat_config.clone();
                     let heartbeat_path = moltis_config::heartbeat_path();
                     let heartbeat_file_exists = heartbeat_path.exists();
                     let heartbeat_md = moltis_config::load_heartbeat_md();
@@ -1684,7 +1691,7 @@ impl MethodRegistry {
                                 format!("invalid heartbeat config: {e}"),
                             )
                         })?;
-                    *ctx.state.heartbeat_config.write().await = patch.clone();
+                    ctx.state.inner.write().await.heartbeat_config = patch.clone();
 
                     // Persist to moltis.toml so the config survives restarts.
                     if let Err(e) = moltis_config::update_config(|cfg| {
@@ -1851,8 +1858,8 @@ impl MethodRegistry {
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                     // Forward client Accept-Language, public remote IP, and timezone.
                     {
-                        let clients = ctx.state.clients.read().await;
-                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
                             if let Some(ref lang) = client.accept_language {
                                 params["_accept_language"] = serde_json::json!(lang);
                             }
@@ -1982,8 +1989,8 @@ impl MethodRegistry {
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                     // Forward client Accept-Language, public remote IP, and timezone.
                     {
-                        let clients = ctx.state.clients.read().await;
-                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
                             if let Some(ref lang) = client.accept_language {
                                 params["_accept_language"] = serde_json::json!(lang);
                             }
@@ -2013,8 +2020,8 @@ impl MethodRegistry {
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                     // Forward client Accept-Language, public remote IP, and timezone.
                     {
-                        let clients = ctx.state.clients.read().await;
-                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                        let inner = ctx.state.inner.read().await;
+                        if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
                             if let Some(ref lang) = client.accept_language {
                                 params["_accept_language"] = serde_json::json!(lang);
                             }
@@ -2049,28 +2056,23 @@ impl MethodRegistry {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
                         })?;
 
-                    // Store the active session for this connection.
-                    ctx.state
-                        .active_sessions
-                        .write()
-                        .await
-                        .insert(ctx.client_conn_id.clone(), key.to_string());
-
-                    // Store the active project for this connection, if provided.
-                    if let Some(project_id) = ctx.params.get("project_id").and_then(|v| v.as_str())
+                    // Store the active session (and project if provided) for this connection.
                     {
-                        if project_id.is_empty() {
-                            ctx.state
-                                .active_projects
-                                .write()
-                                .await
-                                .remove(&ctx.client_conn_id);
-                        } else {
-                            ctx.state
-                                .active_projects
-                                .write()
-                                .await
-                                .insert(ctx.client_conn_id.clone(), project_id.to_string());
+                        let mut inner = ctx.state.inner.write().await;
+                        inner
+                            .active_sessions
+                            .insert(ctx.client_conn_id.clone(), key.to_string());
+
+                        if let Some(project_id) =
+                            ctx.params.get("project_id").and_then(|v| v.as_str())
+                        {
+                            if project_id.is_empty() {
+                                inner.active_projects.remove(&ctx.client_conn_id);
+                            } else {
+                                inner
+                                    .active_projects
+                                    .insert(ctx.client_conn_id.clone(), project_id.to_string());
+                            }
                         }
                     }
 
@@ -2270,7 +2272,7 @@ impl MethodRegistry {
 
                         // Try LLM generation with a 3-second timeout.
                         // Clone the Arc out so we don't hold the outer RwLock across awaits.
-                        let providers = ctx.state.llm_providers.read().await.clone();
+                        let providers = ctx.state.inner.read().await.llm_providers.clone();
                         if let Some(providers) = providers {
                             let provider = providers.read().await.first();
                             if let Some(provider) = provider {
@@ -3518,9 +3520,10 @@ impl MethodRegistry {
                         };
 
                         ctx.state
-                            .tts_session_overrides
+                            .inner
                             .write()
                             .await
+                            .tts_session_overrides
                             .insert(session_key.clone(), override_cfg.clone());
 
                         Ok(serde_json::to_value(override_cfg).unwrap_or_else(
@@ -3544,9 +3547,10 @@ impl MethodRegistry {
                             .to_string();
 
                         ctx.state
-                            .tts_session_overrides
+                            .inner
                             .write()
                             .await
+                            .tts_session_overrides
                             .remove(&session_key);
                         Ok(serde_json::json!({ "ok": true, "sessionKey": session_key }))
                     })
@@ -3592,9 +3596,10 @@ impl MethodRegistry {
                         };
 
                         ctx.state
-                            .tts_channel_overrides
+                            .inner
                             .write()
                             .await
+                            .tts_channel_overrides
                             .insert(key.clone(), override_cfg.clone());
 
                         Ok(serde_json::json!({ "ok": true, "key": key, "override": override_cfg }))
@@ -3621,7 +3626,7 @@ impl MethodRegistry {
                             })?;
 
                         let key = format!("{}:{}", channel_type, account_id);
-                        ctx.state.tts_channel_overrides.write().await.remove(&key);
+                        ctx.state.inner.write().await.tts_channel_overrides.remove(&key);
                         Ok(serde_json::json!({ "ok": true, "key": key }))
                     })
                 }),
@@ -4030,11 +4035,11 @@ impl MethodRegistry {
             "hooks.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let hooks = ctx.state.discovered_hooks.read().await;
-                    let mut list = hooks.clone();
+                    let inner = ctx.state.inner.read().await;
+                    let mut list = inner.discovered_hooks.clone();
 
                     // Enrich with live stats from the registry.
-                    if let Some(ref registry) = *ctx.state.hook_registry.read().await {
+                    if let Some(ref registry) = inner.hook_registry {
                         for hook in &mut list {
                             if let Some(stats) = registry.handler_stats(&hook.name) {
                                 let calls =
@@ -4071,7 +4076,7 @@ impl MethodRegistry {
                                 ErrorShape::new(error_codes::INVALID_REQUEST, "missing name")
                             })?;
 
-                    ctx.state.disabled_hooks.write().await.remove(name);
+                    ctx.state.inner.write().await.disabled_hooks.remove(name);
 
                     // Persist disabled hooks list.
                     persist_disabled_hooks(&ctx.state).await;
@@ -4098,9 +4103,10 @@ impl MethodRegistry {
                             })?;
 
                     ctx.state
-                        .disabled_hooks
+                        .inner
                         .write()
                         .await
+                        .disabled_hooks
                         .insert(name.to_string());
 
                     // Persist disabled hooks list.
@@ -4136,8 +4142,8 @@ impl MethodRegistry {
 
                     // Find the hook's source path.
                     let source_path = {
-                        let hooks = ctx.state.discovered_hooks.read().await;
-                        hooks
+                        let inner = ctx.state.inner.read().await;
+                        inner.discovered_hooks
                             .iter()
                             .find(|h| h.name == name)
                             .map(|h| h.source_path.clone())
@@ -5263,13 +5269,16 @@ fn toggle_voice_provider(
 
 /// Re-run hook discovery, rebuild the registry, and broadcast the update.
 async fn reload_hooks(state: &Arc<GatewayState>) {
-    let disabled = state.disabled_hooks.read().await.clone();
+    let disabled = state.inner.read().await.disabled_hooks.clone();
     let session_store = state.services.session_store.as_ref();
     let (new_registry, new_info) =
         crate::server::discover_and_build_hooks(&disabled, session_store).await;
 
-    *state.hook_registry.write().await = new_registry;
-    *state.discovered_hooks.write().await = new_info.clone();
+    {
+        let mut inner = state.inner.write().await;
+        inner.hook_registry = new_registry;
+        inner.discovered_hooks = new_info.clone();
+    }
 
     // Broadcast hooks.status event so connected UIs auto-refresh.
     broadcast(
@@ -5283,9 +5292,9 @@ async fn reload_hooks(state: &Arc<GatewayState>) {
 
 /// Persist the disabled hooks set to `data_dir/disabled_hooks.json`.
 async fn persist_disabled_hooks(state: &Arc<GatewayState>) {
-    let disabled = state.disabled_hooks.read().await;
+    let disabled = state.inner.read().await.disabled_hooks.clone();
     let path = moltis_config::data_dir().join("disabled_hooks.json");
-    let json = serde_json::to_string_pretty(&*disabled).unwrap_or_default();
+    let json = serde_json::to_string_pretty(&disabled).unwrap_or_default();
     if let Err(e) = std::fs::write(&path, json) {
         warn!("failed to persist disabled hooks: {e}");
     }

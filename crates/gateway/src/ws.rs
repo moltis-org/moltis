@@ -326,7 +326,7 @@ pub async fn handle_connection(
             remote_ip: Some(conn_remote_ip.clone()),
             connected_at: now,
         };
-        state.nodes.write().await.register(node);
+        state.inner.write().await.nodes.register(node);
         info!(conn_id = %conn_id, node_id = %params.client.id, "node registered");
 
         // Broadcast presence change.
@@ -383,7 +383,7 @@ pub async fn handle_connection(
         };
 
         // Touch activity timestamp.
-        if let Some(client) = state.clients.write().await.get_mut(&conn_id) {
+        if let Some(client) = state.inner.write().await.clients.get_mut(&conn_id) {
             client.touch();
         }
 
@@ -428,7 +428,7 @@ pub async fn handle_connection(
     // ── Cleanup ──────────────────────────────────────────────────────────
 
     // Unregister node if applicable.
-    let removed_node = state.nodes.write().await.unregister_by_conn(&conn_id);
+    let removed_node = state.inner.write().await.nodes.unregister_by_conn(&conn_id);
     if let Some(node) = &removed_node {
         info!(conn_id = %conn_id, node_id = %node.node_id, "node unregistered");
         broadcast(

@@ -109,7 +109,8 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let event_json = serde_json::to_string(&event)?;
 
         {
-            let clients = self.state.clients.read().await;
+            let inner = self.state.inner.read().await;
+            let clients = &inner.clients;
             let client = clients
                 .get(conn_id)
                 .ok_or_else(|| anyhow::anyhow!("no client connection for conn_id {conn_id}"))?;
@@ -121,7 +122,8 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         // Set up a oneshot for the result with timeout.
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
-            let mut invokes = self.state.pending_invokes.write().await;
+            let mut inner_w = self.state.inner.write().await;
+            let invokes = &mut inner_w.pending_invokes;
             invokes.insert(request_id.clone(), crate::state::PendingInvoke {
                 request_id: request_id.clone(),
                 sender: tx,
@@ -134,7 +136,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             Ok(Ok(value)) => value,
             Ok(Err(_)) => {
                 // Sender dropped — clean up.
-                self.state.pending_invokes.write().await.remove(&request_id);
+                self.state.inner.write().await.pending_invokes.remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -142,7 +144,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             },
             Err(_) => {
                 // Timeout — clean up.
-                self.state.pending_invokes.write().await.remove(&request_id);
+                self.state.inner.write().await.pending_invokes.remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -184,7 +186,7 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
     }
 
     fn cached_location(&self) -> Option<moltis_config::GeoLocation> {
-        self.state.cached_location.try_read().ok()?.clone()
+        self.state.inner.try_read().ok()?.cached_location.clone()
     }
 }
 
@@ -528,6 +530,7 @@ pub fn build_gateway_app(
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
     http_request_logs: bool,
+    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -539,7 +542,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: state.webauthn_state.clone(),
+            webauthn_state: webauthn_state.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -579,6 +582,7 @@ pub fn build_gateway_app(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     http_request_logs: bool,
+    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -599,7 +603,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: state.webauthn_state.clone(),
+            webauthn_state: webauthn_state.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -1053,7 +1057,7 @@ pub async fn start_gateway(
                 moltis_cron::types::SessionTarget::Named(name) if name == "heartbeat"
             );
             if is_heartbeat_turn {
-                let hb_cfg = state.heartbeat_config.read().await.clone();
+                let hb_cfg = state.inner.read().await.heartbeat_config.clone();
                 let has_prompt_override = hb_cfg
                     .prompt
                     .as_deref()
@@ -1898,10 +1902,8 @@ pub async fn start_gateway(
     let state = GatewayState::with_options(
         resolved_auth,
         services,
-        Arc::clone(&approval_manager),
         Some(Arc::clone(&sandbox_router)),
         Some(Arc::clone(&credential_store)),
-        webauthn_state,
         is_localhost,
         tls_active_for_state,
         hook_registry.clone(),
@@ -1916,8 +1918,11 @@ pub async fn start_gateway(
     );
 
     // Store discovered hook info and disabled set in state for the web UI.
-    *state.discovered_hooks.write().await = discovered_hooks_info;
-    *state.disabled_hooks.write().await = persisted_disabled;
+    {
+        let mut inner = state.inner.write().await;
+        inner.discovered_hooks = discovered_hooks_info;
+        inner.disabled_hooks = persisted_disabled;
+    }
 
     // Note: LLM provider registry is available through the ChatService,
     // not stored separately in GatewayState.
@@ -1926,7 +1931,7 @@ pub async fn start_gateway(
     let setup_code_display =
         if !credential_store.is_setup_complete() && !credential_store.is_auth_disabled() {
             let code = crate::auth_routes::generate_setup_code();
-            *state.setup_code.write().await = Some(secrecy::Secret::new(code.clone()));
+            state.inner.write().await.setup_code = Some(secrecy::Secret::new(code.clone()));
             Some(code)
         } else {
             None
@@ -1985,7 +1990,7 @@ pub async fn start_gateway(
     }
 
     // Store heartbeat config on state for gon data and RPC methods.
-    *state.heartbeat_config.write().await = config.heartbeat.clone();
+    state.inner.write().await.heartbeat_config = config.heartbeat.clone();
 
     // Wire live chat service (needs state reference, so done after state creation).
     if !registry.read().await.is_empty() {
@@ -2133,7 +2138,7 @@ pub async fn start_gateway(
         .with_tools(Arc::clone(&shared_tool_registry))
         .with_failover(config.failover.clone());
 
-        if let Some(ref hooks) = *state.hook_registry.read().await {
+        if let Some(ref hooks) = state.inner.read().await.hook_registry {
             chat_service = chat_service.with_hooks_arc(Arc::clone(hooks));
         }
 
@@ -2211,6 +2216,7 @@ pub async fn start_gateway(
         Arc::clone(&methods),
         push_service,
         config.server.http_request_logs,
+        webauthn_state.clone(),
     );
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     #[cfg(not(feature = "push-notifications"))]
@@ -2218,6 +2224,7 @@ pub async fn start_gateway(
         Arc::clone(&state),
         Arc::clone(&methods),
         config.server.http_request_logs,
+        webauthn_state.clone(),
     );
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
@@ -2430,7 +2437,7 @@ pub async fn start_gateway(
     info!("└{}┘", "─".repeat(width));
 
     // Dispatch GatewayStart hook.
-    if let Some(ref hooks) = *state.hook_registry.read().await {
+    if let Some(ref hooks) = state.inner.read().await.hook_registry {
         let payload = moltis_common::hooks::HookPayload::GatewayStart {
             address: addr.to_string(),
         };
@@ -2524,7 +2531,8 @@ pub async fn start_gateway(
             {
                 Ok(next) => {
                     let changed = {
-                        let mut update = update_state.update.write().await;
+                        let mut inner = update_state.inner.write().await;
+                        let update = &mut inner.update;
                         if *update == next {
                             false
                         } else {
@@ -2563,14 +2571,13 @@ pub async fn start_gateway(
                     - (7 * 24 * 60 * 60 * 1000);
                 match store.load_history(seven_days_ago, 60480).await {
                     Ok(points) => {
-                        let mut history = metrics_state.metrics_history.write().await;
+                        let mut inner = metrics_state.inner.write().await;
                         for point in points {
-                            history.push(point);
+                            inner.metrics_history.push(point);
                         }
-                        info!(
-                            "Loaded {} historical metrics points from store",
-                            history.iter().count()
-                        );
+                        let loaded = inner.metrics_history.iter().count();
+                        drop(inner);
+                        info!("Loaded {loaded} historical metrics points from store");
                     },
                     Err(e) => {
                         warn!("Failed to load metrics history: {e}");
@@ -2586,7 +2593,7 @@ pub async fn start_gateway(
                     // Update gauges that are derived from server state, not events.
                     moltis_metrics::gauge!(moltis_metrics::system::UPTIME_SECONDS)
                         .set(server_start.elapsed().as_secs_f64());
-                    let session_count = metrics_state.active_sessions.read().await.len() as f64;
+                    let session_count = metrics_state.inner.read().await.active_sessions.len() as f64;
                     moltis_metrics::gauge!(moltis_metrics::session::ACTIVE).set(session_count);
 
                     let prometheus_text = handle.render();
@@ -2630,9 +2637,10 @@ pub async fn start_gateway(
 
                     // Push to in-memory history.
                     metrics_state
-                        .metrics_history
+                        .inner
                         .write()
                         .await
+                        .metrics_history
                         .push(point.clone());
 
                     // Persist to store if available.
@@ -3289,7 +3297,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let heartbeat_config = gw.heartbeat_config.read().await.clone();
+    let heartbeat_config = gw.inner.read().await.heartbeat_config.clone();
 
     // Get heartbeat runs using the fixed heartbeat job ID.
     // This preserves run history across restarts.
@@ -3314,7 +3322,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
-        update: gw.update.read().await.clone(),
+        update: gw.inner.read().await.update.clone(),
     }
 }
 
@@ -3398,7 +3406,7 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
-    let hooks = gw.discovered_hooks.read().await.len();
+    let hooks = gw.inner.read().await.discovered_hooks.len();
 
     NavCounts {
         projects,
@@ -3707,8 +3715,8 @@ async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse {
 /// Hooks list for the UI (HTTP endpoint for initial page load).
 #[cfg(feature = "web-ui")]
 async fn api_hooks_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let hooks = state.gateway.discovered_hooks.read().await;
-    axum::Json(serde_json::json!({ "hooks": *hooks }))
+    let hooks = state.gateway.inner.read().await;
+    axum::Json(serde_json::json!({ "hooks": hooks.discovered_hooks }))
 }
 
 /// Lightweight skills overview: repo summaries + enabled skills only.

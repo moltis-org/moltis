@@ -23,16 +23,12 @@ use moltis_agents::providers::ProviderRegistry;
 async fn start_test_server() -> SocketAddr {
     let resolved_auth = auth::resolve_auth(None, None);
     let services = GatewayServices::noop();
-    let state = GatewayState::new(
-        resolved_auth,
-        services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None, false);
+    let app = build_gateway_app(state, methods, None, false, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods, false);
+    let app = build_gateway_app(state, methods, false, None);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -230,11 +226,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         )));
     }
 
-    let state = GatewayState::new(
-        resolved_auth,
-        services,
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state = GatewayState::new(resolved_auth, services);
 
     // This is the call that used to panic with blocking_write inside async.
     let tmp1 = tempfile::tempdir().unwrap();
@@ -268,11 +260,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     // Force it with an empty registry to exercise set_chat unconditionally.
     let resolved_auth2 = auth::resolve_auth(None, None);
     let registry2 = Arc::new(tokio::sync::RwLock::new(ProviderRegistry::from_env()));
-    let state2 = GatewayState::new(
-        resolved_auth2,
-        GatewayServices::noop(),
-        Arc::new(moltis_tools::approval::ApprovalManager::default()),
-    );
+    let state2 = GatewayState::new(resolved_auth2, GatewayServices::noop());
     let tmp2 = tempfile::tempdir().unwrap();
     let session_store2 = Arc::new(moltis_sessions::store::SessionStore::new(
         tmp2.path().to_path_buf(),

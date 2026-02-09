@@ -625,9 +625,10 @@ async fn build_prompt_runtime_context(
         .and_then(|r| r.config().timezone.clone());
 
     let location = state
-        .cached_location
+        .inner
         .read()
         .await
+        .cached_location
         .as_ref()
         .map(|loc| loc.to_string());
 
@@ -1417,8 +1418,8 @@ impl LiveChatService {
     /// Resolve the active session key for a connection.
     async fn session_key_for(&self, conn_id: Option<&str>) -> String {
         if let Some(cid) = conn_id {
-            let sessions = self.state.active_sessions.read().await;
-            if let Some(key) = sessions.get(cid) {
+            let inner = self.state.inner.read().await;
+            if let Some(key) = inner.active_sessions.get(cid) {
                 return key.clone();
             }
         }
@@ -1432,8 +1433,8 @@ impl LiveChatService {
         conn_id: Option<&str>,
     ) -> Option<String> {
         let project_id = if let Some(cid) = conn_id {
-            let projects = self.state.active_projects.read().await;
-            projects.get(cid).cloned()
+            let inner = self.state.inner.read().await;
+            inner.active_projects.get(cid).cloned()
         } else {
             None
         };
@@ -2685,8 +2686,8 @@ impl ChatService for LiveChatService {
             .and_then(|v| v.as_str())
             .map(String::from);
         let project_id = if let Some(cid) = conn_id.as_deref() {
-            let projects = self.state.active_projects.read().await;
-            projects.get(cid).cloned()
+            let inner = self.state.inner.read().await;
+            inner.active_projects.get(cid).cloned()
         } else {
             None
         };
@@ -4291,9 +4292,10 @@ async fn generate_tts_audio(
 
     let session_override = {
         state
-            .tts_session_overrides
+            .inner
             .read()
             .await
+            .tts_session_overrides
             .get(session_key)
             .cloned()
     };
@@ -4334,21 +4336,12 @@ async fn build_tts_payload(
     }
 
     let channel_key = format!("{}:{}", target.channel_type.as_str(), target.account_id);
-    let channel_override = {
-        state
-            .tts_channel_overrides
-            .read()
-            .await
-            .get(&channel_key)
-            .cloned()
-    };
-    let session_override = {
-        state
-            .tts_session_overrides
-            .read()
-            .await
-            .get(session_key)
-            .cloned()
+    let (channel_override, session_override) = {
+        let inner = state.inner.read().await;
+        (
+            inner.tts_channel_overrides.get(&channel_key).cloned(),
+            inner.tts_session_overrides.get(session_key).cloned(),
+        )
     };
     let resolved = channel_override.or(session_override);
 
@@ -4733,7 +4726,6 @@ mod tests {
                 password: None,
             },
             crate::services::GatewayServices::noop(),
-            Arc::new(moltis_tools::approval::ApprovalManager::default()),
         );
 
         let start = Instant::now();
