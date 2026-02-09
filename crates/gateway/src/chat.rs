@@ -1250,6 +1250,8 @@ pub struct LiveChatService {
     session_locks: Arc<RwLock<HashMap<String, Arc<Semaphore>>>>,
     /// Per-session message queue for messages arriving during an active run.
     message_queue: Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
+    /// Per-session last-seen client sequence number for ordering diagnostics.
+    last_client_seq: Arc<RwLock<HashMap<String, u64>>>,
     /// Failover configuration for automatic model/provider failover.
     failover_config: moltis_config::schema::FailoverConfig,
 }
@@ -1273,6 +1275,7 @@ impl LiveChatService {
             hook_registry: None,
             session_locks: Arc::new(RwLock::new(HashMap::new())),
             message_queue: Arc::new(RwLock::new(HashMap::new())),
+            last_client_seq: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
     }
@@ -1511,6 +1514,40 @@ impl ChatService for LiveChatService {
             None => self.session_key_for(conn_id.as_deref()).await,
         };
 
+        // Track client-side sequence number for ordering diagnostics.
+        // Note: seq resets to 1 on page reload, so a drop from a high value
+        // back to 1 is normal (new browser session) — only flag issues within
+        // a continuous ascending sequence.
+        let client_seq = params.get("_seq").and_then(|v| v.as_u64());
+        if let Some(seq) = client_seq {
+            let mut seq_map = self.last_client_seq.write().await;
+            let last = seq_map.entry(session_key.clone()).or_insert(0);
+            if seq == 1 && *last > 1 {
+                // Page reload — reset tracking.
+                debug!(
+                    session = %session_key,
+                    prev_seq = *last,
+                    "client seq reset (page reload)"
+                );
+            } else if seq <= *last {
+                warn!(
+                    session = %session_key,
+                    seq,
+                    last_seq = *last,
+                    "client seq out of order (duplicate or reorder)"
+                );
+            } else if seq > *last + 1 {
+                warn!(
+                    session = %session_key,
+                    seq,
+                    last_seq = *last,
+                    gap = seq - *last - 1,
+                    "client seq gap detected (missing messages)"
+                );
+            }
+            *last = seq;
+        }
+
         // Resolve model: explicit param → session metadata → first registered.
         let session_model = if explicit_model.is_none() {
             self.session_metadata
@@ -1708,6 +1745,7 @@ impl ChatService for LiveChatService {
             stream_only,
             session = %session_key,
             reply_medium = ?desired_reply_medium,
+            client_seq = ?client_seq,
             "chat.send"
         );
 
@@ -1818,6 +1856,7 @@ impl ChatService for LiveChatService {
                 info!(
                     session = %session_key,
                     mode = ?queue_mode,
+                    client_seq = ?client_seq,
                     "queueing message (run active)"
                 );
                 let position = {

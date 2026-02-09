@@ -778,6 +778,7 @@ function handleSlashCommand(cmdName) {
 }
 
 // ── Send chat message ────────────────────────────────────
+var chatSeq = 0;
 function sendChat() {
 	var text = S.chatInput.value.trim();
 	if (!(text && S.connected)) return;
@@ -802,7 +803,8 @@ function sendChat() {
 	S.chatInput.value = "";
 	chatAutoResize();
 	var userEl = chatAddMsg("user", renderMarkdown(text), true);
-	var chatParams = { text: text };
+	chatSeq += 1;
+	var chatParams = { text: text, _seq: chatSeq };
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
 		chatParams.model = selectedModel;
