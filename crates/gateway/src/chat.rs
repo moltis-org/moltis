@@ -1600,32 +1600,23 @@ impl ChatService for LiveChatService {
             }
         }
 
-        // Persist the user message (with optional channel metadata for UI display).
+        // Build the user message for later persistence (deferred until we
+        // know the message won't be queued — avoids double-persist when a
+        // queued message is replayed via send()).
         let channel_meta = params.get("channel").cloned();
         let user_msg = PersistedMessage::User {
             content: message_content,
             created_at: Some(now_ms()),
             channel: channel_meta,
         };
-        if let Err(e) = self
-            .session_store
-            .append(&session_key, &user_msg.to_value())
-            .await
-        {
-            warn!("failed to persist user message: {e}");
-        }
 
-        // Load conversation history excluding the user message we just appended
-        // (both run_streaming and run_agent_loop add the current user message themselves).
+        // Load conversation history (the current user message is NOT yet
+        // persisted — run_streaming / run_agent_loop add it themselves).
         let mut history = self
             .session_store
             .read(&session_key)
             .await
             .unwrap_or_default();
-        // Pop the last message (the one we just appended).
-        if !history.is_empty() {
-            history.pop();
-        }
 
         // Update metadata.
         let _ = self.session_metadata.upsert(&session_key, None).await;
@@ -1855,6 +1846,16 @@ impl ChatService for LiveChatService {
                 }));
             },
         };
+
+        // Persist the user message now that we know it won't be queued.
+        // (Queued messages skip this; they are persisted when replayed.)
+        if let Err(e) = self
+            .session_store
+            .append(&session_key, &user_msg.to_value())
+            .await
+        {
+            warn!("failed to persist user message: {e}");
+        }
 
         let agent_timeout_secs = moltis_config::discover_and_load().tools.agent_timeout_secs;
 
