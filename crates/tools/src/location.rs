@@ -159,28 +159,28 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
         }
 
         // No browser connection — try channel-based location request.
-        if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str()) {
-            if session_key.starts_with("telegram:") || session_key.starts_with("discord:") {
-                let result = self.requester.request_channel_location(session_key).await?;
-                return match result.location {
-                    Some(loc) => Ok(serde_json::json!({
-                        "latitude": loc.latitude,
-                        "longitude": loc.longitude,
-                        "accuracy_meters": loc.accuracy,
-                        "source": "channel"
-                    })),
-                    None => {
-                        let msg = result
-                            .error
-                            .as_ref()
-                            .map_or("Unknown location error".to_string(), ToString::to_string);
-                        Ok(serde_json::json!({
-                            "error": msg,
-                            "available": false
-                        }))
-                    },
-                };
-            }
+        if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str())
+            && (session_key.starts_with("telegram:") || session_key.starts_with("discord:"))
+        {
+            let result = self.requester.request_channel_location(session_key).await?;
+            return match result.location {
+                Some(loc) => Ok(serde_json::json!({
+                    "latitude": loc.latitude,
+                    "longitude": loc.longitude,
+                    "accuracy_meters": loc.accuracy,
+                    "source": "channel"
+                })),
+                None => {
+                    let msg = result
+                        .error
+                        .as_ref()
+                        .map_or("Unknown location error".to_string(), ToString::to_string);
+                    Ok(serde_json::json!({
+                        "error": msg,
+                        "available": false
+                    }))
+                },
+            };
         }
 
         Err(anyhow::anyhow!(
