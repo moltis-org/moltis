@@ -1595,14 +1595,9 @@ impl MethodRegistry {
                         config.prompt.as_deref(),
                         heartbeat_md.as_deref(),
                     );
-                    let has_prompt_override = config
-                        .prompt
-                        .as_deref()
-                        .is_some_and(|p| !p.trim().is_empty());
-                    let heartbeat_file_effectively_empty =
-                        heartbeat_file_exists && heartbeat_md.is_none();
-                    let skip_llm_when_empty =
-                        heartbeat_file_effectively_empty && !has_prompt_override;
+                    // No meaningful prompt → heartbeat won't execute.
+                    let has_prompt = prompt_source
+                        != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
                     // Find the heartbeat job to get its state.
                     let jobs_val = ctx
                         .state
@@ -1619,8 +1614,7 @@ impl MethodRegistry {
                         "job": hb_job,
                         "promptSource": prompt_source.as_str(),
                         "heartbeatFileExists": heartbeat_file_exists,
-                        "heartbeatFileEffectivelyEmpty": heartbeat_file_effectively_empty,
-                        "skipLlmWhenEmpty": skip_llm_when_empty,
+                        "hasPrompt": has_prompt,
                     }))
                 })
             }),
@@ -1678,6 +1672,11 @@ impl MethodRegistry {
                                 "heartbeat prompt source conflict: config heartbeat.prompt overrides HEARTBEAT.md"
                             );
                         }
+                        // Disable the job when there is no meaningful prompt,
+                        // even if the user toggled enabled=true.
+                        let has_prompt = prompt_source
+                            != moltis_cron::heartbeat::HeartbeatPromptSource::Default;
+                        let effective_enabled = patch.enabled && has_prompt;
                         let job_patch = moltis_cron::types::CronJobPatch {
                             schedule: Some(moltis_cron::types::CronSchedule::Every {
                                 every_ms: interval_ms,
@@ -1691,7 +1690,7 @@ impl MethodRegistry {
                                 channel: None,
                                 to: None,
                             }),
-                            enabled: Some(patch.enabled),
+                            enabled: Some(effective_enabled),
                             sandbox: Some(moltis_cron::types::CronSandboxConfig {
                                 enabled: patch.sandbox_enabled,
                                 image: patch.sandbox_image.clone(),

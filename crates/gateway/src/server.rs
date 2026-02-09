@@ -2588,7 +2588,12 @@ pub async fn start_gateway(
         let existing = cron_service.list().await;
         let existing_job = existing.iter().find(|j| j.id == HEARTBEAT_JOB_ID);
 
-        if hb.enabled {
+        // Skip heartbeat when there is no meaningful prompt (no config prompt,
+        // no HEARTBEAT.md content). The built-in default prompt is generic and
+        // wastes LLM calls when the user hasn't configured anything.
+        let has_prompt = prompt_source != HeartbeatPromptSource::Default;
+
+        if hb.enabled && has_prompt {
             if existing_job.is_some() {
                 // Update existing job to match config.
                 let patch = CronJobPatch {
@@ -2647,9 +2652,17 @@ pub async fn start_gateway(
                 }
             }
         } else if existing_job.is_some() {
-            // Heartbeat is disabled, remove the job.
+            // Heartbeat is disabled or has no prompt content — remove the job.
             let _ = cron_service.remove(HEARTBEAT_JOB_ID).await;
-            tracing::info!("heartbeat job removed (disabled)");
+            if !hb.enabled {
+                tracing::info!("heartbeat job removed (disabled)");
+            } else {
+                tracing::info!("heartbeat job removed (no prompt configured)");
+            }
+        } else if hb.enabled && !has_prompt {
+            tracing::info!(
+                "heartbeat skipped: no prompt in config and HEARTBEAT.md is empty"
+            );
         }
     }
 
