@@ -1297,6 +1297,8 @@ fn default_sandbox_packages() -> Vec<String> {
         "patchelf",
         // Text processing & search
         "ripgrep",
+        "fd-find",
+        "yq",
         // Terminal multiplexer (useful for capturing ncurses apps)
         "tmux",
         // Browser automation (for browser tool)
@@ -1335,13 +1337,22 @@ fn default_sandbox_packages() -> Vec<String> {
         "vorbis-tools",
         "opus-tools",
         "mediainfo",
-        // Data processing & conversion
-        "csvtool",
-        "xmlstarlet",
+        // Document & office conversion
         "pandoc",
         "poppler-utils",
         "ghostscript",
         "wkhtmltopdf",
+        "texlive-latex-base",
+        "texlive-latex-extra",
+        "texlive-fonts-recommended",
+        "antiword",
+        "catdoc",
+        "unrtf",
+        "libreoffice-core",
+        "libreoffice-writer",
+        // Data processing & conversion
+        "csvtool",
+        "xmlstarlet",
         "html2text",
         "dos2unix",
         "miller",
