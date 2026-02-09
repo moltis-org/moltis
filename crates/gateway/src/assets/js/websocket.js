@@ -346,8 +346,13 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 					.finally(() => appendFinalFooter(resolvedEl, p));
 			}
 		} else {
-			// Silent reply — attach footer to the last visible element (e.g. exec card).
-			var target = resolvedEl || S.chatMsgBox?.lastElementChild;
+			// Silent reply — attach footer to the last visible assistant element
+			// (e.g. exec card). Never attach to a user message.
+			var target = resolvedEl;
+			if (!target) {
+				var last = S.chatMsgBox?.lastElementChild;
+				if (last && !last.classList.contains("user")) target = last;
+			}
 			appendFinalFooter(target, p);
 		}
 	}

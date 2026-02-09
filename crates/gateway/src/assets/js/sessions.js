@@ -390,7 +390,7 @@ export function appendLastMessageTimestamp(epochMs) {
 	var old = S.chatMsgBox.querySelector(".msg-footer-time");
 	if (old) old.remove();
 	var lastMsg = S.chatMsgBox.lastElementChild;
-	if (!lastMsg) return;
+	if (!lastMsg || lastMsg.classList.contains("user")) return;
 	var footer = lastMsg.querySelector(".msg-model-footer");
 	if (!footer) {
 		footer = document.createElement("div");
