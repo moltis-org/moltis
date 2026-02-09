@@ -136,7 +136,12 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             Ok(Ok(value)) => value,
             Ok(Err(_)) => {
                 // Sender dropped — clean up.
-                self.state.inner.write().await.pending_invokes.remove(&request_id);
+                self.state
+                    .inner
+                    .write()
+                    .await
+                    .pending_invokes
+                    .remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -144,7 +149,12 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
             },
             Err(_) => {
                 // Timeout — clean up.
-                self.state.inner.write().await.pending_invokes.remove(&request_id);
+                self.state
+                    .inner
+                    .write()
+                    .await
+                    .pending_invokes
+                    .remove(&request_id);
                 return Ok(LocationResult {
                     location: None,
                     error: Some(LocationError::Timeout),
@@ -187,6 +197,108 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
 
     fn cached_location(&self) -> Option<moltis_config::GeoLocation> {
         self.state.inner.try_read().ok()?.cached_location.clone()
+    }
+
+    async fn request_channel_location(
+        &self,
+        session_key: &str,
+    ) -> anyhow::Result<moltis_tools::location::LocationResult> {
+        use moltis_tools::location::{LocationError, LocationResult};
+
+        // Look up channel binding from session metadata.
+        let session_meta = self
+            .state
+            .services
+            .session_metadata
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("session metadata not available"))?;
+        let entry = session_meta
+            .get(session_key)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no session metadata for key {session_key}"))?;
+        let binding_json = entry
+            .channel_binding
+            .ok_or_else(|| anyhow::anyhow!("no channel binding for session {session_key}"))?;
+        let reply_target: moltis_channels::ChannelReplyTarget =
+            serde_json::from_str(&binding_json)?;
+
+        // Send a message asking the user to share their location.
+        let outbound = self
+            .state
+            .services
+            .channel_outbound_arc()
+            .ok_or_else(|| anyhow::anyhow!("no channel outbound available"))?;
+        outbound
+            .send_text(
+                &reply_target.account_id,
+                &reply_target.chat_id,
+                "Please share your location using the attachment menu (📎 → Location).",
+                None,
+            )
+            .await?;
+
+        // Create a pending invoke keyed by session.
+        let pending_key = format!("channel_location:{session_key}");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut inner = self.state.inner.write().await;
+            inner
+                .pending_invokes
+                .insert(pending_key.clone(), crate::state::PendingInvoke {
+                    request_id: pending_key.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                });
+        }
+
+        // Wait up to 60 seconds — user needs to navigate Telegram's UI.
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) => {
+                self.state
+                    .inner
+                    .write()
+                    .await
+                    .pending_invokes
+                    .remove(&pending_key);
+                return Ok(LocationResult {
+                    location: None,
+                    error: Some(LocationError::Timeout),
+                });
+            },
+            Err(_) => {
+                self.state
+                    .inner
+                    .write()
+                    .await
+                    .pending_invokes
+                    .remove(&pending_key);
+                return Ok(LocationResult {
+                    location: None,
+                    error: Some(LocationError::Timeout),
+                });
+            },
+        };
+
+        // Parse the result (same format as update_location sends).
+        if let Some(loc) = result.get("location") {
+            let lat = loc.get("latitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let lon = loc.get("longitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let accuracy = loc.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            Ok(LocationResult {
+                location: Some(moltis_tools::location::BrowserLocation {
+                    latitude: lat,
+                    longitude: lon,
+                    accuracy,
+                }),
+                error: None,
+            })
+        } else {
+            Ok(LocationResult {
+                location: None,
+                error: Some(LocationError::PositionUnavailable),
+            })
+        }
     }
 }
 
@@ -2593,7 +2705,8 @@ pub async fn start_gateway(
                     // Update gauges that are derived from server state, not events.
                     moltis_metrics::gauge!(moltis_metrics::system::UPTIME_SECONDS)
                         .set(server_start.elapsed().as_secs_f64());
-                    let session_count = metrics_state.inner.read().await.active_sessions.len() as f64;
+                    let session_count =
+                        metrics_state.inner.read().await.active_sessions.len() as f64;
                     moltis_metrics::gauge!(moltis_metrics::session::ACTIVE).set(session_count);
 
                     let prometheus_text = handle.render();

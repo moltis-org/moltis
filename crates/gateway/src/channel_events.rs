@@ -438,6 +438,58 @@ impl ChannelEventSink for GatewayChannelEventSink {
         }
     }
 
+    async fn update_location(
+        &self,
+        reply_to: &ChannelReplyTarget,
+        latitude: f64,
+        longitude: f64,
+    ) -> bool {
+        let Some(state) = self.state.get() else {
+            warn!("update_location: gateway not ready");
+            return false;
+        };
+
+        let session_key = if let Some(ref sm) = state.services.session_metadata {
+            resolve_channel_session(reply_to, sm).await
+        } else {
+            default_channel_session_key(reply_to)
+        };
+
+        // Update in-memory cache.
+        let geo = moltis_config::GeoLocation::now(latitude, longitude);
+        state.inner.write().await.cached_location = Some(geo.clone());
+
+        // Persist to USER.md (best-effort).
+        let mut user = moltis_config::load_user().unwrap_or_default();
+        user.location = Some(geo);
+        if let Err(e) = moltis_config::save_user(&user) {
+            warn!(error = %e, "failed to persist location to USER.md");
+        }
+
+        // Check for a pending tool-triggered location request.
+        let pending_key = format!("channel_location:{session_key}");
+        let pending = state
+            .inner
+            .write()
+            .await
+            .pending_invokes
+            .remove(&pending_key);
+        if let Some(invoke) = pending {
+            let result = serde_json::json!({
+                "location": {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "accuracy": 0.0,
+                }
+            });
+            let _ = invoke.sender.send(result);
+            info!(session_key, "resolved pending channel location request");
+            return true;
+        }
+
+        false
+    }
+
     async fn dispatch_to_chat_with_attachments(
         &self,
         text: &str,

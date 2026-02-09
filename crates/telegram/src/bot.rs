@@ -107,7 +107,11 @@ pub async fn start_polling(
                 .get_updates()
                 .offset(offset)
                 .timeout(30)
-                .allowed_updates(vec![AllowedUpdate::Message, AllowedUpdate::CallbackQuery])
+                .allowed_updates(vec![
+                    AllowedUpdate::Message,
+                    AllowedUpdate::EditedMessage,
+                    AllowedUpdate::CallbackQuery,
+                ])
                 .await;
 
             match result {
@@ -134,6 +138,23 @@ pub async fn start_polling(
                                         account_id = aid,
                                         error = %e,
                                         "error handling telegram message"
+                                    );
+                                }
+                            },
+                            UpdateKind::EditedMessage(msg) => {
+                                debug!(
+                                    account_id = aid,
+                                    chat_id = msg.chat.id.0,
+                                    "received telegram edited message"
+                                );
+                                if let Err(e) =
+                                    handlers::handle_edited_location(msg, &aid, &poll_accounts)
+                                        .await
+                                {
+                                    error!(
+                                        account_id = aid,
+                                        error = %e,
+                                        "error handling telegram edited message"
                                     );
                                 }
                             },

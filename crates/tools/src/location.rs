@@ -77,6 +77,17 @@ pub trait LocationRequester: Send + Sync {
 
     /// Return a previously cached location (from `USER.md` or in-memory cache).
     fn cached_location(&self) -> Option<GeoLocation>;
+
+    /// Request location from a channel user (e.g. Telegram).
+    ///
+    /// Sends a message asking the user to share their location via the channel's
+    /// native location-sharing feature, then waits for the result.
+    async fn request_channel_location(&self, _session_key: &str) -> Result<LocationResult> {
+        Ok(LocationResult {
+            location: None,
+            error: Some(LocationError::NotSupported),
+        })
+    }
 }
 
 // ── Tool ──────────────────────────────────────────────────────────────────────
@@ -124,34 +135,57 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
             }));
         }
 
-        // Extract the connection ID injected by the chat layer.
-        let conn_id = params
-            .get("_conn_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow::anyhow!("no client connection available for location request")
-            })?;
-
-        let result = self.requester.request_location(conn_id).await?;
-
-        match result.location {
-            Some(loc) => Ok(serde_json::json!({
-                "latitude": loc.latitude,
-                "longitude": loc.longitude,
-                "accuracy_meters": loc.accuracy,
-                "source": "browser"
-            })),
-            None => {
-                let msg = result
-                    .error
-                    .as_ref()
-                    .map_or("Unknown location error".to_string(), ToString::to_string);
-                Ok(serde_json::json!({
-                    "error": msg,
-                    "available": false
-                }))
-            },
+        // Try browser geolocation if a connection ID is available.
+        if let Some(conn_id) = params.get("_conn_id").and_then(|v| v.as_str()) {
+            let result = self.requester.request_location(conn_id).await?;
+            return match result.location {
+                Some(loc) => Ok(serde_json::json!({
+                    "latitude": loc.latitude,
+                    "longitude": loc.longitude,
+                    "accuracy_meters": loc.accuracy,
+                    "source": "browser"
+                })),
+                None => {
+                    let msg = result
+                        .error
+                        .as_ref()
+                        .map_or("Unknown location error".to_string(), ToString::to_string);
+                    Ok(serde_json::json!({
+                        "error": msg,
+                        "available": false
+                    }))
+                },
+            };
         }
+
+        // No browser connection — try channel-based location request.
+        if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str()) {
+            if session_key.starts_with("telegram:") || session_key.starts_with("discord:") {
+                let result = self.requester.request_channel_location(session_key).await?;
+                return match result.location {
+                    Some(loc) => Ok(serde_json::json!({
+                        "latitude": loc.latitude,
+                        "longitude": loc.longitude,
+                        "accuracy_meters": loc.accuracy,
+                        "source": "channel"
+                    })),
+                    None => {
+                        let msg = result
+                            .error
+                            .as_ref()
+                            .map_or("Unknown location error".to_string(), ToString::to_string);
+                        Ok(serde_json::json!({
+                            "error": msg,
+                            "available": false
+                        }))
+                    },
+                };
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "no client connection available for location request"
+        ))
     }
 }
 
@@ -165,6 +199,7 @@ mod tests {
     struct MockRequester {
         cached: Option<GeoLocation>,
         response: LocationResult,
+        channel_response: Option<LocationResult>,
     }
 
     #[async_trait]
@@ -176,6 +211,16 @@ mod tests {
         fn cached_location(&self) -> Option<GeoLocation> {
             self.cached.clone()
         }
+
+        async fn request_channel_location(&self, _session_key: &str) -> Result<LocationResult> {
+            match &self.channel_response {
+                Some(r) => Ok(r.clone()),
+                None => Ok(LocationResult {
+                    location: None,
+                    error: Some(LocationError::NotSupported),
+                }),
+            }
+        }
     }
 
     #[tokio::test]
@@ -184,11 +229,13 @@ mod tests {
             cached: Some(GeoLocation {
                 latitude: 48.8566,
                 longitude: 2.3522,
+                updated_at: None,
             }),
             response: LocationResult {
                 location: None,
                 error: None,
             },
+            channel_response: None,
         }));
 
         let result = tool.execute(serde_json::json!({})).await.unwrap();
@@ -208,6 +255,7 @@ mod tests {
                 }),
                 error: None,
             },
+            channel_response: None,
         }));
 
         let result = tool
@@ -227,6 +275,7 @@ mod tests {
                 location: None,
                 error: Some(LocationError::PermissionDenied),
             },
+            channel_response: None,
         }));
 
         let result = tool
@@ -245,6 +294,7 @@ mod tests {
                 location: None,
                 error: None,
             },
+            channel_response: None,
         }));
 
         let err = tool.execute(serde_json::json!({})).await.unwrap_err();
@@ -259,10 +309,101 @@ mod tests {
                 location: None,
                 error: None,
             },
+            channel_response: None,
         }));
 
         assert_eq!(tool.name(), "get_user_location");
         let schema = tool.parameters_schema();
         assert_eq!(schema["type"], "object");
+    }
+
+    #[tokio::test]
+    async fn channel_location_success() {
+        let tool = LocationTool::new(Arc::new(MockRequester {
+            cached: None,
+            response: LocationResult {
+                location: None,
+                error: None,
+            },
+            channel_response: Some(LocationResult {
+                location: Some(BrowserLocation {
+                    latitude: 51.5074,
+                    longitude: -0.1278,
+                    accuracy: 0.0,
+                }),
+                error: None,
+            }),
+        }));
+
+        let result = tool
+            .execute(serde_json::json!({ "_session_key": "telegram:bot1:12345" }))
+            .await
+            .unwrap();
+        assert_eq!(result["latitude"], 51.5074);
+        assert_eq!(result["longitude"], -0.1278);
+        assert_eq!(result["source"], "channel");
+    }
+
+    #[tokio::test]
+    async fn channel_location_not_supported_for_non_channel_session() {
+        let tool = LocationTool::new(Arc::new(MockRequester {
+            cached: None,
+            response: LocationResult {
+                location: None,
+                error: None,
+            },
+            channel_response: None,
+        }));
+
+        // Non-channel session key should not attempt channel location.
+        let err = tool
+            .execute(serde_json::json!({ "_session_key": "web:session:123" }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no client connection"));
+    }
+
+    #[tokio::test]
+    async fn channel_location_fallback_no_session() {
+        let tool = LocationTool::new(Arc::new(MockRequester {
+            cached: None,
+            response: LocationResult {
+                location: None,
+                error: None,
+            },
+            channel_response: None,
+        }));
+
+        // No _session_key and no _conn_id — should error.
+        let err = tool.execute(serde_json::json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("no client connection"));
+    }
+
+    #[tokio::test]
+    async fn channel_location_default_trait_returns_not_supported() {
+        // Test the default trait implementation directly.
+        struct MinimalRequester;
+
+        #[async_trait]
+        impl LocationRequester for MinimalRequester {
+            async fn request_location(&self, _conn_id: &str) -> Result<LocationResult> {
+                Ok(LocationResult {
+                    location: None,
+                    error: None,
+                })
+            }
+
+            fn cached_location(&self) -> Option<GeoLocation> {
+                None
+            }
+        }
+
+        let req = MinimalRequester;
+        let result = req
+            .request_channel_location("telegram:bot1:123")
+            .await
+            .unwrap();
+        assert!(result.location.is_none());
+        assert!(matches!(result.error, Some(LocationError::NotSupported)));
     }
 }

@@ -80,11 +80,47 @@ impl<'de> Deserialize<'de> for Timezone {
 pub struct GeoLocation {
     pub latitude: f64,
     pub longitude: f64,
+    /// Unix epoch seconds when the location was last updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+impl GeoLocation {
+    /// Create a new `GeoLocation` stamped with the current time.
+    pub fn now(latitude: f64, longitude: f64) -> Self {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Self {
+            latitude,
+            longitude,
+            updated_at: Some(ts),
+        }
+    }
 }
 
 impl std::fmt::Display for GeoLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{},{}", self.latitude, self.longitude)
+        write!(f, "{},{}", self.latitude, self.longitude)?;
+        if let Some(ts) = self.updated_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let age_secs = now.saturating_sub(ts);
+            let age_str = if age_secs < 60 {
+                "just now".to_string()
+            } else if age_secs < 3600 {
+                format!("{}m ago", age_secs / 60)
+            } else if age_secs < 86400 {
+                format!("{}h ago", age_secs / 3600)
+            } else {
+                format!("{}d ago", age_secs / 86400)
+            };
+            write!(f, " (updated {age_str})")?;
+        }
+        Ok(())
     }
 }
 

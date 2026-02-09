@@ -399,6 +399,9 @@ pub fn save_user(user: &UserProfile) -> anyhow::Result<PathBuf> {
     if let Some(ref loc) = user.location {
         yaml_lines.push(format!("latitude: {}", loc.latitude));
         yaml_lines.push(format!("longitude: {}", loc.longitude));
+        if let Some(ts) = loc.updated_at {
+            yaml_lines.push(format!("location_updated_at: {ts}"));
+        }
     }
     let yaml = yaml_lines.join("\n");
     let content = format!(
@@ -450,6 +453,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
     let mut user = UserProfile::default();
     let mut latitude: Option<f64> = None;
     let mut longitude: Option<f64> = None;
+    let mut location_updated_at: Option<i64> = None;
 
     for raw in frontmatter.lines() {
         let line = raw.trim();
@@ -473,6 +477,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
             },
             "latitude" => latitude = value.parse().ok(),
             "longitude" => longitude = value.parse().ok(),
+            "location_updated_at" => location_updated_at = value.parse().ok(),
             _ => {},
         }
     }
@@ -481,6 +486,7 @@ fn parse_user_frontmatter(frontmatter: &str) -> UserProfile {
         user.location = Some(crate::schema::GeoLocation {
             latitude: lat,
             longitude: lon,
+            updated_at: location_updated_at,
         });
     }
 
@@ -1028,6 +1034,7 @@ mod tests {
             location: Some(crate::schema::GeoLocation {
                 latitude: 48.8566,
                 longitude: 2.3522,
+                updated_at: Some(1700000000),
             }),
         };
 

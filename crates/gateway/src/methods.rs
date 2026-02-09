@@ -389,7 +389,8 @@ impl MethodRegistry {
                 Box::pin(async move {
                     let inner = ctx.state.inner.read().await;
 
-                    let client_list: Vec<_> = inner.clients
+                    let client_list: Vec<_> = inner
+                        .clients
                         .values()
                         .map(|c| {
                             serde_json::json!({
@@ -403,7 +404,8 @@ impl MethodRegistry {
                         })
                         .collect();
 
-                    let node_list: Vec<_> = inner.nodes
+                    let node_list: Vec<_> = inner
+                        .nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -470,8 +472,13 @@ impl MethodRegistry {
             "set-heartbeats",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    if let Some(client) =
-                        ctx.state.inner.write().await.clients.get_mut(&ctx.client_conn_id)
+                    if let Some(client) = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .clients
+                        .get_mut(&ctx.client_conn_id)
                     {
                         client.touch();
                     }
@@ -490,7 +497,8 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let inner = ctx.state.inner.read().await;
-                    let list: Vec<_> = inner.nodes
+                    let list: Vec<_> = inner
+                        .nodes
                         .list()
                         .iter()
                         .map(|n| {
@@ -562,7 +570,8 @@ impl MethodRegistry {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing displayName")
                         })?;
                     let mut inner = ctx.state.inner.write().await;
-                    inner.nodes
+                    inner
+                        .nodes
                         .rename(node_id, name)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
                     Ok(serde_json::json!({}))
@@ -638,11 +647,14 @@ impl MethodRegistry {
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     {
                         let mut inner = ctx.state.inner.write().await;
-                        inner.pending_invokes.insert(invoke_id.clone(), crate::state::PendingInvoke {
-                            request_id: ctx.request_id.clone(),
-                            sender: tx,
-                            created_at: std::time::Instant::now(),
-                        });
+                        inner.pending_invokes.insert(
+                            invoke_id.clone(),
+                            crate::state::PendingInvoke {
+                                request_id: ctx.request_id.clone(),
+                                sender: tx,
+                                created_at: std::time::Instant::now(),
+                            },
+                        );
                     }
 
                     // Wait for result with 30s timeout.
@@ -653,7 +665,12 @@ impl MethodRegistry {
                             "invoke cancelled",
                         )),
                         Err(_) => {
-                            ctx.state.inner.write().await.pending_invokes.remove(&invoke_id);
+                            ctx.state
+                                .inner
+                                .write()
+                                .await
+                                .pending_invokes
+                                .remove(&invoke_id);
                             Err(ErrorShape::new(
                                 error_codes::AGENT_TIMEOUT,
                                 "node invoke timeout",
@@ -682,7 +699,13 @@ impl MethodRegistry {
                         .cloned()
                         .unwrap_or(serde_json::json!(null));
 
-                    let pending = ctx.state.inner.write().await.pending_invokes.remove(invoke_id);
+                    let pending = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .pending_invokes
+                        .remove(invoke_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -737,10 +760,7 @@ impl MethodRegistry {
                             loc.get("latitude").and_then(|v| v.as_f64()),
                             loc.get("longitude").and_then(|v| v.as_f64()),
                         ) {
-                            let geo = moltis_config::GeoLocation {
-                                latitude: lat,
-                                longitude: lon,
-                            };
+                            let geo = moltis_config::GeoLocation::now(lat, lon);
                             ctx.state.inner.write().await.cached_location = Some(geo.clone());
 
                             // Persist to USER.md (best-effort).
@@ -756,7 +776,13 @@ impl MethodRegistry {
                         serde_json::json!({ "error": ctx.params.get("error") })
                     };
 
-                    let pending = ctx.state.inner.write().await.pending_invokes.remove(request_id);
+                    let pending = ctx
+                        .state
+                        .inner
+                        .write()
+                        .await
+                        .pending_invokes
+                        .remove(request_id);
                     if let Some(invoke) = pending {
                         let _ = invoke.sender.send(result);
                         Ok(serde_json::json!({}))
@@ -889,7 +915,8 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let inner = ctx.state.inner.read().await;
-                    let list: Vec<_> = inner.pairing
+                    let list: Vec<_> = inner
+                        .pairing
                         .list_pending()
                         .iter()
                         .map(|r| {
@@ -992,7 +1019,8 @@ impl MethodRegistry {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let inner = ctx.state.inner.read().await;
-                    let list: Vec<_> = inner.pairing
+                    let list: Vec<_> = inner
+                        .pairing
                         .list_devices()
                         .iter()
                         .map(|d| {
@@ -3626,7 +3654,12 @@ impl MethodRegistry {
                             })?;
 
                         let key = format!("{}:{}", channel_type, account_id);
-                        ctx.state.inner.write().await.tts_channel_overrides.remove(&key);
+                        ctx.state
+                            .inner
+                            .write()
+                            .await
+                            .tts_channel_overrides
+                            .remove(&key);
                         Ok(serde_json::json!({ "ok": true, "key": key }))
                     })
                 }),
@@ -4143,7 +4176,8 @@ impl MethodRegistry {
                     // Find the hook's source path.
                     let source_path = {
                         let inner = ctx.state.inner.read().await;
-                        inner.discovered_hooks
+                        inner
+                            .discovered_hooks
                             .iter()
                             .find(|h| h.name == name)
                             .map(|h| h.source_path.clone())

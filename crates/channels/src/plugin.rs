@@ -135,6 +135,18 @@ pub trait ChannelEventSink: Send + Sync {
         true
     }
 
+    /// Update the user's geolocation from a channel message (e.g. Telegram location share).
+    ///
+    /// Returns `true` if a pending tool-triggered location request was resolved.
+    async fn update_location(
+        &self,
+        _reply_to: &ChannelReplyTarget,
+        _latitude: f64,
+        _longitude: f64,
+    ) -> bool {
+        false
+    }
+
     /// Dispatch an inbound message with attachments (images, files) to the chat session.
     ///
     /// This is used when a channel message contains both text and media (e.g., a
@@ -177,6 +189,7 @@ pub enum ChannelMessageKind {
     Photo,
     Document,
     Video,
+    Location,
     Other,
 }
 
@@ -337,5 +350,17 @@ mod tests {
     async fn default_voice_stt_available_is_true() {
         let sink = DummySink;
         assert!(sink.voice_stt_available().await);
+    }
+
+    #[tokio::test]
+    async fn default_update_location_returns_false() {
+        let sink = DummySink;
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "42".into(),
+            message_id: None,
+        };
+        assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
     }
 }
