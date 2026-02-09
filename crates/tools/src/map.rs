@@ -38,15 +38,34 @@ struct ShowMapParams {
 
 /// Build clickable map URLs for the three major mapping services.
 fn build_map_links(lat: f64, lon: f64, zoom: u8, label: Option<&str>) -> serde_json::Value {
-    let google = format!("https://www.google.com/maps/search/?api=1&query={lat},{lon}");
-
-    let apple = match label {
-        Some(l) => format!("https://maps.apple.com/?ll={lat},{lon}&q={}", urlencoded(l)),
-        None => format!("https://maps.apple.com/?ll={lat},{lon}"),
+    // When a place name is provided, use it as the search query so the map
+    // service resolves the actual business page (with reviews, hours, photos)
+    // instead of just dropping an anonymous pin at raw coordinates.
+    let google = match label {
+        Some(l) => format!(
+            "https://www.google.com/maps/search/?api=1&query={}&center={lat},{lon}",
+            urlencoded(l),
+        ),
+        None => format!("https://www.google.com/maps/search/?api=1&query={lat},{lon}"),
     };
 
-    let osm =
-        format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}");
+    let apple = match label {
+        Some(l) => format!(
+            "https://maps.apple.com/?ll={lat},{lon}&q={}&z={zoom}",
+            urlencoded(l),
+        ),
+        None => format!("https://maps.apple.com/?ll={lat},{lon}&z={zoom}"),
+    };
+
+    let osm = match label {
+        Some(l) => format!(
+            "https://www.openstreetmap.org/search?query={}&mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}",
+            urlencoded(l),
+        ),
+        None => {
+            format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}")
+        },
+    };
 
     serde_json::json!({
         "google_maps": google,
@@ -552,30 +571,32 @@ mod tests {
     #[test]
     fn build_links_with_label() {
         let links = build_map_links(37.7614, -122.4199, 15, Some("La Taqueria"));
+        // Google uses the label as search query with coordinates as center hint.
         assert_eq!(
             links["google_maps"],
-            "https://www.google.com/maps/search/?api=1&query=37.7614,-122.4199"
+            "https://www.google.com/maps/search/?api=1&query=La+Taqueria&center=37.7614,-122.4199"
         );
         assert_eq!(
             links["apple_maps"],
-            "https://maps.apple.com/?ll=37.7614,-122.4199&q=La+Taqueria"
+            "https://maps.apple.com/?ll=37.7614,-122.4199&q=La+Taqueria&z=15"
         );
         assert_eq!(
             links["openstreetmap"],
-            "https://www.openstreetmap.org/?mlat=37.7614&mlon=-122.4199#map=15/37.7614/-122.4199"
+            "https://www.openstreetmap.org/search?query=La+Taqueria&mlat=37.7614&mlon=-122.4199#map=15/37.7614/-122.4199"
         );
     }
 
     #[test]
     fn build_links_without_label() {
         let links = build_map_links(48.8566, 2.3522, 12, None);
+        // Without a label, falls back to raw coordinates.
         assert_eq!(
             links["google_maps"],
             "https://www.google.com/maps/search/?api=1&query=48.8566,2.3522"
         );
         assert_eq!(
             links["apple_maps"],
-            "https://maps.apple.com/?ll=48.8566,2.3522"
+            "https://maps.apple.com/?ll=48.8566,2.3522&z=12"
         );
         assert_eq!(
             links["openstreetmap"],
@@ -586,6 +607,8 @@ mod tests {
     #[test]
     fn build_links_special_chars_in_label() {
         let links = build_map_links(0.0, 0.0, 10, Some("Café & Bar"));
+        let google = links["google_maps"].as_str().unwrap();
+        assert!(google.contains("Caf%C3%A9+%26+Bar"));
         let apple = links["apple_maps"].as_str().unwrap();
         assert!(apple.contains("Caf%C3%A9+%26+Bar"));
     }

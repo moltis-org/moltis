@@ -566,35 +566,27 @@ impl AgentTool for WebSearchTool {
         let accept_language = params.get("_accept_language").and_then(|v| v.as_str());
 
         debug!("web_search: {query} (count={count})");
-        let result = match &self.provider {
-            SearchProvider::Brave => {
-                self.search_brave(query, count, &params, accept_language)
-                    .await?
-            },
-            SearchProvider::Perplexity { base_url, model } => {
-                self.search_perplexity(query, base_url, model).await?
-            },
-        };
 
-        // When the configured provider can't run (no API key), try DuckDuckGo
-        // HTML search as a transparent fallback so the LLM never has to ask.
-        let result = if self.fallback_enabled
-            && result.get("error").is_some()
-            && self.api_key.expose_secret().is_empty()
-        {
+        // When no API key is configured, skip the provider entirely and go
+        // straight to the DuckDuckGo fallback. This avoids a pointless
+        // round-trip that always returns an error and prevents the LLM from
+        // retrying repeatedly.
+        let result = if self.fallback_enabled && self.api_key.expose_secret().is_empty() {
             warn!(
                 provider = ?self.provider,
-                "search API key not configured, falling back to DuckDuckGo"
+                "search API key not configured, using DuckDuckGo directly"
             );
-            match self.search_duckduckgo(query, count).await {
-                Ok(ddg_result) => ddg_result,
-                Err(e) => {
-                    warn!(%e, "DuckDuckGo fallback failed, returning original error");
-                    result
+            self.search_duckduckgo(query, count).await?
+        } else {
+            match &self.provider {
+                SearchProvider::Brave => {
+                    self.search_brave(query, count, &params, accept_language)
+                        .await?
+                },
+                SearchProvider::Perplexity { base_url, model } => {
+                    self.search_perplexity(query, base_url, model).await?
                 },
             }
-        } else {
-            result
         };
 
         self.cache_set(cache_key, result.clone());
