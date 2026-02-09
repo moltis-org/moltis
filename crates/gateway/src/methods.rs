@@ -2204,15 +2204,15 @@ impl MethodRegistry {
                                 )
                                 .await;
 
-                                if let Ok(Ok(response)) = result {
-                                    if let Some(text) = response.text {
-                                        let text = text.trim().to_string();
-                                        if !text.is_empty() {
-                                            return Ok(serde_json::json!({
-                                                "phrase": text,
-                                                "source": "llm",
-                                            }));
-                                        }
+                                if let Ok(Ok(response)) = result
+                                    && let Some(text) = response.text
+                                {
+                                    let text = text.trim().to_string();
+                                    if !text.is_empty() {
+                                        return Ok(serde_json::json!({
+                                            "phrase": text,
+                                            "source": "llm",
+                                        }));
                                     }
                                 }
                             }

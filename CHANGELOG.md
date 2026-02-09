@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Web search DuckDuckGo fallback**: When no search API key (Brave or
+  Perplexity) is configured, `web_search` now automatically falls back to
+  DuckDuckGo HTML search instead of returning an error and forcing the LLM
+  to ask the user about using the browser.
+
 - **Web onboarding flash and redirect timing**: The web server now performs onboarding redirects before rendering the main app shell. When onboarding is incomplete, non-onboarding routes redirect directly to `/onboarding`; once onboarding is complete, `/onboarding` redirects back to `/`. The onboarding route now serves a dedicated onboarding HTML/JS entry instead of the full app bundle, preventing duplicate bootstrap/navigation flashes in Safari.
 - **Local model cache path visibility**: Startup logs for local LLM providers now explicitly print the model cache directory and cached model IDs, making `MOLTIS_DATA_DIR` behavior easier to verify without noisy model-catalog output.
 - **Kimi device-flow OAuth in web UI**: Kimi OAuth now uses provider-specific headers and prefers `verification_uri_complete` (or synthesizes `?user_code=` fallback) so mobile-device sign-in links no longer fail with missing `user_code`.

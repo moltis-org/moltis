@@ -10,7 +10,7 @@ use {
 
 use moltis_gateway::{
     auth,
-    chat::{LiveChatService, LiveModelService},
+    chat::{DisabledModelsStore, LiveChatService, LiveModelService},
     methods::MethodRegistry,
     server::build_gateway_app,
     services::GatewayServices,
@@ -49,14 +49,14 @@ async fn start_test_server() -> SocketAddr {
 
 #[cfg(feature = "web-ui")]
 #[tokio::test]
-async fn root_serves_chat_ui_html() {
+async fn root_redirects_to_onboarding_when_not_onboarded() {
     let addr = start_test_server().await;
+    // A fresh (non-onboarded) server redirects `/` → `/onboarding`.
     let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("<title>moltis</title>"));
-    assert!(body.contains("id=\"pageContent\""));
-    assert!(body.contains("id=\"navPanel\""));
+    assert!(body.contains("<title>moltis onboarding</title>"));
+    assert!(body.contains("id=\"onboardingRoot\""));
 }
 
 #[tokio::test]
@@ -223,7 +223,11 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
 
     let mut services = GatewayServices::noop();
     if !registry.read().await.is_empty() {
-        services = services.with_model(Arc::new(LiveModelService::new(Arc::clone(&registry))));
+        services = services.with_model(Arc::new(LiveModelService::new(
+            Arc::clone(&registry),
+            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
+            Vec::new(),
+        )));
     }
 
     let state = GatewayState::new(
@@ -252,6 +256,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         state
             .set_chat(Arc::new(LiveChatService::new(
                 Arc::clone(&registry),
+                Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
                 Arc::clone(&state),
                 Arc::clone(&session_store1),
                 Arc::clone(&session_metadata1),
@@ -286,6 +291,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     state2
         .set_chat(Arc::new(LiveChatService::new(
             Arc::clone(&registry2),
+            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
             Arc::clone(&state2),
             Arc::clone(&session_store2),
             Arc::clone(&session_metadata2),

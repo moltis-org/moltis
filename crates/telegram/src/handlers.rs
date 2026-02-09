@@ -1081,7 +1081,10 @@ pub async fn handle_callback_query(
         }
 
         // Also send as a regular message for visibility.
-        if let Err(e) = outbound.send_text(account_id, &chat_id, &response, None).await {
+        if let Err(e) = outbound
+            .send_text(account_id, &chat_id, &response, None)
+            .await
+        {
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {

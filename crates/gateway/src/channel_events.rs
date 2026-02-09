@@ -193,7 +193,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
+                            .send_text(
+                                &reply_to.account_id,
+                                &reply_to.chat_id,
+                                &msg,
+                                reply_to.message_id.as_deref(),
+                            )
                             .await;
                     }
                 }
@@ -229,7 +234,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
+                            .send_text(
+                                &reply_to.account_id,
+                                &reply_to.chat_id,
+                                &msg,
+                                reply_to.message_id.as_deref(),
+                            )
                             .await;
                     }
                 }
@@ -294,7 +304,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let error_msg = format!("⚠️ {e}");
                     if let Err(send_err) = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg, reply_to.message_id.as_deref())
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &error_msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await
                     {
                         warn!("failed to send error back to channel: {send_err}");
@@ -572,7 +587,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await;
                 }
             }
@@ -605,7 +625,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg, reply_to.message_id.as_deref())
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await;
                 }
             }
@@ -639,7 +664,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
             if let Some(outbound) = state.services.channel_outbound_arc() {
                 let error_msg = format!("⚠️ {e}");
                 if let Err(send_err) = outbound
-                    .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg, reply_to.message_id.as_deref())
+                    .send_text(
+                        &reply_to.account_id,
+                        &reply_to.chat_id,
+                        &error_msg,
+                        reply_to.message_id.as_deref(),
+                    )
                     .await
                 {
                     warn!("failed to send error back to channel: {send_err}");

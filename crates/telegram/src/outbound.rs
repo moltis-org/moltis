@@ -67,10 +67,10 @@ impl ChannelOutbound for TelegramOutbound {
         for (i, chunk) in chunks.iter().enumerate() {
             let mut req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
             // Thread only the first chunk as a reply to the original message.
-            if i == 0 {
-                if let Some(ref rp) = rp {
-                    req = req.reply_parameters(rp.clone());
-                }
+            if i == 0
+                && let Some(ref rp) = rp
+            {
+                req = req.reply_parameters(rp.clone());
             }
             req.await?;
         }
@@ -104,10 +104,10 @@ impl ChannelOutbound for TelegramOutbound {
                 .send_message(chat_id, chunk)
                 .parse_mode(ParseMode::Html)
                 .disable_notification(true);
-            if i == 0 {
-                if let Some(ref rp) = rp {
-                    req = req.reply_parameters(rp.clone());
-                }
+            if i == 0
+                && let Some(ref rp) = rp
+            {
+                req = req.reply_parameters(rp.clone());
             }
             req.await?;
         }
@@ -249,7 +249,8 @@ impl ChannelOutbound for TelegramOutbound {
                 }
             }
         } else if !payload.text.is_empty() {
-            self.send_text(account_id, to, &payload.text, reply_to).await?;
+            self.send_text(account_id, to, &payload.text, reply_to)
+                .await?;
         }
 
         Ok(())

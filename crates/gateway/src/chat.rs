@@ -4101,12 +4101,7 @@ async fn deliver_channel_replies_to_targets(
                 moltis_channels::ChannelType::Telegram => match tts_payload {
                     Some(payload) => {
                         if let Err(e) = outbound
-                            .send_media(
-                                &target.account_id,
-                                &target.chat_id,
-                                &payload,
-                                reply_to,
-                            )
+                            .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
                             .await
                         {
                             warn!(
@@ -4118,12 +4113,7 @@ async fn deliver_channel_replies_to_targets(
                     },
                     None => {
                         if let Err(e) = outbound
-                            .send_text(
-                                &target.account_id,
-                                &target.chat_id,
-                                &text,
-                                reply_to,
-                            )
+                            .send_text(&target.account_id, &target.chat_id, &text, reply_to)
                             .await
                         {
                             warn!(
@@ -4477,12 +4467,7 @@ async fn send_screenshot_to_channels(
                 moltis_channels::ChannelType::Telegram => {
                     let reply_to = target.message_id.as_deref();
                     if let Err(e) = outbound
-                        .send_media(
-                            &target.account_id,
-                            &target.chat_id,
-                            &payload,
-                            reply_to,
-                        )
+                        .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
                         .await
                     {
                         warn!(
@@ -4493,12 +4478,7 @@ async fn send_screenshot_to_channels(
                         // Notify the user of the error
                         let error_msg = format!("⚠️ Failed to send screenshot: {e}");
                         let _ = outbound
-                            .send_text(
-                                &target.account_id,
-                                &target.chat_id,
-                                &error_msg,
-                                reply_to,
-                            )
+                            .send_text(&target.account_id, &target.chat_id, &error_msg, reply_to)
                             .await;
                     } else {
                         debug!(

@@ -1655,7 +1655,7 @@ mod tests {
             .filter(|m| m.provider == "openrouter")
             .collect();
         assert_eq!(or_models.len(), 1);
-        assert_eq!(or_models[0].id, "anthropic/claude-3-haiku");
+        assert_eq!(or_models[0].id, "openrouter::anthropic/claude-3-haiku");
     }
 
     #[test]
@@ -1748,7 +1748,7 @@ mod tests {
             .collect();
         // Should only have the one specified model, not the full default list
         assert_eq!(mistral_models.len(), 1);
-        assert_eq!(mistral_models[0].id, "mistral-small-latest");
+        assert_eq!(mistral_models[0].id, "mistral::mistral-small-latest");
     }
 
     #[test]
@@ -1799,16 +1799,16 @@ mod tests {
         ));
         // We can't register same model ID twice, so test the ordering
         // with what we have: primary is gpt-4o/openai.
-        let fallbacks = reg.fallback_providers_for("gpt-4o", "openai");
+        let fallbacks = reg.fallback_providers_for("openai::gpt-4o", "openai");
         let ids: Vec<&str> = fallbacks.iter().map(|p| p.id()).collect();
 
         // gpt-4o-mini (same provider) should come before claude-sonnet (other provider).
-        assert_eq!(ids, vec!["gpt-4o-mini", "claude-sonnet"]);
+        assert_eq!(ids, vec!["openai::gpt-4o-mini", "anthropic::claude-sonnet"]);
 
         // Now test with primary being claude-sonnet/anthropic — both openai models should follow.
-        let fallbacks = reg.fallback_providers_for("claude-sonnet", "anthropic");
+        let fallbacks = reg.fallback_providers_for("anthropic::claude-sonnet", "anthropic");
         let ids: Vec<&str> = fallbacks.iter().map(|p| p.id()).collect();
-        assert_eq!(ids, vec!["gpt-4o", "gpt-4o-mini"]);
+        assert_eq!(ids, vec!["openai::gpt-4o", "openai::gpt-4o-mini"]);
 
         // Verify we don't use the openrouter provider we created (not registered).
         drop(provider_or);
@@ -1847,7 +1847,7 @@ mod tests {
             .filter(|m| m.provider == "local-llm")
             .collect();
         assert_eq!(local_models.len(), 1);
-        assert_eq!(local_models[0].id, "qwen2.5-coder-7b-q4_k_m");
+        assert_eq!(local_models[0].id, "local-llm::qwen2.5-coder-7b-q4_k_m");
     }
 
     #[cfg(feature = "local-llm")]

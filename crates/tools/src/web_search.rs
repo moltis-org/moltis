@@ -9,7 +9,7 @@ use {
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
-    tracing::debug,
+    tracing::{debug, warn},
 };
 
 use {
@@ -26,6 +26,9 @@ struct CacheEntry {
 }
 
 /// Web search tool — lets the LLM search the web via Brave Search or Perplexity.
+///
+/// When the configured provider's API key is missing, the tool automatically
+/// falls back to DuckDuckGo HTML search so the LLM never has to ask the user.
 pub struct WebSearchTool {
     provider: SearchProvider,
     api_key: Secret<String>,
@@ -33,6 +36,10 @@ pub struct WebSearchTool {
     timeout: Duration,
     cache_ttl: Duration,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    /// Whether to fall back to DuckDuckGo when the API key is missing.
+    /// Always `true` in production; set to `false` in unit tests to avoid
+    /// network calls.
+    fallback_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +116,7 @@ impl WebSearchTool {
                     config.max_results,
                     Duration::from_secs(config.timeout_seconds),
                     Duration::from_secs(config.cache_ttl_minutes * 60),
+                    true,
                 ))
             },
             ConfigSearchProvider::Perplexity => {
@@ -124,6 +132,7 @@ impl WebSearchTool {
                     config.max_results,
                     Duration::from_secs(config.timeout_seconds),
                     Duration::from_secs(config.cache_ttl_minutes * 60),
+                    true,
                 ))
             },
         }
@@ -135,6 +144,7 @@ impl WebSearchTool {
         max_results: u8,
         timeout: Duration,
         cache_ttl: Duration,
+        fallback_enabled: bool,
     ) -> Self {
         Self {
             provider,
@@ -143,6 +153,7 @@ impl WebSearchTool {
             timeout,
             cache_ttl,
             cache: Mutex::new(HashMap::new()),
+            fallback_enabled,
         }
     }
 
@@ -300,6 +311,39 @@ impl WebSearchTool {
             "citations": pplx.citations,
         }))
     }
+
+    /// Fallback: search DuckDuckGo's HTML endpoint when no API key is configured.
+    async fn search_duckduckgo(&self, query: &str, count: u8) -> Result<serde_json::Value> {
+        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
+
+        let resp = client
+            .post("https://html.duckduckgo.com/html/")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Referer", "https://html.duckduckgo.com/")
+            .body(format!("q={}&b=", urlencoding::encode(query)))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            bail!("DuckDuckGo returned HTTP {status}");
+        }
+
+        let html = resp.text().await?;
+
+        if html.contains("challenge-form") || html.contains("not a Robot") {
+            bail!("DuckDuckGo returned a CAPTCHA challenge");
+        }
+
+        let results = parse_duckduckgo_html(&html, count);
+
+        Ok(serde_json::json!({
+            "provider": "duckduckgo",
+            "query": query,
+            "results": results,
+            "note": "Results from DuckDuckGo (search API key not configured)"
+        }))
+    }
 }
 
 /// Resolve Perplexity API key and base URL from config / env.
@@ -322,6 +366,117 @@ fn resolve_perplexity_config(cfg: &PerplexityConfig) -> (Secret<String>, String)
     });
 
     (Secret::new(api_key), base_url)
+}
+
+// ---------------------------------------------------------------------------
+// DuckDuckGo HTML parsing helpers
+// ---------------------------------------------------------------------------
+
+/// Parse DuckDuckGo HTML search results into structured result objects.
+fn parse_duckduckgo_html(html: &str, max_results: u8) -> Vec<serde_json::Value> {
+    let mut results = Vec::new();
+    let max = max_results as usize;
+    let mut search_from = 0;
+
+    while results.len() < max {
+        let Some(anchor_pos) = html[search_from..].find("class=\"result__a\"") else {
+            break;
+        };
+        let anchor_abs = search_from + anchor_pos;
+        search_from = anchor_abs + 1;
+
+        let Some(href) = extract_href_before(html, anchor_abs) else {
+            continue;
+        };
+
+        let url = resolve_ddg_redirect(&href);
+        let title = extract_tag_text(html, anchor_abs);
+
+        let snippet = html[anchor_abs..]
+            .find("class=\"result__snippet\"")
+            .map(|offset| extract_tag_text(html, anchor_abs + offset))
+            .unwrap_or_default();
+
+        if !url.is_empty() && !title.is_empty() {
+            results.push(serde_json::json!({
+                "title": decode_html_entities(&title),
+                "url": url,
+                "description": decode_html_entities(&snippet),
+            }));
+        }
+    }
+
+    results
+}
+
+/// Find the `href="..."` attribute value in the tag surrounding `class_pos`.
+fn extract_href_before(html: &str, class_pos: usize) -> Option<String> {
+    let tag_start = html[..class_pos].rfind('<')?;
+    let tag_region = &html[tag_start..];
+    let href_start = tag_region.find("href=\"")?;
+    let value_start = href_start + 6;
+    let value_end = tag_region[value_start..].find('"')?;
+    Some(tag_region[value_start..value_start + value_end].to_string())
+}
+
+/// Extract text content from the element at `class_pos` (after the closing `>`).
+fn extract_tag_text(html: &str, class_pos: usize) -> String {
+    let Some(tag_close) = html[class_pos..].find('>') else {
+        return String::new();
+    };
+    let content_start = class_pos + tag_close + 1;
+    let remaining = &html[content_start..];
+    let end = remaining.find("</").unwrap_or(remaining.len());
+    strip_tags(&remaining[..end])
+}
+
+/// Strip HTML tags, keeping only text content.
+fn strip_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {},
+        }
+    }
+    result.trim().to_string()
+}
+
+/// Decode common HTML entities.
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&#160;", " ")
+}
+
+/// Resolve a DuckDuckGo redirect URL (`//duckduckgo.com/l/?uddg=...`) to the
+/// actual destination. Returns the href as-is when it's not a redirect.
+fn resolve_ddg_redirect(href: &str) -> String {
+    let full_url = if href.starts_with("//") {
+        format!("https:{href}")
+    } else {
+        href.to_string()
+    };
+
+    if full_url.contains("duckduckgo.com/l/")
+        && let Ok(parsed) = url::Url::parse(&full_url)
+    {
+        for (key, value) in parsed.query_pairs() {
+            if key == "uddg" {
+                return value.into_owned();
+            }
+        }
+    }
+
+    full_url
 }
 
 /// URL-encode helper (subset; reqwest doesn't re-export this).
@@ -421,6 +576,27 @@ impl AgentTool for WebSearchTool {
             },
         };
 
+        // When the configured provider can't run (no API key), try DuckDuckGo
+        // HTML search as a transparent fallback so the LLM never has to ask.
+        let result = if self.fallback_enabled
+            && result.get("error").is_some()
+            && self.api_key.expose_secret().is_empty()
+        {
+            warn!(
+                provider = ?self.provider,
+                "search API key not configured, falling back to DuckDuckGo"
+            );
+            match self.search_duckduckgo(query, count).await {
+                Ok(ddg_result) => ddg_result,
+                Err(e) => {
+                    warn!(%e, "DuckDuckGo fallback failed, returning original error");
+                    result
+                },
+            }
+        } else {
+            result
+        };
+
         self.cache_set(cache_key, result.clone());
         Ok(result)
     }
@@ -437,6 +613,7 @@ mod tests {
             5,
             Duration::from_secs(10),
             Duration::from_secs(60),
+            false, // no network fallback in tests
         )
     }
 
@@ -450,6 +627,7 @@ mod tests {
             5,
             Duration::from_secs(10),
             Duration::from_secs(60),
+            false, // no network fallback in tests
         )
     }
 
@@ -515,6 +693,7 @@ mod tests {
             5,
             Duration::from_secs(10),
             Duration::ZERO,
+            false,
         );
         tool.cache_set("k".into(), serde_json::json!(1));
         assert!(tool.cache_get("k").is_none());
@@ -597,5 +776,116 @@ mod tests {
             .map(|n| n.clamp(1, 10) as u8)
             .unwrap_or(5);
         assert_eq!(count, 10);
+    }
+
+    // --- DuckDuckGo fallback tests ---
+
+    #[test]
+    fn test_parse_duckduckgo_html_basic() {
+        let html = r#"
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Frust-lang.org&amp;rut=abc" class="result__a">Rust Programming Language</a></h2>
+          <a class="result__snippet">A language empowering everyone to build reliable software.</a>
+        </div>
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fcrates.io&amp;rut=def" class="result__a">crates.io: Rust Package Registry</a></h2>
+          <a class="result__snippet">The Rust community's package registry.</a>
+        </div>
+        "#;
+        let results = parse_duckduckgo_html(html, 5);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["title"], "Rust Programming Language");
+        assert_eq!(results[0]["url"], "https://rust-lang.org");
+        assert_eq!(
+            results[0]["description"],
+            "A language empowering everyone to build reliable software."
+        );
+        assert_eq!(results[1]["title"], "crates.io: Rust Package Registry");
+        assert_eq!(results[1]["url"], "https://crates.io");
+    }
+
+    #[test]
+    fn test_parse_duckduckgo_html_respects_max() {
+        let html = r#"
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fa.com&amp;rut=1" class="result__a">A</a></h2>
+          <a class="result__snippet">Desc A</a>
+        </div>
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fb.com&amp;rut=2" class="result__a">B</a></h2>
+          <a class="result__snippet">Desc B</a>
+        </div>
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fc.com&amp;rut=3" class="result__a">C</a></h2>
+          <a class="result__snippet">Desc C</a>
+        </div>
+        "#;
+        let results = parse_duckduckgo_html(html, 2);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_duckduckgo_html_empty() {
+        let results = parse_duckduckgo_html("<html><body>No results</body></html>", 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_duckduckgo_html_with_entities() {
+        let html = r#"
+        <div class="web-result">
+          <h2><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com&amp;rut=x" class="result__a">Tom &amp; Jerry</a></h2>
+          <a class="result__snippet">A &lt;classic&gt; show</a>
+        </div>
+        "#;
+        let results = parse_duckduckgo_html(html, 5);
+        assert_eq!(results[0]["title"], "Tom & Jerry");
+        assert_eq!(results[0]["description"], "A <classic> show");
+    }
+
+    #[test]
+    fn test_resolve_ddg_redirect_standard() {
+        let href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Frust-lang.org%2Flearn&rut=abc";
+        assert_eq!(resolve_ddg_redirect(href), "https://rust-lang.org/learn");
+    }
+
+    #[test]
+    fn test_resolve_ddg_redirect_not_a_redirect() {
+        assert_eq!(
+            resolve_ddg_redirect("https://example.com/page"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn test_resolve_ddg_redirect_protocol_relative() {
+        assert_eq!(
+            resolve_ddg_redirect("//example.com/page"),
+            "https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn test_strip_tags_basic() {
+        assert_eq!(strip_tags("hello <b>world</b>"), "hello world");
+        assert_eq!(strip_tags("no tags"), "no tags");
+        assert_eq!(strip_tags("<a href='x'>link</a>"), "link");
+    }
+
+    #[test]
+    fn test_decode_html_entities_basic() {
+        assert_eq!(decode_html_entities("a &amp; b"), "a & b");
+        assert_eq!(decode_html_entities("&lt;div&gt;"), "<div>");
+        assert_eq!(decode_html_entities("it&#39;s"), "it's");
+    }
+
+    #[test]
+    fn test_extract_href_before() {
+        let html = r#"<a href="https://example.com" class="result__a">Title</a>"#;
+        let class_pos = html.find("class=\"result__a\"").unwrap();
+        assert_eq!(
+            extract_href_before(html, class_pos),
+            Some("https://example.com".to_string())
+        );
     }
 }
