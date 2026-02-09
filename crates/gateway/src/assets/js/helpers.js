@@ -336,9 +336,11 @@ var _audioCtx = null;
 export function warmAudioPlayback() {
 	if (!_audioCtx) {
 		_audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+		console.debug("[audio] created AudioContext, state:", _audioCtx.state);
 	}
 	if (_audioCtx.state === "suspended") {
-		_audioCtx.resume().catch(() => undefined);
+		console.debug("[audio] resuming suspended AudioContext");
+		_audioCtx.resume().catch((e) => console.warn("[audio] resume failed:", e));
 	}
 }
 
@@ -458,11 +460,26 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 	if (autoplay) {
 		// Ensure AudioContext is resumed (may have been unlocked by warmAudioPlayback).
 		warmAudioPlayback();
-		var doPlay = () => audio.play().catch(() => undefined);
+		console.debug(
+			"[audio] autoplay requested, readyState:",
+			audio.readyState,
+			"audioCtx:",
+			_audioCtx?.state,
+			"src:",
+			audioSrc.substring(0, 60),
+		);
+		var doPlay = () => {
+			console.debug("[audio] attempting play(), readyState:", audio.readyState, "paused:", audio.paused);
+			audio
+				.play()
+				.then(() => console.debug("[audio] play() succeeded"))
+				.catch((e) => console.warn("[audio] play() rejected:", e.name, e.message));
+		};
 		// Wait for enough data to be buffered before starting playback.
 		if (audio.readyState >= 3) {
 			doPlay();
 		} else {
+			console.debug("[audio] waiting for canplay event");
 			audio.addEventListener("canplay", doPlay, { once: true });
 		}
 	}

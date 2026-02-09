@@ -51,9 +51,22 @@ function updateMicButton() {
 			: "Click to start recording";
 }
 
+/** Pause all currently playing audio elements on the page. */
+function stopAllAudio() {
+	for (var audio of document.querySelectorAll("audio")) {
+		if (!audio.paused) {
+			audio.pause();
+			console.debug("[voice] paused playing audio");
+		}
+	}
+}
+
 /** Start recording audio from the microphone. */
 async function startRecording() {
 	if (isRecording || isStarting || !sttConfigured) return;
+
+	// Stop any playing audio so the mic doesn't pick up speaker output.
+	stopAllAudio();
 
 	isStarting = true;
 	micBtn.classList.add("starting");
@@ -142,6 +155,26 @@ function stopRecording() {
 	micBtn.title = "Transcribing...";
 
 	// Stop the recorder, which triggers onstop -> transcribeAudio
+	mediaRecorder.stop();
+}
+
+/** Cancel recording without sending — discards audio chunks. */
+function cancelRecording() {
+	if (!(isRecording && mediaRecorder)) return;
+
+	console.debug("[voice] recording cancelled via Escape");
+
+	// Prevent onstop from transcribing by clearing chunks first.
+	audioChunks = [];
+
+	isStarting = false;
+	isRecording = false;
+	micBtn.classList.remove("starting", "recording");
+	micBtn.removeAttribute("aria-busy");
+	micBtn.setAttribute("aria-pressed", "false");
+	micBtn.title = "Click to start recording";
+
+	// Stop the recorder — onstop will see empty chunks and bail out.
 	mediaRecorder.stop();
 }
 
@@ -299,6 +332,14 @@ export function initVoiceInput(btn) {
 		if (e.key === " " || e.key === "Enter") {
 			e.preventDefault();
 			onMicClick(e);
+		}
+	});
+
+	// Escape cancels recording without sending.
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Escape" && isRecording) {
+			e.preventDefault();
+			cancelRecording();
 		}
 	});
 
