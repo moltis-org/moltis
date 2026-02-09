@@ -252,13 +252,15 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
     }
 
     fn description(&self) -> &str {
-        "Get the user's current location as a place name and coordinates. \
+        "Get the user's current location as coordinates and a place name. \
          Requires user permission via browser popup. Use when the user asks \
          about local weather, nearby places, directions, or anything \
-         location-dependent. Returns `place` (full location) and \
-         `place_short` (local neighbourhood/city only, e.g. \"Noe Valley\"). \
-         When speaking aloud, use `place_short` instead of the full place or \
-         coordinates."
+         location-dependent. Returns `latitude`, `longitude`, `place` (full \
+         location string), and `place_short` (neighbourhood/city). \
+         IMPORTANT: For web searches, map lookups, and Google queries always \
+         use the numeric `latitude` and `longitude` (e.g. \"lunch near \
+         37.76,-122.42\") — place names are too imprecise for search engines. \
+         Only use `place_short` when speaking aloud to the user."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
