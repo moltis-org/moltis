@@ -3,7 +3,7 @@
 
 import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
-import { renderMarkdown, sendRpc } from "./helpers.js";
+import { renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import { bumpSessionCount, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
@@ -200,6 +200,9 @@ function cleanupTranscribingState() {
 
 /** Send transcribed text as a chat message. */
 function sendTranscribedMessage(text) {
+	// Unlock audio playback while we still have user-gesture context.
+	warmAudioPlayback();
+
 	// Add user message to chat (like sendChat does)
 	chatAddMsg("user", renderMarkdown(text), true);
 

@@ -1,7 +1,7 @@
 // ── Chat page ────────────────────────────────────────────
 
 import { chatAddMsg, chatAddMsgWithImages, updateTokenBar } from "./chat-ui.js";
-import { formatBytes, formatTokens, renderMarkdown, sendRpc } from "./helpers.js";
+import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
 	clearPendingImages,
 	getPendingImages,
@@ -809,6 +809,9 @@ function sendChat() {
 	var text = S.chatInput.value.trim();
 	var hasImages = hasPendingImages();
 	if (!((text || hasImages) && S.connected)) return;
+
+	// Unlock audio playback while we still have user-gesture context.
+	warmAudioPlayback();
 
 	if (text.charAt(0) === "/" && !hasImages) {
 		var cmdName = text.substring(1).toLowerCase();

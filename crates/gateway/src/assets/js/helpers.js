@@ -321,6 +321,27 @@ function createPauseSvg() {
 	return svg;
 }
 
+// ── Audio autoplay unlock ────────────────────────────────────
+// Browsers block audio.play() without a recent user gesture. We "unlock"
+// playback by creating a shared AudioContext on the first user action
+// (sending a message / clicking record). Once resumed, all subsequent
+// audio.play() calls on the page are allowed.
+var _audioCtx = null;
+
+/**
+ * Call from a user-gesture handler (click / keydown) to unlock audio
+ * playback for the current page session. Idempotent — safe to call
+ * multiple times.
+ */
+export function warmAudioPlayback() {
+	if (!_audioCtx) {
+		_audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+	}
+	if (_audioCtx.state === "suspended") {
+		_audioCtx.resume().catch(() => undefined);
+	}
+}
+
 /**
  * Render a waveform audio player (Telegram-style bars) into `container`.
  * @param {HTMLElement} container - parent element to append into
@@ -434,7 +455,17 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 		if (audio.paused) audio.play().catch(() => undefined);
 	};
 
-	if (autoplay) audio.play().catch(() => undefined);
+	if (autoplay) {
+		// Ensure AudioContext is resumed (may have been unlocked by warmAudioPlayback).
+		warmAudioPlayback();
+		var doPlay = () => audio.play().catch(() => undefined);
+		// Wait for enough data to be buffered before starting playback.
+		if (audio.readyState >= 3) {
+			doPlay();
+		} else {
+			audio.addEventListener("canplay", doPlay, { once: true });
+		}
+	}
 }
 
 export function createEl(tag, attrs, children) {
