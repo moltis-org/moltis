@@ -45,6 +45,8 @@ pub enum AudioFormat {
     Aac,
     /// PCM (raw audio).
     Pcm,
+    /// WebM container (browser MediaRecorder default).
+    Webm,
 }
 
 impl AudioFormat {
@@ -56,6 +58,7 @@ impl AudioFormat {
             Self::Opus => "audio/ogg",
             Self::Aac => "audio/aac",
             Self::Pcm => "audio/pcm",
+            Self::Webm => "audio/webm",
         }
     }
 
@@ -67,6 +70,33 @@ impl AudioFormat {
             Self::Opus => "ogg",
             Self::Aac => "aac",
             Self::Pcm => "pcm",
+            Self::Webm => "webm",
+        }
+    }
+
+    /// Parse from a MIME content-type string (e.g. `"audio/webm"`, `"audio/webm;codecs=opus"`).
+    #[must_use]
+    pub fn from_content_type(ct: &str) -> Option<Self> {
+        let base = ct.split(';').next().unwrap_or(ct).trim();
+        match base {
+            "audio/webm" => Some(Self::Webm),
+            "audio/ogg" | "audio/opus" => Some(Self::Opus),
+            "audio/mpeg" | "audio/mp3" => Some(Self::Mp3),
+            "audio/aac" | "audio/mp4" | "audio/m4a" => Some(Self::Aac),
+            "audio/pcm" | "audio/wav" | "audio/x-wav" => Some(Self::Pcm),
+            _ => None,
+        }
+    }
+
+    /// Parse from a short format name (e.g. `"webm"`, `"opus"`, `"ogg"`, `"mp3"`).
+    #[must_use]
+    pub fn from_short_name(name: &str) -> Self {
+        match name {
+            "webm" => Self::Webm,
+            "opus" | "ogg" => Self::Opus,
+            "aac" | "m4a" => Self::Aac,
+            "pcm" | "wav" => Self::Pcm,
+            _ => Self::Mp3,
         }
     }
 }
@@ -176,12 +206,72 @@ mod tests {
     fn test_audio_format_mime_type() {
         assert_eq!(AudioFormat::Mp3.mime_type(), "audio/mpeg");
         assert_eq!(AudioFormat::Opus.mime_type(), "audio/ogg");
+        assert_eq!(AudioFormat::Webm.mime_type(), "audio/webm");
+        assert_eq!(AudioFormat::Aac.mime_type(), "audio/aac");
+        assert_eq!(AudioFormat::Pcm.mime_type(), "audio/pcm");
     }
 
     #[test]
     fn test_audio_format_extension() {
         assert_eq!(AudioFormat::Mp3.extension(), "mp3");
         assert_eq!(AudioFormat::Opus.extension(), "ogg");
+        assert_eq!(AudioFormat::Webm.extension(), "webm");
+        assert_eq!(AudioFormat::Aac.extension(), "aac");
+        assert_eq!(AudioFormat::Pcm.extension(), "pcm");
+    }
+
+    #[test]
+    fn test_audio_format_from_content_type() {
+        assert_eq!(
+            AudioFormat::from_content_type("audio/webm"),
+            Some(AudioFormat::Webm)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/webm;codecs=opus"),
+            Some(AudioFormat::Webm)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/ogg"),
+            Some(AudioFormat::Opus)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/mpeg"),
+            Some(AudioFormat::Mp3)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/mp3"),
+            Some(AudioFormat::Mp3)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/aac"),
+            Some(AudioFormat::Aac)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/mp4"),
+            Some(AudioFormat::Aac)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/pcm"),
+            Some(AudioFormat::Pcm)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/wav"),
+            Some(AudioFormat::Pcm)
+        );
+        assert_eq!(AudioFormat::from_content_type("image/png"), None);
+        assert_eq!(AudioFormat::from_content_type("text/plain"), None);
+    }
+
+    #[test]
+    fn test_audio_format_from_short_name() {
+        assert_eq!(AudioFormat::from_short_name("webm"), AudioFormat::Webm);
+        assert_eq!(AudioFormat::from_short_name("opus"), AudioFormat::Opus);
+        assert_eq!(AudioFormat::from_short_name("ogg"), AudioFormat::Opus);
+        assert_eq!(AudioFormat::from_short_name("aac"), AudioFormat::Aac);
+        assert_eq!(AudioFormat::from_short_name("pcm"), AudioFormat::Pcm);
+        assert_eq!(AudioFormat::from_short_name("wav"), AudioFormat::Pcm);
+        assert_eq!(AudioFormat::from_short_name("mp3"), AudioFormat::Mp3);
+        assert_eq!(AudioFormat::from_short_name("unknown"), AudioFormat::Mp3);
     }
 
     #[test]

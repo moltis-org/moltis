@@ -626,6 +626,12 @@ function handleModelsUpdated(payload) {
 
 // ── Location request handler ─────────────────────────────────
 
+function handleWsError(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	chatAddErrorMsg(payload.message || "Unknown error");
+}
+
 function handleLocationRequest(payload) {
 	var requestId = payload.requestId;
 	if (!requestId) return;
@@ -661,6 +667,7 @@ function handleLocationRequest(payload) {
 
 var eventHandlers = {
 	chat: handleChatEvent,
+	error: handleWsError,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,

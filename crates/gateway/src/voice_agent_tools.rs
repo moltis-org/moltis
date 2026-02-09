@@ -296,6 +296,17 @@ mod tests {
             Ok(json!({ "text": "hello" }))
         }
 
+        async fn transcribe_bytes(
+            &self,
+            _audio: bytes::Bytes,
+            _format: &str,
+            _provider: Option<&str>,
+            _language: Option<&str>,
+            _prompt: Option<&str>,
+        ) -> ServiceResult {
+            Err("STT not available in agent mode".to_string())
+        }
+
         async fn set_provider(&self, _params: Value) -> ServiceResult {
             Ok(json!({}))
         }

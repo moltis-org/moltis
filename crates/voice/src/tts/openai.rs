@@ -96,7 +96,7 @@ impl OpenAiTts {
     fn response_format(format: AudioFormat) -> &'static str {
         match format {
             AudioFormat::Mp3 => "mp3",
-            AudioFormat::Opus => "opus",
+            AudioFormat::Opus | AudioFormat::Webm => "opus",
             AudioFormat::Aac => "aac",
             AudioFormat::Pcm => "pcm",
         }

@@ -400,19 +400,16 @@ impl ChannelEventSink for GatewayChannelEventSink {
             .get()
             .ok_or_else(|| anyhow!("gateway not ready"))?;
 
-        // Encode audio as base64 for the STT service
-        let audio_base64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, audio_data);
-
-        let params = serde_json::json!({
-            "audio": audio_base64,
-            "format": format,
-        });
-
         let result = state
             .services
             .stt
-            .transcribe(params)
+            .transcribe_bytes(
+                bytes::Bytes::copy_from_slice(audio_data),
+                format,
+                None,
+                None,
+                None,
+            )
             .await
             .map_err(|e| anyhow!("transcription failed: {}", e))?;
 

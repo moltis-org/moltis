@@ -292,12 +292,7 @@ impl TtsService for LiveTtsService {
         let format = params
             .get("format")
             .and_then(|v| v.as_str())
-            .map(|f| match f {
-                "opus" | "ogg" => AudioFormat::Opus,
-                "aac" => AudioFormat::Aac,
-                "pcm" => AudioFormat::Pcm,
-                _ => AudioFormat::Mp3,
-            })
+            .map(AudioFormat::from_short_name)
             .unwrap_or(AudioFormat::Mp3);
 
         let request = SynthesizeRequest {
@@ -376,8 +371,19 @@ pub trait SttService: Send + Sync {
     async fn status(&self) -> ServiceResult;
     /// List available STT providers.
     async fn providers(&self) -> ServiceResult;
-    /// Transcribe audio to text.
+    /// Transcribe audio to text (base64-encoded audio in params).
     async fn transcribe(&self, params: Value) -> ServiceResult;
+    /// Transcribe raw audio bytes directly (no base64 encoding needed).
+    ///
+    /// `format` is a short name like `"webm"`, `"ogg"`, `"mp3"` etc.
+    async fn transcribe_bytes(
+        &self,
+        audio: bytes::Bytes,
+        format: &str,
+        provider: Option<&str>,
+        language: Option<&str>,
+        prompt: Option<&str>,
+    ) -> ServiceResult;
     /// Set the active STT provider.
     async fn set_provider(&self, params: Value) -> ServiceResult;
 }
@@ -631,18 +637,6 @@ impl SttService for LiveSttService {
     }
 
     async fn transcribe(&self, params: Value) -> ServiceResult {
-        let cfg = moltis_config::discover_and_load();
-        let provider_str = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or(cfg.voice.stt.provider.as_str());
-
-        let provider_id = SttProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
-
-        let provider: Box<dyn SttProvider + Send + Sync> = Self::create_provider(provider_id)
-            .ok_or_else(|| format!("STT provider '{}' not configured", provider_id))?;
-
         let audio_base64 = params
             .get("audio")
             .and_then(|v| v.as_str())
@@ -652,31 +646,47 @@ impl SttService for LiveSttService {
             .decode(audio_base64)
             .map_err(|e| format!("invalid base64 audio: {}", e))?;
 
-        let format = params
+        let format_str = params
             .get("format")
             .and_then(|v| v.as_str())
-            .map(|f| match f {
-                "opus" | "ogg" => AudioFormat::Opus,
-                "aac" => AudioFormat::Aac,
-                "pcm" => AudioFormat::Pcm,
-                _ => AudioFormat::Mp3,
-            })
-            .unwrap_or(AudioFormat::Mp3);
+            .unwrap_or("mp3");
+
+        self.transcribe_bytes(
+            audio_data.into(),
+            format_str,
+            params.get("provider").and_then(|v| v.as_str()),
+            params.get("language").and_then(|v| v.as_str()),
+            params.get("prompt").and_then(|v| v.as_str()),
+        )
+        .await
+    }
+
+    async fn transcribe_bytes(
+        &self,
+        audio: bytes::Bytes,
+        format: &str,
+        provider: Option<&str>,
+        language: Option<&str>,
+        prompt: Option<&str>,
+    ) -> ServiceResult {
+        let cfg = moltis_config::discover_and_load();
+        let provider_str = provider.unwrap_or(cfg.voice.stt.provider.as_str());
+
+        let provider_id = SttProviderId::parse(provider_str)
+            .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
+
+        let stt_provider: Box<dyn SttProvider + Send + Sync> =
+            Self::create_provider(provider_id)
+                .ok_or_else(|| format!("STT provider '{}' not configured", provider_id))?;
 
         let request = TranscribeRequest {
-            audio: audio_data.into(),
-            format,
-            language: params
-                .get("language")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            prompt: params
-                .get("prompt")
-                .and_then(|v| v.as_str())
-                .map(String::from),
+            audio,
+            format: AudioFormat::from_short_name(format),
+            language: language.map(String::from),
+            prompt: prompt.map(String::from),
         };
 
-        let transcript = provider
+        let transcript = stt_provider
             .transcribe(request)
             .await
             .map_err(|e| format!("transcription failed: {}", e))?;
@@ -731,6 +741,17 @@ impl SttService for NoopSttService {
     }
 
     async fn transcribe(&self, _params: Value) -> ServiceResult {
+        Err("STT not available".to_string())
+    }
+
+    async fn transcribe_bytes(
+        &self,
+        _audio: bytes::Bytes,
+        _format: &str,
+        _provider: Option<&str>,
+        _language: Option<&str>,
+        _prompt: Option<&str>,
+    ) -> ServiceResult {
         Err("STT not available".to_string())
     }
 
@@ -862,5 +883,11 @@ mod tests {
 
         let result = service.transcribe(json!({})).await;
         assert!(result.is_err());
+
+        let result = service
+            .transcribe_bytes(bytes::Bytes::from_static(b"fake"), "mp3", None, None, None)
+            .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "STT not available");
     }
 }

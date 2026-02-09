@@ -80,7 +80,7 @@ impl GoogleStt {
     fn encoding(format: crate::tts::AudioFormat) -> &'static str {
         match format {
             crate::tts::AudioFormat::Mp3 => "MP3",
-            crate::tts::AudioFormat::Opus => "OGG_OPUS",
+            crate::tts::AudioFormat::Opus | crate::tts::AudioFormat::Webm => "OGG_OPUS",
             crate::tts::AudioFormat::Aac => "MP3", // Fallback, not directly supported
             crate::tts::AudioFormat::Pcm => "LINEAR16",
         }
