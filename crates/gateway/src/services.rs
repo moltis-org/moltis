@@ -83,7 +83,7 @@ async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<serde_json::Value>
 }
 
 fn is_protected_discovered_skill(name: &str) -> bool {
-    matches!(name, "template-skill" | "template")
+    matches!(name, "template-skill" | "template" | "tmux")
 }
 
 fn commit_url_for_source(source: &str, sha: &str) -> Option<String> {
@@ -437,6 +437,8 @@ pub trait ChatService: Send + Sync {
     async fn clear(&self, params: Value) -> ServiceResult;
     async fn compact(&self, params: Value) -> ServiceResult;
     async fn context(&self, params: Value) -> ServiceResult;
+    /// Build the complete system prompt and return it for inspection.
+    async fn raw_prompt(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopChatService;
@@ -469,6 +471,10 @@ impl ChatService for NoopChatService {
 
     async fn context(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!({ "session": {}, "project": null, "tools": [], "providers": [] }))
+    }
+
+    async fn raw_prompt(&self, _p: Value) -> ServiceResult {
+        Err("chat not configured".into())
     }
 }
 

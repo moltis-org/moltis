@@ -13,6 +13,7 @@ pub mod cron_tool;
 pub mod exec;
 pub mod image_cache;
 pub mod policy;
+pub mod process;
 pub mod sandbox;
 pub mod session_state;
 pub mod skill_tools;

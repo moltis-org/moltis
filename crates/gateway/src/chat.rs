@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     path::PathBuf,
+    process::Stdio,
     sync::Arc,
 };
 
@@ -22,7 +24,10 @@ use {
     moltis_agents::{
         AgentRunError, ChatMessage,
         model::{StreamEvent, values_to_chat_messages},
-        prompt::{build_system_prompt_minimal, build_system_prompt_with_session},
+        prompt::{
+            PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
+            build_system_prompt_minimal_runtime, build_system_prompt_with_session_runtime,
+        },
         providers::ProviderRegistry,
         runner::{RunnerEvent, run_agent_loop_streaming},
         tool_registry::ToolRegistry,
@@ -143,6 +148,172 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     }
 
     ReplyMedium::Text
+}
+
+fn detect_runtime_shell() -> Option<String> {
+    let candidate = std::env::var("SHELL")
+        .ok()
+        .or_else(|| std::env::var("COMSPEC").ok())?;
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let name = std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(trimmed)
+        .trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) {
+    #[cfg(not(unix))]
+    {
+        return (None, Some("unsupported".to_string()));
+    }
+
+    #[cfg(unix)]
+    {
+        let output = tokio::process::Command::new("sudo")
+            .arg("-n")
+            .arg("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        match output {
+            Ok(out) if out.status.success() => (Some(true), Some("passwordless".to_string())),
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+                if stderr.contains("a password is required") {
+                    (Some(false), Some("requires_password".to_string()))
+                } else if stderr.contains("not in the sudoers")
+                    || stderr.contains("is not in the sudoers")
+                    || stderr.contains("is not allowed to run sudo")
+                    || stderr.contains("may not run sudo")
+                {
+                    (Some(false), Some("denied".to_string()))
+                } else {
+                    (None, Some("unknown".to_string()))
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                (None, Some("not_installed".to_string()))
+            },
+            Err(_) => (None, Some("unknown".to_string())),
+        }
+    }
+}
+
+/// Pre-loaded persona data used to build the system prompt.
+struct PromptPersona {
+    config: moltis_config::MoltisConfig,
+    identity: moltis_config::AgentIdentity,
+    user: moltis_config::UserProfile,
+    soul_text: Option<String>,
+    agents_text: Option<String>,
+    tools_text: Option<String>,
+}
+
+/// Load identity, user profile, soul, and workspace text from config + data files.
+///
+/// Both `run_with_tools` and `run_streaming` need the same persona data;
+/// this function avoids duplicating the merge logic.
+fn load_prompt_persona() -> PromptPersona {
+    let config = moltis_config::discover_and_load();
+    let mut identity = config.identity.clone();
+    if let Some(file_identity) = moltis_config::load_identity() {
+        if file_identity.name.is_some() {
+            identity.name = file_identity.name;
+        }
+        if file_identity.emoji.is_some() {
+            identity.emoji = file_identity.emoji;
+        }
+        if file_identity.creature.is_some() {
+            identity.creature = file_identity.creature;
+        }
+        if file_identity.vibe.is_some() {
+            identity.vibe = file_identity.vibe;
+        }
+    }
+    let mut user = config.user.clone();
+    if let Some(file_user) = moltis_config::load_user() {
+        if file_user.name.is_some() {
+            user.name = file_user.name;
+        }
+        if file_user.timezone.is_some() {
+            user.timezone = file_user.timezone;
+        }
+    }
+    PromptPersona {
+        config,
+        identity,
+        user,
+        soul_text: moltis_config::load_soul(),
+        agents_text: moltis_config::load_agents_md(),
+        tools_text: moltis_config::load_tools_md(),
+    }
+}
+
+async fn build_prompt_runtime_context(
+    state: &Arc<GatewayState>,
+    provider: &Arc<dyn moltis_agents::model::LlmProvider>,
+    session_key: &str,
+    session_entry: Option<&moltis_sessions::metadata::SessionEntry>,
+) -> PromptRuntimeContext {
+    let sudo_fut = detect_host_sudo_access();
+    let sandbox_fut = async {
+        if let Some(ref router) = state.sandbox_router {
+            let is_sandboxed = router.is_sandboxed(session_key).await;
+            let config = router.config();
+            Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: is_sandboxed,
+                mode: Some(config.mode.to_string()),
+                backend: Some(router.backend_name().to_string()),
+                scope: Some(config.scope.to_string()),
+                image: Some(router.resolve_image(session_key, None).await),
+                workspace_mount: Some(config.workspace_mount.to_string()),
+                no_network: Some(config.no_network),
+                session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
+            })
+        } else {
+            Some(PromptSandboxRuntimeContext {
+                exec_sandboxed: false,
+                mode: Some("off".to_string()),
+                backend: Some("none".to_string()),
+                scope: None,
+                image: None,
+                workspace_mount: None,
+                no_network: None,
+                session_override: None,
+            })
+        }
+    };
+
+    let ((sudo_non_interactive, sudo_status), sandbox_ctx) = tokio::join!(sudo_fut, sandbox_fut);
+
+    let host_ctx = PromptHostRuntimeContext {
+        host: Some(state.hostname.clone()),
+        os: Some(std::env::consts::OS.to_string()),
+        arch: Some(std::env::consts::ARCH.to_string()),
+        shell: detect_runtime_shell(),
+        provider: Some(provider.name().to_string()),
+        model: Some(provider.id().to_string()),
+        session_key: Some(session_key.to_string()),
+        sudo_non_interactive,
+        sudo_status,
+    };
+
+    PromptRuntimeContext {
+        host: host_ctx,
+        sandbox: sandbox_ctx,
+    }
 }
 
 fn effective_tool_policy(config: &moltis_config::MoltisConfig) -> ToolPolicy {
@@ -440,6 +611,68 @@ impl LiveChatService {
         }
         "main".to_string()
     }
+
+    /// Resolve the project context prompt section for a session.
+    async fn resolve_project_context(
+        &self,
+        session_key: &str,
+        conn_id: Option<&str>,
+    ) -> Option<String> {
+        let project_id = if let Some(cid) = conn_id {
+            let projects = self.state.active_projects.read().await;
+            projects.get(cid).cloned()
+        } else {
+            None
+        };
+        // Also check session metadata for project binding (async path).
+        let project_id = match project_id {
+            Some(pid) => Some(pid),
+            None => self
+                .session_metadata
+                .get(session_key)
+                .await
+                .and_then(|e| e.project_id),
+        };
+
+        let pid = project_id?;
+        let val = self
+            .state
+            .services
+            .project
+            .get(serde_json::json!({"id": pid}))
+            .await
+            .ok()?;
+        let dir = val.get("directory").and_then(|v| v.as_str())?;
+        let files = match moltis_projects::context::load_context_files(std::path::Path::new(dir)) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("failed to load project context: {e}");
+                return None;
+            },
+        };
+        let project: moltis_projects::Project = serde_json::from_value(val.clone()).ok()?;
+        let worktree_dir = self
+            .session_metadata
+            .get(session_key)
+            .await
+            .and_then(|e| e.worktree_branch)
+            .and_then(|_| {
+                let wt_path = std::path::Path::new(dir)
+                    .join(".moltis-worktrees")
+                    .join(session_key);
+                if wt_path.exists() {
+                    Some(wt_path)
+                } else {
+                    None
+                }
+            });
+        let ctx = moltis_projects::ProjectContext {
+            project,
+            context_files: files,
+            worktree_dir,
+        };
+        Some(ctx.to_prompt_section())
+    }
 }
 
 #[async_trait]
@@ -587,80 +820,9 @@ impl ChatService for LiveChatService {
         }
 
         // Resolve project context for this connection's active project.
-        let project_context = {
-            let project_id = if let Some(cid) = conn_id.as_deref() {
-                let projects = self.state.active_projects.read().await;
-                projects.get(cid).cloned()
-            } else {
-                None
-            };
-            // Also check session metadata for project binding.
-            let project_id = if project_id.is_some() {
-                project_id
-            } else {
-                self.session_metadata
-                    .get(&session_key)
-                    .await
-                    .and_then(|e| e.project_id)
-            };
-            if let Some(pid) = project_id {
-                match self
-                    .state
-                    .services
-                    .project
-                    .get(serde_json::json!({"id": pid}))
-                    .await
-                {
-                    Ok(val) => {
-                        if let Some(dir) = val.get("directory").and_then(|v| v.as_str()) {
-                            match moltis_projects::context::load_context_files(
-                                std::path::Path::new(dir),
-                            ) {
-                                Ok(files) => {
-                                    let project: Option<moltis_projects::Project> =
-                                        serde_json::from_value(val.clone()).ok();
-                                    if let Some(p) = project {
-                                        // Resolve worktree dir from session metadata.
-                                        let worktree_dir = self
-                                            .session_metadata
-                                            .get(&session_key)
-                                            .await
-                                            .and_then(|e| e.worktree_branch)
-                                            .and_then(|_| {
-                                                let wt_path = std::path::Path::new(dir)
-                                                    .join(".moltis-worktrees")
-                                                    .join(&session_key);
-                                                if wt_path.exists() {
-                                                    Some(wt_path)
-                                                } else {
-                                                    None
-                                                }
-                                            });
-                                        let ctx = moltis_projects::ProjectContext {
-                                            project: p,
-                                            context_files: files,
-                                            worktree_dir,
-                                        };
-                                        Some(ctx.to_prompt_section())
-                                    } else {
-                                        None
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!("failed to load project context: {e}");
-                                    None
-                                },
-                            }
-                        } else {
-                            None
-                        }
-                    },
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
-        };
+        let project_context = self
+            .resolve_project_context(&session_key, conn_id.as_deref())
+            .await;
 
         // Dispatch MessageReceived hook (read-only).
         if let Some(ref hooks) = self.hook_registry {
@@ -755,13 +917,20 @@ impl ChatService for LiveChatService {
             },
         };
 
-        // Check if MCP tools are disabled for this session.
-        let mcp_disabled = self
-            .session_metadata
-            .get(&session_key)
-            .await
-            .and_then(|e| e.mcp_disabled)
+        // Check if MCP tools are disabled for this session and capture
+        // per-session sandbox override details for prompt runtime context.
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
 
         let run_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::clone(&self.state);
@@ -804,24 +973,6 @@ impl ChatService for LiveChatService {
             .get("_accept_language")
             .and_then(|v| v.as_str())
             .map(String::from);
-        // Compute session context stats for the system prompt.
-        let session_stats = {
-            let msg_count = history.len() + 1; // +1 for the current user message
-            let total_input: u64 = history
-                .iter()
-                .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
-                .sum();
-            let total_output: u64 = history
-                .iter()
-                .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
-                .sum();
-            let total_tokens = total_input + total_output;
-
-            format!(
-                "Session \"{session_key}\": {msg_count} messages, {total_tokens} tokens used ({total_input} input / {total_output} output)."
-            )
-        };
-
         // Auto-compact: if conversation input tokens exceed 95% of context window, compact first.
         let context_window = provider.context_window() as u64;
         let total_input: u64 = history
@@ -951,7 +1102,6 @@ impl ChatService for LiveChatService {
         let handle = tokio::spawn(async move {
             let _permit = permit; // hold permit until task completes
             let ctx_ref = project_context.as_deref();
-            let stats_ref = Some(session_stats.as_str());
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -964,9 +1114,9 @@ impl ChatService for LiveChatService {
                         &session_key_clone,
                         desired_reply_medium,
                         ctx_ref,
-                        stats_ref,
                         user_message_index,
                         &discovered_skills,
+                        Some(&runtime_context),
                     )
                     .await
                 } else {
@@ -981,7 +1131,7 @@ impl ChatService for LiveChatService {
                         &session_key_clone,
                         desired_reply_medium,
                         ctx_ref,
-                        stats_ref,
+                        Some(&runtime_context),
                         user_message_index,
                         &discovered_skills,
                         hook_registry,
@@ -1150,6 +1300,14 @@ impl ChatService for LiveChatService {
         // Ensure this session appears in the sessions list.
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
 
         // Load conversation history (excluding the message we just appended).
         let mut history = self
@@ -1190,9 +1348,9 @@ impl ChatService for LiveChatService {
                 &session_key,
                 desired_reply_medium,
                 None,
-                None,
                 user_message_index,
                 &[],
+                Some(&runtime_context),
             )
             .await
         } else {
@@ -1207,7 +1365,7 @@ impl ChatService for LiveChatService {
                 &session_key,
                 desired_reply_medium,
                 None,
-                None,
+                Some(&runtime_context),
                 user_message_index,
                 &[],
                 hook_registry,
@@ -1721,6 +1879,119 @@ impl ChatService for LiveChatService {
             },
         }))
     }
+
+    async fn raw_prompt(&self, params: Value) -> ServiceResult {
+        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
+            sk.to_string()
+        } else {
+            let conn_id = params
+                .get("_conn_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            self.session_key_for(conn_id.as_deref()).await
+        };
+
+        let conn_id = params
+            .get("_conn_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Resolve provider.
+        let history = self
+            .session_store
+            .read(&session_key)
+            .await
+            .unwrap_or_default();
+        let provider = self.resolve_provider(&session_key, &history).await?;
+        let native_tools = provider.supports_tools();
+
+        // Load persona data.
+        let persona = load_prompt_persona();
+
+        // Build runtime context.
+        let session_entry = self.session_metadata.get(&session_key).await;
+        let runtime_context = build_prompt_runtime_context(
+            &self.state,
+            &provider,
+            &session_key,
+            session_entry.as_ref(),
+        )
+        .await;
+
+        // Resolve project context.
+        let project_context = self
+            .resolve_project_context(&session_key, conn_id.as_deref())
+            .await;
+
+        // Discover skills.
+        let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
+        let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
+        let discovered_skills = match discoverer.discover().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("failed to discover skills: {e}");
+                Vec::new()
+            },
+        };
+
+        // Check MCP disabled.
+        let mcp_disabled = session_entry
+            .as_ref()
+            .and_then(|entry| entry.mcp_disabled)
+            .unwrap_or(false);
+
+        // Build filtered tool registry.
+        let filtered_registry = {
+            let registry_guard = self.tool_registry.read().await;
+            if native_tools {
+                apply_runtime_tool_filters(
+                    &registry_guard,
+                    &persona.config,
+                    &discovered_skills,
+                    mcp_disabled,
+                )
+            } else {
+                registry_guard.clone_without(&[])
+            }
+        };
+
+        let tool_count = filtered_registry.list_schemas().len();
+
+        // Build the system prompt.
+        let system_prompt = if native_tools {
+            build_system_prompt_with_session_runtime(
+                &filtered_registry,
+                native_tools,
+                project_context.as_deref(),
+                &discovered_skills,
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        } else {
+            build_system_prompt_minimal_runtime(
+                project_context.as_deref(),
+                Some(&persona.identity),
+                Some(&persona.user),
+                persona.soul_text.as_deref(),
+                persona.agents_text.as_deref(),
+                persona.tools_text.as_deref(),
+                Some(&runtime_context),
+            )
+        };
+
+        let char_count = system_prompt.len();
+
+        Ok(serde_json::json!({
+            "prompt": system_prompt,
+            "charCount": char_count,
+            "native_tools": native_tools,
+            "toolCount": tool_count,
+        }))
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -1736,7 +2007,7 @@ async fn run_with_tools(
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
-    session_context: Option<&str>,
+    runtime_context: Option<&PromptRuntimeContext>,
     user_message_index: usize,
     skills: &[moltis_skills::types::SkillMetadata],
     hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
@@ -1744,42 +2015,14 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
 ) -> Option<(String, u32, u32)> {
-    // Load identity and user profile from config so the LLM knows who it is.
-    let config = moltis_config::discover_and_load();
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity() {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.creature.is_some() {
-            identity.creature = file_identity.creature;
-        }
-        if file_identity.vibe.is_some() {
-            identity.vibe = file_identity.vibe;
-        }
-    }
-    let mut user = config.user.clone();
-    if let Some(file_user) = moltis_config::load_user() {
-        if file_user.name.is_some() {
-            user.name = file_user.name;
-        }
-        if file_user.timezone.is_some() {
-            user.timezone = file_user.timezone;
-        }
-    }
-    let soul_text = moltis_config::load_soul();
-    let agents_text = moltis_config::load_agents_md();
-    let tools_text = moltis_config::load_tools_md();
+    let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
 
     let filtered_registry = {
         let registry_guard = tool_registry.read().await;
         if native_tools {
-            apply_runtime_tool_filters(&registry_guard, &config, skills, mcp_disabled)
+            apply_runtime_tool_filters(&registry_guard, &persona.config, skills, mcp_disabled)
         } else {
             registry_guard.clone_without(&[])
         }
@@ -1788,28 +2031,28 @@ async fn run_with_tools(
     // Use a minimal prompt without tool schemas for providers that don't support tools.
     // This reduces context size and avoids confusing the LLM with unusable instructions.
     let system_prompt = if native_tools {
-        build_system_prompt_with_session(
+        build_system_prompt_with_session_runtime(
             &filtered_registry,
             native_tools,
             project_context,
-            session_context,
             skills,
-            Some(&identity),
-            Some(&user),
-            soul_text.as_deref(),
-            agents_text.as_deref(),
-            tools_text.as_deref(),
+            Some(&persona.identity),
+            Some(&persona.user),
+            persona.soul_text.as_deref(),
+            persona.agents_text.as_deref(),
+            persona.tools_text.as_deref(),
+            runtime_context,
         )
     } else {
         // Minimal prompt without tools for local LLMs
-        build_system_prompt_minimal(
+        build_system_prompt_minimal_runtime(
             project_context,
-            session_context,
-            Some(&identity),
-            Some(&user),
-            soul_text.as_deref(),
-            agents_text.as_deref(),
-            tools_text.as_deref(),
+            Some(&persona.identity),
+            Some(&persona.user),
+            persona.soul_text.as_deref(),
+            persona.agents_text.as_deref(),
+            persona.tools_text.as_deref(),
+            runtime_context,
         )
     };
 
@@ -2244,23 +2487,24 @@ async fn run_streaming(
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
-    session_context: Option<&str>,
     user_message_index: usize,
-    skills: &[moltis_skills::types::SkillMetadata],
+    _skills: &[moltis_skills::types::SkillMetadata],
+    runtime_context: Option<&PromptRuntimeContext>,
 ) -> Option<(String, u32, u32)> {
+    let persona = load_prompt_persona();
+
+    let system_prompt = build_system_prompt_minimal_runtime(
+        project_context,
+        Some(&persona.identity),
+        Some(&persona.user),
+        persona.soul_text.as_deref(),
+        persona.agents_text.as_deref(),
+        persona.tools_text.as_deref(),
+        runtime_context,
+    );
+
     let mut messages: Vec<ChatMessage> = Vec::new();
-    // Prepend session + project context as system messages.
-    if let Some(ctx) = session_context {
-        messages.push(ChatMessage::system(format!("## Current Session\n\n{ctx}")));
-    }
-    if let Some(ctx) = project_context {
-        messages.push(ChatMessage::system(ctx));
-    }
-    // Inject skills into the system prompt for streaming mode too.
-    if !skills.is_empty() {
-        let skills_block = moltis_skills::prompt_gen::generate_skills_prompt(skills);
-        messages.push(ChatMessage::system(skills_block));
-    }
+    messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
     messages.extend(values_to_chat_messages(history_raw));
     messages.push(ChatMessage::user(text));

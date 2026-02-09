@@ -494,6 +494,44 @@ function toggleDebugPanel() {
 	if (hidden) refreshDebugPanel();
 }
 
+// ── Raw prompt panel ─────────────────────────────────────
+
+function refreshRawPromptPanel() {
+	var panel = S.$("rawPromptPanel");
+	if (!panel) return;
+	panel.textContent = "";
+	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building prompt\u2026"));
+
+	sendRpc("chat.raw_prompt", {}).then((res) => {
+		panel.textContent = "";
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build prompt"));
+			return;
+		}
+		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-2");
+		header.textContent = `Full system prompt sent to the model · ${res.payload.charCount} chars · ${res.payload.toolCount} tools · native_tools=${res.payload.native_tools}`;
+		panel.appendChild(header);
+
+		var pre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-3 overflow-y-auto text-[var(--text)]",
+		);
+		pre.style.maxHeight = "320px";
+		pre.textContent = res.payload.prompt;
+		panel.appendChild(pre);
+	});
+}
+
+function toggleRawPromptPanel() {
+	var panel = S.$("rawPromptPanel");
+	var btn = S.$("rawPromptBtn");
+	if (!panel) return;
+	var hidden = panel.classList.contains("hidden");
+	panel.classList.toggle("hidden", !hidden);
+	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
+	if (hidden) refreshRawPromptPanel();
+}
+
 // ── MCP toggle ───────────────────────────────────────────
 export function updateMcpToggleUI(enabled) {
 	var btn = S.$("mcpToggleBtn");
@@ -688,6 +726,10 @@ var chatPageHTML =
 	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.194-.14 1.743" /></svg>' +
 	'<span id="debugPanelLabel">Debug</span>' +
 	"</button>" +
+	'<button id="rawPromptBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show raw system prompt sent to model">' +
+	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" /></svg>' +
+	'<span id="rawPromptLabel">Prompt</span>' +
+	"</button>" +
 	'<div class="ml-auto flex items-center gap-1.5">' +
 	'<span id="chatSessionName" class="text-xs text-[var(--muted)] cursor-default" title="Click to rename"></span>' +
 	'<input id="chatSessionRenameInput" class="hidden text-xs text-[var(--text)] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] px-1.5 py-0.5 outline-none max-w-[200px]" style="width:0" />' +
@@ -695,7 +737,10 @@ var chatPageHTML =
 	'<button id="chatSessionDelete" class="provider-btn provider-btn-danger provider-btn-sm hidden">Delete</button>' +
 	"</div>" +
 	"</div>" +
+	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
+	'<div id="rawPromptPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:400px;"></div>' +
+	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
 	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
@@ -772,6 +817,9 @@ registerPrefix(
 
 		var debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
+
+		var rawBtn = S.$("rawPromptBtn");
+		if (rawBtn) rawBtn.addEventListener("click", toggleRawPromptPanel);
 
 		if (S.models.length > 0 && S.modelComboLabel) {
 			var found = S.models.find((m) => m.id === S.selectedModelId);
