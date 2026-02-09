@@ -5,7 +5,7 @@ use {
     teloxide::{
         payloads::SendMessageSetters,
         prelude::*,
-        types::{ChatAction, ChatId, InputFile, ParseMode},
+        types::{ChatAction, ChatId, InputFile, MessageId, ParseMode, ReplyParameters},
     },
     tracing::debug,
 };
@@ -37,11 +37,26 @@ impl TelegramOutbound {
     }
 }
 
+/// Parse a platform message ID string into Telegram `ReplyParameters`.
+/// Returns `None` if the string is not a valid i32 (Telegram message IDs are i32).
+fn parse_reply_params(reply_to: Option<&str>) -> Option<ReplyParameters> {
+    reply_to
+        .and_then(|id| id.parse::<i32>().ok())
+        .map(|id| ReplyParameters::new(MessageId(id)).allow_sending_without_reply())
+}
+
 #[async_trait]
 impl ChannelOutbound for TelegramOutbound {
-    async fn send_text(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
+    async fn send_text(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = parse_reply_params(reply_to);
 
         // Send typing indicator
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
@@ -49,10 +64,15 @@ impl ChannelOutbound for TelegramOutbound {
         let html = markdown::markdown_to_telegram_html(text);
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
 
-        for chunk in chunks {
-            bot.send_message(chat_id, &chunk)
-                .parse_mode(ParseMode::Html)
-                .await?;
+        for (i, chunk) in chunks.iter().enumerate() {
+            let mut req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
+            // Thread only the first chunk as a reply to the original message.
+            if i == 0
+                && let Some(ref rp) = rp
+            {
+                req = req.reply_parameters(rp.clone());
+            }
+            req.await?;
         }
 
         Ok(())
@@ -65,26 +85,46 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
-    async fn send_text_silent(&self, account_id: &str, to: &str, text: &str) -> Result<()> {
+    async fn send_text_silent(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = parse_reply_params(reply_to);
 
         let html = markdown::markdown_to_telegram_html(text);
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
 
-        for chunk in chunks {
-            bot.send_message(chat_id, &chunk)
+        for (i, chunk) in chunks.iter().enumerate() {
+            let mut req = bot
+                .send_message(chat_id, chunk)
                 .parse_mode(ParseMode::Html)
-                .disable_notification(true) // Silent - no sound/vibration
-                .await?;
+                .disable_notification(true);
+            if i == 0
+                && let Some(ref rp) = rp
+            {
+                req = req.reply_parameters(rp.clone());
+            }
+            req.await?;
         }
 
         Ok(())
     }
 
-    async fn send_media(&self, account_id: &str, to: &str, payload: &ReplyPayload) -> Result<()> {
+    async fn send_media(
+        &self,
+        account_id: &str,
+        to: &str,
+        payload: &ReplyPayload,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = parse_reply_params(reply_to);
 
         if let Some(ref media) = payload.media {
             // Handle base64 data URIs (e.g., "data:image/png;base64,...")
@@ -120,6 +160,9 @@ impl ChannelOutbound for TelegramOutbound {
                     let mut req = bot.send_photo(chat_id, input);
                     if !payload.text.is_empty() {
                         req = req.caption(&payload.text);
+                    }
+                    if let Some(ref rp) = rp {
+                        req = req.reply_parameters(rp.clone());
                     }
 
                     match req.await {
@@ -206,7 +249,8 @@ impl ChannelOutbound for TelegramOutbound {
                 }
             }
         } else if !payload.text.is_empty() {
-            self.send_text(account_id, to, &payload.text).await?;
+            self.send_text(account_id, to, &payload.text, reply_to)
+                .await?;
         }
 
         Ok(())

@@ -235,6 +235,11 @@ impl LogBuffer {
         ring.into()
     }
 
+    /// Return the path to the persisted JSONL file, if persistence is enabled.
+    pub fn file_path(&self) -> Option<PathBuf> {
+        self.file_path.read().ok().and_then(|fp| fp.clone())
+    }
+
     /// O(1) count of unseen warn/error entries since the last ack.
     pub fn count_unseen(&self) -> (u64, u64) {
         let tw = self.total_warns.load(Ordering::Relaxed);
@@ -459,6 +464,10 @@ impl LogsService for LiveLogsService {
     async fn ack(&self) -> ServiceResult {
         self.buffer.ack_visit();
         Ok(serde_json::json!({}))
+    }
+
+    fn log_file_path(&self) -> Option<PathBuf> {
+        self.buffer.file_path()
     }
 }
 
@@ -847,5 +856,37 @@ mod tests {
         let status = svc.status().await.unwrap();
         assert_eq!(status["unseen_errors"], 0);
         assert_eq!(status["unseen_warns"], 0);
+    }
+
+    #[test]
+    fn file_path_none_without_persistence() {
+        let buf = LogBuffer::default();
+        assert!(buf.file_path().is_none());
+    }
+
+    #[test]
+    fn file_path_returns_path_with_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logs.jsonl");
+        let buf = LogBuffer::default();
+        buf.enable_persistence(path.clone());
+        assert_eq!(buf.file_path().unwrap(), path);
+    }
+
+    #[test]
+    fn log_file_path_via_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logs.jsonl");
+        let buf = LogBuffer::default();
+        buf.enable_persistence(path.clone());
+        let svc = LiveLogsService::new(buf);
+        assert_eq!(svc.log_file_path().unwrap(), path);
+    }
+
+    #[test]
+    fn log_file_path_none_without_persistence() {
+        let buf = LogBuffer::default();
+        let svc = LiveLogsService::new(buf);
+        assert!(svc.log_file_path().is_none());
     }
 }

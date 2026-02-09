@@ -72,6 +72,11 @@ enum KnownKeys {
     /// A map with dynamic keys (providers, mcp.servers, etc.) whose values
     /// have a known shape.
     Map(Box<KnownKeys>),
+    /// A map with dynamic keys plus explicit static keys.
+    MapWithFields {
+        value: Box<KnownKeys>,
+        fields: HashMap<&'static str, KnownKeys>,
+    },
     /// An array of typed items.
     Array(Box<KnownKeys>),
     /// Scalar value — stop recursion.
@@ -95,9 +100,12 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "ollama",
 ];
 
+/// Static metadata keys allowed directly under `[providers]`.
+const PROVIDERS_META_KEYS: &[&str] = &["offered"];
+
 /// Build the full schema map mirroring every field in `schema.rs`.
 fn build_schema_map() -> KnownKeys {
-    use KnownKeys::{Array, Leaf, Map, Struct};
+    use KnownKeys::{Array, Leaf, Map, MapWithFields, Struct};
 
     let provider_entry = || {
         Struct(HashMap::from([
@@ -263,13 +271,21 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("bind", Leaf),
                 ("port", Leaf),
+                ("http_request_logs", Leaf),
+                ("ws_request_logs", Leaf),
                 ("update_repository_url", Leaf),
             ])),
         ),
-        ("providers", Map(Box::new(provider_entry()))),
+        ("providers", MapWithFields {
+            value: Box::new(provider_entry()),
+            fields: HashMap::from([("offered", Array(Box::new(Leaf)))]),
+        }),
         (
             "chat",
-            Struct(HashMap::from([("message_queue_mode", Leaf)])),
+            Struct(HashMap::from([
+                ("message_queue_mode", Leaf),
+                ("priority_models", Leaf),
+            ])),
         ),
         ("tools", tools()),
         (
@@ -692,6 +708,26 @@ fn check_unknown_fields(
                 check_unknown_fields(child_value, value_schema, &path, diagnostics);
             }
         },
+        (
+            toml::Value::Table(table),
+            KnownKeys::MapWithFields {
+                value: value_schema,
+                fields,
+            },
+        ) => {
+            for (key, child_value) in table {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                if let Some(child_schema) = fields.get(key.as_str()) {
+                    check_unknown_fields(child_value, child_schema, &path, diagnostics);
+                } else {
+                    check_unknown_fields(child_value, value_schema, &path, diagnostics);
+                }
+            }
+        },
         (toml::Value::Array(arr), KnownKeys::Array(item_schema)) => {
             for (i, item) in arr.iter().enumerate() {
                 let path = format!("{prefix}[{i}]");
@@ -709,6 +745,9 @@ fn check_provider_names(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for name in providers.keys() {
+        if PROVIDERS_META_KEYS.contains(&name.as_str()) {
+            continue;
+        }
         if !KNOWN_PROVIDER_NAMES.contains(&name.as_str()) {
             let suggestion = suggest(name, KNOWN_PROVIDER_NAMES, 3);
             let msg = if let Some(s) = suggestion {
@@ -1065,6 +1104,24 @@ enabled = true
         let d = warning.unwrap();
         assert_eq!(d.severity, Severity::Warning);
         assert!(d.message.contains("anthropic"));
+    }
+
+    #[test]
+    fn providers_offered_key_not_treated_as_provider_name() {
+        let toml = r#"
+[providers]
+offered = ["openai", "github-copilot"]
+"#;
+        let result = validate_toml_str(toml);
+        let offered_warning = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-provider" && d.path == "providers.offered");
+        assert!(
+            offered_warning.is_none(),
+            "providers.offered should be treated as metadata, got: {:?}",
+            result.diagnostics
+        );
     }
 
     #[test]
@@ -1518,6 +1575,26 @@ unknwon = "value"
                         format!("{prefix}.{key}")
                     };
                     collect_missing_keys(child_value, value_schema, &path, missing);
+                }
+            },
+            (
+                toml::Value::Table(table),
+                KnownKeys::MapWithFields {
+                    value: value_schema,
+                    fields,
+                },
+            ) => {
+                for (key, child_value) in table {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    if let Some(child_schema) = fields.get(key.as_str()) {
+                        collect_missing_keys(child_value, child_schema, &path, missing);
+                    } else {
+                        collect_missing_keys(child_value, value_schema, &path, missing);
+                    }
                 }
             },
             (toml::Value::Array(arr), KnownKeys::Array(item_schema)) => {

@@ -117,6 +117,8 @@ function Toolbar() {
 			if (area) area.textContent = "";
 			entryCount.value = 0;
 		}}>Clear</button>
+    <a href="/api/logs/download" class="logs-btn" download="moltis-logs.jsonl"
+      style="text-decoration:none;text-align:center;">Download</a>
     <span class="logs-count">${entryCount.value} entries</span>
   </div>`;
 }

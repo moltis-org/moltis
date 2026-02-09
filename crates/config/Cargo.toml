@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 anyhow         = { workspace = true }
+chrono-tz      = { workspace = true }
 directories    = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 secrecy        = { workspace = true }

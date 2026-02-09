@@ -34,24 +34,58 @@ const REFRESH_THRESHOLD_SECS: u64 = 300;
 
 // ── Provider ─────────────────────────────────────────────────────────────────
 
+enum AuthMode {
+    OAuthTokenStore { token_store: TokenStore },
+    ApiKey { api_key: Secret<String> },
+}
+
 pub struct KimiCodeProvider {
     model: String,
     client: reqwest::Client,
-    token_store: TokenStore,
+    base_url: String,
+    auth_mode: AuthMode,
 }
 
 impl KimiCodeProvider {
+    /// Build a provider that authenticates via Kimi OAuth tokens.
     pub fn new(model: String) -> Self {
         Self {
             model,
             client: reqwest::Client::new(),
-            token_store: TokenStore::new(),
+            base_url: KIMI_API_BASE.into(),
+            auth_mode: AuthMode::OAuthTokenStore {
+                token_store: TokenStore::new(),
+            },
+        }
+    }
+
+    /// Build a provider that authenticates via API key.
+    pub fn new_with_api_key(api_key: Secret<String>, model: String, base_url: String) -> Self {
+        Self {
+            model,
+            client: reqwest::Client::new(),
+            base_url,
+            auth_mode: AuthMode::ApiKey { api_key },
+        }
+    }
+
+    fn should_send_kimi_headers(&self) -> bool {
+        matches!(self.auth_mode, AuthMode::OAuthTokenStore { .. })
+    }
+
+    async fn get_auth_token(&self) -> anyhow::Result<String> {
+        match &self.auth_mode {
+            AuthMode::ApiKey { api_key } => Ok(api_key.expose_secret().clone()),
+            AuthMode::OAuthTokenStore { .. } => self.get_valid_oauth_token().await,
         }
     }
 
     /// Load tokens and refresh if needed (< 5 min remaining).
-    async fn get_valid_token(&self) -> anyhow::Result<String> {
-        let tokens = self.token_store.load(PROVIDER_NAME).ok_or_else(|| {
+    async fn get_valid_oauth_token(&self) -> anyhow::Result<String> {
+        let AuthMode::OAuthTokenStore { token_store } = &self.auth_mode else {
+            return Err(anyhow::anyhow!("oauth token store is not configured"));
+        };
+        let tokens = token_store.load(PROVIDER_NAME).ok_or_else(|| {
             anyhow::anyhow!(
                 "not logged in to kimi-code — run `moltis auth login --provider kimi-code`"
             )
@@ -68,7 +102,7 @@ impl KimiCodeProvider {
                     debug!("refreshing kimi-code token");
                     let new_tokens =
                         refresh_access_token(&self.client, refresh_token.expose_secret()).await?;
-                    self.token_store.save(PROVIDER_NAME, &new_tokens)?;
+                    token_store.save(PROVIDER_NAME, &new_tokens)?;
                     return Ok(new_tokens.access_token.expose_secret().clone());
                 }
                 return Err(anyhow::anyhow!(
@@ -79,6 +113,15 @@ impl KimiCodeProvider {
 
         Ok(tokens.access_token.expose_secret().clone())
     }
+}
+
+fn build_access_denied_hint(status: reqwest::StatusCode, body_text: &str) -> Option<String> {
+    if status == reqwest::StatusCode::FORBIDDEN && body_text.contains("access_terminated_error") {
+        return Some(
+            "Kimi OAuth access is restricted for this account/client. Configure `kimi-code` with `KIMI_API_KEY` (or [providers.kimi-code].api_key) and use API-key auth.".into(),
+        );
+    }
+    None
 }
 
 /// Refresh the access token using the Kimi token endpoint.
@@ -133,7 +176,10 @@ pub fn has_stored_tokens() -> bool {
 }
 
 /// Known Kimi Code models.
-pub const KIMI_CODE_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5 (Kimi Code/OAuth)")];
+pub const KIMI_CODE_MODELS: &[(&str, &str)] = &[
+    ("kimi-for-coding", "Kimi For Coding"),
+    ("kimi-k2.5", "Kimi K2.5"),
+];
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────
 
@@ -156,7 +202,7 @@ impl LlmProvider for KimiCodeProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let token = self.get_valid_token().await?;
+        let token = self.get_auth_token().await?;
 
         let openai_messages: Vec<serde_json::Value> =
             messages.iter().map(ChatMessage::to_openai_value).collect();
@@ -177,20 +223,24 @@ impl LlmProvider for KimiCodeProvider {
         );
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code request body");
 
-        let http_resp = self
+        let mut request = self
             .client
-            .post(format!("{KIMI_API_BASE}/chat/completions"))
+            .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {token}"))
-            .header("content-type", "application/json")
-            .headers(kimi_headers())
-            .json(&body)
-            .send()
-            .await?;
+            .header("content-type", "application/json");
+        if self.should_send_kimi_headers() {
+            request = request.headers(kimi_headers());
+        }
+        let http_resp = request.json(&body).send().await?;
 
         let status = http_resp.status();
         if !status.is_success() {
             let body_text = http_resp.text().await.unwrap_or_default();
             warn!(status = %status, body = %body_text, "kimi-code API error");
+            let hint = build_access_denied_hint(status, &body_text);
+            if let Some(hint) = hint {
+                anyhow::bail!("Kimi Code API error HTTP {status}: {body_text} ({hint})");
+            }
             anyhow::bail!("Kimi Code API error HTTP {status}: {body_text}");
         }
 
@@ -205,6 +255,10 @@ impl LlmProvider for KimiCodeProvider {
         let usage = Usage {
             input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: resp["usage"]["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+            ..Default::default()
         };
 
         Ok(CompletionResponse {
@@ -229,7 +283,7 @@ impl LlmProvider for KimiCodeProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let token = match self.get_valid_token().await {
+            let token = match self.get_auth_token().await {
                 Ok(t) => t,
                 Err(e) => {
                     yield StreamEvent::Error(e.to_string());
@@ -258,21 +312,30 @@ impl LlmProvider for KimiCodeProvider {
             );
             trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "kimi-code stream request body");
 
-            let resp = match self
+            let mut request = self
                 .client
-                .post(format!("{KIMI_API_BASE}/chat/completions"))
+                .post(format!("{}/chat/completions", self.base_url))
                 .header("Authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .headers(kimi_headers())
-                .json(&body)
-                .send()
-                .await
-            {
+                .header("content-type", "application/json");
+            if self.should_send_kimi_headers() {
+                request = request.headers(kimi_headers());
+            }
+
+            let resp = match request.json(&body).send().await {
                 Ok(r) => {
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
                         let body_text = r.text().await.unwrap_or_default();
-                        yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                        let hint = build_access_denied_hint(
+                            reqwest::StatusCode::from_u16(status)
+                                .unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+                            &body_text,
+                        );
+                        if let Some(hint) = hint {
+                            yield StreamEvent::Error(format!("HTTP {status}: {body_text} ({hint})"));
+                        } else {
+                            yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                        }
                         return;
                     }
                     r
@@ -447,6 +510,7 @@ mod tests {
             let usage = Usage {
                 input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
                 output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                ..Default::default()
             };
 
             Ok(CompletionResponse {
@@ -528,6 +592,50 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "authorization" && v == "Bearer mock-kimi-token");
         assert!(has_auth, "missing Authorization header");
+    }
+
+    #[tokio::test]
+    async fn complete_with_api_key_does_not_send_kimi_headers() {
+        let (base_url, captured) = start_mock_with_capture(mock_completion_response()).await;
+        let provider = KimiCodeProvider::new_with_api_key(
+            Secret::new("sk-kimi".into()),
+            "kimi-for-coding".into(),
+            base_url,
+        );
+
+        let messages = vec![ChatMessage::user("hi")];
+        let result = provider.complete(&messages, &[]).await;
+        assert!(result.is_ok());
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let req = &reqs[0];
+
+        let has_platform = req.headers.iter().any(|(k, _)| k == "x-msh-platform");
+        assert!(!has_platform, "api-key mode should not send X-Msh-Platform");
+
+        let has_device_id = req.headers.iter().any(|(k, _)| k == "x-msh-device-id");
+        assert!(
+            !has_device_id,
+            "api-key mode should not send X-Msh-Device-Id"
+        );
+
+        let has_auth = req
+            .headers
+            .iter()
+            .any(|(k, v)| k == "authorization" && v == "Bearer sk-kimi");
+        assert!(has_auth, "missing Authorization header");
+    }
+
+    #[test]
+    fn access_terminated_error_adds_api_key_hint() {
+        let hint = build_access_denied_hint(
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"error":{"type":"access_terminated_error"}}"#,
+        );
+        assert!(hint.is_some());
+        let hint_text = hint.unwrap();
+        assert!(hint_text.contains("KIMI_API_KEY"));
     }
 
     #[tokio::test]

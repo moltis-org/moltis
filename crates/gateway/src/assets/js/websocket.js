@@ -11,11 +11,18 @@ import {
 	updateTokenBar,
 } from "./chat-ui.js";
 import { eventListeners } from "./events.js";
-import { formatTokens, nextId, renderMarkdown, sendRpc } from "./helpers.js";
+import {
+	formatTokens,
+	renderAudioPlayer,
+	renderMarkdown,
+	renderScreenshot,
+	sendRpc,
+	toolCallSummary,
+} from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
-import { renderCompactCard } from "./page-chat.js";
+import { maybeRefreshFullContext, renderCompactCard } from "./page-chat.js";
 import { fetchProjects } from "./projects.js";
 import { currentPage, currentPrefix, mount } from "./router.js";
 import {
@@ -27,6 +34,7 @@ import {
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { connectWs, forceReconnect } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
@@ -71,6 +79,21 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
+function moveFirstQueuedToChat() {
+	var tray = document.getElementById("queuedMessages");
+	if (!tray) return;
+	var firstQueued = tray.querySelector(".msg.user.queued");
+	if (!firstQueued) return;
+	console.debug("[queued] moving queued message from tray to chat", {
+		remaining: tray.querySelectorAll(".msg").length - 1,
+	});
+	firstQueued.classList.remove("queued");
+	var badge = firstQueued.querySelector(".queued-badge");
+	if (badge) badge.remove();
+	S.chatMsgBox.appendChild(firstQueued);
+	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
+}
+
 function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
@@ -99,26 +122,10 @@ function handleChatThinkingDone(_p, isActive, isChatPage) {
 	if (isActive && isChatPage) removeThinking();
 }
 
-/** Build a short summary string for a tool call card. */
-function toolCallSummary(name, args, executionMode) {
-	if (!args) return name || "tool";
-	switch (name) {
-		case "exec":
-			return args.command || "exec";
-		case "web_fetch":
-			return `web_fetch ${args.url || ""}`.trim();
-		case "web_search":
-			return `web_search "${args.query || ""}"`;
-		case "browser": {
-			// Format: browser action (mode) url
-			var action = args.action || "browser";
-			var mode = executionMode ? ` (${executionMode})` : "";
-			var url = args.url ? ` ${args.url}` : "";
-			return `browser ${action}${mode}${url}`.trim();
-		}
-		default:
-			return name || "tool";
-	}
+function handleChatVoicePending(_p, isActive, isChatPage) {
+	if (!(isActive && isChatPage)) return;
+	S.setVoicePending(true);
+	// Keep the existing thinking dots visible — no separate voice indicator.
 }
 
 function handleChatToolCallStart(p, isActive, isChatPage) {
@@ -164,122 +171,10 @@ function appendToolResult(toolCard, result) {
 	}
 	// Browser screenshot support - display as thumbnail with lightbox and download
 	if (result.screenshot) {
-		var imgContainer = document.createElement("div");
-		imgContainer.className = "screenshot-container";
-		var img = document.createElement("img");
-		// Handle both raw base64 and data URI formats
 		var imgSrc = result.screenshot.startsWith("data:")
 			? result.screenshot
 			: `data:image/png;base64,${result.screenshot}`;
-		img.src = imgSrc;
-		img.className = "screenshot-thumbnail";
-		img.alt = "Browser screenshot";
-		img.title = "Click to view full size";
-
-		// Scale factor for HiDPI/Retina displays (default to 1 if not provided)
-		var scale = result.screenshot_scale || 1;
-
-		// Once image loads, set display size based on scale factor
-		// This makes 2x screenshots display at their logical size (crisp on Retina)
-		img.onload = () => {
-			if (scale > 1) {
-				var logicalWidth = img.naturalWidth / scale;
-				var logicalHeight = img.naturalHeight / scale;
-				// Cap thumbnail at max-width from CSS, but set aspect ratio
-				img.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
-			}
-		};
-
-		// Helper to trigger download
-		var downloadScreenshot = (e) => {
-			e.stopPropagation();
-			var link = document.createElement("a");
-			link.href = imgSrc;
-			link.download = `screenshot-${Date.now()}.png`;
-			link.click();
-		};
-
-		img.onclick = () => {
-			// Create fullscreen lightbox overlay
-			var overlay = document.createElement("div");
-			overlay.className = "screenshot-lightbox";
-
-			// Container for image and controls
-			var lightboxContent = document.createElement("div");
-			lightboxContent.className = "screenshot-lightbox-content";
-
-			// Header with close button and download button
-			var header = document.createElement("div");
-			header.className = "screenshot-lightbox-header";
-			header.onclick = (e) => e.stopPropagation();
-
-			var closeBtn = document.createElement("button");
-			closeBtn.className = "screenshot-lightbox-close";
-			closeBtn.innerHTML = "✕";
-			closeBtn.title = "Close (Esc)";
-			closeBtn.onclick = () => overlay.remove();
-
-			var downloadBtn = document.createElement("button");
-			downloadBtn.className = "screenshot-download-btn";
-			downloadBtn.innerHTML = "⬇ Download";
-			downloadBtn.onclick = downloadScreenshot;
-
-			header.appendChild(closeBtn);
-			header.appendChild(downloadBtn);
-
-			// Scrollable container for the image
-			var scrollContainer = document.createElement("div");
-			scrollContainer.className = "screenshot-lightbox-scroll";
-			scrollContainer.onclick = (e) => e.stopPropagation();
-
-			var fullImg = document.createElement("img");
-			fullImg.src = img.src;
-			fullImg.className = "screenshot-lightbox-img";
-
-			// Scale lightbox image for proper display on HiDPI screens
-			// For tall screenshots, use a reasonable width to allow vertical scrolling
-			fullImg.onload = () => {
-				var logicalWidth = fullImg.naturalWidth / scale;
-				var logicalHeight = fullImg.naturalHeight / scale;
-				var viewportWidth = window.innerWidth - 80; // Account for padding
-
-				// Use logical width, but cap at viewport width minus padding
-				var displayWidth = Math.min(logicalWidth, viewportWidth);
-				fullImg.style.width = `${displayWidth}px`;
-
-				// Height scales proportionally - will overflow and scroll for tall images
-				var displayHeight = (displayWidth / logicalWidth) * logicalHeight;
-				fullImg.style.height = `${displayHeight}px`;
-			};
-
-			scrollContainer.appendChild(fullImg);
-			lightboxContent.appendChild(header);
-			lightboxContent.appendChild(scrollContainer);
-			overlay.appendChild(lightboxContent);
-
-			// Close on click outside image
-			overlay.onclick = () => overlay.remove();
-			// Close on Escape key
-			var closeOnEscape = (e) => {
-				if (e.key === "Escape") {
-					overlay.remove();
-					document.removeEventListener("keydown", closeOnEscape);
-				}
-			};
-			document.addEventListener("keydown", closeOnEscape);
-			document.body.appendChild(overlay);
-		};
-
-		// Download button next to thumbnail
-		var thumbDownloadBtn = document.createElement("button");
-		thumbDownloadBtn.className = "screenshot-download-btn-small";
-		thumbDownloadBtn.innerHTML = "⬇";
-		thumbDownloadBtn.title = "Download screenshot";
-		thumbDownloadBtn.onclick = downloadScreenshot;
-
-		imgContainer.appendChild(img);
-		imgContainer.appendChild(thumbDownloadBtn);
-		toolCard.appendChild(imgContainer);
+		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
 	}
 }
 
@@ -343,6 +238,11 @@ function setSafeMarkdownHtml(el, text) {
 
 function handleChatDelta(p, isActive, isChatPage) {
 	if (!(p.text && isActive && isChatPage)) return;
+	// When voice is pending, accumulate text silently without rendering.
+	if (S.voicePending) {
+		S.setStreamText(S.streamText + p.text);
+		return;
+	}
 	removeThinking();
 	if (!S.streamEl) {
 		S.setStreamText("");
@@ -366,6 +266,8 @@ function resolveFinalMessageEl(p) {
 			return S.streamEl;
 		}
 		if (p.text) return chatAddMsg("assistant", renderMarkdown(p.text), true);
+		// No text (silent reply) — remove any leftover stream element.
+		if (S.streamEl) S.streamEl.remove();
 		return null;
 	}
 	if (S.streamEl) S.streamEl.remove();
@@ -390,6 +292,7 @@ function appendFinalFooter(msgEl, p) {
 	msgEl.appendChild(footer);
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (p.messageIndex !== undefined && p.messageIndex <= S.lastHistoryIndex) {
 		setSessionReplying(eventSession, false);
@@ -400,18 +303,58 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
 	}
-	if (!(isActive && isChatPage)) return;
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
 	removeThinking();
-	var msgEl = resolveFinalMessageEl(p);
-	if (msgEl && p.text && p.replyMedium === "voice") {
-		appendAssistantVoiceIfEnabled(msgEl, p.text)
-			.catch((err) => {
-				console.warn("Web UI TTS playback failed:", err);
-				return false;
-			})
-			.finally(() => appendFinalFooter(msgEl, p));
-	} else {
+
+	if (S.voicePending && p.text && p.replyMedium === "voice") {
+		// Voice pending path: we suppressed streaming, so render everything at once.
+		var msgEl = S.streamEl || document.createElement("div");
+		msgEl.className = "msg assistant";
+		msgEl.textContent = "";
+		if (!msgEl.parentNode) S.chatMsgBox.appendChild(msgEl);
+
+		if (p.audio) {
+			var filename = p.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(msgEl, audioSrc, true);
+		}
+		// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
+		var textWrap = document.createElement("div");
+		textWrap.className = "mt-2";
+		setSafeMarkdownHtml(textWrap, p.text);
+		msgEl.appendChild(textWrap);
 		appendFinalFooter(msgEl, p);
+		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	} else {
+		var resolvedEl = resolveFinalMessageEl(p);
+		if (resolvedEl && p.text && p.replyMedium === "voice") {
+			if (p.audio) {
+				var fn2 = p.audio.split("/").pop();
+				var src2 = `/api/sessions/${encodeURIComponent(p.sessionKey || S.activeSessionKey)}/media/${encodeURIComponent(fn2)}`;
+				resolvedEl.textContent = "";
+				renderAudioPlayer(resolvedEl, src2, true);
+				appendFinalFooter(resolvedEl, p);
+			} else {
+				appendAssistantVoiceIfEnabled(resolvedEl, p.text)
+					.catch((err) => {
+						console.warn("Web UI TTS playback failed:", err);
+						return false;
+					})
+					.finally(() => appendFinalFooter(resolvedEl, p));
+			}
+		} else {
+			// Silent reply — attach footer to the last visible assistant element
+			// (e.g. exec card). Never attach to a user message.
+			var target = resolvedEl;
+			if (!target) {
+				var last = S.chatMsgBox?.lastElementChild;
+				if (last && !last.classList.contains("user")) target = last;
+			}
+			appendFinalFooter(target, p);
+		}
 	}
 	if (p.inputTokens || p.outputTokens) {
 		S.sessionTokens.input += p.inputTokens || 0;
@@ -422,6 +365,12 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setLastToolOutput("");
+	S.setVoicePending(false);
+	maybeRefreshFullContext();
+	// Move the next queued message from the tray AFTER the response is
+	// fully rendered. This ensures correct ordering: user-msg → response →
+	// next-user-msg → next-response (never next-user-msg before response).
+	moveFirstQueuedToChat();
 }
 
 function handleChatAutoCompact(p, isActive, isChatPage) {
@@ -441,7 +390,10 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 
 function handleChatError(p, isActive, isChatPage, eventSession) {
 	setSessionReplying(eventSession, false);
-	if (!(isActive && isChatPage)) return;
+	if (!(isActive && isChatPage)) {
+		S.setVoicePending(false);
+		return;
+	}
 	removeThinking();
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
@@ -450,6 +402,8 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	}
 	S.setStreamEl(null);
 	S.setStreamText("");
+	S.setVoicePending(false);
+	moveFirstQueuedToChat();
 }
 
 function handleChatNotice(p, isActive, isChatPage) {
@@ -459,10 +413,22 @@ function handleChatNotice(p, isActive, isChatPage) {
 	chatAddMsg("system", msg);
 }
 
+function handleChatQueueCleared(_p, isActive, isChatPage) {
+	if (!(isActive && isChatPage)) return;
+	var tray = document.getElementById("queuedMessages");
+	if (tray) {
+		var count = tray.querySelectorAll(".msg").length;
+		console.debug("[queued] queue_cleared: removing all from tray", { count });
+		while (tray.firstChild) tray.removeChild(tray.firstChild);
+		tray.classList.add("hidden");
+	}
+}
+
 var chatHandlers = {
 	thinking: handleChatThinking,
 	thinking_text: handleChatThinkingText,
 	thinking_done: handleChatThinkingDone,
+	voice_pending: handleChatVoicePending,
 	tool_call_start: handleChatToolCallStart,
 	tool_call_end: handleChatToolCallEnd,
 	channel_user: handleChatChannelUser,
@@ -471,6 +437,7 @@ var chatHandlers = {
 	auto_compact: handleChatAutoCompact,
 	error: handleChatError,
 	notice: handleChatNotice,
+	queue_cleared: handleChatQueueCleared,
 };
 
 function handleChatEvent(p) {
@@ -532,6 +499,24 @@ function handleSandboxImageProvision(payload) {
 	} else if (payload.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		chatAddMsg("error", `Sandbox provisioning failed: ${payload.error || "unknown"}`);
+	}
+}
+
+function handleSandboxHostProvision(payload) {
+	var isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+	if (payload.phase === "start") {
+		var msg = `Installing ${payload.count || ""} package${payload.count === 1 ? "" : "s"} on host\u2026`;
+		chatAddMsg("system", msg);
+	} else if (payload.phase === "done") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		var parts = [];
+		if (payload.installed > 0) parts.push(`${payload.installed} installed`);
+		if (payload.skipped > 0) parts.push(`${payload.skipped} already present`);
+		chatAddMsg("system", `Host packages ready (${parts.join(", ") || "done"})`);
+	} else if (payload.phase === "error") {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		chatAddMsg("error", `Host package install failed: ${payload.error || "unknown"}`);
 	}
 }
 
@@ -635,124 +620,120 @@ function handleLocalLlmDownload(payload) {
 	}
 }
 
+var modelsUpdatedTimer = null;
+function handleModelsUpdated(payload) {
+	// Progress/status frames are consumed directly by the Providers page.
+	// Avoid spamming model refresh requests while a probe is running.
+	if (payload?.phase === "start" || payload?.phase === "progress") return;
+	if (modelsUpdatedTimer) return;
+	modelsUpdatedTimer = setTimeout(() => {
+		modelsUpdatedTimer = null;
+		fetchModels();
+		if (S.refreshProvidersPage) S.refreshProvidersPage();
+	}, 150);
+}
+
+// ── Location request handler ─────────────────────────────────
+
+function handleLocationRequest(payload) {
+	var requestId = payload.requestId;
+	if (!requestId) return;
+
+	if (!navigator.geolocation) {
+		sendRpc("location.result", {
+			requestId,
+			error: { code: 0, message: "Geolocation not supported" },
+		});
+		return;
+	}
+
+	navigator.geolocation.getCurrentPosition(
+		(pos) => {
+			sendRpc("location.result", {
+				requestId,
+				location: {
+					latitude: pos.coords.latitude,
+					longitude: pos.coords.longitude,
+					accuracy: pos.coords.accuracy,
+				},
+			});
+		},
+		(err) => {
+			sendRpc("location.result", {
+				requestId,
+				error: { code: err.code, message: err.message },
+			});
+		},
+		{ enableHighAccuracy: false, timeout: 15000, maximumAge: 3600000 },
+	);
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
 	"sandbox.image.provision": handleSandboxImageProvision,
+	"sandbox.host.provision": handleSandboxHostProvision,
 	"browser.image.pull": handleBrowserImagePull,
 	"local-llm.download": handleLocalLlmDownload,
+	"models.updated": handleModelsUpdated,
+	"location.request": handleLocationRequest,
 };
 
 function dispatchFrame(frame) {
-	if (frame.type === "res") {
-		var cb = S.pending[frame.id];
-		if (cb) {
-			delete S.pending[frame.id];
-			cb(frame);
-		}
-		return;
-	}
-	if (frame.type === "event") {
-		var listeners = eventListeners[frame.event] || [];
-		listeners.forEach((h) => {
-			h(frame.payload || {});
-		});
-		var handler = eventHandlers[frame.event];
-		if (handler) handler(frame.payload || {});
-	}
+	if (frame.type !== "event") return;
+	var listeners = eventListeners[frame.event] || [];
+	listeners.forEach((h) => {
+		h(frame.payload || {});
+	});
+	var handler = eventHandlers[frame.event];
+	if (handler) handler(frame.payload || {});
 }
 
-export function connect() {
-	setStatus("connecting", "connecting...");
-	var proto = location.protocol === "https:" ? "wss:" : "ws:";
-	S.setWs(new WebSocket(`${proto}//${location.host}/ws`));
-
-	S.ws.onopen = () => {
-		var id = nextId();
-		S.ws.send(
-			JSON.stringify({
-				type: "req",
-				id: id,
-				method: "connect",
-				params: {
-					minProtocol: 3,
-					maxProtocol: 3,
-					client: {
-						id: "web-chat-ui",
-						version: "0.1.0",
-						platform: "browser",
-						mode: "operator",
-					},
-				},
-			}),
-		);
-		S.pending[id] = (frame) => {
-			var hello = frame.ok && frame.payload;
-			if (hello && hello.type === "hello-ok") {
-				S.setConnected(true);
-				S.setReconnectDelay(1000);
-				var assetHash = document.querySelector('meta[name="build-ts"]')?.content || "?";
-				setStatus("connected", `connected (v${hello.protocol}) assets:${assetHash.substring(0, 8)}`);
-				var now = new Date();
-				var ts = now.toLocaleTimeString([], {
-					hour: "2-digit",
-					minute: "2-digit",
-					second: "2-digit",
-				});
-				chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
-				fetchModels();
-				fetchSessions();
-				fetchProjects();
-				prefetchChannels();
-				sendRpc("logs.status", {}).then((res) => {
-					if (res?.ok) {
-						var p = res.payload || {};
-						S.setUnseenErrors(p.unseen_errors || 0);
-						S.setUnseenWarns(p.unseen_warns || 0);
-						if (currentPage === "/logs") clearLogsAlert();
-						else updateLogsAlert();
-					}
-				});
-				if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage);
-			} else {
-				setStatus("", "handshake failed");
-				var reason = frame.error?.message || "unknown error";
-				chatAddMsg("error", `Handshake failed: ${reason}`);
+var connectOpts = {
+	onFrame: dispatchFrame,
+	onConnected: (hello) => {
+		setStatus("connected", "");
+		var now = new Date();
+		var ts = now.toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
+		chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
+		fetchModels();
+		fetchSessions();
+		fetchProjects();
+		prefetchChannels();
+		sendRpc("logs.status", {}).then((res) => {
+			if (res?.ok) {
+				var p = res.payload || {};
+				S.setUnseenErrors(p.unseen_errors || 0);
+				S.setUnseenWarns(p.unseen_warns || 0);
+				if (currentPage === "/logs") clearLogsAlert();
+				else updateLogsAlert();
 			}
-		};
-	};
-
-	S.ws.onmessage = (evt) => {
-		var frame;
-		try {
-			frame = JSON.parse(evt.data);
-		} catch (_e) {
-			return;
-		}
-		dispatchFrame(frame);
-	};
-
-	S.ws.onclose = () => {
-		var wasConnected = S.connected;
-		S.setConnected(false);
+		});
+		if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage);
+	},
+	onHandshakeFailed: (frame) => {
+		setStatus("", "handshake failed");
+		var reason = frame.error?.message || "unknown error";
+		chatAddMsg("error", `Handshake failed: ${reason}`);
+	},
+	onDisconnected: (wasConnected) => {
 		if (wasConnected) {
 			setStatus("", "disconnected \u2014 reconnecting\u2026");
 		}
 		S.setStreamEl(null);
 		S.setStreamText("");
-		// Reject all pending RPC callbacks so callers don't hang forever.
-		for (var id in S.pending) {
-			S.pending[id]({ ok: false, error: { message: "WebSocket disconnected" } });
-			delete S.pending[id];
-		}
-		scheduleReconnect();
-	};
+	},
+};
 
-	S.ws.onerror = () => {
-		/* handled by onclose */
-	};
+export function connect() {
+	setStatus("connecting", "connecting...");
+	connectWs(connectOpts);
 }
 
 function setStatus(state, text) {
@@ -760,26 +741,13 @@ function setStatus(state, text) {
 	var sText = S.$("statusText");
 	dot.className = `status-dot ${state}`;
 	sText.textContent = text;
+	sText.classList.toggle("status-text-live", state === "connected");
 	var sendBtn = S.$("sendBtn");
 	if (sendBtn) sendBtn.disabled = state !== "connected";
 }
 
-var reconnectTimer = null;
-
-function scheduleReconnect() {
-	if (reconnectTimer) return;
-	reconnectTimer = setTimeout(() => {
-		reconnectTimer = null;
-		S.setReconnectDelay(Math.min(S.reconnectDelay * 1.5, 5000));
-		connect();
-	}, S.reconnectDelay);
-}
-
 document.addEventListener("visibilitychange", () => {
 	if (!(document.hidden || S.connected)) {
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
-		S.setReconnectDelay(1000);
-		connect();
+		forceReconnect(connectOpts);
 	}
 });

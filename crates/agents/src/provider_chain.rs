@@ -275,6 +275,20 @@ impl LlmProvider for ProviderChain {
                         )
                         .increment(u64::from(resp.usage.output_tokens));
 
+                        counter!(
+                            llm_metrics::CACHE_READ_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(resp.usage.cache_read_tokens));
+
+                        counter!(
+                            llm_metrics::CACHE_WRITE_TOKENS_TOTAL,
+                            labels::PROVIDER => provider_name.clone(),
+                            labels::MODEL => model_id.clone()
+                        )
+                        .increment(u64::from(resp.usage.cache_write_tokens));
+
                         histogram!(
                             llm_metrics::COMPLETION_DURATION_SECONDS,
                             labels::PROVIDER => provider_name,
@@ -383,6 +397,7 @@ mod tests {
                 usage: Usage {
                     input_tokens: 1,
                     output_tokens: 1,
+                    ..Default::default()
                 },
             })
         }
@@ -394,6 +409,7 @@ mod tests {
             Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
                 input_tokens: 1,
                 output_tokens: 1,
+                ..Default::default()
             })))
         }
     }
@@ -682,6 +698,7 @@ mod tests {
                 usage: Usage {
                     input_tokens: 1,
                     output_tokens: 1,
+                    ..Default::default()
                 },
             })
         }
@@ -693,6 +710,7 @@ mod tests {
             Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
                 input_tokens: 1,
                 output_tokens: 1,
+                ..Default::default()
             })))
         }
 
@@ -705,6 +723,7 @@ mod tests {
             Box::pin(tokio_stream::once(StreamEvent::Done(Usage {
                 input_tokens: 1,
                 output_tokens: 1,
+                ..Default::default()
             })))
         }
     }

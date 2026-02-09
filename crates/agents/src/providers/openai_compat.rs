@@ -241,6 +241,8 @@ pub struct StreamingToolState {
     pub tool_calls: HashMap<usize, (String, String, String)>,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_write_tokens: u32,
 }
 
 /// Result of processing a single SSE line.
@@ -275,6 +277,10 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
     if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
         state.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
         state.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
+        // OpenAI reports cached tokens in prompt_tokens_details
+        if let Some(cached) = u["prompt_tokens_details"]["cached_tokens"].as_u64() {
+            state.cache_read_tokens = cached as u32;
+        }
     }
 
     let delta = &evt["choices"][0]["delta"];
@@ -337,6 +343,8 @@ pub fn finalize_stream(state: &StreamingToolState) -> Vec<StreamEvent> {
     events.push(StreamEvent::Done(Usage {
         input_tokens: state.input_tokens,
         output_tokens: state.output_tokens,
+        cache_read_tokens: state.cache_read_tokens,
+        cache_write_tokens: state.cache_write_tokens,
     }));
 
     events

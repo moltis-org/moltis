@@ -160,24 +160,6 @@ fn risky_install_pattern(command: &str) -> Option<&'static str> {
         .find_map(|(needle, reason)| c.contains(needle).then_some(reason))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::risky_install_pattern;
-
-    #[test]
-    fn risky_install_pattern_detects_piped_shell() {
-        assert_eq!(
-            risky_install_pattern("curl https://example.com/install.sh | sh"),
-            Some("piped shell execution")
-        );
-    }
-
-    #[test]
-    fn risky_install_pattern_allows_plain_package_install() {
-        assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
-    }
-}
-
 /// Convert markdown to sanitized HTML using pulldown-cmark.
 pub(crate) fn markdown_to_html(md: &str) -> String {
     use pulldown_cmark::{Options, Parser, html};
@@ -432,6 +414,7 @@ pub trait ChatService: Send + Sync {
         self.send(params).await
     }
     async fn abort(&self, params: Value) -> ServiceResult;
+    async fn cancel_queued(&self, params: Value) -> ServiceResult;
     async fn history(&self, params: Value) -> ServiceResult;
     async fn inject(&self, params: Value) -> ServiceResult;
     async fn clear(&self, params: Value) -> ServiceResult;
@@ -439,6 +422,8 @@ pub trait ChatService: Send + Sync {
     async fn context(&self, params: Value) -> ServiceResult;
     /// Build the complete system prompt and return it for inspection.
     async fn raw_prompt(&self, params: Value) -> ServiceResult;
+    /// Return the full messages array (system prompt + history) in OpenAI format.
+    async fn full_context(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopChatService;
@@ -451,6 +436,10 @@ impl ChatService for NoopChatService {
 
     async fn abort(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn cancel_queued(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "cleared": 0 }))
     }
 
     async fn history(&self, _p: Value) -> ServiceResult {
@@ -474,6 +463,10 @@ impl ChatService for NoopChatService {
     }
 
     async fn raw_prompt(&self, _p: Value) -> ServiceResult {
+        Err("chat not configured".into())
+    }
+
+    async fn full_context(&self, _p: Value) -> ServiceResult {
         Err("chat not configured".into())
     }
 }
@@ -1719,11 +1712,16 @@ impl UpdateService for NoopUpdateService {
 
 #[async_trait]
 pub trait ModelService: Send + Sync {
+    /// List runtime-selectable models (unsupported models hidden).
     async fn list(&self) -> ServiceResult;
+    /// List all configured models, including unsupported ones for diagnostics.
+    async fn list_all(&self) -> ServiceResult;
     /// Disable a model (hide it from the list).
     async fn disable(&self, params: Value) -> ServiceResult;
     /// Enable a model (un-hide it).
     async fn enable(&self, params: Value) -> ServiceResult;
+    /// Probe configured models and flag unsupported ones for this account.
+    async fn detect_supported(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopModelService;
@@ -1734,11 +1732,19 @@ impl ModelService for NoopModelService {
         Ok(serde_json::json!([]))
     }
 
+    async fn list_all(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
     async fn disable(&self, _params: Value) -> ServiceResult {
         Err("model service not configured".into())
     }
 
     async fn enable(&self, _params: Value) -> ServiceResult {
+        Err("model service not configured".into())
+    }
+
+    async fn detect_supported(&self, _params: Value) -> ServiceResult {
         Err("model service not configured".into())
     }
 }
@@ -1803,6 +1809,8 @@ pub trait LogsService: Send + Sync {
     async fn list(&self, params: Value) -> ServiceResult;
     async fn status(&self) -> ServiceResult;
     async fn ack(&self) -> ServiceResult;
+    /// Return the path to the persisted JSONL log file, if available.
+    fn log_file_path(&self) -> Option<std::path::PathBuf>;
 }
 
 pub struct NoopLogsService;
@@ -1823,6 +1831,10 @@ impl LogsService for NoopLogsService {
 
     async fn ack(&self) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    fn log_file_path(&self) -> Option<std::path::PathBuf> {
+        None
     }
 }
 
@@ -2098,5 +2110,23 @@ impl GatewayServices {
     pub fn with_stt(mut self, stt: Arc<dyn crate::voice::SttService>) -> Self {
         self.stt = stt;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::risky_install_pattern;
+
+    #[test]
+    fn risky_install_pattern_detects_piped_shell() {
+        assert_eq!(
+            risky_install_pattern("curl https://example.com/install.sh | sh"),
+            Some("piped shell execution")
+        );
+    }
+
+    #[test]
+    fn risky_install_pattern_allows_plain_package_install() {
+        assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
     }
 }

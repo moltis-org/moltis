@@ -11,11 +11,30 @@
 
 .status-dot.connected {
   background: var(--ok);
+  animation: 1.8s ease-out infinite status-live-pulse;
 }
 
 .status-dot.connecting {
   background: var(--warn);
   animation: 1s infinite pulse;
+}
+
+.status-text-live {
+  color: var(--ok) !important;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(34, 197, 94, 0.45);
+}
+
+@keyframes status-live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
 }
 
 .msg {

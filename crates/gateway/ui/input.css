@@ -161,6 +161,45 @@
     border: 1px solid var(--user-border);
     color: var(--text);
   }
+  .queued-tray {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 16px;
+    border-top: 1px dashed var(--border);
+    background: var(--surface);
+  }
+  .msg.user.queued {
+    opacity: 0.6;
+    border-style: dashed;
+    max-width: 100%;
+    align-self: flex-end;
+  }
+  .queued-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .queued-label {
+    font-style: italic;
+  }
+  .queued-cancel {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 1px 6px;
+    font-size: 0.7rem;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .queued-cancel:hover {
+    color: var(--error);
+    border-color: var(--error);
+  }
   .msg.assistant {
     align-self: flex-start;
     background: var(--assistant-bg);

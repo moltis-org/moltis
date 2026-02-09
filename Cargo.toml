@@ -37,7 +37,7 @@ unsafe_code = "deny"
 edition    = "2024"
 license    = "MIT"
 repository = "https://github.com/moltis-org/moltis"
-version    = "0.2.9"
+version    = "0.3.7"
 
 [workspace.dependencies]
 # Async runtime
@@ -127,7 +127,7 @@ image          = { default-features = false, features = ["jpeg", "png", "webp"],
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Filesystem / archiving
 chrono                = "0.4"
-chrono-tz             = "0.10"
+chrono-tz             = { version = "0.10", features = ["serde"] }
 cron                  = "0.13"
 dirs-next             = "2"
 flate2                = "1"

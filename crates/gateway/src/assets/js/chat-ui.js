@@ -21,6 +21,8 @@ export function scrollChatToBottom() {
 
 export function chatAddMsg(cls, content, isHtml) {
 	if (!S.chatMsgBox) return null;
+	var welcome = document.getElementById("welcomeCard");
+	if (welcome) welcome.remove();
 	var el = document.createElement("div");
 	el.className = `msg ${cls}`;
 	if (isHtml) {

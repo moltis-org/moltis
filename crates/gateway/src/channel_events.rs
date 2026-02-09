@@ -125,10 +125,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
             if let Ok(binding_json) = serde_json::to_string(&reply_to)
                 && let Some(ref session_meta) = state.services.session_metadata
             {
-                // Label the first session "Telegram 1" if it has no label yet.
-                if let Some(entry) = session_meta.get(&session_key).await
-                    && entry.channel_binding.is_none()
-                {
+                // Ensure the session row exists and label it on first use.
+                // `set_channel_binding` is an UPDATE, so the row must exist
+                // before we can set the binding column.
+                let entry = session_meta.get(&session_key).await;
+                if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                     let existing = session_meta
                         .list_channel_sessions(
                             reply_to.channel_type.as_str(),
@@ -193,7 +194,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                            .send_text(
+                                &reply_to.account_id,
+                                &reply_to.chat_id,
+                                &msg,
+                                reply_to.message_id.as_deref(),
+                            )
                             .await;
                     }
                 }
@@ -229,7 +235,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     if let Some(outbound) = state.services.channel_outbound_arc() {
                         let msg = format!("Using *{display}*. Use /model to change.");
                         let _ = outbound
-                            .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                            .send_text(
+                                &reply_to.account_id,
+                                &reply_to.chat_id,
+                                &msg,
+                                reply_to.message_id.as_deref(),
+                            )
                             .await;
                     }
                 }
@@ -294,7 +305,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let error_msg = format!("⚠️ {e}");
                     if let Err(send_err) = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg)
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &error_msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await
                     {
                         warn!("failed to send error back to channel: {send_err}");
@@ -423,6 +439,58 @@ impl ChannelEventSink for GatewayChannelEventSink {
         }
     }
 
+    async fn update_location(
+        &self,
+        reply_to: &ChannelReplyTarget,
+        latitude: f64,
+        longitude: f64,
+    ) -> bool {
+        let Some(state) = self.state.get() else {
+            warn!("update_location: gateway not ready");
+            return false;
+        };
+
+        let session_key = if let Some(ref sm) = state.services.session_metadata {
+            resolve_channel_session(reply_to, sm).await
+        } else {
+            default_channel_session_key(reply_to)
+        };
+
+        // Update in-memory cache.
+        let geo = moltis_config::GeoLocation::now(latitude, longitude);
+        state.inner.write().await.cached_location = Some(geo.clone());
+
+        // Persist to USER.md (best-effort).
+        let mut user = moltis_config::load_user().unwrap_or_default();
+        user.location = Some(geo);
+        if let Err(e) = moltis_config::save_user(&user) {
+            warn!(error = %e, "failed to persist location to USER.md");
+        }
+
+        // Check for a pending tool-triggered location request.
+        let pending_key = format!("channel_location:{session_key}");
+        let pending = state
+            .inner
+            .write()
+            .await
+            .pending_invokes
+            .remove(&pending_key);
+        if let Some(invoke) = pending {
+            let result = serde_json::json!({
+                "location": {
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "accuracy": 0.0,
+                }
+            });
+            let _ = invoke.sender.send(result);
+            info!(session_key, "resolved pending channel location request");
+            return true;
+        }
+
+        false
+    }
+
     async fn dispatch_to_chat_with_attachments(
         &self,
         text: &str,
@@ -507,13 +575,13 @@ impl ChannelEventSink for GatewayChannelEventSink {
             .push_channel_reply(&session_key, reply_to.clone())
             .await;
 
-        // Persist channel binding
+        // Persist channel binding (ensure session row exists first —
+        // set_channel_binding is an UPDATE so the row must already be present).
         if let Ok(binding_json) = serde_json::to_string(&reply_to)
             && let Some(ref session_meta) = state.services.session_metadata
         {
-            if let Some(entry) = session_meta.get(&session_key).await
-                && entry.channel_binding.is_none()
-            {
+            let entry = session_meta.get(&session_key).await;
+            if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                 let existing = session_meta
                     .list_channel_sessions(
                         reply_to.channel_type.as_str(),
@@ -572,7 +640,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await;
                 }
             }
@@ -605,7 +678,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 if let Some(outbound) = state.services.channel_outbound_arc() {
                     let msg = format!("Using *{display}*. Use /model to change.");
                     let _ = outbound
-                        .send_text(&reply_to.account_id, &reply_to.chat_id, &msg)
+                        .send_text(
+                            &reply_to.account_id,
+                            &reply_to.chat_id,
+                            &msg,
+                            reply_to.message_id.as_deref(),
+                        )
                         .await;
                 }
             }
@@ -639,7 +717,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
             if let Some(outbound) = state.services.channel_outbound_arc() {
                 let error_msg = format!("⚠️ {e}");
                 if let Err(send_err) = outbound
-                    .send_text(&reply_to.account_id, &reply_to.chat_id, &error_msg)
+                    .send_text(
+                        &reply_to.account_id,
+                        &reply_to.chat_id,
+                        &error_msg,
+                        reply_to.message_id.as_deref(),
+                    )
                     .await
                 {
                     warn!("failed to send error back to channel: {send_err}");
@@ -1268,6 +1351,7 @@ mod tests {
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "12345".into(),
+            message_id: None,
         };
         assert_eq!(default_channel_session_key(&target), "telegram:bot1:12345");
     }
@@ -1278,6 +1362,7 @@ mod tests {
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
             chat_id: "-100999".into(),
+            message_id: None,
         };
         assert_eq!(
             default_channel_session_key(&target),

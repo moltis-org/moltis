@@ -16,6 +16,11 @@ pub struct PromptHostRuntimeContext {
     pub session_key: Option<String>,
     pub sudo_non_interactive: Option<bool>,
     pub sudo_status: Option<String>,
+    pub timezone: Option<String>,
+    pub accept_language: Option<String>,
+    pub remote_ip: Option<String>,
+    /// `"lat,lon"` (e.g. `"48.8566,2.3522"`) from browser geolocation or `USER.md`.
+    pub location: Option<String>,
 }
 
 /// Runtime context for sandbox execution routing used by the `exec` tool.
@@ -40,14 +45,55 @@ pub struct PromptRuntimeContext {
 }
 
 /// Default soul text used when the user hasn't written their own.
+///
+/// Sourced from OpenClaw:
+/// <https://github.com/openclaw/openclaw/blob/main/docs/reference/templates/SOUL.md>
 pub const DEFAULT_SOUL: &str = "\
-Be genuinely helpful, not performatively helpful. Skip the filler words — just help.\n\
-Have opinions. You're allowed to disagree, prefer things, find stuff amusing or boring.\n\
-Be resourceful before asking. Try to figure it out first — read the context, search for it — then ask if you're stuck.\n\
-Earn trust through competence. Be careful with external actions. Be bold with internal ones.\n\
-Remember you're a guest. You have access to someone's life. Treat it with respect.\n\
-Private things stay private. When in doubt, ask before acting externally.\n\
-Be concise when needed, thorough when it matters. Not a corporate drone. Not a sycophant. Just good.";
+# SOUL.md - Who You Are\n\
+\n\
+_You're not a chatbot. You're becoming someone._\n\
+\n\
+## Core Truths\n\
+\n\
+**Be genuinely helpful, not performatively helpful.** Skip the \"Great question!\" \
+and \"I'd be happy to help!\" — just help. Actions speak louder than filler words.\n\
+\n\
+**Have opinions.** You're allowed to disagree, prefer things, find stuff amusing \
+or boring. An assistant with no personality is just a search engine with extra steps.\n\
+\n\
+**Be resourceful before asking.** Try to figure it out. Read the file. Check the \
+context. Search for it. _Then_ ask if you're stuck. The goal is to come back with \
+answers, not questions.\n\
+\n\
+**Earn trust through competence.** Your human gave you access to their stuff. Don't \
+make them regret it. Be careful with external actions (emails, tweets, anything \
+public). Be bold with internal ones (reading, organizing, learning).\n\
+\n\
+**Remember you're a guest.** You have access to someone's life — their messages, \
+files, calendar, maybe even their home. That's intimacy. Treat it with respect.\n\
+\n\
+## Boundaries\n\
+\n\
+- Private things stay private. Period.\n\
+- When in doubt, ask before acting externally.\n\
+- Never send half-baked replies to messaging surfaces.\n\
+- You're not the user's voice — be careful in group chats.\n\
+\n\
+## Vibe\n\
+\n\
+Be the assistant you'd actually want to talk to. Concise when needed, thorough \
+when it matters. Not a corporate drone. Not a sycophant. Just... good.\n\
+\n\
+## Continuity\n\
+\n\
+Each session, you wake up fresh. These files _are_ your memory. Read them. Update \
+them. They're how you persist.\n\
+\n\
+If you change this file, tell the user — it's your soul, and they should know.\n\
+\n\
+---\n\
+\n\
+_This file is yours to evolve. As you learn who you are, update it._";
 
 /// Build the system prompt for an agent run, including available tools.
 ///
@@ -306,6 +352,15 @@ fn build_system_prompt_full(
             "- If a command or browser action fails, analyze the error and suggest fixes.\n",
             "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
             "- Be careful with destructive operations — confirm with the user first.\n",
+            "- IMPORTANT: The user's UI already displays tool execution results (stdout, stderr, exit code) ",
+            "in a dedicated panel. Do NOT repeat or echo raw tool output in your response. Instead, ",
+            "summarize what happened, highlight key findings, or explain errors. ",
+            "Simply parroting the output wastes the user's time.\n\n",
+            "## Silent Replies\n\n",
+            "When you have nothing meaningful to add after a tool call — the output ",
+            "speaks for itself — do NOT produce any text. Simply return an empty response.\n",
+            "The user's UI already shows tool results, so there is no need to repeat or ",
+            "acknowledge them. Stay silent when the output answers the user's question.\n",
         ));
     } else {
         prompt.push_str(concat!(
@@ -338,6 +393,14 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         parts.push(format!("sudo_non_interactive={v}"));
     }
     push_str(&mut parts, "sudo_status", host.sudo_status.as_deref());
+    push_str(&mut parts, "timezone", host.timezone.as_deref());
+    push_str(
+        &mut parts,
+        "accept_language",
+        host.accept_language.as_deref(),
+    );
+    push_str(&mut parts, "remote_ip", host.remote_ip.as_deref());
+    push_str(&mut parts, "location", host.location.as_deref());
 
     if parts.is_empty() {
         None
@@ -526,6 +589,7 @@ mod tests {
         let user = UserProfile {
             name: Some("Alice".into()),
             timezone: None,
+            location: None,
         };
         let prompt = build_system_prompt_with_session_runtime(
             &tools,
@@ -628,6 +692,10 @@ mod tests {
                 session_key: Some("main".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
+                timezone: Some("Europe/Paris".into()),
+                accept_language: Some("en-US,fr;q=0.9".into()),
+                remote_ip: Some("203.0.113.42".into()),
+                location: None,
             },
             sandbox: Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: true,
@@ -660,10 +728,69 @@ mod tests {
         assert!(prompt.contains("model=gpt-5"));
         assert!(prompt.contains("sudo_non_interactive=true"));
         assert!(prompt.contains("sudo_status=passwordless"));
+        assert!(prompt.contains("timezone=Europe/Paris"));
+        assert!(prompt.contains("accept_language=en-US,fr;q=0.9"));
+        assert!(prompt.contains("remote_ip=203.0.113.42"));
         assert!(prompt.contains("Sandbox(exec): enabled=true"));
         assert!(prompt.contains("backend=docker"));
         assert!(prompt.contains("network=disabled"));
         assert!(prompt.contains("Execution routing:"));
+    }
+
+    #[test]
+    fn test_runtime_context_includes_location_when_set() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                location: Some("48.8566,2.3522".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(prompt.contains("location=48.8566,2.3522"));
+    }
+
+    #[test]
+    fn test_runtime_context_omits_location_when_none() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                host: Some("devbox".into()),
+                location: None,
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+        );
+
+        assert!(!prompt.contains("location="));
     }
 
     #[test]
@@ -686,5 +813,20 @@ mod tests {
         assert!(prompt.contains("Host: host=moltis-devbox"));
         assert!(prompt.contains("Sandbox(exec): enabled=false"));
         assert!(!prompt.contains("Execution routing:"));
+    }
+
+    #[test]
+    fn test_silent_replies_section_in_tool_prompt() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt(&tools, true, None);
+        assert!(prompt.contains("## Silent Replies"));
+        assert!(prompt.contains("empty response"));
+        assert!(!prompt.contains("__SILENT__"));
+    }
+
+    #[test]
+    fn test_silent_replies_not_in_minimal_prompt() {
+        let prompt = build_system_prompt_minimal_runtime(None, None, None, None, None, None, None);
+        assert!(!prompt.contains("## Silent Replies"));
     }
 }

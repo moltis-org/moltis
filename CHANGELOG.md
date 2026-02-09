@@ -7,7 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-02-09
+
+### Fixed
+
+- **Clippy warnings**: Fixed `MutexGuard` held across await in telegram
+  test, `field assignment outside initializer` in provider setup test, and
+  `items after test module` in gateway services.
+
+## [0.3.6] - 2026-02-09
+
+### Fixed
+
+- **Release CI zizmor audit**: Removed `rust-cache` from the release workflow's
+  clippy-test job entirely instead of using `save-if: false`, which zizmor does
+  not recognize as a cache-poisoning mitigation.
+
+## [0.3.5] - 2026-02-09
+
+### Fixed
+
+- **Release CI cache-poisoning**: Set `save-if: false` on `rust-cache` in the
+  release workflow to satisfy zizmor's cache-poisoning audit for tag-triggered
+  workflows that publish artifacts.
+
+## [0.3.4] - 2026-02-09
+
+### Fixed
+
+- **Session file lock contention**: Replaced non-blocking `try_write()` with
+  blocking `write()` in `SessionStore::append()` and `replace_history()` so
+  concurrent tool-result persists wait for the file lock instead of failing
+  with `EAGAIN` (OS error 35).
+
+### Changed
+
+- **Release CI quality gates**: The Build Packages workflow now runs biome,
+  format, clippy, and test checks before building any packages, ensuring code
+  correctness before artifacts are produced.
+
+## [0.3.3] - 2026-02-09
+
+### Fixed
+
+- **OpenAI Codex token refresh panic**: Made `get_valid_token()` async to fix
+  `block_on` inside async runtime panic when refreshing expired OAuth tokens.
+- **Channel session binding**: Ensure session row exists before setting channel
+  binding, fixing `get_user_location` failures on first Telegram message.
+- **Cargo.lock sync**: Lock file now matches workspace version.
+
+## [0.3.0] - 2026-02-08
+
 ### Added
+
+- **Silent replies**: The system prompt instructs the LLM to return an empty
+  response when tool output speaks for itself, suppressing empty chat bubbles,
+  push notifications, and channel replies. Empty assistant messages are not
+  persisted to session history.
+
+- **Persist TTS audio to session media**: When TTS is enabled and the reply
+  medium is `voice`, the server generates TTS audio, saves it to the session
+  media directory, and includes the media path in the persisted assistant
+  message. On session reload the frontend renders an `<audio>` player from
+  the media API instead of re-generating audio via RPC.
+
+- **Per-session media directory**: Screenshots from the browser tool are now
+  persisted to `sessions/media/<key>/` and served via
+  `GET /api/sessions/:key/media/:filename`. Session history reload renders
+  screenshots from the API instead of losing them. Media files are cleaned
+  up when a session is deleted.
 
 - **Process tool for interactive terminal sessions**: New `process` tool lets
   the LLM manage interactive/TUI programs (htop, vim, REPLs, etc.) via tmux
@@ -20,6 +88,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (enabled state, mode, backend, scope, image, workspace mount, network policy,
   session override). Tool-mode prompts also add routing guidance so the agent
   asks before requesting host installs or changing sandbox mode.
+
+- **Telegram location sharing**: Telegram channels now support receiving shared
+  locations and live location updates. Live locations are tracked until they
+  expire or the user stops sharing.
+
+- **Telegram reply threading**: Telegram channel replies now use
+  `reply_to_message_id` to thread responses under the original user message,
+  keeping conversations visually grouped in the chat.
+
+- **`get_user_location` tool**: New browser-based geolocation tool lets the LLM
+  request the user's current coordinates via the Geolocation API, with a
+  permission prompt in the UI.
+
+- **`sandbox_packages` tool**: New tool for on-demand package discovery inside
+  the sandbox, allowing the LLM to query available and installable packages at
+  runtime.
+
+- **Sandbox package expansions**: Pre-built sandbox images now include expanded
+  package groups — GIS/OpenStreetMap, document/office/search,
+  image/audio/media/data-processing, and communication packages. Mise is also
+  available for runtime version management.
+
+- **Queued message UI**: When a message is submitted while the LLM is already
+  responding, it is shown in a dedicated bottom tray with cancel support.
+  Queued messages are moved into the conversation only after the current
+  response finishes rendering.
+
+- **Full context view**: New "Context" button in the chat header opens a panel
+  showing the full LLM messages array sent to the provider, with a Copy button
+  for easy debugging.
+
+- **Browser timezone auto-detection**: The gateway now auto-detects the user's
+  timezone from the browser via `Intl.DateTimeFormat` and includes it in
+  session context, removing the need for manual timezone configuration.
+
+- **Logs download**: New Download button on the logs page streams the JSONL log
+  file via `GET /api/logs/download` with gzip/zstd compression.
+
+- **Gateway middleware hardening**: Consolidated middleware into
+  `apply_middleware_stack()` with security and observability layers:
+  - Replace `allow_origin(Any)` with dynamic host-based CORS validation
+    reusing the WebSocket CSWSH `is_same_origin` logic, safe for
+    Docker/cloud deployments with unknown hostnames
+  - `CatchPanicLayer` to convert handler panics to 500 responses
+  - `RequestBodyLimitLayer` (16 MiB) to prevent memory exhaustion
+  - `SetSensitiveHeadersLayer` to redact Authorization/Cookie in traces
+  - Security response headers (`X-Content-Type-Options`, `X-Frame-Options`,
+    `Referrer-Policy`)
+  - `SetRequestIdLayer` + `PropagateRequestIdLayer` for `x-request-id`
+    correlation across HTTP request logs
+  - zstd compression alongside gzip for better ratios
+
+- **Message run tracking**: Persisted messages now carry `run_id` and `seq`
+  fields for parent/child linking across multi-turn tool runs, plus a
+  client-side sequence number for ordering diagnostics.
+
+- **Cache token metrics**: Provider responses now populate cache-hit and
+  cache-miss token counters in the metrics subsystem.
+
+### Changed
+
+- **Provider auto-detection observability**: When no explicit provider settings are present in `moltis.toml`, startup now logs each auto-detected provider with its source (`env`, config file key, OAuth token file, provider key file, or Codex auth file). Added `server.http_request_logs` (Axum HTTP traces) and `server.ws_request_logs` (WebSocket RPC request/response traces) config options (both default `false`) for on-demand transport debugging without code changes.
+- **Dynamic OpenAI Codex model catalog**: OpenAI Codex providers now load model IDs from `https://chatgpt.com/backend-api/codex/models` at startup (with fallback defaults), and the gateway refreshes Codex models hourly so long-running sessions pick up newly available models (for example `gpt-5.3`) without restart.
+- **Model availability probing UX**: Model support probing now runs in parallel with bounded concurrency, starts automatically after provider connect/startup, and streams live progress (`start`/`progress`/`complete`) over WebSocket so the Providers page can render a progress bar.
+- **Provider-scoped probing on connect**: Connecting a provider from the Providers UI now probes only that provider's models (instead of all providers), reducing noise and startup load when adding accounts one by one.
+- **Configurable model ordering**: Added `chat.priority_models` in `moltis.toml` to pin preferred models at the top of model selectors without rebuilding. Runtime model selectors (`models.list`, chat model dropdown, Telegram `/model`) hide unsupported models, while Providers diagnostics continue to show full catalog entries (including unsupported flags).
+- **Configurable provider offerings in UI**: Added `[providers] offered = [...]` allowlist in `moltis.toml` to control which providers are shown in onboarding/provider-picker UI. New config templates default this to `["openai", "github-copilot"]`; setting `offered = []` shows all known providers. Configured providers remain visible for management.
+
+### Fixed
+
+- **Web search DuckDuckGo fallback**: When no search API key (Brave or
+  Perplexity) is configured, `web_search` now automatically falls back to
+  DuckDuckGo HTML search instead of returning an error and forcing the LLM
+  to ask the user about using the browser.
+
+- **Web onboarding flash and redirect timing**: The web server now performs onboarding redirects before rendering the main app shell. When onboarding is incomplete, non-onboarding routes redirect directly to `/onboarding`; once onboarding is complete, `/onboarding` redirects back to `/`. The onboarding route now serves a dedicated onboarding HTML/JS entry instead of the full app bundle, preventing duplicate bootstrap/navigation flashes in Safari.
+- **Local model cache path visibility**: Startup logs for local LLM providers now explicitly print the model cache directory and cached model IDs, making `MOLTIS_DATA_DIR` behavior easier to verify without noisy model-catalog output.
+- **Kimi device-flow OAuth in web UI**: Kimi OAuth now uses provider-specific headers and prefers `verification_uri_complete` (or synthesizes `?user_code=` fallback) so mobile-device sign-in links no longer fail with missing `user_code`.
+- **Kimi Code provider authentication compatibility**: `kimi-code` is now API-key-first in the web UI (`KIMI_API_KEY`, default base URL `https://api.moonshot.ai/v1`), while still honoring previously stored OAuth tokens for backward compatibility. Provider errors now include a targeted hint to switch to API-key auth when Kimi returns `access_terminated_error`.
+- **Provider setup success feedback**: API-key provider setup now runs an immediate model probe after saving credentials. The onboarding and Providers modal only show success when at least one model validates, and otherwise display a validation failure message instead of a false-positive "configured" state.
+- **Heartbeat/cron duplicate runs**: Skip heartbeat LLM turn when no prompt is
+  configured, and fix duplicate cron job executions that could fire the same
+  scheduled run twice.
+- **Onboarding finish screen removed**: Onboarding now skips the final
+  "congratulations" screen and redirects straight to the chat view.
+- **User message footer leak**: Model name footer and timestamp are no longer
+  incorrectly attached to user messages in the chat UI.
+- **TTS counterpart auto-enable on STT save**: Saving an ElevenLabs or Google
+  Cloud STT key now automatically enables the matching TTS provider, mirroring
+  the onboarding voice-test behavior.
+- **Voice-generating indicator removed**: The separate "voice generating"
+  spinner during TTS playback has been removed in favor of the unified
+  response indicator.
+- **Config restart crash loop prevention**: The gateway now validates the
+  configuration file before restarting, returning an error to the UI instead
+  of entering a crash loop when the config is invalid.
+- **Safari dev-mode cache busting**: Development mode now busts the Safari
+  asset cache on reload, and fixes a missing border on detected-provider cards.
+
+### Refactored
+
+- **McpManager lock consolidation**: Replaced per-field `RwLock`s in
+  `McpManager` with a single `RwLock<McpManagerInner>` to reduce lock
+  contention and simplify state management.
+- **GatewayState lock consolidation**: Replaced per-field `RwLock`s in
+  `GatewayState` with a single `RwLock<GatewayInner>` for the same reasons.
+- **Typed chat broadcast payloads**: Chat WebSocket broadcasts now use typed
+  Rust structs instead of ad-hoc `serde_json::Value` maps.
+
+### Documentation
+
+- Expanded default `SOUL.md` with the full OpenClaw reference text for agent
+  personality bootstrapping.
 
 ## [0.2.9] - 2026-02-08
 
@@ -36,7 +217,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Chat UI reply badge visibility**: Assistant footer now reliably shows the selected reply medium badge.
 - **Voice UX polish**: Improved microphone timing behavior and preserved settings scroll state in voice configuration views.
-
 ## [0.2.8] - 2026-02-07
 
 ### Changed

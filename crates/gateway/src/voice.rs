@@ -18,7 +18,7 @@ use moltis_voice::{
     AudioFormat, CoquiTts, DeepgramStt, ElevenLabsStt, ElevenLabsTts, GoogleStt, GoogleTts,
     GroqStt, MistralStt, OpenAiTts, PiperTts, SherpaOnnxStt, SttProvider, SttProviderId,
     SynthesizeRequest, TranscribeRequest, TtsConfig, TtsProvider, TtsProviderId, VoxtralLocalStt,
-    WhisperCliStt, WhisperStt,
+    WhisperCliStt, WhisperStt, strip_ssml_tags,
 };
 
 #[cfg(feature = "voice")]
@@ -282,6 +282,13 @@ impl TtsService for LiveTtsService {
         let provider = Self::create_provider(provider_id)
             .ok_or_else(|| format!("provider '{}' not configured", provider_id))?;
 
+        // Strip SSML tags for providers that don't support them natively
+        let text = if provider.supports_ssml() {
+            text.to_string()
+        } else {
+            strip_ssml_tags(text).into_owned()
+        };
+
         let format = params
             .get("format")
             .and_then(|v| v.as_str())
@@ -294,7 +301,7 @@ impl TtsService for LiveTtsService {
             .unwrap_or(AudioFormat::Mp3);
 
         let request = SynthesizeRequest {
-            text: text.to_string(),
+            text,
             voice_id: params
                 .get("voiceId")
                 .and_then(|v| v.as_str())

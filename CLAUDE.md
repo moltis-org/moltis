@@ -809,6 +809,12 @@ The Build Packages workflow derives artifact versions from the tag when running
 on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
 packaging metadata consistency, and future non-tag runs.
 
+**Cargo.lock must stay in sync.** After bumping `[workspace.package].version`
+in the root `Cargo.toml`, always run `cargo update --workspace` and verify with
+`cargo fetch --locked` before committing. CI uses `--locked` and will reject a
+stale lock file. Include the updated `Cargo.lock` in the same commit as the
+version bump — never leave it for a follow-up.
+
 **Merging main into your branch:** When merging `main` into your current branch
 and encountering conflicts, resolve them by keeping both sides of the changes.
 Don't discard either the incoming changes from main or your local changes —

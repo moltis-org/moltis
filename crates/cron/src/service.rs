@@ -362,6 +362,13 @@ impl CronService {
             bail!("job is disabled (use force=true to override)");
         }
 
+        // Mark as running before executing (prevents duplicate runs).
+        let now = now_ms();
+        self.update_job_state(&job.id, |state| {
+            state.running_at_ms = Some(now);
+        })
+        .await;
+
         self.execute_job(&job).await;
         Ok(())
     }
@@ -438,15 +445,20 @@ impl CronService {
     async fn process_due_jobs(self: &Arc<Self>) {
         let now = now_ms();
         let due_jobs: Vec<CronJob> = {
-            let jobs = self.jobs.read().await;
-            jobs.iter()
-                .filter(|j| j.enabled)
-                .filter(|j| {
-                    j.state.next_run_at_ms.is_some_and(|t| t <= now)
-                        && j.state.running_at_ms.is_none()
-                })
-                .cloned()
-                .collect()
+            let mut jobs = self.jobs.write().await;
+            let mut due = Vec::new();
+            for job in jobs.iter_mut() {
+                if job.enabled
+                    && job.state.next_run_at_ms.is_some_and(|t| t <= now)
+                    && job.state.running_at_ms.is_none()
+                {
+                    // Mark as running under the write lock BEFORE spawning,
+                    // so the next timer tick won't pick up the same job again.
+                    job.state.running_at_ms = Some(now);
+                    due.push(job.clone());
+                }
+            }
+            due
         };
 
         // Clear stuck jobs.
@@ -468,11 +480,7 @@ impl CronService {
         #[cfg(feature = "metrics")]
         counter!(cron_metrics::EXECUTIONS_TOTAL).increment(1);
 
-        // Mark as running.
-        self.update_job_state(&job.id, |state| {
-            state.running_at_ms = Some(started);
-        })
-        .await;
+        // running_at_ms was already set in process_due_jobs() before spawning.
 
         let result = match &job.payload {
             CronPayload::SystemEvent { text } => {
