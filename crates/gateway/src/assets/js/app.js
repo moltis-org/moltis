@@ -11,7 +11,7 @@ import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
 import { mount, registerPage, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { fetchSessions, refreshActiveSession, renderSessionList } from "./sessions.js";
+import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
 import { initTheme, injectMarkdownStyles } from "./theme.js";
 import { connect } from "./websocket.js";
@@ -254,6 +254,7 @@ function fetchBootstrap() {
 				renderSessionList();
 			}
 			if (boot.models) applyModels(boot.models);
+			refreshWelcomeCardIfNeeded();
 			if (boot.projects) {
 				S.setProjects(boot.projects || []);
 				renderProjectSelect();

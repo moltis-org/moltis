@@ -24,8 +24,17 @@ impl SystemInfo {
     pub fn detect() -> Self {
         let sys = System::new_all();
 
-        let total_ram_bytes = sys.total_memory();
-        let available_ram_bytes = sys.available_memory();
+        let (total_ram_bytes, available_ram_bytes) = {
+            let total = sys.total_memory();
+            let available = sys.available_memory();
+            if total > 0 {
+                (total, available)
+            } else if let Some((fallback_total, fallback_available)) = read_proc_meminfo() {
+                (fallback_total, fallback_available)
+            } else {
+                (total, available)
+            }
+        };
 
         // Metal detection: compile-time check for macOS + runtime check
         let has_metal = cfg!(target_os = "macos") && cfg!(feature = "local-llm-metal");
@@ -103,6 +112,37 @@ impl std::fmt::Display for MemoryTier {
     }
 }
 
+/// Parse `/proc/meminfo` as a fallback when `sysinfo` returns 0 (common in
+/// Docker containers with restrictive cgroup settings).
+///
+/// Returns `(total_bytes, available_bytes)` or `None` if the file is absent or
+/// unparseable.
+fn read_proc_meminfo() -> Option<(u64, u64)> {
+    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let mut total_kb: Option<u64> = None;
+    let mut available_kb: Option<u64> = None;
+
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            total_kb = parse_meminfo_kb(rest);
+        } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            available_kb = parse_meminfo_kb(rest);
+        }
+        if total_kb.is_some() && available_kb.is_some() {
+            break;
+        }
+    }
+
+    let total = total_kb? * 1024;
+    let available = available_kb.unwrap_or(0) * 1024;
+    Some((total, available))
+}
+
+/// Parse a `/proc/meminfo` value line like `"   16384 kB"` into kilobytes.
+fn parse_meminfo_kb(value: &str) -> Option<u64> {
+    value.split_whitespace().next()?.parse::<u64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +214,28 @@ mod tests {
             is_apple_silicon: false,
         };
         assert!(!info.has_gpu());
+    }
+
+    #[test]
+    fn test_parse_meminfo_kb() {
+        assert_eq!(parse_meminfo_kb("   16384 kB"), Some(16384));
+        assert_eq!(parse_meminfo_kb("1024 kB"), Some(1024));
+        assert_eq!(parse_meminfo_kb(""), None);
+        assert_eq!(parse_meminfo_kb("   not_a_number kB"), None);
+    }
+
+    #[test]
+    fn test_read_proc_meminfo_on_host() {
+        // On Linux this will parse /proc/meminfo; on macOS it will return None.
+        let result = read_proc_meminfo();
+        if cfg!(target_os = "linux") {
+            // Should succeed on any Linux host
+            let (total, _available) = result.expect("/proc/meminfo should be readable on Linux");
+            assert!(total > 0, "total RAM should be > 0");
+        } else {
+            // /proc/meminfo doesn't exist on macOS/Windows
+            assert!(result.is_none());
+        }
     }
 
     #[test]

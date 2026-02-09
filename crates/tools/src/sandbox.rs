@@ -40,6 +40,25 @@ async fn provision_packages(cli: &str, container_name: &str, packages: &[String]
     Ok(())
 }
 
+/// Check whether the current process is running as root (UID 0).
+fn is_running_as_root() -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("id")
+            .args(["-u"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .is_some_and(|uid| uid.trim() == "0")
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Check whether the current host is Debian/Ubuntu (has `/etc/debian_version`
 /// and `apt-get` on PATH).
 pub fn is_debian_host() -> bool {
@@ -112,6 +131,21 @@ pub async fn provision_host_packages(packages: &[String]) -> Result<Option<HostP
         .status()
         .await
         .is_ok_and(|s| s.success());
+
+    let is_root = is_running_as_root();
+
+    if !has_sudo && !is_root {
+        info!(
+            missing = missing.len(),
+            "not running as root and passwordless sudo unavailable; \
+             skipping host package provisioning (install packages in the container image instead)"
+        );
+        return Ok(Some(HostProvisionResult {
+            installed: Vec::new(),
+            skipped: missing,
+            used_sudo: false,
+        }));
+    }
 
     let pkg_list = missing.join(" ");
     let apt_update = if has_sudo {
@@ -2137,6 +2171,14 @@ mod tests {
         }
         let result = provision_host_packages(&["curl".into()]).await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_running_as_root() {
+        // In CI and dev, we typically don't run as root.
+        let result = is_running_as_root();
+        // Just verify it returns a bool without panic.
+        let _ = result;
     }
 
     #[test]

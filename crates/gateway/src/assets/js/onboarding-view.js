@@ -1,7 +1,7 @@
 // ── Onboarding wizard ──────────────────────────────────────
 //
 // Multi-step setup page shown to first-time users.
-// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) → Channel
+// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) → Channel → Summary
 // No new Rust code — all existing RPC methods and REST endpoints.
 
 import { html } from "htm/preact";
@@ -10,15 +10,16 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { detectPasskeyName } from "./passkey-detect.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { validateProviderConnection } from "./provider-validation.js";
+import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel"];
+var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -51,17 +52,48 @@ function StepDot({ index, label, state }) {
 	</div>`;
 }
 
+// ── Base64url helpers for WebAuthn ───────────────────────────
+
+function base64ToBuffer(b64) {
+	var str = b64.replace(/-/g, "+").replace(/_/g, "/");
+	while (str.length % 4) str += "=";
+	var bin = atob(str);
+	var buf = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+	return buf.buffer;
+}
+
+function bufferToBase64(buf) {
+	var bytes = new Uint8Array(buf);
+	var str = "";
+	for (var b of bytes) str += String.fromCharCode(b);
+	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 // ── Auth step ───────────────────────────────────────────────
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth step handles passkey+password+code flows
 function AuthStep({ onNext, skippable }) {
+	var [method, setMethod] = useState(null); // null | "passkey" | "password"
 	var [password, setPassword] = useState("");
 	var [confirm, setConfirm] = useState("");
 	var [setupCode, setSetupCode] = useState("");
+	var [passkeyName, setPasskeyName] = useState("");
 	var [codeRequired, setCodeRequired] = useState(false);
 	var [localhostOnly, setLocalhostOnly] = useState(false);
+	var [webauthnAvailable, setWebauthnAvailable] = useState(false);
 	var [error, setError] = useState(null);
 	var [saving, setSaving] = useState(false);
 	var [loading, setLoading] = useState(true);
+	var [passkeyOrigins, setPasskeyOrigins] = useState([]);
+	var [passkeyDone, setPasskeyDone] = useState(false);
+	var [optPw, setOptPw] = useState("");
+	var [optPwConfirm, setOptPwConfirm] = useState("");
+	var [optPwSaving, setOptPwSaving] = useState(false);
+
+	var isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[");
+	var browserSupportsWebauthn = !!window.PublicKeyCredential;
+	var passkeyEnabled = webauthnAvailable && browserSupportsWebauthn && !isIpAddress;
 
 	useEffect(() => {
 		fetch("/api/auth/status")
@@ -69,13 +101,15 @@ function AuthStep({ onNext, skippable }) {
 			.then((data) => {
 				if (data.setup_code_required) setCodeRequired(true);
 				if (data.localhost_only) setLocalhostOnly(true);
+				if (data.webauthn_available) setWebauthnAvailable(true);
+				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
 	}, []);
 
-	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auth form handles password+code validation
-	function onSubmit(e) {
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: password+code validation
+	function onPasswordSubmit(e) {
 		e.preventDefault();
 		setError(null);
 		if (password.length > 0 || !localhostOnly) {
@@ -116,16 +150,226 @@ function AuthStep({ onNext, skippable }) {
 			});
 	}
 
+	function onPasskeyRegister() {
+		setError(null);
+		if (codeRequired && setupCode.trim().length === 0) {
+			setError("Enter the setup code shown in the process log (stdout).");
+			return;
+		}
+		setSaving(true);
+		var codeBody = codeRequired ? { setup_code: setupCode.trim() } : {};
+		fetch("/api/auth/setup/passkey/register/begin", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(codeBody),
+		})
+			.then((r) => {
+				if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t || "Failed to start passkey registration")));
+				return r.json();
+			})
+			.then((data) => {
+				var options = data.options;
+				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
+				options.publicKey.user.id = base64ToBuffer(options.publicKey.user.id);
+				if (options.publicKey.excludeCredentials) {
+					for (var c of options.publicKey.excludeCredentials) {
+						c.id = base64ToBuffer(c.id);
+					}
+				}
+				return navigator.credentials
+					.create({ publicKey: options.publicKey })
+					.then((cred) => ({ cred, challengeId: data.challenge_id }));
+			})
+			.then(({ cred, challengeId }) => {
+				var body = {
+					challenge_id: challengeId,
+					name: passkeyName.trim() || detectPasskeyName(cred),
+					credential: {
+						id: cred.id,
+						rawId: bufferToBase64(cred.rawId),
+						type: cred.type,
+						response: {
+							attestationObject: bufferToBase64(cred.response.attestationObject),
+							clientDataJSON: bufferToBase64(cred.response.clientDataJSON),
+						},
+					},
+				};
+				if (codeRequired) body.setup_code = setupCode.trim();
+				return fetch("/api/auth/setup/passkey/register/finish", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				});
+			})
+			.then((r) => {
+				if (r.ok) {
+					setSaving(false);
+					setPasskeyDone(true);
+				} else {
+					return r.text().then((t) => {
+						setError(t || "Passkey registration failed");
+						setSaving(false);
+					});
+				}
+			})
+			.catch((err) => {
+				if (err.name === "NotAllowedError") {
+					setError("Passkey registration was cancelled.");
+				} else {
+					setError(err.message || "Passkey registration failed");
+				}
+				setSaving(false);
+			});
+	}
+
+	function onOptionalPassword(e) {
+		e.preventDefault();
+		setError(null);
+		if (optPw.length < 8) {
+			setError("Password must be at least 8 characters.");
+			return;
+		}
+		if (optPw !== optPwConfirm) {
+			setError("Passwords do not match.");
+			return;
+		}
+		setOptPwSaving(true);
+		fetch("/api/auth/password/change", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ new_password: optPw }),
+		})
+			.then((r) => {
+				if (r.ok) {
+					onNext();
+				} else {
+					return r.text().then((t) => {
+						setError(t || "Failed to set password");
+						setOptPwSaving(false);
+					});
+				}
+			})
+			.catch((err) => {
+				setError(err.message);
+				setOptPwSaving(false);
+			});
+	}
+
 	if (loading) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
 	}
 
+	var passkeyDisabledReason = webauthnAvailable
+		? browserSupportsWebauthn
+			? isIpAddress
+				? "Requires domain name"
+				: null
+			: "Browser not supported"
+		: "Not available on this server";
+
+	var originsHint =
+		passkeyOrigins.length > 1 ? passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ") : null;
+
+	// ── After passkey registration: optional password ────────
+	if (passkeyDone) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7" /></svg>
+				Passkey registered successfully!
+			</div>
+
+			<p class="text-xs text-[var(--muted)] leading-relaxed">
+				Optionally set a password as a fallback for when passkeys aren't available.
+			</p>
+
+			<form onSubmit=${onOptionalPassword} class="flex flex-col gap-3">
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${optPw} onInput=${(e) => setOptPw(e.target.value)}
+						placeholder="At least 8 characters" autofocus />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Confirm password</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${optPwConfirm} onInput=${(e) => setOptPwConfirm(e.target.value)}
+						placeholder="Repeat password" />
+				</div>
+				${error && html`<${ErrorPanel} message=${error} />`}
+				<div class="flex items-center gap-3 mt-1">
+					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
+						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
+					</button>
+					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip</button>
+				</div>
+			</form>
+		</div>`;
+	}
+
+	// ── Method selection ─────────────────────────────────────
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly ? "Set a password to secure your instance, or skip for now." : "Set a password to secure your instance."}
+			${localhostOnly ? "Choose how to secure your instance, or skip for now." : "Choose how to secure your instance."}
 		</p>
-		<form onSubmit=${onSubmit} class="flex flex-col gap-3">
+
+		${
+			codeRequired &&
+			html`<div>
+			<label class="text-xs text-[var(--muted)] mb-1 block">Setup code</label>
+			<input type="text" class="provider-key-input w-full" inputmode="numeric" pattern="[0-9]*"
+				value=${setupCode} onInput=${(e) => setSetupCode(e.target.value)}
+				placeholder="6-digit code from terminal" />
+			<div class="text-xs text-[var(--muted)] mt-1">Find this code in the moltis process log (stdout).</div>
+		</div>`
+		}
+
+		<div class="flex flex-col gap-2">
+			<div class=${`backend-card ${method === "passkey" ? "selected" : ""} ${passkeyEnabled ? "" : "disabled"}`}
+				onClick=${passkeyEnabled ? () => setMethod("passkey") : null}>
+				<div class="flex items-center justify-between">
+					<span class="text-sm font-medium text-[var(--text)]">Passkey</span>
+					<div class="flex gap-2">
+						${passkeyEnabled ? html`<span class="recommended-badge">Recommended</span>` : null}
+						${passkeyDisabledReason ? html`<span class="tier-badge">${passkeyDisabledReason}</span>` : null}
+					</div>
+				</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Use Touch ID, Face ID, or a security key</div>
+			</div>
+			<div class=${`backend-card ${method === "password" ? "selected" : ""}`}
+				onClick=${() => setMethod("password")}>
+				<div class="flex items-center justify-between">
+					<span class="text-sm font-medium text-[var(--text)]">Password</span>
+				</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
+			</div>
+		</div>
+
+		${
+			method === "passkey" &&
+			html`<div class="flex flex-col gap-3">
+			<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Passkey name</label>
+				<input type="text" class="provider-key-input w-full"
+					value=${passkeyName} onInput=${(e) => setPasskeyName(e.target.value)}
+					placeholder="e.g. MacBook Touch ID (optional)" />
+			</div>
+			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
+			${error && html`<${ErrorPanel} message=${error} />`}
+			<div class="flex items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
+					${saving ? "Registering\u2026" : "Register passkey"}
+				</button>
+				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+			</div>
+		</div>`
+		}
+
+		${
+			method === "password" &&
+			html`<form onSubmit=${onPasswordSubmit} class="flex flex-col gap-3">
 			<div>
 				<label class="text-xs text-[var(--muted)] mb-1 block">Password${localhostOnly ? "" : " *"}</label>
 				<input type="password" class="provider-key-input w-full"
@@ -138,16 +382,6 @@ function AuthStep({ onNext, skippable }) {
 					value=${confirm} onInput=${(e) => setConfirm(e.target.value)}
 					placeholder="Repeat password" />
 			</div>
-			${
-				codeRequired &&
-				html`<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Setup code</label>
-				<input type="text" class="provider-key-input w-full" inputmode="numeric" pattern="[0-9]*"
-					value=${setupCode} onInput=${(e) => setSetupCode(e.target.value)}
-					placeholder="6-digit code from terminal" />
-				<div class="text-xs text-[var(--muted)] mt-1">Hint: find this code in the moltis process log (stdout).</div>
-			</div>`
-			}
 			${error && html`<${ErrorPanel} message=${error} />`}
 			<div class="flex items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
@@ -155,7 +389,15 @@ function AuthStep({ onNext, skippable }) {
 				</button>
 				${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 			</div>
-		</form>
+		</form>`
+		}
+
+		${
+			method === null &&
+			html`<div class="flex items-center gap-3 mt-1">
+			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
+		</div>`
+		}
 	</div>`;
 }
 
@@ -251,27 +493,327 @@ function IdentityStep({ onNext, onBack }) {
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
 var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider step manages multiple auth flows inline
+// ── Provider row for multi-provider onboarding ──────────────
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config forms for api-key, oauth, and local flows
+function OnboardingProviderRow({
+	provider,
+	configuring,
+	phase,
+	providerModels,
+	selectedModel,
+	modelTestError,
+	modelSearch,
+	setModelSearch,
+	oauthProvider,
+	oauthInfo,
+	localProvider,
+	sysInfo,
+	localModels,
+	selectedBackend,
+	setSelectedBackend,
+	apiKey,
+	setApiKey,
+	endpoint,
+	setEndpoint,
+	model,
+	setModel,
+	saving,
+	error,
+	validationResult,
+	onStartConfigure,
+	onCancelConfigure,
+	onSaveKey,
+	onSelectModel,
+	onCancelOAuth,
+	onConfigureLocalModel,
+	onCancelLocal,
+}) {
+	var isApiKeyForm = configuring === provider.name && (phase === "form" || phase === "validating");
+	var isModelSelect = configuring === provider.name && (phase === "selectModel" || phase === "testingModel");
+	var isOAuth = oauthProvider === provider.name;
+	var isLocal = localProvider === provider.name;
+	var isExpanded = isApiKeyForm || isModelSelect || isOAuth || isLocal;
+	var keyInputRef = useRef(null);
+	var rowRef = useRef(null);
+
+	useEffect(() => {
+		if (isApiKeyForm && keyInputRef.current) {
+			keyInputRef.current.focus();
+		}
+	}, [isApiKeyForm]);
+
+	useEffect(() => {
+		if (isExpanded && rowRef.current) {
+			rowRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+		}
+	}, [isExpanded]);
+
+	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
+	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+
+	// Filter models for the model selector.
+	var filteredModels = (providerModels || []).filter(
+		(m) =>
+			!modelSearch ||
+			m.displayName.toLowerCase().includes(modelSearch.toLowerCase()) ||
+			m.id.toLowerCase().includes(modelSearch.toLowerCase()),
+	);
+
+	return html`<div ref=${rowRef} class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
+		<div class="flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex flex-col gap-0.5">
+				<div class="flex items-center gap-2 flex-wrap">
+					<span class="text-sm font-medium text-[var(--text-strong)]">${provider.displayName}</span>
+					${provider.configured ? html`<span class="provider-item-badge configured">configured</span>` : null}
+					${
+						validationResult?.ok === true
+							? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="inline-block">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+							</svg>`
+							: null
+					}
+					<span class="provider-item-badge ${provider.authType}">
+						${provider.authType === "oauth" ? "OAuth" : provider.authType === "local" ? "Local" : "API Key"}
+					</span>
+				</div>
+			</div>
+			<div class="shrink-0">
+				${
+					isExpanded
+						? null
+						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${() => onStartConfigure(provider.name)}>${provider.configured ? "Choose Model" : "Configure"}</button>`
+				}
+			</div>
+		</div>
+		${
+			validationResult?.ok === false && !isExpanded
+				? html`<div class="text-xs text-[var(--warning)] mt-1">${validationResult.message}</div>`
+				: null
+		}
+		${
+			isApiKeyForm
+				? html`<form onSubmit=${onSaveKey} class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
+					<input type="password" class="provider-key-input w-full"
+						ref=${keyInputRef}
+						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
+						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+				</div>
+				${
+					supportsEndpoint
+						? html`<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Endpoint (optional)</label>
+						<input type="text" class="provider-key-input w-full"
+							value=${endpoint} onInput=${(e) => setEndpoint(e.target.value)}
+							placeholder=${provider.defaultBaseUrl || "https://api.example.com/v1"} />
+						<div class="text-xs text-[var(--muted)] mt-1">Leave empty to use the default endpoint.</div>
+					</div>`
+						: null
+				}
+				${
+					needsModel
+						? html`<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
+						<input type="text" class="provider-key-input w-full"
+							value=${model} onInput=${(e) => setModel(e.target.value)}
+							placeholder=${provider.name === "ollama" ? "llama3" : "model-id"} />
+					</div>`
+						: null
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<div class="flex items-center gap-2 mt-1">
+					<button type="submit" class="provider-btn provider-btn-sm" disabled=${phase === "validating"}>${phase === "validating" ? "Validating\u2026" : "Save & Validate"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${phase === "validating"}>Cancel</button>
+				</div>
+			</form>`
+				: null
+		}
+		${
+			isModelSelect
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+				${
+					(providerModels || []).length > 5
+						? html`<input type="text" class="provider-key-input w-full text-xs"
+							placeholder="Search models\u2026"
+							value=${modelSearch}
+							onInput=${(e) => setModelSearch(e.target.value)} />`
+						: null
+				}
+				<div class="flex flex-col gap-2 max-h-56 overflow-y-auto">
+					${
+						filteredModels.length === 0
+							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
+							: filteredModels.map(
+									(m) => html`<div key=${m.id}
+									class="model-card ${selectedModel === m.id ? "selected" : ""}"
+									onClick=${() => {
+										if (phase !== "testingModel") onSelectModel(m.id);
+									}}>
+									<div class="flex items-center justify-between">
+										<span class="text-sm font-medium text-[var(--text)]">${m.displayName}</span>
+										<div class="flex gap-2">
+											${m.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
+											${phase === "testingModel" && selectedModel === m.id ? html`<span class="tier-badge">Testing\u2026</span>` : null}
+										</div>
+									</div>
+									<div class="text-xs text-[var(--muted)] mt-1 font-mono">${m.id}</div>
+								</div>`,
+								)
+					}
+				</div>
+				${modelTestError ? html`<${ErrorPanel} message=${modelTestError} />` : null}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelConfigure}>Cancel</button>
+			</div>`
+				: null
+		}
+		${
+			isOAuth
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				${
+					oauthInfo?.status === "device"
+						? html`<div class="text-sm text-[var(--text)]">
+						Open <a href=${oauthInfo.uri} target="_blank" class="text-[var(--accent)] underline">${oauthInfo.uri}</a> and enter code:<strong class="font-mono ml-1">${oauthInfo.code}</strong>
+					</div>`
+						: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelOAuth}>Cancel</button>
+			</div>`
+				: null
+		}
+		${
+			isLocal
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				${
+					sysInfo
+						? html`<div class="flex flex-col gap-3">
+						<div class="flex gap-3 text-xs text-[var(--muted)]">
+							<span>RAM: ${sysInfo.totalRamGb}GB</span>
+							<span>Tier: ${sysInfo.memoryTier}</span>
+							${sysInfo.hasGpu ? html`<span class="text-[var(--ok)]">GPU available</span>` : null}
+						</div>
+						${
+							sysInfo.isAppleSilicon && (sysInfo.availableBackends || []).length > 0
+								? html`<div class="flex flex-col gap-2">
+								<div class="text-xs font-medium text-[var(--text-strong)]">Backend</div>
+								<div class="flex flex-col gap-2">
+									${(sysInfo.availableBackends || []).map(
+										// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: backend card renders conditional badges inline
+										(b) => html`<div key=${b.id}
+										class="backend-card ${b.id === selectedBackend ? "selected" : ""} ${b.available ? "" : "disabled"}"
+										onClick=${() => {
+											if (b.available) setSelectedBackend(b.id);
+										}}>
+										<div class="flex items-center justify-between">
+											<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
+											<div class="flex gap-2">
+												${b.id === sysInfo.recommendedBackend && b.available ? html`<span class="recommended-badge">Recommended</span>` : null}
+												${b.available ? null : html`<span class="tier-badge">Not installed</span>`}
+											</div>
+										</div>
+										<div class="text-xs text-[var(--muted)] mt-1">${b.description}</div>
+									</div>`,
+									)}
+								</div>
+							</div>`
+								: null
+						}
+						<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+						<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+							${
+								localModels.filter((m) => m.backend === selectedBackend).length === 0
+									? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
+									: localModels
+											.filter((m) => m.backend === selectedBackend)
+											.map(
+												(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => onConfigureLocalModel(mdl)}>
+											<div class="flex items-center justify-between">
+												<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
+												<div class="flex gap-2">
+													<span class="tier-badge">${mdl.minRamGb}GB</span>
+													${mdl.suggested ? html`<span class="recommended-badge">Recommended</span>` : null}
+												</div>
+											</div>
+											<div class="text-xs text-[var(--muted)] mt-1">Context: ${(mdl.contextWindow / 1000).toFixed(0)}k tokens</div>
+										</div>`,
+											)
+							}
+						</div>
+						${saving ? html`<div class="text-xs text-[var(--muted)]">Configuring\u2026</div>` : null}
+					</div>`
+						: html`<div class="text-xs text-[var(--muted)]">Loading system info\u2026</div>`
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelLocal}>Cancel</button>
+			</div>`
+				: null
+		}
+	</div>`;
+}
+
+function sortProviders(list) {
+	list.sort((a, b) => {
+		var aIsLocal = a.authType === "local" || a.name === "ollama";
+		var bIsLocal = b.authType === "local" || b.name === "ollama";
+		if (aIsLocal && !bIsLocal) return -1;
+		if (!aIsLocal && bIsLocal) return 1;
+		return a.displayName.localeCompare(b.displayName);
+	});
+	return list;
+}
+
 function ProviderStep({ onNext, onBack }) {
 	var [providers, setProviders] = useState([]);
 	var [loading, setLoading] = useState(true);
-	var [selected, setSelected] = useState(null);
-	var [phase, setPhase] = useState("list"); // list | form | oauth | local | success
+	var [error, setError] = useState(null);
+
+	// Which provider has an open inline form (by name), or null
+	var [configuring, setConfiguring] = useState(null);
+	var [oauthProvider, setOauthProvider] = useState(null);
+	var [localProvider, setLocalProvider] = useState(null);
+
+	// Phase: "form" | "validating" | "selectModel" | "testingModel"
+	var [phase, setPhase] = useState("form");
+	var [providerModels, setProviderModels] = useState([]);
+	var [selectedModel, setSelectedModel] = useState(null);
+	var [modelTestError, setModelTestError] = useState(null);
+	var [modelSearch, setModelSearch] = useState("");
+
+	// Track when model selection originated from OAuth (provider name or null)
+	var [oauthModelSelect, setOauthModelSelect] = useState(null);
 
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
 	var [endpoint, setEndpoint] = useState("");
 	var [model, setModel] = useState("");
 	var [saving, setSaving] = useState(false);
-	var [error, setError] = useState(null);
+
+	// Validation results: { [providerName]: { ok, message } }
+	var [validationResults, setValidationResults] = useState({});
 
 	// OAuth state
 	var [oauthInfo, setOauthInfo] = useState(null);
+	var oauthTimerRef = useRef(null);
 
 	// Local state
 	var [sysInfo, setSysInfo] = useState(null);
 	var [localModels, setLocalModels] = useState([]);
 	var [selectedBackend, setSelectedBackend] = useState(null);
+
+	function refreshProviders() {
+		return sendRpc("providers.available", {}).then((res) => {
+			if (res?.ok) {
+				var list = sortProviders(res.payload || []);
+				setProviders(list);
+			}
+			return res;
+		});
+	}
 
 	useEffect(() => {
 		var cancelled = false;
@@ -282,16 +824,7 @@ function ProviderStep({ onNext, onBack }) {
 			sendRpc("providers.available", {}).then((res) => {
 				if (cancelled) return;
 				if (res?.ok) {
-					var list = res.payload || [];
-					// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider ordering keeps local options first.
-					list.sort((a, b) => {
-						var aIsLocal = a.authType === "local" || a.name === "ollama";
-						var bIsLocal = b.authType === "local" || b.name === "ollama";
-						if (aIsLocal && !bIsLocal) return -1;
-						if (!aIsLocal && bIsLocal) return 1;
-						return a.displayName.localeCompare(b.displayName);
-					});
-					setProviders(list);
+					setProviders(sortProviders(res.payload || []));
 					setLoading(false);
 					return;
 				}
@@ -312,74 +845,197 @@ function ProviderStep({ onNext, onBack }) {
 		};
 	}, []);
 
-	function selectProvider(p) {
-		setSelected(p);
-		setError(null);
+	// Cleanup OAuth timer on unmount
+	useEffect(() => {
+		return () => {
+			if (oauthTimerRef.current) {
+				clearInterval(oauthTimerRef.current);
+				oauthTimerRef.current = null;
+			}
+		};
+	}, []);
+
+	function closeAll() {
+		setConfiguring(null);
+		setOauthProvider(null);
+		setLocalProvider(null);
+		setOauthModelSelect(null);
+		setPhase("form");
+		setProviderModels([]);
+		setSelectedModel(null);
+		setModelTestError(null);
+		setModelSearch("");
 		setApiKey("");
 		setEndpoint("");
 		setModel("");
-		if (p.authType === "api-key") setPhase("form");
-		else if (p.authType === "oauth") startOAuth(p);
-		else if (p.authType === "local") startLocal(p);
+		setError(null);
+		setOauthInfo(null);
+		setSysInfo(null);
+		setLocalModels([]);
+		if (oauthTimerRef.current) {
+			clearInterval(oauthTimerRef.current);
+			oauthTimerRef.current = null;
+		}
 	}
 
-	function backToList() {
-		setPhase("list");
-		setSelected(null);
-		setError(null);
+	function onStartConfigure(name) {
+		closeAll();
+		var p = providers.find((pr) => pr.name === name);
+		if (!p) return;
+		if (p.authType === "api-key") {
+			setEndpoint(p.baseUrl || "");
+			setModel(p.model || "");
+			setConfiguring(name);
+		} else if (p.authType === "oauth") {
+			startOAuth(p);
+		} else if (p.authType === "local") {
+			startLocal(p);
+		}
 	}
 
 	// ── API key form ─────────────────────────────────────────
 
 	function onSaveKey(e) {
 		e.preventDefault();
-		if (!apiKey.trim() && selected.name !== "ollama") {
+		var p = providers.find((pr) => pr.name === configuring);
+		if (!p) return;
+		if (!apiKey.trim() && p.name !== "ollama") {
 			setError("API key is required.");
 			return;
 		}
-		if (BYOM_PROVIDERS.includes(selected.name) && !model.trim()) {
+		if (BYOM_PROVIDERS.includes(p.name) && !model.trim()) {
 			setError("Model ID is required.");
 			return;
 		}
 		setError(null);
-		setSaving(true);
-		var payload = { provider: selected.name, apiKey: apiKey.trim() || "ollama" };
-		if (endpoint.trim()) payload.baseUrl = endpoint.trim();
-		if (model.trim()) payload.model = model.trim();
-		sendRpc("providers.save_key", payload)
-			.then(async (res) => {
-				if (res?.ok) {
-					var validation = await validateProviderConnection(selected.name);
-					setSaving(false);
-					if (!validation.ok) {
-						setError(validation.message || "Credentials were saved, but provider validation failed.");
-						return;
-					}
-					setPhase("success");
-				} else {
-					setSaving(false);
-					setError(res?.error?.message || "Failed to save");
+		setPhase("validating");
+
+		var keyVal = apiKey.trim() || "ollama";
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+
+		validateProviderKey(p.name, keyVal, endpointVal, modelVal)
+			.then((result) => {
+				if (!result.valid) {
+					// Validation failed — stay on the form.
+					setPhase("form");
+					setError(result.error || "Validation failed. Please check your credentials.");
+					return;
 				}
+
+				// BYOM providers: we already tested the specific model during validation,
+				// so save immediately without showing the model selector.
+				if (BYOM_PROVIDERS.includes(p.name)) {
+					return saveAndFinish(p.name, keyVal, endpointVal, modelVal);
+				}
+
+				// Regular providers: show the model selector.
+				setProviderModels(result.models || []);
+				setPhase("selectModel");
 			})
 			.catch((err) => {
-				setSaving(false);
-				setError(err?.message || "Failed to save");
+				setPhase("form");
+				setError(err?.message || "Validation failed.");
+			});
+	}
+
+	function onSelectModel(modelId) {
+		setSelectedModel(modelId);
+		setModelTestError(null);
+		setPhase("testingModel");
+
+		if (oauthModelSelect) {
+			// OAuth flow: credentials already saved, just test + save model preference.
+			testModel(modelId).then((testResult) => {
+				if (!testResult.ok) {
+					setPhase("selectModel");
+					setModelTestError(testResult.error || "Model test failed. Try another model.");
+					return;
+				}
+				sendRpc("providers.save_model", { provider: oauthModelSelect, model: modelId }).then(() => {
+					localStorage.setItem("moltis-model", modelId);
+					setValidationResults((prev) => ({ ...prev, [oauthModelSelect]: { ok: true } }));
+					setOauthModelSelect(null);
+					setConfiguring(null);
+					setPhase("form");
+					setProviderModels([]);
+					setSelectedModel(null);
+					setModelTestError(null);
+					setModelSearch("");
+					setError(null);
+					refreshProviders();
+				});
+			});
+			return;
+		}
+
+		var p = providers.find((pr) => pr.name === configuring);
+		if (!p) return;
+
+		// Save credentials first so the model is available in the live registry.
+		var keyVal = apiKey.trim() || "ollama";
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+
+		saveAndFinish(p.name, keyVal, endpointVal, modelVal, modelId);
+	}
+
+	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
+		var payload = { provider: providerName, apiKey: keyVal };
+		if (endpointVal) payload.baseUrl = endpointVal;
+		if (modelVal) payload.model = modelVal;
+
+		sendRpc("providers.save_key", payload)
+			.then(async (res) => {
+				if (!res?.ok) {
+					setPhase("form");
+					setError(res?.error?.message || "Failed to save credentials.");
+					return;
+				}
+
+				// If a specific model was selected, test it from the live registry.
+				if (selectedModelId) {
+					var testResult = await testModel(selectedModelId);
+					if (!testResult.ok) {
+						// Model test failed — let user pick another.
+						setPhase("selectModel");
+						setModelTestError(testResult.error || "Model test failed. Try another model.");
+						return;
+					}
+					// Persist model preference for the provider.
+					await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
+					// Store chosen model in localStorage for the UI.
+					localStorage.setItem("moltis-model", selectedModelId);
+				}
+
+				// Success — close the form and update state.
+				setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+				setConfiguring(null);
+				setPhase("form");
+				setProviderModels([]);
+				setSelectedModel(null);
+				setModelTestError(null);
+				setModelSearch("");
+				setApiKey("");
+				setEndpoint("");
+				setModel("");
+				setError(null);
+				refreshProviders();
+			})
+			.catch((err) => {
+				setPhase("form");
+				setError(err?.message || "Failed to save credentials.");
 			});
 	}
 
 	// ── OAuth flow ───────────────────────────────────────────
 
 	function startOAuth(p) {
-		setPhase("oauth");
+		setOauthProvider(p.name);
 		setOauthInfo({ status: "starting" });
 		startProviderOAuth(p.name).then((result) => {
 			if (result.status === "already") {
-				sendRpc("models.detect_supported", {
-					background: true,
-					reason: "provider_connected",
-					provider: p.name,
-				});
-				setPhase("success");
+				onOAuthAuthenticated(p.name);
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				setOauthInfo({ status: "waiting" });
@@ -393,44 +1049,85 @@ function ProviderStep({ onNext, onBack }) {
 				pollOAuth(p);
 			} else {
 				setError(result.error || "Failed to start OAuth");
+				setOauthProvider(null);
 				setOauthInfo(null);
-				setPhase("list");
 			}
 		});
 	}
 
+	async function onOAuthAuthenticated(providerName) {
+		var modelsRes = await sendRpc("models.list", {});
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		var needle = providerName.replace(/-/g, "").toLowerCase();
+		var provModels = allModels.filter((m) => m.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+
+		setOauthProvider(null);
+		setOauthInfo(null);
+
+		if (provModels.length > 0) {
+			setOauthModelSelect(providerName);
+			setConfiguring(providerName);
+			setProviderModels(
+				provModels.map((m) => ({
+					id: m.id,
+					displayName: m.displayName || m.id,
+					provider: m.provider,
+					supportsTools: m.supportsTools,
+				})),
+			);
+			setPhase("selectModel");
+		} else {
+			sendRpc("models.detect_supported", {
+				background: true,
+				reason: "provider_connected",
+				provider: providerName,
+			});
+			setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+		}
+		refreshProviders();
+	}
+
 	function pollOAuth(p) {
 		var attempts = 0;
-		var timer = setInterval(() => {
+		if (oauthTimerRef.current) clearInterval(oauthTimerRef.current);
+		oauthTimerRef.current = setInterval(() => {
 			attempts++;
 			if (attempts > 60) {
-				clearInterval(timer);
+				clearInterval(oauthTimerRef.current);
+				oauthTimerRef.current = null;
 				setError("OAuth timed out. Please try again.");
-				setPhase("list");
+				setOauthProvider(null);
+				setOauthInfo(null);
 				return;
 			}
 			sendRpc("providers.oauth.status", { provider: p.name }).then((res) => {
 				if (res?.ok && res.payload?.authenticated) {
-					clearInterval(timer);
-					sendRpc("models.detect_supported", {
-						background: true,
-						reason: "provider_connected",
-						provider: p.name,
-					});
-					setPhase("success");
+					clearInterval(oauthTimerRef.current);
+					oauthTimerRef.current = null;
+					onOAuthAuthenticated(p.name);
 				}
 			});
 		}, 2000);
 	}
 
+	function cancelOAuth() {
+		if (oauthTimerRef.current) {
+			clearInterval(oauthTimerRef.current);
+			oauthTimerRef.current = null;
+		}
+		setOauthProvider(null);
+		setOauthInfo(null);
+		setError(null);
+	}
+
 	// ── Local model flow ─────────────────────────────────────
 
-	function startLocal(_p) {
-		setPhase("local");
+	function startLocal(p) {
+		setLocalProvider(p.name);
 		sendRpc("providers.local.system_info", {}).then((sysRes) => {
 			if (!sysRes?.ok) {
 				setError(sysRes?.error?.message || "Failed to get system info");
-				setPhase("list");
+				setLocalProvider(null);
 				return;
 			}
 			setSysInfo(sysRes.payload);
@@ -444,16 +1141,28 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	function configureLocalModel(mdl) {
+		var provName = localProvider;
 		setSaving(true);
 		setError(null);
 		sendRpc("providers.local.configure", { modelId: mdl.id, backend: selectedBackend }).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				setPhase("success");
+				setLocalProvider(null);
+				setSysInfo(null);
+				setLocalModels([]);
+				setValidationResults((prev) => ({ ...prev, [provName]: { ok: true, message: null } }));
+				refreshProviders();
 			} else {
 				setError(res?.error?.message || "Failed to configure model");
 			}
 		});
+	}
+
+	function cancelLocal() {
+		setLocalProvider(null);
+		setSysInfo(null);
+		setLocalModels([]);
+		setError(null);
 	}
 
 	// ── Render ────────────────────────────────────────────────
@@ -462,167 +1171,63 @@ function ProviderStep({ onNext, onBack }) {
 		return html`<div class="text-sm text-[var(--muted)]">Loading providers\u2026</div>`;
 	}
 
-	// Success screen
-	if (phase === "success") {
-		return html`<div class="flex flex-col gap-4 items-center text-center py-4">
-			<div class="text-2xl">\u2705</div>
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected?.displayName || "Provider"} configured!</h2>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
-		</div>`;
-	}
+	var configuredProviders = providers.filter((p) => p.configured);
 
-	// API key form
-	if (phase === "form" && selected) {
-		var supportsEndpoint = OPENAI_COMPATIBLE.includes(selected.name);
-		var needsModel = BYOM_PROVIDERS.includes(selected.name);
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected.displayName}</h2>
-			<form onSubmit=${onSaveKey} class="flex flex-col gap-3">
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${selected.name === "ollama" ? "(optional for Ollama)" : "sk-..."} autofocus />
-				</div>
-				${
-					supportsEndpoint &&
-					html`<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Endpoint (optional)</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${endpoint} onInput=${(e) => setEndpoint(e.target.value)}
-						placeholder=${selected.defaultBaseUrl || "https://api.example.com/v1"} />
-					<div class="text-xs text-[var(--muted)] mt-1">Leave empty to use the default endpoint.</div>
-				</div>`
-				}
-				${
-					needsModel &&
-					html`<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${model} onInput=${(e) => setModel(e.target.value)}
-						placeholder=${selected.name === "ollama" ? "llama3" : "model-id"} />
-				</div>`
-				}
-				${error && html`<${ErrorPanel} message=${error} />`}
-				<div class="flex items-center gap-3 mt-1">
-					<button type="button" class="provider-btn provider-btn-secondary" onClick=${backToList}>Back</button>
-					<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
-				</div>
-			</form>
-		</div>`;
-	}
-
-	// OAuth waiting
-	if (phase === "oauth") {
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected?.displayName}</h2>
-			${
-				oauthInfo?.status === "device"
-					? html`<div class="text-sm text-[var(--text)]">
-					Open <a href=${oauthInfo.uri} target="_blank" class="text-[var(--accent)] underline">${oauthInfo.uri}</a> and enter code:<strong class="font-mono ml-1">${oauthInfo.code}</strong>
-				</div>`
-					: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
-			}
-			${error && html`<${ErrorPanel} message=${error} />`}
-			<button class="provider-btn provider-btn-secondary" onClick=${backToList}>Cancel</button>
-		</div>`;
-	}
-
-	// Local model selection
-	if (phase === "local" && sysInfo) {
-		var backends = sysInfo.availableBackends || [];
-		var filteredModels = localModels.filter((m) => m.backend === selectedBackend);
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Local Models</h2>
-			<div class="flex gap-3 text-xs text-[var(--muted)]">
-				<span>RAM: ${sysInfo.totalRamGb}GB</span>
-				<span>Tier: ${sysInfo.memoryTier}</span>
-				${sysInfo.hasGpu && html`<span class="text-[var(--ok)]">GPU available</span>`}
-			</div>
-			${
-				sysInfo.isAppleSilicon &&
-				backends.length > 0 &&
-				html`<div class="flex flex-col gap-2">
-				<div class="text-xs font-medium text-[var(--text-strong)]">Backend</div>
-				<div class="flex flex-col gap-2">
-					${backends.map(
-						(b) => html`<div key=${b.id}
-						class="backend-card ${b.id === selectedBackend ? "selected" : ""} ${b.available ? "" : "disabled"}"
-						onClick=${() => {
-							if (b.available) setSelectedBackend(b.id);
-						}}>
-						<div class="flex items-center justify-between">
-							<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
-							<div class="flex gap-2">
-								${b.id === sysInfo.recommendedBackend && b.available && html`<span class="recommended-badge">Recommended</span>`}
-								${!b.available && html`<span class="tier-badge">Not installed</span>`}
-							</div>
-						</div>
-						<div class="text-xs text-[var(--muted)] mt-1">${b.description}</div>
-					</div>`,
-					)}
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add providers</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Configure one or more LLM providers to power your agent. You can add more later in Settings.</p>
+		${
+			configuredProviders.length > 0
+				? html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
+				<div class="text-xs text-[var(--muted)]">Detected providers</div>
+				<div class="flex flex-wrap gap-2">
+					${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
 				</div>
 			</div>`
-			}
-			<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
-			<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
-				${
-					filteredModels.length === 0
-						? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
-						: filteredModels.map(
-								(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => configureLocalModel(mdl)}>
-						<div class="flex items-center justify-between">
-							<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
-							<div class="flex gap-2">
-								<span class="tier-badge">${mdl.minRamGb}GB</span>
-								${mdl.suggested && html`<span class="recommended-badge">Recommended</span>`}
-							</div>
-						</div>
-						<div class="text-xs text-[var(--muted)] mt-1">Context: ${(mdl.contextWindow / 1000).toFixed(0)}k tokens</div>
-					</div>`,
-							)
-				}
-			</div>
-			${error && html`<${ErrorPanel} message=${error} />`}
-			${saving && html`<div class="text-xs text-[var(--muted)]">Configuring\u2026</div>`}
-			<div class="flex items-center gap-3 mt-1">
-				<button class="provider-btn provider-btn-secondary" onClick=${backToList}>Back</button>
-			</div>
-		</div>`;
-	}
-
-	// Provider list
-	var configuredProviders = providers.filter((p) => p.configured);
-	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add a provider</h2>
-		<p class="text-xs text-[var(--muted)] leading-relaxed">Pick an LLM provider to power your agent. You can add more later in Settings.</p>
-		${
-			configuredProviders.length > 0 &&
-			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
-			<div class="text-xs text-[var(--muted)]">Detected providers</div>
-			<div class="flex flex-wrap gap-2">
-				${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
-			</div>
-			<button class="provider-btn self-start" onClick=${onNext}>Continue with detected providers</button>
-		</div>`
+				: null
 		}
-		<div class="text-xs text-[var(--muted)]">Choose a provider to connect</div>
-		<div class="flex flex-col gap-2 max-h-64 overflow-y-auto">
+		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
 			${providers.map(
-				(p) => html`<div key=${p.name} class="provider-item" onClick=${() => selectProvider(p)}>
-				<span class="provider-item-name">${p.displayName}</span>
-				<div class="flex gap-2">
-					${p.configured && html`<span class="provider-item-badge configured">configured</span>`}
-					<span class="provider-item-badge ${p.authType}">
-						${p.authType === "oauth" ? "OAuth" : p.authType === "local" ? "Local" : "API Key"}
-					</span>
-				</div>
-			</div>`,
+				(p) => html`<${OnboardingProviderRow}
+				key=${p.name}
+				provider=${p}
+				configuring=${configuring}
+				phase=${configuring === p.name ? phase : "form"}
+				providerModels=${configuring === p.name ? providerModels : []}
+				selectedModel=${configuring === p.name ? selectedModel : null}
+				modelTestError=${configuring === p.name ? modelTestError : null}
+				modelSearch=${configuring === p.name ? modelSearch : ""}
+				setModelSearch=${setModelSearch}
+				oauthProvider=${oauthProvider}
+				oauthInfo=${oauthInfo}
+				localProvider=${localProvider}
+				sysInfo=${sysInfo}
+				localModels=${localModels}
+				selectedBackend=${selectedBackend}
+				setSelectedBackend=${setSelectedBackend}
+				apiKey=${apiKey}
+				setApiKey=${setApiKey}
+				endpoint=${endpoint}
+				setEndpoint=${setEndpoint}
+				model=${model}
+				setModel=${setModel}
+				saving=${saving}
+				error=${configuring === p.name || oauthProvider === p.name || localProvider === p.name ? error : null}
+				validationResult=${validationResults[p.name] || null}
+				onStartConfigure=${onStartConfigure}
+				onCancelConfigure=${closeAll}
+				onSaveKey=${onSaveKey}
+				onSelectModel=${onSelectModel}
+				onCancelOAuth=${cancelOAuth}
+				onConfigureLocalModel=${configureLocalModel}
+				onCancelLocal=${cancelLocal}
+			/>`,
 			)}
 		</div>
-		${error && html`<${ErrorPanel} message=${error} />`}
+		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<button class="provider-btn" onClick=${onNext}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;
@@ -1170,6 +1775,8 @@ function ChannelStep({ onNext, onBack }) {
 	var [dmPolicy, setDmPolicy] = useState("allowlist");
 	var [allowlist, setAllowlist] = useState("");
 	var [saving, setSaving] = useState(false);
+	var [connected, setConnected] = useState(false);
+	var [connectedName, setConnectedName] = useState("");
 	var [error, setError] = useState(null);
 
 	function onSubmit(e) {
@@ -1201,7 +1808,8 @@ function ChannelStep({ onNext, onBack }) {
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				onNext();
+				setConnected(true);
+				setConnectedName(accountId.trim());
 			} else {
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.");
 			}
@@ -1211,47 +1819,308 @@ function ChannelStep({ onNext, onBack }) {
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Connect Telegram</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Connect a Telegram bot so you can chat from your phone. You can set this up later in Channels.</p>
-		<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-			<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
-			<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
-			<span>2. Send /newbot and follow the prompts</span>
-			<span>3. Copy the bot token and paste it below</span>
+		${
+			connected
+				? html`<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+				</svg>
+				<div>
+					<div class="text-sm font-medium text-[var(--text-strong)]">Bot connected</div>
+					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
+				</div>
+			</div>`
+				: html`<form onSubmit=${onSubmit} class="flex flex-col gap-3 max-h-80 overflow-y-auto -mr-4 pr-4">
+				<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+					<span class="font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
+					<span>1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)] underline">@BotFather</a> in Telegram</span>
+					<span>2. Send /newbot and follow the prompts</span>
+					<span>3. Copy the bot token and paste it below</span>
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
+					<input type="text" class="provider-key-input w-full"
+						value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
+						placeholder="e.g. my_assistant_bot" autofocus />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+					<input type="password" class="provider-key-input w-full"
+						value=${token} onInput=${(e) => setToken(e.target.value)}
+						placeholder="123456:ABC-DEF..." />
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+					<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
+						<option value="allowlist">Allowlist only (recommended)</option>
+						<option value="open">Open (anyone)</option>
+						<option value="disabled">Disabled</option>
+					</select>
+				</div>
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
+					<textarea class="provider-key-input w-full" rows="2"
+						value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
+						placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
+					<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
+				</div>
+				${error && html`<${ErrorPanel} message=${error} />`}
+			</form>`
+		}
+		<div class="flex items-center gap-3 mt-1">
+			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			${
+				connected
+					? html`<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>`
+					: html`<button type="button" class="provider-btn" disabled=${saving} onClick=${onSubmit}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>`
+			}
+			<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
-		<form onSubmit=${onSubmit} class="flex flex-col gap-3">
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Bot username</label>
-				<input type="text" class="provider-key-input w-full"
-					value=${accountId} onInput=${(e) => setAccountId(e.target.value)}
-					placeholder="e.g. my_assistant_bot" autofocus />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-				<input type="password" class="provider-key-input w-full"
-					value=${token} onInput=${(e) => setToken(e.target.value)}
-					placeholder="123456:ABC-DEF..." />
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
-				<select class="provider-key-input w-full cursor-pointer" value=${dmPolicy} onChange=${(e) => setDmPolicy(e.target.value)}>
-					<option value="allowlist">Allowlist only (recommended)</option>
-					<option value="open">Open (anyone)</option>
-					<option value="disabled">Disabled</option>
-				</select>
-			</div>
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Your Telegram username(s)</label>
-				<textarea class="provider-key-input w-full" rows="2"
-					value=${allowlist} onInput=${(e) => setAllowlist(e.target.value)}
-					placeholder="your_username" style="resize:vertical;font-family:var(--font-body);" />
-				<div class="text-xs text-[var(--muted)] mt-1">One username per line, without the @ sign. These users can DM your bot.</div>
-			</div>
-			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
-				<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-				<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Connecting\u2026" : "Connect Bot"}</button>
-				<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
-			</div>
-		</form>
+	</div>`;
+}
+
+// ── Summary step helpers ─────────────────────────────────────
+
+var LOW_MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
+
+function formatMemBytes(bytes) {
+	if (bytes == null) return "?";
+	var gb = bytes / (1024 * 1024 * 1024);
+	return `${gb.toFixed(1)} GB`;
+}
+
+function CheckIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+	</svg>`;
+}
+
+function WarnIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+	</svg>`;
+}
+
+function ErrorIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+	</svg>`;
+}
+
+function InfoIcon() {
+	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" class="shrink-0">
+		<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+	</svg>`;
+}
+
+function SummaryRow({ icon, label, children }) {
+	return html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 flex gap-3 items-start">
+		<div class="mt-0.5">${icon}</div>
+		<div class="flex-1 min-w-0">
+			<div class="text-sm font-medium text-[var(--text-strong)]">${label}</div>
+			<div class="text-xs text-[var(--muted)] mt-1">${children}</div>
+		</div>
+	</div>`;
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: summary step fetches multiple data sources and renders conditional sections
+function SummaryStep({ onBack, onFinish }) {
+	var [loading, setLoading] = useState(true);
+	var [data, setData] = useState(null);
+
+	useEffect(() => {
+		var cancelled = false;
+
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: parallel data fetches and conditional gon reads
+		async function load() {
+			await refreshGon();
+
+			var identity = getGon("identity");
+			var mem = getGon("mem");
+			var update = getGon("update");
+			var voiceEnabled = getGon("voice_enabled");
+
+			var [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+				sendRpc("providers.available", {}).catch(() => null),
+				sendRpc("channels.status", {}).catch(() => null),
+				fetch("/api/tailscale/status")
+					.then((r) => (r.ok ? r.json() : null))
+					.catch(() => null),
+				voiceEnabled ? sendRpc("voice.providers.all", {}).catch(() => null) : Promise.resolve(null),
+				fetch("/api/bootstrap")
+					.then((r) => (r.ok ? r.json() : null))
+					.catch(() => null),
+			]);
+
+			if (cancelled) return;
+
+			setData({
+				identity,
+				mem,
+				update,
+				voiceEnabled,
+				providers: providersRes?.ok ? providersRes.payload || [] : [],
+				channels: channelsRes?.ok ? channelsRes.payload?.channels || [] : [],
+				tailscale: tailscaleRes,
+				voice: voiceRes?.ok ? voiceRes.payload || { tts: [], stt: [] } : null,
+				sandbox: bootstrapRes?.sandbox || null,
+			});
+			setLoading(false);
+		}
+
+		load();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	if (loading || !data) {
+		return html`<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>`;
+	}
+
+	var activeModel = localStorage.getItem("moltis-model");
+	var configuredProviders = data.providers.filter((p) => p.configured);
+
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Setup Summary</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Overview of your configuration. You can change any of these later in Settings.</p>
+
+		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto -mr-4 pr-4">
+			<!-- Identity -->
+			<${SummaryRow}
+				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
+				label="Identity">
+				${
+					data.identity?.user_name && data.identity?.name
+						? html`You: <span class="font-medium text-[var(--text)]">${data.identity.user_name}</span>
+						${" "}Agent: <span class="font-medium text-[var(--text)]">${data.identity.emoji || ""} ${data.identity.name}</span>`
+						: html`<span class="text-[var(--warn)]">Identity not fully configured</span>`
+				}
+			<//>
+
+			<!-- Providers -->
+			<${SummaryRow}
+				icon=${configuredProviders.length > 0 ? html`<${CheckIcon} />` : html`<${ErrorIcon} />`}
+				label="Providers">
+				${
+					configuredProviders.length > 0
+						? html`<div class="flex flex-col gap-1">
+						<div class="flex flex-wrap gap-1">
+							${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
+						</div>
+						${activeModel ? html`<div>Active model: <span class="font-mono font-medium text-[var(--text)]">${activeModel}</span></div>` : null}
+					</div>`
+						: html`<span class="text-[var(--error)]">No providers configured</span>`
+				}
+			<//>
+
+			<!-- Channels -->
+			<${SummaryRow}
+				icon=${
+					data.channels.length > 0
+						? data.channels.some((c) => c.status === "error")
+							? html`<${ErrorIcon} />`
+							: data.channels.some((c) => c.status === "disconnected")
+								? html`<${WarnIcon} />`
+								: html`<${CheckIcon} />`
+						: html`<${InfoIcon} />`
+				}
+				label="Channels">
+				${
+					data.channels.length > 0
+						? html`<div class="flex flex-col gap-1">
+						${data.channels.map((ch) => {
+							var statusColor =
+								ch.status === "connected" ? "var(--ok)" : ch.status === "error" ? "var(--error)" : "var(--warn)";
+							return html`<div key=${ch.account_id} class="flex items-center gap-1">
+								<span style="color:${statusColor}">\u25CF</span>
+								<span class="font-medium text-[var(--text)]">${ch.type}</span>: ${ch.name || ch.account_id}
+								<span>(${ch.status})</span>
+							</div>`;
+						})}
+					</div>`
+						: html`No channels configured`
+				}
+			<//>
+
+			<!-- System Memory -->
+			<${SummaryRow}
+				icon=${data.mem?.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<${WarnIcon} />` : html`<${CheckIcon} />`}
+				label="System Memory">
+				${
+					data.mem
+						? html`Total: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.total)}</span>
+						${" "}Available: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.available)}</span>
+						${data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<div class="text-[var(--warn)] mt-1">Low memory detected. Consider cloud deployment for better performance.</div>` : null}`
+						: html`Memory info unavailable`
+				}
+			<//>
+
+			<!-- Sandbox -->
+			<${SummaryRow}
+				icon=${data.sandbox?.backend && data.sandbox.backend !== "none" ? html`<${CheckIcon} />` : html`<${InfoIcon} />`}
+				label="Sandbox">
+				${
+					data.sandbox?.backend && data.sandbox.backend !== "none"
+						? html`Backend: <span class="font-medium text-[var(--text)]">${data.sandbox.backend}</span>`
+						: html`No container runtime detected`
+				}
+			<//>
+
+			<!-- Version -->
+			<${SummaryRow}
+				icon=${data.update?.available ? html`<${WarnIcon} />` : html`<${CheckIcon} />`}
+				label="Version">
+				${
+					data.update?.available
+						? html`Update available: <a href=${data.update.release_url || "#"} target="_blank" class="text-[var(--accent)] underline font-medium">${data.update.latest_version}</a>`
+						: html`You are running the latest version.`
+				}
+			<//>
+
+			<!-- Tailscale (hidden if feature not compiled) -->
+			${
+				data.tailscale !== null
+					? html`<${SummaryRow}
+					icon=${data.tailscale?.connected ? html`<${CheckIcon} />` : data.tailscale?.installed ? html`<${WarnIcon} />` : html`<${InfoIcon} />`}
+					label="Tailscale">
+					${
+						data.tailscale?.connected
+							? html`Connected`
+							: data.tailscale?.installed
+								? html`Installed but not connected`
+								: html`Not installed. Install Tailscale for secure remote access.`
+					}
+				<//>`
+					: null
+			}
+
+			<!-- Voice (hidden if not enabled) -->
+			${
+				data.voiceEnabled
+					? html`<${SummaryRow}
+					icon=${data.voice && ([...data.voice.tts, ...data.voice.stt].some((p) => p.enabled)) ? html`<${CheckIcon} />` : html`<${InfoIcon} />`}
+					label="Voice">
+					${(() => {
+						if (!data.voice) return html`Voice providers unavailable`;
+						var enabledStt = data.voice.stt.filter((p) => p.enabled).map((p) => p.name);
+						var enabledTts = data.voice.tts.filter((p) => p.enabled).map((p) => p.name);
+						if (enabledStt.length === 0 && enabledTts.length === 0) return html`No voice providers enabled`;
+						return html`<div class="flex flex-col gap-0.5">
+							${enabledStt.length > 0 ? html`<div>STT: <span class="font-medium text-[var(--text)]">${enabledStt.join(", ")}</span></div>` : null}
+							${enabledTts.length > 0 ? html`<div>TTS: <span class="font-medium text-[var(--text)]">${enabledTts.join(", ")}</span></div>` : null}
+						</div>`;
+					})()}
+				<//>`
+					: null
+			}
+		</div>
+
+		<div class="flex items-center gap-3 mt-1">
+			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<div class="flex-1" />
+			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
+		</div>
 	</div>`;
 }
 
@@ -1353,7 +2222,7 @@ function OnboardingPage() {
 	var allLabels = voiceAvailable ? VOICE_STEP_LABELS : BASE_STEP_LABELS;
 	var steps = authNeeded ? allLabels : allLabels.slice(1);
 	var stepIndex = authNeeded ? step : step - 1;
-	var lastStep = voiceAvailable ? 4 : 3;
+	var lastStep = voiceAvailable ? 5 : 4;
 
 	function goNext() {
 		if (step === lastStep) {
@@ -1361,6 +2230,10 @@ function OnboardingPage() {
 		} else {
 			setStep(step + 1);
 		}
+	}
+
+	function goFinish() {
+		window.location.assign(preferredChatPath());
 	}
 
 	function goBack() {
@@ -1371,9 +2244,10 @@ function OnboardingPage() {
 		}
 	}
 
-	// Determine which component to show for steps 3 and 4
+	// Determine which component to show for each step
 	var channelStep = voiceAvailable ? 4 : 3;
 	var voiceStep = voiceAvailable ? 3 : -1;
+	var summaryStep = voiceAvailable ? 5 : 4;
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
@@ -1383,6 +2257,7 @@ function OnboardingPage() {
 			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
 	</div>`;
 }

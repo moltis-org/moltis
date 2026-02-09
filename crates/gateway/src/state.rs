@@ -286,6 +286,9 @@ pub struct GatewayInner {
     pub llm_providers: Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
     /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
     pub cached_location: Option<moltis_config::GeoLocation>,
+    /// Per-session buffer for channel status messages (tool use, model selection).
+    /// Drained when the final response is delivered to the channel.
+    pub channel_status_log: HashMap<String, Vec<String>>,
 }
 
 impl GatewayInner {
@@ -315,6 +318,7 @@ impl GatewayInner {
             push_service: None,
             llm_providers: None,
             cached_location: moltis_config::load_user().and_then(|u| u.location),
+            channel_status_log: HashMap::new(),
         }
     }
 
@@ -561,6 +565,29 @@ impl GatewayState {
     /// Take (and remove) the last error for a run_id.
     pub async fn last_run_error(&self, run_id: &str) -> Option<String> {
         self.inner.write().await.run_errors.remove(run_id)
+    }
+
+    /// Append a status line (e.g. tool use, model selection) to the channel
+    /// status log for a session. These are drained and appended as a logbook
+    /// when the final response is delivered.
+    pub async fn push_channel_status_log(&self, session_key: &str, message: String) {
+        self.inner
+            .write()
+            .await
+            .channel_status_log
+            .entry(session_key.to_string())
+            .or_default()
+            .push(message);
+    }
+
+    /// Drain all buffered status log entries for a session.
+    pub async fn drain_channel_status_log(&self, session_key: &str) -> Vec<String> {
+        self.inner
+            .write()
+            .await
+            .channel_status_log
+            .remove(session_key)
+            .unwrap_or_default()
     }
 
     /// Close a client: remove from registry and unregister from nodes.

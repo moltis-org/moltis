@@ -6,7 +6,12 @@ use std::{
 
 use secrecy::{ExposeSecret, Secret};
 
-use {async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::info};
+use {
+    async_trait::async_trait,
+    serde_json::Value,
+    tokio::sync::RwLock,
+    tracing::{debug, info},
+};
 
 use {
     moltis_agents::providers::ProviderRegistry,
@@ -526,6 +531,54 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
         .and_then(|t| t.get("access_token"))
         .and_then(|v| v.as_str())
         .is_some_and(|token| !token.trim().is_empty())
+}
+
+/// Parse Codex CLI `auth.json` content into `OAuthTokens`.
+fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
+    let json: serde_json::Value = serde_json::from_str(data).ok()?;
+    let tokens = json.get("tokens")?;
+    let access_token = tokens.get("access_token")?.as_str()?.to_string();
+    if access_token.trim().is_empty() {
+        return None;
+    }
+    let refresh_token = tokens
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Some(moltis_oauth::OAuthTokens {
+        access_token: Secret::new(access_token),
+        refresh_token: refresh_token.map(Secret::new),
+        expires_at: None,
+    })
+}
+
+/// Import auto-detected external OAuth tokens into the token store so all
+/// providers read from a single location. Currently handles Codex CLI
+/// `~/.codex/auth.json` → `openai-codex` in the token store.
+pub(crate) fn import_detected_oauth_tokens(
+    detected: &[AutoDetectedProviderSource],
+    token_store: &TokenStore,
+) {
+    for source in detected {
+        if source.provider == "openai-codex"
+            && source.source.contains(".codex/auth.json")
+            && token_store.load("openai-codex").is_none()
+            && let Some(path) = codex_cli_auth_path()
+            && let Ok(data) = std::fs::read_to_string(&path)
+            && let Some(tokens) = parse_codex_cli_tokens(&data)
+        {
+            match token_store.save("openai-codex", &tokens) {
+                Ok(()) => info!(
+                    source = %path.display(),
+                    "imported openai-codex tokens from Codex CLI auth"
+                ),
+                Err(e) => debug!(
+                    error = %e,
+                    "failed to import openai-codex tokens"
+                ),
+            }
+        }
+    }
 }
 
 fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> Result<(), String> {
@@ -1275,6 +1328,152 @@ impl ProviderSetupService for LiveProviderSetupService {
             "provider": provider_name,
             "authenticated": has_tokens,
         }))
+    }
+
+    async fn validate_key(&self, params: Value) -> ServiceResult {
+        use moltis_agents::model::{ChatMessage, LlmProvider};
+
+        let provider_name = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'provider' parameter".to_string())?;
+
+        let api_key = params.get("apiKey").and_then(|v| v.as_str());
+        let base_url = params.get("baseUrl").and_then(|v| v.as_str());
+        let model = params.get("model").and_then(|v| v.as_str());
+
+        // Validate provider name exists.
+        let known = known_providers();
+        let provider_info = known
+            .iter()
+            .find(|p| p.name == provider_name)
+            .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
+
+        // API key is required for api-key providers (except Ollama).
+        if provider_info.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
+            return Err("missing 'apiKey' parameter".to_string());
+        }
+
+        // Build a temporary ProvidersConfig with just this provider.
+        let mut temp_config = ProvidersConfig::default();
+        temp_config.providers.insert(
+            provider_name.to_string(),
+            moltis_config::schema::ProviderEntry {
+                enabled: true,
+                api_key: api_key.map(|k| Secret::new(k.to_string())),
+                base_url: base_url.filter(|s| !s.trim().is_empty()).map(String::from),
+                model: model.filter(|s| !s.trim().is_empty()).map(String::from),
+                ..Default::default()
+            },
+        );
+
+        // Build a temporary registry from the temp config.
+        let temp_registry = ProviderRegistry::from_env_with_config(&temp_config);
+
+        // Filter models for this provider.
+        let models: Vec<_> = temp_registry
+            .list_models()
+            .iter()
+            .filter(|m| {
+                normalize_provider_name(&m.provider) == normalize_provider_name(provider_name)
+            })
+            .cloned()
+            .collect();
+
+        if models.is_empty() {
+            return Ok(serde_json::json!({
+                "valid": false,
+                "error": "No models available for this provider. Check your credentials and try again.",
+            }));
+        }
+
+        // Probe the first available model with a "ping" message.
+        let probe_model = &models[0];
+        let llm_provider: Arc<dyn LlmProvider> = match temp_registry.get(&probe_model.id) {
+            Some(p) => p,
+            None => {
+                return Ok(serde_json::json!({
+                    "valid": false,
+                    "error": "Could not instantiate provider for probing.",
+                }));
+            },
+        };
+
+        let probe = [ChatMessage::user("ping")];
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            llm_provider.complete(&probe, &[]),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(_)) => {
+                // Build model list for the frontend.
+                let model_list: Vec<serde_json::Value> = models
+                    .iter()
+                    .map(|m| {
+                        let supports_tools =
+                            temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());
+                        serde_json::json!({
+                            "id": m.id,
+                            "displayName": m.display_name,
+                            "provider": m.provider,
+                            "supportsTools": supports_tools,
+                        })
+                    })
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "valid": true,
+                    "models": model_list,
+                }))
+            },
+            Ok(Err(err)) => {
+                let error_text = err.to_string();
+                let error_obj =
+                    crate::chat_error::parse_chat_error(&error_text, Some(provider_name));
+                let detail = error_obj
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&error_text);
+
+                Ok(serde_json::json!({
+                    "valid": false,
+                    "error": detail,
+                }))
+            },
+            Err(_) => Ok(serde_json::json!({
+                "valid": false,
+                "error": "Connection timed out after 20 seconds. Check your endpoint URL and try again.",
+            })),
+        }
+    }
+
+    async fn save_model(&self, params: Value) -> ServiceResult {
+        let provider_name = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'provider' parameter".to_string())?;
+
+        let model = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'model' parameter".to_string())?;
+
+        // Validate provider exists.
+        let known = known_providers();
+        if !known.iter().any(|p| p.name == provider_name) {
+            return Err(format!("unknown provider: {provider_name}"));
+        }
+
+        self.key_store
+            .save_config(provider_name, None, None, Some(model.to_string()))?;
+
+        info!(
+            provider = provider_name,
+            model, "saved model preference for provider"
+        );
+        Ok(serde_json::json!({ "ok": true }))
     }
 }
 
@@ -2113,6 +2312,60 @@ mod tests {
             ..Default::default()
         });
         assert!(has_explicit_provider_settings(&model_only));
+    }
+
+    #[tokio::test]
+    async fn validate_key_rejects_unknown_provider() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc
+            .validate_key(serde_json::json!({"provider": "nonexistent", "apiKey": "sk-test"}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown provider"));
+    }
+
+    #[tokio::test]
+    async fn validate_key_rejects_missing_provider_param() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc.validate_key(serde_json::json!({})).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing 'provider'"));
+    }
+
+    #[tokio::test]
+    async fn validate_key_rejects_missing_api_key_for_api_key_provider() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc
+            .validate_key(serde_json::json!({"provider": "anthropic"}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing 'apiKey'"));
+    }
+
+    #[tokio::test]
+    async fn validate_key_allows_missing_api_key_for_ollama() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        // Ollama doesn't require an API key, so this should not error on missing apiKey.
+        // It will likely return valid=false due to connection issues, but it should not
+        // reject with a "missing apiKey" error.
+        let result = svc
+            .validate_key(serde_json::json!({"provider": "ollama"}))
+            .await;
+        // Should succeed (return Ok) even without apiKey — the probe may fail,
+        // but param validation should pass.
+        assert!(result.is_ok());
     }
 
     #[test]

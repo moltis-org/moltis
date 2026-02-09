@@ -10,6 +10,82 @@ function firstProbeFailure(payload) {
 	return null;
 }
 
+/**
+ * Map raw error strings to user-friendly messages.
+ */
+export function humanizeProbeError(error) {
+	if (!error || typeof error !== "string") return error;
+	var lower = error.toLowerCase();
+
+	if (
+		lower.includes("401") ||
+		lower.includes("unauthorized") ||
+		lower.includes("invalid api key") ||
+		lower.includes("invalid x-api-key")
+	) {
+		return "Invalid API key. Please double-check and try again.";
+	}
+	if (lower.includes("403") || lower.includes("forbidden") || lower.includes("permission")) {
+		return "Your API key doesn't have access. Check your account permissions.";
+	}
+	if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+		return "Rate limited by the provider. Wait a moment and try again.";
+	}
+	if (lower.includes("timeout") || lower.includes("timed out")) {
+		return "Connection timed out. Check your endpoint URL and try again.";
+	}
+	if (lower.includes("connection refused") || lower.includes("econnrefused")) {
+		return "Connection refused. Make sure the provider endpoint is running and reachable.";
+	}
+	if (lower.includes("dns") || lower.includes("getaddrinfo") || lower.includes("name or service not known")) {
+		return "Could not resolve the endpoint address. Check the URL and try again.";
+	}
+
+	return error;
+}
+
+/**
+ * Validate provider credentials without saving them.
+ * Returns { valid, models?, error? }.
+ */
+export async function validateProviderKey(provider, apiKey, baseUrl, model) {
+	var payload = { provider, apiKey };
+	if (baseUrl) payload.baseUrl = baseUrl;
+	if (model) payload.model = model;
+
+	var res = await sendRpc("providers.validate_key", payload);
+	if (!res?.ok) {
+		return {
+			valid: false,
+			error: humanizeProbeError(res?.error?.message || "Failed to validate credentials."),
+		};
+	}
+
+	var data = res.payload || {};
+	if (data.valid) {
+		return { valid: true, models: data.models || [] };
+	}
+	return {
+		valid: false,
+		error: humanizeProbeError(data.error || "Validation failed."),
+	};
+}
+
+/**
+ * Test a single model from the live registry.
+ * Returns { ok, error? }.
+ */
+export async function testModel(modelId) {
+	var res = await sendRpc("models.test", { modelId });
+	if (res?.ok) {
+		return { ok: true };
+	}
+	return {
+		ok: false,
+		error: humanizeProbeError(res?.error?.message || "Model test failed."),
+	};
+}
+
 export async function validateProviderConnection(providerName) {
 	var res = await sendRpc("models.detect_supported", {
 		provider: providerName,

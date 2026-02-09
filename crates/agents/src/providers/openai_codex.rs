@@ -451,7 +451,10 @@ fn load_access_token_and_account_id() -> anyhow::Result<(String, String)> {
     let tokens = TokenStore::new()
         .load("openai-codex")
         .or_else(load_codex_cli_tokens)
-        .ok_or_else(|| anyhow::anyhow!("openai-codex tokens not found"))?;
+        .ok_or_else(|| {
+            warn!("openai-codex tokens not found in token store or codex CLI auth");
+            anyhow::anyhow!("openai-codex tokens not found")
+        })?;
 
     let access_token = tokens.access_token.expose_secret().clone();
     let account_id = OpenAiCodexProvider::extract_account_id(&access_token)?;
@@ -473,7 +476,12 @@ pub fn available_models() -> Vec<(String, String)> {
     let discovered = match live_models() {
         Ok(models) => models,
         Err(err) => {
-            warn!(error = %err, "failed to fetch openai-codex models, using fallback catalog");
+            let msg = err.to_string();
+            if msg.contains("tokens not found") || msg.contains("not logged in") {
+                debug!(error = %err, "openai-codex not configured, using fallback catalog");
+            } else {
+                warn!(error = %err, "failed to fetch openai-codex models, using fallback catalog");
+            }
             return fallback;
         },
     };
