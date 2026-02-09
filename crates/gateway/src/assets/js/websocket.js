@@ -81,10 +81,9 @@ function makeThinkingDots() {
 
 function moveFirstQueuedToChat() {
 	var tray = document.getElementById("queuedMessages");
-	if (!tray || tray.hasAttribute("data-moving")) return;
+	if (!tray) return;
 	var firstQueued = tray.querySelector(".msg.user.queued");
 	if (!firstQueued) return;
-	tray.setAttribute("data-moving", "true");
 	console.debug("[queued] moving queued message from tray to chat", {
 		remaining: tray.querySelectorAll(".msg").length - 1,
 	});
@@ -95,18 +94,8 @@ function moveFirstQueuedToChat() {
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
 
-function clearQueueMovingFlag() {
-	var tray = document.getElementById("queuedMessages");
-	if (tray) tray.removeAttribute("data-moving");
-}
-
 function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	// Move the first queued message from the tray on the first thinking
-	// event of a run. The data-moving flag prevents subsequent thinking
-	// events (multi-iteration runs with tool calls) from moving additional
-	// messages. The flag is cleared by handleChatFinal.
-	moveFirstQueuedToChat();
 	removeThinking();
 	var thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
@@ -316,12 +305,8 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	}
 	if (!(isActive && isChatPage)) {
 		S.setVoicePending(false);
-		clearQueueMovingFlag();
 		return;
 	}
-	// If thinking never fired (silent/fast response), move the queued
-	// message now as a fallback so it appears before the LLM response.
-	moveFirstQueuedToChat();
 	removeThinking();
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
@@ -382,7 +367,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setLastToolOutput("");
 	S.setVoicePending(false);
 	maybeRefreshFullContext();
-	clearQueueMovingFlag();
+	// Move the next queued message from the tray AFTER the response is
+	// fully rendered. This ensures correct ordering: user-msg → response →
+	// next-user-msg → next-response (never next-user-msg before response).
+	moveFirstQueuedToChat();
 }
 
 function handleChatAutoCompact(p, isActive, isChatPage) {
@@ -415,6 +403,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setVoicePending(false);
+	moveFirstQueuedToChat();
 }
 
 function handleChatNotice(p, isActive, isChatPage) {
