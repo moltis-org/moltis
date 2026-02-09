@@ -59,10 +59,10 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  clippy-test:
+  clippy:
     needs: [fmt, biome]
     runs-on: ubuntu-latest
-    name: Clippy + Test
+    name: Clippy
     permissions:
       contents: read
     steps:
@@ -74,10 +74,24 @@ jobs:
           toolchain: nightly
           components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    needs: [fmt, biome]
+    runs-on: ubuntu-latest
+    name: Test
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: stable
       - run: cargo test
 
   build-deb:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
@@ -165,7 +179,7 @@ jobs:
             target/${{ matrix.target }}/debian/*.crt
 
   build-rpm:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
@@ -258,7 +272,7 @@ jobs:
             target/${{ matrix.target }}/generate-rpm/*.crt
 
   build-arch:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
@@ -358,7 +372,7 @@ jobs:
             *.pkg.tar.zst.crt
 
   build-appimage:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
@@ -480,7 +494,7 @@ jobs:
             *.AppImage.crt
 
   build-snap:
-    needs: clippy-test
+    needs: [clippy, test]
     runs-on: ubuntu-latest
     name: Build Snap
     permissions:
@@ -542,7 +556,7 @@ jobs:
             ${{ steps.build-snap.outputs.snap }}.crt
 
   build-homebrew-binaries:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
@@ -626,7 +640,7 @@ jobs:
             *.tar.gz.crt
 
   build-docker:
-    needs: clippy-test
+    needs: [clippy, test]
     strategy:
       matrix:
         include:
