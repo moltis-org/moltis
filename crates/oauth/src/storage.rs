@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use {
     anyhow::Result,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 use crate::{config_dir::moltis_config_dir, types::OAuthTokens};
@@ -28,6 +28,10 @@ impl TokenStore {
         let path = self.path.display().to_string();
         let data = match std::fs::read_to_string(&self.path) {
             Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(path = %path, provider, "token file not found");
+                return None;
+            },
             Err(e) => {
                 warn!(
                     path = %path,
