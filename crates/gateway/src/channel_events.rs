@@ -129,7 +129,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // `set_channel_binding` is an UPDATE, so the row must exist
                 // before we can set the binding column.
                 let entry = session_meta.get(&session_key).await;
-                if entry.as_ref().map_or(true, |e| e.channel_binding.is_none()) {
+                if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                     let existing = session_meta
                         .list_channel_sessions(
                             reply_to.channel_type.as_str(),
@@ -581,7 +581,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
             && let Some(ref session_meta) = state.services.session_metadata
         {
             let entry = session_meta.get(&session_key).await;
-            if entry.as_ref().map_or(true, |e| e.channel_binding.is_none()) {
+            if entry.as_ref().is_none_or(|e| e.channel_binding.is_none()) {
                 let existing = session_meta
                     .list_channel_sessions(
                         reply_to.channel_type.as_str(),
