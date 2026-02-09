@@ -250,27 +250,261 @@ function IdentityStep({ onNext, onBack }) {
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
 var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider step manages multiple auth flows inline
+// ── Provider row for multi-provider onboarding ──────────────
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config forms for api-key, oauth, and local flows
+function OnboardingProviderRow({
+	provider,
+	configuring,
+	oauthProvider,
+	oauthInfo,
+	localProvider,
+	sysInfo,
+	localModels,
+	selectedBackend,
+	setSelectedBackend,
+	apiKey,
+	setApiKey,
+	endpoint,
+	setEndpoint,
+	model,
+	setModel,
+	saving,
+	error,
+	validationResult,
+	onStartConfigure,
+	onCancelConfigure,
+	onSaveKey,
+	onCancelOAuth,
+	onConfigureLocalModel,
+	onCancelLocal,
+}) {
+	var isApiKeyForm = configuring === provider.name;
+	var isOAuth = oauthProvider === provider.name;
+	var isLocal = localProvider === provider.name;
+	var isExpanded = isApiKeyForm || isOAuth || isLocal;
+	var keyInputRef = useRef(null);
+	var rowRef = useRef(null);
+
+	useEffect(() => {
+		if (isApiKeyForm && keyInputRef.current) {
+			keyInputRef.current.focus();
+		}
+	}, [isApiKeyForm]);
+
+	useEffect(() => {
+		if (isExpanded && rowRef.current) {
+			rowRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+		}
+	}, [isExpanded]);
+
+	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
+	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+
+	return html`<div ref=${rowRef} class="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
+		<div class="flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex flex-col gap-0.5">
+				<div class="flex items-center gap-2 flex-wrap">
+					<span class="text-sm font-medium text-[var(--text-strong)]">${provider.displayName}</span>
+					${provider.configured ? html`<span class="provider-item-badge configured">configured</span>` : null}
+					${
+						validationResult?.ok === true
+							? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="inline-block">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+							</svg>`
+							: null
+					}
+					<span class="provider-item-badge ${provider.authType}">
+						${provider.authType === "oauth" ? "OAuth" : provider.authType === "local" ? "Local" : "API Key"}
+					</span>
+				</div>
+			</div>
+			<div class="shrink-0">
+				${
+					isExpanded
+						? null
+						: html`<button class="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick=${() => onStartConfigure(provider.name)}>${provider.configured ? "Reconfigure" : "Configure"}</button>`
+				}
+			</div>
+		</div>
+		${
+			validationResult?.ok === false && !isExpanded
+				? html`<div class="text-xs text-[var(--warning)] mt-1">${validationResult.message}</div>`
+				: null
+		}
+		${
+			isApiKeyForm
+				? html`<form onSubmit=${onSaveKey} class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				<div>
+					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
+					<input type="password" class="provider-key-input w-full"
+						ref=${keyInputRef}
+						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
+						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+				</div>
+				${
+					supportsEndpoint
+						? html`<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Endpoint (optional)</label>
+						<input type="text" class="provider-key-input w-full"
+							value=${endpoint} onInput=${(e) => setEndpoint(e.target.value)}
+							placeholder=${provider.defaultBaseUrl || "https://api.example.com/v1"} />
+						<div class="text-xs text-[var(--muted)] mt-1">Leave empty to use the default endpoint.</div>
+					</div>`
+						: null
+				}
+				${
+					needsModel
+						? html`<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
+						<input type="text" class="provider-key-input w-full"
+							value=${model} onInput=${(e) => setModel(e.target.value)}
+							placeholder=${provider.name === "ollama" ? "llama3" : "model-id"} />
+					</div>`
+						: null
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<div class="flex items-center gap-2 mt-1">
+					<button type="submit" class="provider-btn provider-btn-sm" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure}>Cancel</button>
+				</div>
+			</form>`
+				: null
+		}
+		${
+			isOAuth
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				${
+					oauthInfo?.status === "device"
+						? html`<div class="text-sm text-[var(--text)]">
+						Open <a href=${oauthInfo.uri} target="_blank" class="text-[var(--accent)] underline">${oauthInfo.uri}</a> and enter code:<strong class="font-mono ml-1">${oauthInfo.code}</strong>
+					</div>`
+						: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelOAuth}>Cancel</button>
+			</div>`
+				: null
+		}
+		${
+			isLocal
+				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
+				${
+					sysInfo
+						? html`<div class="flex flex-col gap-3">
+						<div class="flex gap-3 text-xs text-[var(--muted)]">
+							<span>RAM: ${sysInfo.totalRamGb}GB</span>
+							<span>Tier: ${sysInfo.memoryTier}</span>
+							${sysInfo.hasGpu ? html`<span class="text-[var(--ok)]">GPU available</span>` : null}
+						</div>
+						${
+							sysInfo.isAppleSilicon && (sysInfo.availableBackends || []).length > 0
+								? html`<div class="flex flex-col gap-2">
+								<div class="text-xs font-medium text-[var(--text-strong)]">Backend</div>
+								<div class="flex flex-col gap-2">
+									${(sysInfo.availableBackends || []).map(
+										// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: backend card renders conditional badges inline
+										(b) => html`<div key=${b.id}
+										class="backend-card ${b.id === selectedBackend ? "selected" : ""} ${b.available ? "" : "disabled"}"
+										onClick=${() => {
+											if (b.available) setSelectedBackend(b.id);
+										}}>
+										<div class="flex items-center justify-between">
+											<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
+											<div class="flex gap-2">
+												${b.id === sysInfo.recommendedBackend && b.available ? html`<span class="recommended-badge">Recommended</span>` : null}
+												${b.available ? null : html`<span class="tier-badge">Not installed</span>`}
+											</div>
+										</div>
+										<div class="text-xs text-[var(--muted)] mt-1">${b.description}</div>
+									</div>`,
+									)}
+								</div>
+							</div>`
+								: null
+						}
+						<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+						<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+							${
+								localModels.filter((m) => m.backend === selectedBackend).length === 0
+									? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
+									: localModels
+											.filter((m) => m.backend === selectedBackend)
+											.map(
+												(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => onConfigureLocalModel(mdl)}>
+											<div class="flex items-center justify-between">
+												<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
+												<div class="flex gap-2">
+													<span class="tier-badge">${mdl.minRamGb}GB</span>
+													${mdl.suggested ? html`<span class="recommended-badge">Recommended</span>` : null}
+												</div>
+											</div>
+											<div class="text-xs text-[var(--muted)] mt-1">Context: ${(mdl.contextWindow / 1000).toFixed(0)}k tokens</div>
+										</div>`,
+											)
+							}
+						</div>
+						${saving ? html`<div class="text-xs text-[var(--muted)]">Configuring\u2026</div>` : null}
+					</div>`
+						: html`<div class="text-xs text-[var(--muted)]">Loading system info\u2026</div>`
+				}
+				${error ? html`<${ErrorPanel} message=${error} />` : null}
+				<button class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelLocal}>Cancel</button>
+			</div>`
+				: null
+		}
+	</div>`;
+}
+
+function sortProviders(list) {
+	list.sort((a, b) => {
+		var aIsLocal = a.authType === "local" || a.name === "ollama";
+		var bIsLocal = b.authType === "local" || b.name === "ollama";
+		if (aIsLocal && !bIsLocal) return -1;
+		if (!aIsLocal && bIsLocal) return 1;
+		return a.displayName.localeCompare(b.displayName);
+	});
+	return list;
+}
+
 function ProviderStep({ onNext, onBack }) {
 	var [providers, setProviders] = useState([]);
 	var [loading, setLoading] = useState(true);
-	var [selected, setSelected] = useState(null);
-	var [phase, setPhase] = useState("list"); // list | form | oauth | local | success
+	var [error, setError] = useState(null);
+
+	// Which provider has an open inline form (by name), or null
+	var [configuring, setConfiguring] = useState(null);
+	var [oauthProvider, setOauthProvider] = useState(null);
+	var [localProvider, setLocalProvider] = useState(null);
 
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
 	var [endpoint, setEndpoint] = useState("");
 	var [model, setModel] = useState("");
 	var [saving, setSaving] = useState(false);
-	var [error, setError] = useState(null);
+
+	// Validation results: { [providerName]: { ok, message } }
+	var [validationResults, setValidationResults] = useState({});
 
 	// OAuth state
 	var [oauthInfo, setOauthInfo] = useState(null);
+	var oauthTimerRef = useRef(null);
 
 	// Local state
 	var [sysInfo, setSysInfo] = useState(null);
 	var [localModels, setLocalModels] = useState([]);
 	var [selectedBackend, setSelectedBackend] = useState(null);
+
+	function refreshProviders() {
+		return sendRpc("providers.available", {}).then((res) => {
+			if (res?.ok) {
+				var list = sortProviders(res.payload || []);
+				setProviders(list);
+			}
+			return res;
+		});
+	}
 
 	useEffect(() => {
 		var cancelled = false;
@@ -281,16 +515,7 @@ function ProviderStep({ onNext, onBack }) {
 			sendRpc("providers.available", {}).then((res) => {
 				if (cancelled) return;
 				if (res?.ok) {
-					var list = res.payload || [];
-					// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider ordering keeps local options first.
-					list.sort((a, b) => {
-						var aIsLocal = a.authType === "local" || a.name === "ollama";
-						var bIsLocal = b.authType === "local" || b.name === "ollama";
-						if (aIsLocal && !bIsLocal) return -1;
-						if (!aIsLocal && bIsLocal) return 1;
-						return a.displayName.localeCompare(b.displayName);
-					});
-					setProviders(list);
+					setProviders(sortProviders(res.payload || []));
 					setLoading(false);
 					return;
 				}
@@ -311,50 +536,82 @@ function ProviderStep({ onNext, onBack }) {
 		};
 	}, []);
 
-	function selectProvider(p) {
-		setSelected(p);
-		setError(null);
+	// Cleanup OAuth timer on unmount
+	useEffect(() => {
+		return () => {
+			if (oauthTimerRef.current) {
+				clearInterval(oauthTimerRef.current);
+				oauthTimerRef.current = null;
+			}
+		};
+	}, []);
+
+	function closeAll() {
+		setConfiguring(null);
+		setOauthProvider(null);
+		setLocalProvider(null);
 		setApiKey("");
 		setEndpoint("");
 		setModel("");
-		if (p.authType === "api-key") setPhase("form");
-		else if (p.authType === "oauth") startOAuth(p);
-		else if (p.authType === "local") startLocal(p);
+		setError(null);
+		setOauthInfo(null);
+		setSysInfo(null);
+		setLocalModels([]);
+		if (oauthTimerRef.current) {
+			clearInterval(oauthTimerRef.current);
+			oauthTimerRef.current = null;
+		}
 	}
 
-	function backToList() {
-		setPhase("list");
-		setSelected(null);
-		setError(null);
+	function onStartConfigure(name) {
+		closeAll();
+		var p = providers.find((pr) => pr.name === name);
+		if (!p) return;
+		if (p.authType === "api-key") {
+			setEndpoint(p.baseUrl || "");
+			setModel(p.model || "");
+			setConfiguring(name);
+		} else if (p.authType === "oauth") {
+			startOAuth(p);
+		} else if (p.authType === "local") {
+			startLocal(p);
+		}
 	}
 
 	// ── API key form ─────────────────────────────────────────
 
 	function onSaveKey(e) {
 		e.preventDefault();
-		if (!apiKey.trim() && selected.name !== "ollama") {
+		var p = providers.find((pr) => pr.name === configuring);
+		if (!p) return;
+		if (!apiKey.trim() && p.name !== "ollama") {
 			setError("API key is required.");
 			return;
 		}
-		if (BYOM_PROVIDERS.includes(selected.name) && !model.trim()) {
+		if (BYOM_PROVIDERS.includes(p.name) && !model.trim()) {
 			setError("Model ID is required.");
 			return;
 		}
 		setError(null);
 		setSaving(true);
-		var payload = { provider: selected.name, apiKey: apiKey.trim() || "ollama" };
+		var payload = { provider: p.name, apiKey: apiKey.trim() || "ollama" };
 		if (endpoint.trim()) payload.baseUrl = endpoint.trim();
 		if (model.trim()) payload.model = model.trim();
 		sendRpc("providers.save_key", payload)
 			.then(async (res) => {
 				if (res?.ok) {
-					var validation = await validateProviderConnection(selected.name);
+					var validation = await validateProviderConnection(p.name);
 					setSaving(false);
+					setValidationResults((prev) => ({ ...prev, [p.name]: validation }));
 					if (!validation.ok) {
 						setError(validation.message || "Credentials were saved, but provider validation failed.");
-						return;
 					}
-					setPhase("success");
+					setConfiguring(null);
+					setApiKey("");
+					setEndpoint("");
+					setModel("");
+					setError(null);
+					refreshProviders();
 				} else {
 					setSaving(false);
 					setError(res?.error?.message || "Failed to save");
@@ -369,7 +626,7 @@ function ProviderStep({ onNext, onBack }) {
 	// ── OAuth flow ───────────────────────────────────────────
 
 	function startOAuth(p) {
-		setPhase("oauth");
+		setOauthProvider(p.name);
 		setOauthInfo({ status: "starting" });
 		startProviderOAuth(p.name).then((result) => {
 			if (result.status === "already") {
@@ -378,7 +635,10 @@ function ProviderStep({ onNext, onBack }) {
 					reason: "provider_connected",
 					provider: p.name,
 				});
-				setPhase("success");
+				setOauthProvider(null);
+				setOauthInfo(null);
+				setValidationResults((prev) => ({ ...prev, [p.name]: { ok: true, message: null } }));
+				refreshProviders();
 			} else if (result.status === "browser") {
 				window.open(result.authUrl, "_blank");
 				setOauthInfo({ status: "waiting" });
@@ -392,44 +652,61 @@ function ProviderStep({ onNext, onBack }) {
 				pollOAuth(p);
 			} else {
 				setError(result.error || "Failed to start OAuth");
+				setOauthProvider(null);
 				setOauthInfo(null);
-				setPhase("list");
 			}
 		});
 	}
 
 	function pollOAuth(p) {
 		var attempts = 0;
-		var timer = setInterval(() => {
+		if (oauthTimerRef.current) clearInterval(oauthTimerRef.current);
+		oauthTimerRef.current = setInterval(() => {
 			attempts++;
 			if (attempts > 60) {
-				clearInterval(timer);
+				clearInterval(oauthTimerRef.current);
+				oauthTimerRef.current = null;
 				setError("OAuth timed out. Please try again.");
-				setPhase("list");
+				setOauthProvider(null);
+				setOauthInfo(null);
 				return;
 			}
 			sendRpc("providers.oauth.status", { provider: p.name }).then((res) => {
 				if (res?.ok && res.payload?.authenticated) {
-					clearInterval(timer);
+					clearInterval(oauthTimerRef.current);
+					oauthTimerRef.current = null;
 					sendRpc("models.detect_supported", {
 						background: true,
 						reason: "provider_connected",
 						provider: p.name,
 					});
-					setPhase("success");
+					setOauthProvider(null);
+					setOauthInfo(null);
+					setValidationResults((prev) => ({ ...prev, [p.name]: { ok: true, message: null } }));
+					refreshProviders();
 				}
 			});
 		}, 2000);
 	}
 
+	function cancelOAuth() {
+		if (oauthTimerRef.current) {
+			clearInterval(oauthTimerRef.current);
+			oauthTimerRef.current = null;
+		}
+		setOauthProvider(null);
+		setOauthInfo(null);
+		setError(null);
+	}
+
 	// ── Local model flow ─────────────────────────────────────
 
-	function startLocal(_p) {
-		setPhase("local");
+	function startLocal(p) {
+		setLocalProvider(p.name);
 		sendRpc("providers.local.system_info", {}).then((sysRes) => {
 			if (!sysRes?.ok) {
 				setError(sysRes?.error?.message || "Failed to get system info");
-				setPhase("list");
+				setLocalProvider(null);
 				return;
 			}
 			setSysInfo(sysRes.payload);
@@ -443,16 +720,28 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	function configureLocalModel(mdl) {
+		var provName = localProvider;
 		setSaving(true);
 		setError(null);
 		sendRpc("providers.local.configure", { modelId: mdl.id, backend: selectedBackend }).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				setPhase("success");
+				setLocalProvider(null);
+				setSysInfo(null);
+				setLocalModels([]);
+				setValidationResults((prev) => ({ ...prev, [provName]: { ok: true, message: null } }));
+				refreshProviders();
 			} else {
 				setError(res?.error?.message || "Failed to configure model");
 			}
 		});
+	}
+
+	function cancelLocal() {
+		setLocalProvider(null);
+		setSysInfo(null);
+		setLocalModels([]);
+		setError(null);
 	}
 
 	// ── Render ────────────────────────────────────────────────
@@ -461,167 +750,56 @@ function ProviderStep({ onNext, onBack }) {
 		return html`<div class="text-sm text-[var(--muted)]">Loading providers\u2026</div>`;
 	}
 
-	// Success screen
-	if (phase === "success") {
-		return html`<div class="flex flex-col gap-4 items-center text-center py-4">
-			<div class="text-2xl">\u2705</div>
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected?.displayName || "Provider"} configured!</h2>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
-		</div>`;
-	}
+	var configuredProviders = providers.filter((p) => p.configured);
 
-	// API key form
-	if (phase === "form" && selected) {
-		var supportsEndpoint = OPENAI_COMPATIBLE.includes(selected.name);
-		var needsModel = BYOM_PROVIDERS.includes(selected.name);
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected.displayName}</h2>
-			<form onSubmit=${onSaveKey} class="flex flex-col gap-3">
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">API Key</label>
-					<input type="password" class="provider-key-input w-full"
-						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${selected.name === "ollama" ? "(optional for Ollama)" : "sk-..."} autofocus />
-				</div>
-				${
-					supportsEndpoint &&
-					html`<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Endpoint (optional)</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${endpoint} onInput=${(e) => setEndpoint(e.target.value)}
-						placeholder=${selected.defaultBaseUrl || "https://api.example.com/v1"} />
-					<div class="text-xs text-[var(--muted)] mt-1">Leave empty to use the default endpoint.</div>
-				</div>`
-				}
-				${
-					needsModel &&
-					html`<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${model} onInput=${(e) => setModel(e.target.value)}
-						placeholder=${selected.name === "ollama" ? "llama3" : "model-id"} />
-				</div>`
-				}
-				${error && html`<${ErrorPanel} message=${error} />`}
-				<div class="flex items-center gap-3 mt-1">
-					<button type="button" class="provider-btn provider-btn-secondary" onClick=${backToList}>Back</button>
-					<button type="submit" class="provider-btn" disabled=${saving}>${saving ? "Saving\u2026" : "Save"}</button>
-				</div>
-			</form>
-		</div>`;
-	}
-
-	// OAuth waiting
-	if (phase === "oauth") {
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">${selected?.displayName}</h2>
-			${
-				oauthInfo?.status === "device"
-					? html`<div class="text-sm text-[var(--text)]">
-					Open <a href=${oauthInfo.uri} target="_blank" class="text-[var(--accent)] underline">${oauthInfo.uri}</a> and enter code:<strong class="font-mono ml-1">${oauthInfo.code}</strong>
-				</div>`
-					: html`<div class="text-sm text-[var(--muted)]">Waiting for authentication\u2026</div>`
-			}
-			${error && html`<${ErrorPanel} message=${error} />`}
-			<button class="provider-btn provider-btn-secondary" onClick=${backToList}>Cancel</button>
-		</div>`;
-	}
-
-	// Local model selection
-	if (phase === "local" && sysInfo) {
-		var backends = sysInfo.availableBackends || [];
-		var filteredModels = localModels.filter((m) => m.backend === selectedBackend);
-		return html`<div class="flex flex-col gap-4">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">Local Models</h2>
-			<div class="flex gap-3 text-xs text-[var(--muted)]">
-				<span>RAM: ${sysInfo.totalRamGb}GB</span>
-				<span>Tier: ${sysInfo.memoryTier}</span>
-				${sysInfo.hasGpu && html`<span class="text-[var(--ok)]">GPU available</span>`}
-			</div>
-			${
-				sysInfo.isAppleSilicon &&
-				backends.length > 0 &&
-				html`<div class="flex flex-col gap-2">
-				<div class="text-xs font-medium text-[var(--text-strong)]">Backend</div>
-				<div class="flex flex-col gap-2">
-					${backends.map(
-						(b) => html`<div key=${b.id}
-						class="backend-card ${b.id === selectedBackend ? "selected" : ""} ${b.available ? "" : "disabled"}"
-						onClick=${() => {
-							if (b.available) setSelectedBackend(b.id);
-						}}>
-						<div class="flex items-center justify-between">
-							<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
-							<div class="flex gap-2">
-								${b.id === sysInfo.recommendedBackend && b.available && html`<span class="recommended-badge">Recommended</span>`}
-								${!b.available && html`<span class="tier-badge">Not installed</span>`}
-							</div>
-						</div>
-						<div class="text-xs text-[var(--muted)] mt-1">${b.description}</div>
-					</div>`,
-					)}
+	return html`<div class="flex flex-col gap-4">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add providers</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed">Configure one or more LLM providers to power your agent. You can add more later in Settings.</p>
+		${
+			configuredProviders.length > 0
+				? html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
+				<div class="text-xs text-[var(--muted)]">Detected providers</div>
+				<div class="flex flex-wrap gap-2">
+					${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
 				</div>
 			</div>`
-			}
-			<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
-			<div class="flex flex-col gap-2 max-h-48 overflow-y-auto">
-				${
-					filteredModels.length === 0
-						? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models available for ${selectedBackend}</div>`
-						: filteredModels.map(
-								(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => configureLocalModel(mdl)}>
-						<div class="flex items-center justify-between">
-							<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
-							<div class="flex gap-2">
-								<span class="tier-badge">${mdl.minRamGb}GB</span>
-								${mdl.suggested && html`<span class="recommended-badge">Recommended</span>`}
-							</div>
-						</div>
-						<div class="text-xs text-[var(--muted)] mt-1">Context: ${(mdl.contextWindow / 1000).toFixed(0)}k tokens</div>
-					</div>`,
-							)
-				}
-			</div>
-			${error && html`<${ErrorPanel} message=${error} />`}
-			${saving && html`<div class="text-xs text-[var(--muted)]">Configuring\u2026</div>`}
-			<div class="flex items-center gap-3 mt-1">
-				<button class="provider-btn provider-btn-secondary" onClick=${backToList}>Back</button>
-			</div>
-		</div>`;
-	}
-
-	// Provider list
-	var configuredProviders = providers.filter((p) => p.configured);
-	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add a provider</h2>
-		<p class="text-xs text-[var(--muted)] leading-relaxed">Pick an LLM provider to power your agent. You can add more later in Settings.</p>
-		${
-			configuredProviders.length > 0 &&
-			html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
-			<div class="text-xs text-[var(--muted)]">Detected providers</div>
-			<div class="flex flex-wrap gap-2">
-				${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
-			</div>
-			<button class="provider-btn self-start" onClick=${onNext}>Continue with detected providers</button>
-		</div>`
+				: null
 		}
-		<div class="text-xs text-[var(--muted)]">Choose a provider to connect</div>
-		<div class="flex flex-col gap-2 max-h-64 overflow-y-auto">
+		<div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
 			${providers.map(
-				(p) => html`<div key=${p.name} class="provider-item" onClick=${() => selectProvider(p)}>
-				<span class="provider-item-name">${p.displayName}</span>
-				<div class="flex gap-2">
-					${p.configured && html`<span class="provider-item-badge configured">configured</span>`}
-					<span class="provider-item-badge ${p.authType}">
-						${p.authType === "oauth" ? "OAuth" : p.authType === "local" ? "Local" : "API Key"}
-					</span>
-				</div>
-			</div>`,
+				(p) => html`<${OnboardingProviderRow}
+				key=${p.name}
+				provider=${p}
+				configuring=${configuring}
+				oauthProvider=${oauthProvider}
+				oauthInfo=${oauthInfo}
+				localProvider=${localProvider}
+				sysInfo=${sysInfo}
+				localModels=${localModels}
+				selectedBackend=${selectedBackend}
+				setSelectedBackend=${setSelectedBackend}
+				apiKey=${apiKey}
+				setApiKey=${setApiKey}
+				endpoint=${endpoint}
+				setEndpoint=${setEndpoint}
+				model=${model}
+				setModel=${setModel}
+				saving=${saving}
+				error=${configuring === p.name || oauthProvider === p.name || localProvider === p.name ? error : null}
+				validationResult=${validationResults[p.name] || null}
+				onStartConfigure=${onStartConfigure}
+				onCancelConfigure=${closeAll}
+				onSaveKey=${onSaveKey}
+				onCancelOAuth=${cancelOAuth}
+				onConfigureLocalModel=${configureLocalModel}
+				onCancelLocal=${cancelLocal}
+			/>`,
 			)}
 		</div>
-		${error && html`<${ErrorPanel} message=${error} />`}
+		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
+			<button class="provider-btn" onClick=${onNext}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;
