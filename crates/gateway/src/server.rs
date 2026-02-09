@@ -2426,15 +2426,24 @@ pub async fn start_gateway(
     } else {
         "http"
     };
+    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
+    // machine's outbound IP so the printed URL is clickable.
+    let display_ip = if addr.ip().is_unspecified() {
+        resolve_outbound_ip(addr.ip().is_ipv6())
+            .map(|ip| std::net::SocketAddr::new(ip, port))
+            .unwrap_or(addr)
+    } else {
+        addr
+    };
     // Use moltis.localhost for display URLs when bound to loopback with TLS.
     #[cfg(feature = "tls")]
     let display_host = if is_localhost && tls_active {
         format!("{}:{}", crate::tls::LOCALHOST_DOMAIN, port)
     } else {
-        addr.to_string()
+        display_ip.to_string()
     };
     #[cfg(not(feature = "tls"))]
-    let display_host = addr.to_string();
+    let display_host = display_ip.to_string();
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),
@@ -3209,6 +3218,23 @@ async fn websocket_header_authenticated(
     }
 
     false
+}
+
+/// Resolve the machine's primary outbound IP address.
+///
+/// Connects a UDP socket to a public DNS address (no traffic is sent) and
+/// reads back the local address the OS chose.  Returns `None` when no
+/// routable interface is available.
+fn resolve_outbound_ip(ipv6: bool) -> Option<std::net::IpAddr> {
+    use std::net::UdpSocket;
+    let (bind, target) = if ipv6 {
+        (":::0", "[2001:4860:4860::8888]:80")
+    } else {
+        ("0.0.0.0:0", "8.8.8.8:80")
+    };
+    let socket = UdpSocket::bind(bind).ok()?;
+    socket.connect(target).ok()?;
+    Some(socket.local_addr().ok()?.ip())
 }
 
 fn extract_ws_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
@@ -5254,6 +5280,27 @@ mod tests {
                 parse_git_branch("  feat/my-feature  \n"),
                 Some("feat/my-feature".to_owned())
             );
+        }
+    }
+
+    #[test]
+    fn resolve_outbound_ip_returns_non_loopback() {
+        // This test requires network connectivity; skip gracefully otherwise.
+        if let Some(ip) = resolve_outbound_ip(false) {
+            assert!(!ip.is_loopback(), "expected a non-loopback IP, got {ip}");
+            assert!(!ip.is_unspecified(), "expected a routable IP, got {ip}");
+        }
+    }
+
+    #[test]
+    fn display_host_uses_real_ip_for_unspecified_bind() {
+        let addr: std::net::SocketAddr = "0.0.0.0:9999".parse().unwrap();
+        assert!(addr.ip().is_unspecified());
+
+        if let Some(ip) = resolve_outbound_ip(false) {
+            let display = std::net::SocketAddr::new(ip, addr.port());
+            assert!(!display.ip().is_unspecified());
+            assert_eq!(display.port(), 9999);
         }
     }
 }
