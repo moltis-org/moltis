@@ -6,9 +6,8 @@ use {
         types::chat::{
             ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
             ChatCompletionRequestMessageContentPartImage,
-            ChatCompletionRequestMessageContentPartText,
-            ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
-            ChatCompletionRequestUserMessageContent,
+            ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+            ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContent,
             ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequestArgs, ImageUrl,
         },
     },
@@ -99,9 +98,7 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
                     .map(|p| match p {
                         crate::model::ContentPart::Text(t) => {
                             ChatCompletionRequestUserMessageContentPart::Text(
-                                ChatCompletionRequestMessageContentPartText {
-                                    text: t.clone(),
-                                },
+                                ChatCompletionRequestMessageContentPartText { text: t.clone() },
                             )
                         },
                         crate::model::ContentPart::Image { media_type, data } => {
@@ -117,14 +114,12 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
                         },
                     })
                     .collect();
-                out.push(
-                    ChatCompletionRequestMessage::User(
-                        async_openai::types::chat::ChatCompletionRequestUserMessage {
-                            content: ChatCompletionRequestUserMessageContent::Array(content_parts),
-                            name: None,
-                        },
-                    ),
-                );
+                out.push(ChatCompletionRequestMessage::User(
+                    async_openai::types::chat::ChatCompletionRequestUserMessage {
+                        content: ChatCompletionRequestUserMessageContent::Array(content_parts),
+                        name: None,
+                    },
+                ));
             },
             ChatMessage::Tool { content, .. } => {
                 // async-openai doesn't have a dedicated tool result builder;

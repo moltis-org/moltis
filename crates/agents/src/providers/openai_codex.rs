@@ -119,14 +119,19 @@ impl OpenAiCodexProvider {
                                 vec![serde_json::json!({"type": "input_text", "text": t})]
                             },
                             UserContent::Multimodal(parts) => {
-                                let text_count =
-                                    parts.iter().filter(|p| matches!(p, crate::model::ContentPart::Text(_))).count();
-                                let image_count =
-                                    parts.iter().filter(|p| matches!(p, crate::model::ContentPart::Image { .. })).count();
+                                let text_count = parts
+                                    .iter()
+                                    .filter(|p| matches!(p, crate::model::ContentPart::Text(_)))
+                                    .count();
+                                let image_count = parts
+                                    .iter()
+                                    .filter(|p| {
+                                        matches!(p, crate::model::ContentPart::Image { .. })
+                                    })
+                                    .count();
                                 debug!(
                                     text_count,
-                                    image_count,
-                                    "codex convert_messages: multimodal user content"
+                                    image_count, "codex convert_messages: multimodal user content"
                                 );
                                 parts
                                     .iter()
@@ -134,9 +139,7 @@ impl OpenAiCodexProvider {
                                         crate::model::ContentPart::Text(t) => {
                                             serde_json::json!({"type": "input_text", "text": t})
                                         },
-                                        crate::model::ContentPart::Image {
-                                            media_type, data,
-                                        } => {
+                                        crate::model::ContentPart::Image { media_type, data } => {
                                             let data_uri =
                                                 format!("data:{media_type};base64,{data}");
                                             debug!(
@@ -1113,10 +1116,7 @@ mod tests {
         assert_eq!(content[0]["type"], "input_text");
         assert_eq!(content[0]["text"], "describe this image");
         assert_eq!(content[1]["type"], "input_image");
-        assert_eq!(
-            content[1]["image_url"],
-            "data:image/png;base64,ABC123"
-        );
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,ABC123");
     }
 
     #[test]
