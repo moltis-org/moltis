@@ -941,6 +941,13 @@ function VoiceStep({ onNext, onBack }) {
 				setVoiceTesting(null);
 				return;
 			}
+			// ElevenLabs uses the same API key for both STT and TTS — enable the counterpart too
+			var counterType = type === "stt" ? "tts" : "stt";
+			var counterList = type === "stt" ? allProviders.tts : allProviders.stt;
+			var counterProv = counterList.find((p) => p.id === providerId);
+			if (counterProv?.available && !counterProv?.enabled) {
+				await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: counterType });
+			}
 			// Refresh provider list in background
 			fetchProviders();
 		}
