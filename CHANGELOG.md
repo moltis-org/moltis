@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-02-09
+
+### Fixed
+
+- **Session file lock contention**: Replaced non-blocking `try_write()` with
+  blocking `write()` in `SessionStore::append()` and `replace_history()` so
+  concurrent tool-result persists wait for the file lock instead of failing
+  with `EAGAIN` (OS error 35).
+
+### Changed
+
+- **Release CI quality gates**: The Build Packages workflow now runs biome,
+  format, clippy, and test checks before building any packages, ensuring code
+  correctness before artifacts are produced.
+
 ## [0.3.3] - 2026-02-09
 
 ### Fixed
