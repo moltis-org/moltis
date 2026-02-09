@@ -3587,8 +3587,11 @@ impl MethodRegistry {
                                     cfg.voice.stt.google.api_key = Some(key.clone());
                                     cfg.voice.tts.google.api_key =
                                         Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both STT and TTS with Google
                                     cfg.voice.stt.provider = VoiceSttProvider::Google;
                                     cfg.voice.stt.enabled = true;
+                                    cfg.voice.tts.provider = "google".to_string();
+                                    cfg.voice.tts.enabled = true;
                                 },
                                 "mistral" => {
                                     cfg.voice.stt.mistral.api_key =
@@ -3602,8 +3605,11 @@ impl MethodRegistry {
                                     cfg.voice.stt.elevenlabs.api_key = Some(key.clone());
                                     cfg.voice.tts.elevenlabs.api_key =
                                         Some(Secret::new(api_key.to_string()));
+                                    // Auto-enable both STT and TTS with ElevenLabs
                                     cfg.voice.stt.provider = VoiceSttProvider::ElevenLabs;
                                     cfg.voice.stt.enabled = true;
+                                    cfg.voice.tts.provider = "elevenlabs".to_string();
+                                    cfg.voice.tts.enabled = true;
                                 },
                                 _ => {},
                             }

@@ -891,13 +891,28 @@ function VoiceStep({ onNext, onBack }) {
 		var providerId = configuring;
 		sendRpc("voice.config.save_key", { provider: providerId, api_key: apiKey.trim() }).then(async (res) => {
 			if (res?.ok) {
-				// Auto-enable in onboarding: toggle on for each type this provider appears in
+				// Auto-enable in onboarding: toggle on for each type this provider appears in.
+				// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
+				// so also check the counterpart ID.
+				var COUNTERPART_IDS = {
+					elevenlabs: "elevenlabs-stt",
+					"elevenlabs-stt": "elevenlabs",
+					"google-tts": "google",
+					google: "google-tts",
+				};
+				var counterId = COUNTERPART_IDS[providerId];
 				var toggles = [];
-				if (allProviders.stt.some((p) => p.id === providerId)) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: "stt" }));
+				var sttMatch =
+					allProviders.stt.find((p) => p.id === providerId) ||
+					(counterId && allProviders.stt.find((p) => p.id === counterId));
+				var ttsMatch =
+					allProviders.tts.find((p) => p.id === providerId) ||
+					(counterId && allProviders.tts.find((p) => p.id === counterId));
+				if (sttMatch) {
+					toggles.push(sendRpc("voice.provider.toggle", { provider: sttMatch.id, enabled: true, type: "stt" }));
 				}
-				if (allProviders.tts.some((p) => p.id === providerId)) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: "tts" }));
+				if (ttsMatch) {
+					toggles.push(sendRpc("voice.provider.toggle", { provider: ttsMatch.id, enabled: true, type: "tts" }));
 				}
 				await Promise.all(toggles);
 				setSaving(false);
@@ -941,12 +956,21 @@ function VoiceStep({ onNext, onBack }) {
 				setVoiceTesting(null);
 				return;
 			}
-			// ElevenLabs uses the same API key for both STT and TTS — enable the counterpart too
+			// ElevenLabs/Google share API keys — enable the counterpart too.
+			// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
+			// so map to the counterpart ID before looking it up.
 			var counterType = type === "stt" ? "tts" : "stt";
 			var counterList = type === "stt" ? allProviders.tts : allProviders.stt;
-			var counterProv = counterList.find((p) => p.id === providerId);
+			var COUNTERPART_IDS = {
+				elevenlabs: "elevenlabs-stt",
+				"elevenlabs-stt": "elevenlabs",
+				"google-tts": "google",
+				google: "google-tts",
+			};
+			var counterId = COUNTERPART_IDS[providerId] || providerId;
+			var counterProv = counterList.find((p) => p.id === counterId);
 			if (counterProv?.available && !counterProv?.enabled) {
-				await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type: counterType });
+				await sendRpc("voice.provider.toggle", { provider: counterId, enabled: true, type: counterType });
 			}
 			// Refresh provider list in background
 			fetchProviders();
