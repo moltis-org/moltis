@@ -102,6 +102,12 @@ pub struct ConnectedClient {
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
     /// to web tools so fetched pages and search results match the user's locale.
     pub accept_language: Option<String>,
+    /// The client's public IP address (extracted from proxy headers or direct
+    /// connection). `None` when the client connects from a private/loopback address.
+    pub remote_ip: Option<String>,
+    /// The client's IANA timezone (e.g. `Europe/Lisbon`), sent by the browser
+    /// via `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+    pub timezone: Option<String>,
 }
 
 impl ConnectedClient {

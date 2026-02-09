@@ -205,6 +205,8 @@ pub struct ConnectParams {
     pub locale: Option<String>,
     #[serde(rename = "userAgent", skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

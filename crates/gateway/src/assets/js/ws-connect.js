@@ -49,6 +49,7 @@ export function connectWs(opts) {
 						platform: "browser",
 						mode: "operator",
 					},
+					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 				},
 			}),
 		);

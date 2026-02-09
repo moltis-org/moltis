@@ -987,7 +987,8 @@ pub async fn start_gateway(
     services = services.with_cron(live_cron);
 
     // Build sandbox router from config (shared across sessions).
-    let sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    sandbox_config.timezone = config.user.timezone.clone();
     let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(sandbox_config));
 
     // Spawn background image pre-build. This bakes configured packages into a
@@ -2732,6 +2733,12 @@ async fn ws_upgrade_handler(
         .get(axum::http::header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
+
+    // Extract the real client IP (respecting proxy headers) and only keep it
+    // when it resolves to a public address — private/loopback IPs are not useful
+    // for the LLM to reason about locale or location.
+    let remote_ip = extract_ws_client_ip(&headers, addr).filter(|ip| is_public_ip(ip));
+
     let header_authenticated = websocket_header_authenticated(
         &headers,
         state.gateway.credential_store.as_ref(),
@@ -2745,10 +2752,77 @@ async fn ws_upgrade_handler(
             state.methods,
             addr,
             accept_language,
+            remote_ip,
             header_authenticated,
         )
     })
     .into_response()
+}
+
+/// Extract the client IP from proxy headers, falling back to the direct connection address.
+fn extract_ws_client_ip(
+    headers: &axum::http::HeaderMap,
+    conn_addr: std::net::SocketAddr,
+) -> Option<String> {
+    // X-Forwarded-For (may contain multiple IPs — take the leftmost/client IP)
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
+        && let Some(first_ip) = xff.split(',').next()
+    {
+        let ip = first_ip.trim();
+        if !ip.is_empty() {
+            return Some(ip.to_string());
+        }
+    }
+
+    // X-Real-IP (common with nginx)
+    if let Some(xri) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let ip = xri.trim();
+        if !ip.is_empty() {
+            return Some(ip.to_string());
+        }
+    }
+
+    // CF-Connecting-IP (Cloudflare)
+    if let Some(cf_ip) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+    {
+        let ip = cf_ip.trim();
+        if !ip.is_empty() {
+            return Some(ip.to_string());
+        }
+    }
+
+    Some(conn_addr.ip().to_string())
+}
+
+/// Returns `true` if the IP string parses to a public (non-private, non-loopback) address.
+fn is_public_ip(ip: &str) -> bool {
+    use std::net::IpAddr;
+    let Ok(addr) = ip.parse::<IpAddr>() else {
+        return false;
+    };
+    match addr {
+        IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                // 100.64.0.0/10 (CGNAT)
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+                // 192.0.0.0/24
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0))
+        },
+        IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                // fc00::/7 (unique local)
+                || (v6.segments()[0] & 0xFE00) == 0xFC00
+                // fe80::/10 (link-local)
+                || (v6.segments()[0] & 0xFFC0) == 0xFE80)
+        },
+    }
 }
 
 async fn websocket_header_authenticated(

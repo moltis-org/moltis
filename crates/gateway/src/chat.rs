@@ -616,6 +616,11 @@ async fn build_prompt_runtime_context(
 
     let ((sudo_non_interactive, sudo_status), sandbox_ctx) = tokio::join!(sudo_fut, sandbox_fut);
 
+    let timezone = state
+        .sandbox_router
+        .as_ref()
+        .and_then(|r| r.config().timezone.clone());
+
     let host_ctx = PromptHostRuntimeContext {
         host: Some(state.hostname.clone()),
         os: Some(std::env::consts::OS.to_string()),
@@ -626,6 +631,8 @@ async fn build_prompt_runtime_context(
         session_key: Some(session_key.to_string()),
         sudo_non_interactive,
         sudo_status,
+        timezone,
+        ..Default::default()
     };
 
     PromptRuntimeContext {
@@ -1753,13 +1760,27 @@ impl ChatService for LiveChatService {
             .as_ref()
             .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
-        let runtime_context = build_prompt_runtime_context(
+        let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
             &session_key,
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.host.accept_language = params
+            .get("_accept_language")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        runtime_context.host.remote_ip = params
+            .get("_remote_ip")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if runtime_context.host.timezone.is_none() {
+            runtime_context.host.timezone = params
+                .get("_timezone")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
@@ -2868,13 +2889,27 @@ impl ChatService for LiveChatService {
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
-        let runtime_context = build_prompt_runtime_context(
+        let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
             &session_key,
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.host.accept_language = params
+            .get("_accept_language")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        runtime_context.host.remote_ip = params
+            .get("_remote_ip")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if runtime_context.host.timezone.is_none() {
+            runtime_context.host.timezone = params
+                .get("_timezone")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
 
         // Resolve project context.
         let project_context = self
@@ -2983,13 +3018,27 @@ impl ChatService for LiveChatService {
 
         // Build runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
-        let runtime_context = build_prompt_runtime_context(
+        let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
             &session_key,
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.host.accept_language = params
+            .get("_accept_language")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        runtime_context.host.remote_ip = params
+            .get("_remote_ip")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if runtime_context.host.timezone.is_none() {
+            runtime_context.host.timezone = params
+                .get("_timezone")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
 
         // Resolve project context.
         let project_context = self

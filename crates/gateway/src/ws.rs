@@ -36,11 +36,12 @@ pub async fn handle_connection(
     methods: Arc<MethodRegistry>,
     remote_addr: SocketAddr,
     accept_language: Option<String>,
+    remote_ip: Option<String>,
     header_authenticated: bool,
 ) {
     let conn_id = uuid::Uuid::new_v4().to_string();
-    let remote_ip = remote_addr.ip().to_string();
-    info!(conn_id = %conn_id, remote_ip = %remote_ip, "ws: new connection");
+    let conn_remote_ip = remote_addr.ip().to_string();
+    info!(conn_id = %conn_id, remote_ip = %conn_remote_ip, "ws: new connection");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (client_tx, mut client_rx) = mpsc::unbounded_channel::<String>();
@@ -115,7 +116,7 @@ pub async fn handle_connection(
     }
 
     // ── Auth validation ──────────────────────────────────────────────────
-    let is_loopback = auth::is_loopback(&remote_ip);
+    let is_loopback = auth::is_loopback(&conn_remote_ip);
 
     // Try credential-store auth first (API key, password hash), then fall
     // back to legacy env-var auth.
@@ -156,7 +157,7 @@ pub async fn handle_connection(
                 &state.auth,
                 provided_token,
                 provided_password,
-                Some(&remote_ip),
+                Some(&conn_remote_ip),
             );
             if auth_result.ok {
                 authenticated = true;
@@ -258,6 +259,26 @@ pub async fn handle_connection(
     let mut resolved_params = params.clone();
     resolved_params.scopes = Some(scopes.clone());
     resolved_params.role = Some(role.clone());
+    let browser_timezone = params.timezone.clone();
+
+    // Auto-persist browser timezone to USER.md on first connect (one-time).
+    if let Some(ref tz) = browser_timezone {
+        let existing_user = moltis_config::load_user();
+        if existing_user
+            .as_ref()
+            .and_then(|u| u.timezone.as_ref())
+            .is_none()
+        {
+            let mut user = existing_user.unwrap_or_default();
+            user.timezone = Some(tz.clone());
+            if let Err(e) = moltis_config::save_user(&user) {
+                warn!(conn_id = %conn_id, error = %e, "ws: failed to auto-persist timezone");
+            } else {
+                info!(conn_id = %conn_id, timezone = %tz, "ws: auto-persisted browser timezone to USER.md");
+            }
+        }
+    }
+
     let client = ConnectedClient {
         conn_id: conn_id.clone(),
         connect_params: resolved_params,
@@ -265,6 +286,8 @@ pub async fn handle_connection(
         connected_at: now,
         last_activity: now,
         accept_language,
+        remote_ip,
+        timezone: browser_timezone,
     };
     state.register_client(client).await;
 
@@ -292,7 +315,7 @@ pub async fn handle_connection(
             commands,
             permissions,
             path_env: params.path_env.clone(),
-            remote_ip: Some(remote_ip.clone()),
+            remote_ip: Some(conn_remote_ip.clone()),
             connected_at: now,
         };
         state.nodes.write().await.register(node);

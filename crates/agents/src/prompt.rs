@@ -16,6 +16,9 @@ pub struct PromptHostRuntimeContext {
     pub session_key: Option<String>,
     pub sudo_non_interactive: Option<bool>,
     pub sudo_status: Option<String>,
+    pub timezone: Option<String>,
+    pub accept_language: Option<String>,
+    pub remote_ip: Option<String>,
 }
 
 /// Runtime context for sandbox execution routing used by the `exec` tool.
@@ -347,6 +350,13 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         parts.push(format!("sudo_non_interactive={v}"));
     }
     push_str(&mut parts, "sudo_status", host.sudo_status.as_deref());
+    push_str(&mut parts, "timezone", host.timezone.as_deref());
+    push_str(
+        &mut parts,
+        "accept_language",
+        host.accept_language.as_deref(),
+    );
+    push_str(&mut parts, "remote_ip", host.remote_ip.as_deref());
 
     if parts.is_empty() {
         None
@@ -637,6 +647,9 @@ mod tests {
                 session_key: Some("main".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
+                timezone: Some("Europe/Paris".into()),
+                accept_language: Some("en-US,fr;q=0.9".into()),
+                remote_ip: Some("203.0.113.42".into()),
             },
             sandbox: Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: true,
@@ -669,6 +682,9 @@ mod tests {
         assert!(prompt.contains("model=gpt-5"));
         assert!(prompt.contains("sudo_non_interactive=true"));
         assert!(prompt.contains("sudo_status=passwordless"));
+        assert!(prompt.contains("timezone=Europe/Paris"));
+        assert!(prompt.contains("accept_language=en-US,fr;q=0.9"));
+        assert!(prompt.contains("remote_ip=203.0.113.42"));
         assert!(prompt.contains("Sandbox(exec): enabled=true"));
         assert!(prompt.contains("backend=docker"));
         assert!(prompt.contains("network=disabled"));

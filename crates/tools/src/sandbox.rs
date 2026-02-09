@@ -284,6 +284,8 @@ pub struct SandboxConfig {
     /// Packages to install via `apt-get` after container creation.
     /// Set to an empty list to skip provisioning.
     pub packages: Vec<String>,
+    /// IANA timezone (e.g. "Europe/Paris") injected as `TZ` env var into containers.
+    pub timezone: Option<String>,
 }
 
 impl Default for SandboxConfig {
@@ -298,6 +300,7 @@ impl Default for SandboxConfig {
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
             packages: Vec::new(),
+            timezone: None,
         }
     }
 }
@@ -330,6 +333,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 pids_max: cfg.resource_limits.pids_max,
             },
             packages: cfg.packages.clone(),
+            timezone: None, // Set by gateway from user profile
         }
     }
 }
@@ -664,6 +668,10 @@ impl Sandbox for DockerSandbox {
 
         if self.config.no_network {
             args.push("--network=none".to_string());
+        }
+
+        if let Some(ref tz) = self.config.timezone {
+            args.extend(["-e".to_string(), format!("TZ={tz}")]);
         }
 
         args.extend(self.resource_args());
@@ -1066,15 +1074,22 @@ impl Sandbox for AppleContainerSandbox {
         // Must pass `sleep infinity` so the container stays alive for subsequent
         // exec calls (the default entrypoint /bin/bash exits immediately without a TTY).
         info!(name, image, "creating apple container");
-        let args = vec![
+        let mut args = vec![
             "run".to_string(),
             "-d".to_string(),
             "--name".to_string(),
             name.clone(),
+        ];
+
+        if let Some(ref tz) = self.config.timezone {
+            args.extend(["-e".to_string(), format!("TZ={tz}")]);
+        }
+
+        args.extend([
             image.to_string(),
             "sleep".to_string(),
             "infinity".to_string(),
-        ];
+        ]);
 
         let output = tokio::process::Command::new("container")
             .args(&args)

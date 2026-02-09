@@ -1796,15 +1796,20 @@ impl MethodRegistry {
                 Box::pin(async move {
                     let mut params = ctx.params.clone();
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
-                    // Forward client Accept-Language to web tools.
-                    let accept_language = {
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
                         let clients = ctx.state.clients.read().await;
-                        clients
-                            .get(&ctx.client_conn_id)
-                            .and_then(|c| c.accept_language.clone())
-                    };
-                    if let Some(lang) = accept_language {
-                        params["_accept_language"] = serde_json::json!(lang);
+                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
                     }
                     ctx.state
                         .chat()
@@ -1922,6 +1927,21 @@ impl MethodRegistry {
                 Box::pin(async move {
                     let mut params = ctx.params.clone();
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
+                        let clients = ctx.state.clients.read().await;
+                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
+                    }
                     ctx.state
                         .chat()
                         .await
@@ -1938,6 +1958,21 @@ impl MethodRegistry {
                 Box::pin(async move {
                     let mut params = ctx.params.clone();
                     params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    // Forward client Accept-Language, public remote IP, and timezone.
+                    {
+                        let clients = ctx.state.clients.read().await;
+                        if let Some(client) = clients.get(&ctx.client_conn_id) {
+                            if let Some(ref lang) = client.accept_language {
+                                params["_accept_language"] = serde_json::json!(lang);
+                            }
+                            if let Some(ref ip) = client.remote_ip {
+                                params["_remote_ip"] = serde_json::json!(ip);
+                            }
+                            if let Some(ref tz) = client.timezone {
+                                params["_timezone"] = serde_json::json!(tz);
+                            }
+                        }
+                    }
                     ctx.state
                         .chat()
                         .await
