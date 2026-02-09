@@ -79,23 +79,34 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
+function moveFirstQueuedToChat() {
+	var tray = document.getElementById("queuedMessages");
+	if (!tray || tray.hasAttribute("data-moving")) return;
+	var firstQueued = tray.querySelector(".msg.user.queued");
+	if (!firstQueued) return;
+	tray.setAttribute("data-moving", "true");
+	console.debug("[queued] moving queued message from tray to chat", {
+		remaining: tray.querySelectorAll(".msg").length - 1,
+	});
+	firstQueued.classList.remove("queued");
+	var badge = firstQueued.querySelector(".queued-badge");
+	if (badge) badge.remove();
+	S.chatMsgBox.appendChild(firstQueued);
+	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
+}
+
+function clearQueueMovingFlag() {
+	var tray = document.getElementById("queuedMessages");
+	if (tray) tray.removeAttribute("data-moving");
+}
+
 function handleChatThinking(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	// Move the first queued message from the tray into the main chat flow.
-	var tray = document.getElementById("queuedMessages");
-	if (tray) {
-		var firstQueued = tray.querySelector(".msg.user.queued");
-		if (firstQueued) {
-			console.debug("[queued] thinking: moving queued message from tray to chat", {
-				remaining: tray.querySelectorAll(".msg").length - 1,
-			});
-			firstQueued.classList.remove("queued");
-			var badge = firstQueued.querySelector(".queued-badge");
-			if (badge) badge.remove();
-			S.chatMsgBox.appendChild(firstQueued);
-			if (!tray.querySelector(".msg")) tray.classList.add("hidden");
-		}
-	}
+	// Move the first queued message from the tray on the first thinking
+	// event of a run. The data-moving flag prevents subsequent thinking
+	// events (multi-iteration runs with tool calls) from moving additional
+	// messages. The flag is cleared by handleChatFinal.
+	moveFirstQueuedToChat();
 	removeThinking();
 	var thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
@@ -305,8 +316,12 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	}
 	if (!(isActive && isChatPage)) {
 		S.setVoicePending(false);
+		clearQueueMovingFlag();
 		return;
 	}
+	// If thinking never fired (silent/fast response), move the queued
+	// message now as a fallback so it appears before the LLM response.
+	moveFirstQueuedToChat();
 	removeThinking();
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
@@ -367,6 +382,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	S.setLastToolOutput("");
 	S.setVoicePending(false);
 	maybeRefreshFullContext();
+	clearQueueMovingFlag();
 }
 
 function handleChatAutoCompact(p, isActive, isChatPage) {
