@@ -35,6 +35,19 @@ impl TelegramOutbound {
             .map(|s| s.bot.clone())
             .ok_or_else(|| anyhow::anyhow!("unknown account: {account_id}"))
     }
+
+    /// Build reply parameters only when `reply_to_message` is enabled for this account.
+    fn reply_params(&self, account_id: &str, reply_to: Option<&str>) -> Option<ReplyParameters> {
+        let accounts = self.accounts.read().unwrap();
+        let enabled = accounts
+            .get(account_id)
+            .is_some_and(|s| s.config.reply_to_message);
+        if enabled {
+            parse_reply_params(reply_to)
+        } else {
+            None
+        }
+    }
 }
 
 /// Parse a platform message ID string into Telegram `ReplyParameters`.
@@ -56,7 +69,7 @@ impl ChannelOutbound for TelegramOutbound {
     ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
-        let rp = parse_reply_params(reply_to);
+        let rp = self.reply_params(account_id, reply_to);
 
         // Send typing indicator
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
@@ -71,6 +84,68 @@ impl ChannelOutbound for TelegramOutbound {
                 && let Some(ref rp) = rp
             {
                 req = req.reply_parameters(rp.clone());
+            }
+            req.await?;
+        }
+
+        Ok(())
+    }
+
+    async fn send_text_with_suffix(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let bot = self.get_bot(account_id)?;
+        let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send typing indicator
+        let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+
+        let html = markdown::markdown_to_telegram_html(text);
+
+        // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
+        let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
+        let last_idx = chunks.len().saturating_sub(1);
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let content = if i == last_idx {
+                // Append suffix to the last chunk. If it would exceed the limit,
+                // the suffix becomes a separate final message.
+                let combined = format!("{chunk}\n\n{suffix_html}");
+                if combined.len() <= TELEGRAM_MAX_MESSAGE_LEN {
+                    combined
+                } else {
+                    // Send this chunk first, then the suffix as a separate message.
+                    let mut req =
+                        bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
+                    if i == 0 {
+                        if let Some(ref rp) = rp {
+                            req = req.reply_parameters(rp.clone());
+                        }
+                    }
+                    req.await?;
+                    // Send suffix as the final message (no reply threading).
+                    bot.send_message(chat_id, suffix_html)
+                        .parse_mode(ParseMode::Html)
+                        .disable_notification(true)
+                        .await?;
+                    return Ok(());
+                }
+            } else {
+                chunk.clone()
+            };
+            let mut req = bot
+                .send_message(chat_id, &content)
+                .parse_mode(ParseMode::Html);
+            if i == 0 {
+                if let Some(ref rp) = rp {
+                    req = req.reply_parameters(rp.clone());
+                }
             }
             req.await?;
         }
@@ -94,7 +169,7 @@ impl ChannelOutbound for TelegramOutbound {
     ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
-        let rp = parse_reply_params(reply_to);
+        let rp = self.reply_params(account_id, reply_to);
 
         let html = markdown::markdown_to_telegram_html(text);
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
@@ -124,7 +199,7 @@ impl ChannelOutbound for TelegramOutbound {
     ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
-        let rp = parse_reply_params(reply_to);
+        let rp = self.reply_params(account_id, reply_to);
 
         if let Some(ref media) = payload.media {
             // Handle base64 data URIs (e.g., "data:image/png;base64,...")

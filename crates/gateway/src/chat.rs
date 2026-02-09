@@ -4300,6 +4300,8 @@ async fn deliver_channel_replies(
         Some(o) => o,
         None => return,
     };
+    // Drain buffered status log entries to build a logbook suffix.
+    let status_log = state.drain_channel_status_log(session_key).await;
     deliver_channel_replies_to_targets(
         outbound,
         targets,
@@ -4307,8 +4309,28 @@ async fn deliver_channel_replies(
         text,
         Arc::clone(state),
         desired_reply_medium,
+        status_log,
     )
     .await;
+}
+
+/// Format buffered status log entries into a Telegram expandable blockquote HTML.
+/// Returns an empty string if there are no entries.
+fn format_logbook_html(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut html = String::from("<blockquote expandable>\n\u{1f4cb} <b>Activity log</b>\n");
+    for entry in entries {
+        // Escape HTML entities in the entry text.
+        let escaped = entry
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        html.push_str(&format!("\u{2022} {escaped}\n"));
+    }
+    html.push_str("</blockquote>");
+    html
 }
 
 async fn deliver_channel_replies_to_targets(
@@ -4318,15 +4340,18 @@ async fn deliver_channel_replies_to_targets(
     text: &str,
     state: Arc<GatewayState>,
     desired_reply_medium: ReplyMedium,
+    status_log: Vec<String>,
 ) {
     let session_key = session_key.to_string();
     let text = text.to_string();
+    let logbook_html = format_logbook_html(&status_log);
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let state = Arc::clone(&state);
         let session_key = session_key.clone();
         let text = text.clone();
+        let logbook_html = logbook_html.clone();
         tasks.push(tokio::spawn(async move {
             let tts_payload = match desired_reply_medium {
                 ReplyMedium::Voice => build_tts_payload(&state, &session_key, &target, &text).await,
@@ -4348,10 +4373,22 @@ async fn deliver_channel_replies_to_targets(
                         }
                     },
                     None => {
-                        if let Err(e) = outbound
-                            .send_text(&target.account_id, &target.chat_id, &text, reply_to)
-                            .await
-                        {
+                        let result = if logbook_html.is_empty() {
+                            outbound
+                                .send_text(&target.account_id, &target.chat_id, &text, reply_to)
+                                .await
+                        } else {
+                            outbound
+                                .send_text_with_suffix(
+                                    &target.account_id,
+                                    &target.chat_id,
+                                    &text,
+                                    &logbook_html,
+                                    reply_to,
+                                )
+                                .await
+                        };
+                        if let Err(e) = result {
                             warn!(
                                 account_id = target.account_id,
                                 chat_id = target.chat_id,
@@ -4507,8 +4544,9 @@ async fn build_tts_payload(
     })
 }
 
-/// Send a tool execution status to all pending channel targets for a session.
-/// Uses `peek_channel_replies` so targets remain for the final text response.
+/// Buffer a tool execution status into the channel status log for a session.
+/// The buffered entries are appended as a collapsible logbook when the final
+/// response is delivered, instead of being sent as separate messages.
 async fn send_tool_status_to_channels(
     state: &Arc<GatewayState>,
     session_key: &str,
@@ -4520,54 +4558,11 @@ async fn send_tool_status_to_channels(
         return;
     }
 
-    let outbound = match state.services.channel_outbound_arc() {
-        Some(o) => o,
-        None => return,
-    };
-
-    // Format a concise tool execution message
+    // Buffer the status message for the logbook
     let message = format_tool_status_message(tool_name, arguments);
-
-    for target in targets {
-        let outbound = Arc::clone(&outbound);
-        let message = message.clone();
-        tokio::spawn(async move {
-            // Send as a silent message to avoid notification spam
-            if let Err(e) = outbound
-                .send_text_silent(
-                    &target.account_id,
-                    &target.chat_id,
-                    &message,
-                    target.message_id.as_deref(),
-                )
-                .await
-            {
-                debug!(
-                    account_id = target.account_id,
-                    chat_id = target.chat_id,
-                    "failed to send tool status to channel: {e}"
-                );
-            } else {
-                // Re-send typing indicator after status message
-                // (sending a message clears the typing indicator in Telegram)
-                debug!(
-                    account_id = target.account_id,
-                    chat_id = target.chat_id,
-                    "sent tool status, re-sending typing indicator"
-                );
-                if let Err(e) = outbound
-                    .send_typing(&target.account_id, &target.chat_id)
-                    .await
-                {
-                    debug!(
-                        account_id = target.account_id,
-                        chat_id = target.chat_id,
-                        "failed to re-send typing after tool status: {e}"
-                    );
-                }
-            }
-        });
-    }
+    state
+        .push_channel_status_log(session_key, message)
+        .await;
 }
 
 /// Format a human-readable tool execution message.
@@ -4866,6 +4861,7 @@ mod tests {
             "hello",
             state,
             ReplyMedium::Text,
+            Vec::new(),
         )
         .await;
 
@@ -5599,5 +5595,48 @@ mod tests {
             },
             _ => panic!("expected Multimodal variant"),
         }
+    }
+
+    // ── Logbook formatting tests ─────────────────────────────────────────
+
+    #[test]
+    fn format_logbook_html_empty_entries() {
+        assert_eq!(format_logbook_html(&[]), "");
+    }
+
+    #[test]
+    fn format_logbook_html_single_entry() {
+        let entries = vec!["Using Claude Sonnet 4.5. Use /model to change.".to_string()];
+        let html = format_logbook_html(&entries);
+        assert!(html.starts_with("<blockquote expandable>"));
+        assert!(html.ends_with("</blockquote>"));
+        assert!(html.contains("\u{1f4cb} <b>Activity log</b>"));
+        assert!(html.contains("\u{2022} Using Claude Sonnet 4.5. Use /model to change."));
+    }
+
+    #[test]
+    fn format_logbook_html_multiple_entries() {
+        let entries = vec![
+            "Using Claude Sonnet 4.5. Use /model to change.".to_string(),
+            "\u{1f50d} Searching: rust async patterns".to_string(),
+            "\u{1f4bb} Running: `ls -la`".to_string(),
+        ];
+        let html = format_logbook_html(&entries);
+        // Verify all entries are present as bullet points.
+        for entry in &entries {
+            let escaped = entry.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            assert!(
+                html.contains(&format!("\u{2022} {escaped}")),
+                "missing entry: {entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_logbook_html_escapes_html_entities() {
+        let entries = vec!["Running: `echo <script>alert(1)</script>`".to_string()];
+        let html = format_logbook_html(&entries);
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
     }
 }

@@ -261,6 +261,20 @@ pub trait ChannelOutbound: Send + Sync {
     async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
         Ok(())
     }
+    /// Send a text message with a pre-formatted HTML suffix appended after the main
+    /// content. Used to attach a collapsible activity logbook to channel replies.
+    /// The default implementation ignores the suffix and calls `send_text`.
+    async fn send_text_with_suffix(
+        &self,
+        account_id: &str,
+        to: &str,
+        text: &str,
+        suffix_html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let _ = suffix_html;
+        self.send_text(account_id, to, text, reply_to).await
+    }
     /// Send a text message without notification (silent). Falls back to send_text by default.
     async fn send_text_silent(
         &self,
