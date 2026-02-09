@@ -1857,6 +1857,8 @@ pub trait ProviderSetupService: Send + Sync {
     /// Validate provider credentials without persisting them.
     /// Returns `{ valid: true, models: [...] }` or `{ valid: false, error: "..." }`.
     async fn validate_key(&self, params: Value) -> ServiceResult;
+    /// Save model preference for a configured provider (without changing credentials).
+    async fn save_model(&self, params: Value) -> ServiceResult;
 }
 
 // ── Local LLM ───────────────────────────────────────────────────────────────
@@ -1942,6 +1944,10 @@ impl ProviderSetupService for NoopProviderSetupService {
     }
 
     async fn validate_key(&self, _p: Value) -> ServiceResult {
+        Err("provider setup not configured".into())
+    }
+
+    async fn save_model(&self, _p: Value) -> ServiceResult {
         Err("provider setup not configured".into())
     }
 }

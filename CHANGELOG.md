@@ -18,8 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`providers.validate_key` RPC method**: Test provider credentials without
   saving them — builds a temporary registry, probes with a "ping" message, and
   returns validation status with available models.
+- **`providers.save_model` RPC method**: Save the preferred model for any
+  configured provider without changing credentials.
 - **`models.test` RPC method**: Test a single model from the live registry with
   a real LLM request before committing to it.
+- **Model selection for auto-detected providers**: The Providers settings page
+  now shows a "Select Model" button for providers that have available models but
+  no preferred model set. This lets users pick their favorite model for
+  auto-detected providers (e.g. OpenAI Codex detected from `~/.codex/auth.json`).
 
 ### Changed
 

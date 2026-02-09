@@ -406,6 +406,8 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
+				// Persist model preference for the provider.
+				await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
 				localStorage.setItem("moltis-model", selectedModelId);
 			}
 
@@ -553,6 +555,50 @@ function showOAuthModelSelector(provider) {
 			status.textContent = `${provider.displayName} connected successfully!`;
 			modal.body.appendChild(status);
 			setTimeout(closeProviderModal, 1500);
+		}
+	});
+}
+
+// ── Model selector for existing providers ─────────────────
+
+export function openModelSelectorForProvider(providerName, providerDisplayName) {
+	var m = els();
+	m.modal.classList.remove("hidden");
+	m.title.textContent = `${providerDisplayName} — Select Model`;
+	m.body.textContent = "Loading models...";
+
+	sendRpc("models.list", {}).then((modelsRes) => {
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		var provModels = allModels.filter((entry) =>
+			entry.provider?.toLowerCase().includes(providerName.replace(/-/g, "").toLowerCase()),
+		);
+
+		if (provModels.length > 0) {
+			var mapped = provModels.map((entry) => ({
+				id: entry.id,
+				displayName: entry.displayName || entry.id,
+				provider: entry.provider,
+				supportsTools: entry.supportsTools,
+			}));
+			var providerObj = { name: providerName, displayName: providerDisplayName };
+			showModelSelector(providerObj, mapped, null, null, null, true);
+		} else {
+			m.body.textContent = "";
+			var wrapper = document.createElement("div");
+			wrapper.className = "provider-key-form";
+			var msg = document.createElement("div");
+			msg.className = "text-xs text-[var(--muted)] py-4 text-center";
+			msg.textContent = "No models available yet. Try running Detect All Models first.";
+			wrapper.appendChild(msg);
+			var btns = document.createElement("div");
+			btns.className = "btn-row mt-3";
+			var closeBtn = document.createElement("button");
+			closeBtn.className = "provider-btn provider-btn-secondary";
+			closeBtn.textContent = "Close";
+			closeBtn.addEventListener("click", closeProviderModal);
+			btns.appendChild(closeBtn);
+			wrapper.appendChild(btns);
+			m.body.appendChild(wrapper);
 		}
 	});
 }

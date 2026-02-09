@@ -8,13 +8,14 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { fetchModels } from "./models.js";
 import { updateNavCount } from "./nav-counts.js";
-import { openProviderModal } from "./providers.js";
+import { openModelSelectorForProvider, openProviderModal } from "./providers.js";
 import { registerPage } from "./router.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
 
 var configuredModels = signal([]);
+var providerMetaSig = signal(new Map());
 var loading = signal(false);
 var detectingModels = signal(false);
 var detectSummary = signal(null);
@@ -84,6 +85,7 @@ function fetchProviders() {
 					providerMeta.set(providerMetaEntry.name, providerMetaEntry);
 				}
 			}
+			providerMetaSig.value = providerMeta;
 
 			var models = [];
 			if (modelsRes?.ok) {
@@ -152,7 +154,7 @@ async function runDetectAllModels() {
 	}
 }
 
-function groupProviderRows(models) {
+function groupProviderRows(models, metaMap) {
 	var groups = new Map();
 	for (var row of models) {
 		var key = row.provider;
@@ -161,6 +163,7 @@ function groupProviderRows(models) {
 				provider: key,
 				providerDisplayName: row.providerDisplayName || row.displayName || key,
 				authType: row.authType || "api-key",
+				selectedModel: metaMap?.get(key)?.model || null,
 				models: [],
 			});
 		}
@@ -227,6 +230,12 @@ function ProviderSection(props) {
 		});
 	}
 
+	var hasModelsNoSelection = group.models.length > 0 && !group.selectedModel;
+
+	function onSelectModel() {
+		openModelSelectorForProvider(group.provider, group.providerDisplayName);
+	}
+
 	return html`<div class="max-w-form py-1">
 		<div class="flex items-center justify-between gap-3">
 			<div class="flex items-center gap-2 min-w-0">
@@ -235,7 +244,8 @@ function ProviderSection(props) {
 					${group.authType === "oauth" ? "OAuth" : group.authType === "local" ? "Local" : "API Key"}
 				</span>
 			</div>
-			<div class="shrink-0">
+			<div class="flex gap-2 shrink-0">
+				${hasModelsNoSelection ? html`<button class="provider-btn provider-btn-sm" onClick=${onSelectModel}>Select Model</button>` : null}
 				<button
 					class="provider-btn provider-btn-danger provider-btn-sm"
 					disabled=${deletingProvider.value === group.provider}
@@ -342,7 +352,7 @@ function ProvidersPage() {
 						: configuredModels.value.length === 0
 							? html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No providers configured yet.</div>`
 							: html`<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
-								${groupProviderRows(configuredModels.value).map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
+								${groupProviderRows(configuredModels.value, providerMetaSig.value).map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
 							</div>`
 				}
 

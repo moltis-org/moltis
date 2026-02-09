@@ -127,6 +127,7 @@ const WRITE_METHODS: &[&str] = &[
     "models.detect_supported",
     "models.test",
     "providers.save_key",
+    "providers.save_model",
     "providers.validate_key",
     "providers.remove_key",
     "providers.oauth.start",
@@ -3096,6 +3097,19 @@ impl MethodRegistry {
                     });
 
                     Ok(result)
+                })
+            }),
+        );
+        self.register(
+            "providers.save_model",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .provider_setup
+                        .save_model(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
             }),
         );

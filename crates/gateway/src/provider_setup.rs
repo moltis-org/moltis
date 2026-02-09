@@ -1446,6 +1446,33 @@ impl ProviderSetupService for LiveProviderSetupService {
             })),
         }
     }
+
+    async fn save_model(&self, params: Value) -> ServiceResult {
+        let provider_name = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'provider' parameter".to_string())?;
+
+        let model = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'model' parameter".to_string())?;
+
+        // Validate provider exists.
+        let known = known_providers();
+        if !known.iter().any(|p| p.name == provider_name) {
+            return Err(format!("unknown provider: {provider_name}"));
+        }
+
+        self.key_store
+            .save_config(provider_name, None, None, Some(model.to_string()))?;
+
+        info!(
+            provider = provider_name,
+            model, "saved model preference for provider"
+        );
+        Ok(serde_json::json!({ "ok": true }))
+    }
 }
 
 #[cfg(test)]
