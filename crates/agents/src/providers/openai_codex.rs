@@ -45,7 +45,7 @@ impl OpenAiCodexProvider {
         }
     }
 
-    fn get_valid_token(&self) -> anyhow::Result<String> {
+    async fn get_valid_token(&self) -> anyhow::Result<String> {
         let tokens = self
             .token_store
             .load("openai-codex")
@@ -66,12 +66,11 @@ impl OpenAiCodexProvider {
                 // Token expired or expiring — try refresh
                 if let Some(ref refresh_token) = tokens.refresh_token {
                     debug!("refreshing openai-codex token");
-                    let rt = tokio::runtime::Handle::current();
                     let oauth_config = load_oauth_config("openai-codex")
                         .ok_or_else(|| anyhow::anyhow!("missing oauth config for openai-codex"))?;
                     let flow = OAuthFlow::new(oauth_config);
                     let refresh = refresh_token.expose_secret().clone();
-                    let new_tokens = std::thread::scope(|_| rt.block_on(flow.refresh(&refresh)))?;
+                    let new_tokens = flow.refresh(&refresh).await?;
                     self.token_store.save("openai-codex", &new_tokens)?;
                     return Ok(new_tokens.access_token.expose_secret().clone());
                 }
@@ -485,7 +484,7 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let token = self.get_valid_token()?;
+        let token = self.get_valid_token().await?;
         let account_id = Self::extract_account_id(&token)?;
 
         // Extract system message as instructions; pass the rest as input
@@ -651,7 +650,7 @@ impl LlmProvider for OpenAiCodexProvider {
             "stream_with_tools entry (before async_stream)"
         );
         Box::pin(async_stream::stream! {
-            let token = match self.get_valid_token() {
+            let token = match self.get_valid_token().await {
                 Ok(t) => t,
                 Err(e) => {
                     yield StreamEvent::Error(e.to_string());

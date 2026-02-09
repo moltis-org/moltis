@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-09
+
+### Fixed
+
+- **OpenAI Codex token refresh panic**: Made `get_valid_token()` async to fix
+  `block_on` inside async runtime panic when refreshing expired OAuth tokens.
+
 ## [0.3.0] - 2026-02-08
 
 ### Added
