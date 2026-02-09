@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-02-09
+## [0.3.2] - 2026-02-09
 
 ### Fixed
 
 - **OpenAI Codex token refresh panic**: Made `get_valid_token()` async to fix
   `block_on` inside async runtime panic when refreshing expired OAuth tokens.
+- **Channel session binding**: Ensure session row exists before setting channel
+  binding, fixing `get_user_location` failures on first Telegram message.
+- **Cargo.lock sync**: Lock file now matches workspace version.
 
 ## [0.3.0] - 2026-02-08
 
