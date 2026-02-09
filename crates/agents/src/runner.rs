@@ -41,6 +41,30 @@ fn is_context_window_error(msg: &str) -> bool {
     CONTEXT_WINDOW_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
+/// Error patterns that indicate a transient server error worth retrying.
+const RETRYABLE_PATTERNS: &[&str] = &[
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 529",
+    "server_error",
+    "internal server error",
+    "overloaded",
+    "bad gateway",
+    "service unavailable",
+    "the server had an error processing your request",
+];
+
+/// Check if an error looks like a transient provider failure that may
+/// succeed on retry (5xx, overloaded, etc.).
+fn is_retryable_server_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    RETRYABLE_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// Delay before retrying a failed LLM call.
+const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Typed errors from the agent loop.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentRunError {
@@ -99,6 +123,8 @@ pub enum RunnerEvent {
         iterations: usize,
         tool_calls_made: usize,
     },
+    /// A transient LLM error occurred and the runner will retry.
+    RetryingAfterError(String),
 }
 
 /// Try to parse a tool call from the LLM's text response.
@@ -455,6 +481,7 @@ pub async fn run_agent_loop_with_context(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
+    let mut retries_remaining: u8 = 1;
 
     loop {
         iterations += 1;
@@ -480,16 +507,31 @@ pub async fn run_agent_loop_with_context(
             cb(RunnerEvent::Thinking);
         }
 
-        let mut response: CompletionResponse = provider
-            .complete(&messages, schemas_for_api)
-            .await
-            .map_err(|e| {
-                if is_context_window_error(&e.to_string()) {
-                    AgentRunError::ContextWindowExceeded(e.to_string())
-                } else {
-                    AgentRunError::Other(e)
-                }
-            })?;
+        let mut response: CompletionResponse =
+            match provider.complete(&messages, schemas_for_api).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if is_context_window_error(&msg) {
+                        return Err(AgentRunError::ContextWindowExceeded(msg));
+                    }
+                    if retries_remaining > 0 && is_retryable_server_error(&msg) {
+                        retries_remaining -= 1;
+                        iterations -= 1;
+                        warn!(
+                            error = %msg,
+                            retries_remaining,
+                            "transient LLM error, retrying after delay"
+                        );
+                        if let Some(cb) = on_event {
+                            cb(RunnerEvent::RetryingAfterError(msg));
+                        }
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        continue;
+                    }
+                    return Err(AgentRunError::Other(e));
+                },
+            };
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::ThinkingDone);
@@ -815,6 +857,7 @@ pub async fn run_agent_loop_streaming(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
+    let mut retries_remaining: u8 = 1;
 
     loop {
         iterations += 1;
@@ -952,10 +995,25 @@ pub async fn run_agent_loop_streaming(
             cb(RunnerEvent::ThinkingDone);
         }
 
-        // Handle stream error.
+        // Handle stream error — retry once on transient server failures.
         if let Some(err) = stream_error {
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
+            }
+            if retries_remaining > 0 && is_retryable_server_error(&err) {
+                retries_remaining -= 1;
+                // Don't count the failed attempt as an iteration.
+                iterations -= 1;
+                warn!(
+                    error = %err,
+                    retries_remaining,
+                    "transient LLM error, retrying after delay"
+                );
+                if let Some(cb) = on_event {
+                    cb(RunnerEvent::RetryingAfterError(err));
+                }
+                tokio::time::sleep(RETRY_DELAY).await;
+                continue;
             }
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
         }
@@ -2803,5 +2861,122 @@ mod tests {
             "second tool call args — got: {}",
             tool_starts[1]
         );
+    }
+
+    // ── Retry tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_retryable_server_error() {
+        assert!(is_retryable_server_error(
+            "openai-codex API error HTTP 500 Internal Server Error: {}"
+        ));
+        assert!(is_retryable_server_error(
+            "The server had an error processing your request."
+        ));
+        assert!(is_retryable_server_error("HTTP 502 Bad Gateway"));
+        assert!(is_retryable_server_error("HTTP 503 Service Unavailable"));
+        assert!(is_retryable_server_error("overloaded_error: server is overloaded"));
+        assert!(!is_retryable_server_error("context_length_exceeded"));
+        assert!(!is_retryable_server_error("invalid API key"));
+    }
+
+    /// Provider that fails with a 500 on the first call, succeeds on the second.
+    struct TransientFailProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for TransientFailProvider {
+        fn name(&self) -> &str {
+            "transient-fail"
+        }
+
+        fn id(&self) -> &str {
+            "transient-fail-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                bail!("HTTP 500 Internal Server Error: server_error")
+            } else {
+                Ok(CompletionResponse {
+                    text: Some("Recovered!".into()),
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::once(StreamEvent::Error(
+                    "HTTP 500 Internal Server Error: server_error".into(),
+                )))
+            } else {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Recovered!".into()),
+                    StreamEvent::Done(Usage::default()),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_transient_error_non_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(TransientFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let tools = ToolRegistry::new();
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retry: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered!");
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_transient_error_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(TransientFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let tools = ToolRegistry::new();
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retry: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered!");
     }
 }

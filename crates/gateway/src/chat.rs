@@ -28,7 +28,8 @@ use {
         multimodal::parse_data_uri,
         prompt::{
             PromptHostRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
-            build_system_prompt_minimal_runtime, build_system_prompt_with_session_runtime,
+            VOICE_REPLY_SUFFIX, build_system_prompt_minimal_runtime,
+            build_system_prompt_with_session_runtime,
         },
         providers::{ProviderRegistry, raw_model_id},
         runner::{RunnerEvent, run_agent_loop_streaming},
@@ -65,27 +66,25 @@ fn to_user_content(mc: &MessageContent) -> UserContent {
                 .iter()
                 .filter_map(|block| match block {
                     ContentBlock::Text { text } => Some(ContentPart::Text(text.clone())),
-                    ContentBlock::ImageUrl { image_url } => {
-                        match parse_data_uri(&image_url.url) {
-                            Some((media_type, data)) => {
-                                debug!(
-                                    media_type,
-                                    data_len = data.len(),
-                                    "to_user_content: parsed image from data URI"
-                                );
-                                Some(ContentPart::Image {
-                                    media_type: media_type.to_string(),
-                                    data: data.to_string(),
-                                })
-                            },
-                            None => {
-                                warn!(
-                                    url_prefix = &image_url.url[..image_url.url.len().min(80)],
-                                    "to_user_content: failed to parse data URI, dropping image"
-                                );
-                                None
-                            },
-                        }
+                    ContentBlock::ImageUrl { image_url } => match parse_data_uri(&image_url.url) {
+                        Some((media_type, data)) => {
+                            debug!(
+                                media_type,
+                                data_len = data.len(),
+                                "to_user_content: parsed image from data URI"
+                            );
+                            Some(ContentPart::Image {
+                                media_type: media_type.to_string(),
+                                data: data.to_string(),
+                            })
+                        },
+                        None => {
+                            warn!(
+                                url_prefix = &image_url.url[..image_url.url.len().min(80)],
+                                "to_user_content: failed to parse data URI, dropping image"
+                            );
+                            None
+                        },
                     },
                 })
                 .collect();
@@ -3384,6 +3383,13 @@ async fn run_with_tools(
         )
     };
 
+    // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
+    let system_prompt = if desired_reply_medium == ReplyMedium::Voice {
+        format!("{system_prompt}{VOICE_REPLY_SUFFIX}")
+    } else {
+        system_prompt
+    };
+
     // Determine if this session is sandboxed (for browser tool execution mode)
     let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
         router.is_sandboxed(session_key).await
@@ -3651,6 +3657,12 @@ async fn run_with_tools(
                     "depth": depth,
                     "iterations": iterations,
                     "toolCallsMade": tool_calls_made,
+                    "seq": seq,
+                }),
+                RunnerEvent::RetryingAfterError(_) => serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": sk,
+                    "state": "retrying",
                     "seq": seq,
                 }),
             };
@@ -3986,6 +3998,13 @@ async fn run_streaming(
         persona.tools_text.as_deref(),
         runtime_context,
     );
+
+    // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
+    let system_prompt = if desired_reply_medium == ReplyMedium::Voice {
+        format!("{system_prompt}{VOICE_REPLY_SUFFIX}")
+    } else {
+        system_prompt
+    };
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
@@ -4355,6 +4374,9 @@ async fn generate_tts_audio(
         return None;
     }
 
+    // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
+    let text = moltis_voice::tts::sanitize_text_for_tts(text);
+
     let session_override = {
         state
             .inner
@@ -4366,7 +4388,7 @@ async fn generate_tts_audio(
     };
 
     let request = TtsConvertRequest {
-        text,
+        text: &text,
         format: "ogg",
         provider: session_override.as_ref().and_then(|o| o.provider.clone()),
         voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
@@ -4400,6 +4422,9 @@ async fn build_tts_payload(
         return None;
     }
 
+    // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
+    let text = moltis_voice::tts::sanitize_text_for_tts(text);
+
     let channel_key = format!("{}:{}", target.channel_type.as_str(), target.account_id);
     let (channel_override, session_override) = {
         let inner = state.inner.read().await;
@@ -4411,7 +4436,7 @@ async fn build_tts_payload(
     let resolved = channel_override.or(session_override);
 
     let request = TtsConvertRequest {
-        text,
+        text: &text,
         format: "ogg",
         provider: resolved.as_ref().and_then(|o| o.provider.clone()),
         voice_id: resolved.as_ref().and_then(|o| o.voice_id.clone()),
