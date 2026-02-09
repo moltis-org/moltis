@@ -32,8 +32,8 @@ pub struct UploadQuery {
     pub prompt: Option<String>,
 }
 
-/// Maximum upload size: 25 MB.
-const MAX_UPLOAD_SIZE: usize = 25 * 1024 * 1024;
+/// Maximum upload size: 25 MB (also used as the route-level body limit).
+pub const MAX_UPLOAD_SIZE: usize = 25 * 1024 * 1024;
 
 /// `POST /api/sessions/{session_key}/upload`
 ///

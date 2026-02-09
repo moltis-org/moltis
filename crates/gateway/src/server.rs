@@ -462,7 +462,10 @@ fn build_protected_api_routes() -> Router<AppState> {
         )
         .route(
             "/api/sessions/{session_key}/upload",
-            axum::routing::post(crate::upload_routes::session_upload),
+            axum::routing::post(crate::upload_routes::session_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::upload_routes::MAX_UPLOAD_SIZE,
+                )),
         )
         .route(
             "/api/sessions/{session_key}/media/{filename}",
@@ -535,10 +538,9 @@ fn build_cors_layer() -> CorsLayer {
         .allow_headers(Any)
 }
 
-/// 25 MiB request body limit — matches the upload endpoint's `MAX_UPLOAD_SIZE`.
-/// Large enough for voice recordings and file uploads, small enough to prevent
-/// memory exhaustion from oversized payloads.
-const REQUEST_BODY_LIMIT: usize = 25 * 1024 * 1024;
+/// 16 MiB global request body limit — small enough to prevent memory exhaustion
+/// from oversized payloads. The upload endpoint has its own higher limit.
+const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
 /// Apply the full middleware stack to the router.
 ///
