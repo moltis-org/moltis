@@ -2,6 +2,7 @@
 members = [
   "crates/agents",
   "crates/auto-reply",
+  "crates/benchmarks",
   "crates/browser",
   "crates/canvas",
   "crates/channels",
