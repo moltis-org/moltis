@@ -110,14 +110,7 @@ function handleChatThinkingDone(_p, isActive, isChatPage) {
 function handleChatVoicePending(_p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	S.setVoicePending(true);
-	removeThinking();
-	var el = document.createElement("div");
-	el.className = "msg assistant thinking";
-	el.id = "voiceGeneratingIndicator";
-	var tpl = document.getElementById("tpl-voice-generating");
-	el.appendChild(tpl.content.cloneNode(true));
-	S.chatMsgBox.appendChild(el);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	// Keep the existing thinking dots visible — no separate voice indicator.
 }
 
 function handleChatToolCallStart(p, isActive, isChatPage) {
@@ -300,9 +293,6 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
-	// Remove voice-generating indicator if present
-	var voiceIndicator = document.getElementById("voiceGeneratingIndicator");
-	if (voiceIndicator) voiceIndicator.remove();
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
 		// Voice pending path: we suppressed streaming, so render everything at once.
@@ -380,8 +370,6 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
-	var voiceIndicator = document.getElementById("voiceGeneratingIndicator");
-	if (voiceIndicator) voiceIndicator.remove();
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
 	} else {
