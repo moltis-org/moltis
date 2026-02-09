@@ -1365,6 +1365,23 @@ fn default_sandbox_packages() -> Vec<String> {
         "osmctools",
         "python3-mapnik",
         "libgdal-dev",
+        // CalDAV / CardDAV
+        "vdirsyncer",
+        "khal",
+        "python3-caldav",
+        // Email (IMAP sync, indexing, CLI clients)
+        "isync",
+        "offlineimap3",
+        "notmuch",
+        "notmuch-mutt",
+        "aerc",
+        "mutt",
+        "neomutt",
+        // Newsgroups (NNTP)
+        "tin",
+        "slrn",
+        // Messaging APIs
+        "python3-discord",
     ]
     .iter()
     .map(|s| (*s).to_string())

@@ -393,7 +393,7 @@ pub fn sandbox_image_tag(base: &str, packages: &[String]) -> String {
     use std::hash::Hasher;
     let mut h = std::hash::DefaultHasher::new();
     // Bump this when the Dockerfile template changes to force a rebuild.
-    h.write(b"v3");
+    h.write(b"v4");
     h.write(base.as_bytes());
     let mut sorted: Vec<&String> = packages.iter().collect();
     sorted.sort();
@@ -730,8 +730,11 @@ impl Sandbox for DockerSandbox {
         let dockerfile = format!(
             "FROM {base}\n\
 RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
+    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
 RUN mkdir -p /home/sandbox\n\
 ENV HOME=/home/sandbox\n\
+ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
 WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");
@@ -1221,8 +1224,11 @@ impl Sandbox for AppleContainerSandbox {
         let dockerfile = format!(
             "FROM {base}\n\
 RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
+    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
 RUN mkdir -p /home/sandbox\n\
 ENV HOME=/home/sandbox\n\
+ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
 WORKDIR /home/sandbox\n"
         );
         let dockerfile_path = tmp_dir.join("Dockerfile");

@@ -5,13 +5,19 @@
 //! (image processing, audio/video, document conversion, GIS, etc.) to check
 //! what's available, instead of bloating every system prompt with the full
 //! package list.
+//!
+//! **Hybrid mode**: the tool always returns the configured package list
+//! (categorized).  When a sandbox container is already running for the
+//! current session it also queries `dpkg-query` inside the container and
+//! reports any extra packages that were installed at runtime.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use {
     anyhow::Result,
     async_trait::async_trait,
     serde_json::{Value, json},
+    tracing::debug,
 };
 
 #[cfg(feature = "metrics")]
@@ -19,7 +25,7 @@ use moltis_metrics::{counter, histogram};
 
 use moltis_agents::tool_registry::AgentTool;
 
-use crate::sandbox::SandboxRouter;
+use crate::{exec::ExecOpts, sandbox::SandboxRouter};
 
 // ── Category mapping ────────────────────────────────────────────────────────
 
@@ -137,6 +143,18 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
         "osmctools",
         "python3-mapnik",
     ]),
+    ("CalDAV/CardDAV", &["vdirsyncer", "khal", "python3-caldav"]),
+    ("Email", &[
+        "isync",
+        "offlineimap3",
+        "notmuch",
+        "notmuch-mutt",
+        "aerc",
+        "mutt",
+        "neomutt",
+    ]),
+    ("Newsgroups (NNTP)", &["tin", "slrn"]),
+    ("Messaging APIs", &["python3-discord"]),
 ];
 
 /// Returns `true` for packages that are infrastructure/library deps and should
@@ -157,6 +175,41 @@ fn is_infrastructure_package(pkg: &str) -> bool {
         || pkg.starts_with("libn")
         || pkg.starts_with("liba")
 }
+
+/// Well-known base OS packages that are always present and not useful to list.
+const BASE_OS_PACKAGES: &[&str] = &[
+    "adduser",
+    "apt",
+    "base-files",
+    "base-passwd",
+    "bash",
+    "coreutils",
+    "dash",
+    "debconf",
+    "debianutils",
+    "diffutils",
+    "dpkg",
+    "e2fsprogs",
+    "findutils",
+    "grep",
+    "gzip",
+    "hostname",
+    "init-system-helpers",
+    "login",
+    "mawk",
+    "mount",
+    "ncurses-base",
+    "ncurses-bin",
+    "passwd",
+    "perl-base",
+    "procps",
+    "sed",
+    "sensible-utils",
+    "sysvinit-utils",
+    "tar",
+    "ubuntu-keyring",
+    "util-linux",
+];
 
 /// Categorize a list of packages, filtering out infrastructure deps.
 ///
@@ -187,6 +240,66 @@ fn categorize_packages(packages: &[String]) -> Vec<(&'static str, Vec<&str>)> {
     }
 
     categories.into_iter().collect()
+}
+
+/// Query the sandbox container for installed packages via `dpkg-query`.
+///
+/// Returns `None` if the container is not reachable (not running, etc.).
+async fn query_sandbox_packages(router: &SandboxRouter, session_key: &str) -> Option<Vec<String>> {
+    let id = router.sandbox_id_for(session_key);
+    let opts = ExecOpts {
+        timeout: std::time::Duration::from_secs(5),
+        ..Default::default()
+    };
+
+    // dpkg-query with a format string to get one package name per line.
+    let cmd = "dpkg-query -W -f='${Package}\n'";
+
+    match router.backend().exec(&id, cmd, &opts).await {
+        Ok(result) if result.exit_code == 0 => {
+            let packages: Vec<String> = result
+                .stdout
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            debug!(
+                count = packages.len(),
+                "sandbox dpkg-query returned packages"
+            );
+            Some(packages)
+        },
+        Ok(result) => {
+            debug!(
+                exit_code = result.exit_code,
+                "sandbox dpkg-query failed (container may not be running)"
+            );
+            None
+        },
+        Err(e) => {
+            debug!(error = %e, "sandbox dpkg-query error (container not reachable)");
+            None
+        },
+    }
+}
+
+/// Filter packages from the sandbox query that are not already in the config
+/// list and are not base OS / infrastructure packages.
+fn extra_packages(sandbox_pkgs: &[String], config_pkgs: &[String]) -> Vec<String> {
+    let config_set: HashSet<&str> = config_pkgs.iter().map(String::as_str).collect();
+    let base_set: HashSet<&str> = BASE_OS_PACKAGES.iter().copied().collect();
+
+    let mut extras: Vec<String> = sandbox_pkgs
+        .iter()
+        .filter(|pkg| {
+            !config_set.contains(pkg.as_str())
+                && !base_set.contains(pkg.as_str())
+                && !is_infrastructure_package(pkg)
+        })
+        .cloned()
+        .collect();
+    extras.sort();
+    extras
 }
 
 // ── Tool ────────────────────────────────────────────────────────────────────
@@ -225,7 +338,8 @@ impl AgentTool for SandboxPackagesTool {
     fn description(&self) -> &str {
         "List packages pre-installed in the sandbox container, grouped by category. \
          Call this before running commands that need specific tools (image processing, \
-         audio/video, document conversion, GIS, etc.) to check what's available."
+         audio/video, document conversion, GIS, email, CalDAV, etc.) to check what's \
+         available. Also reports extra packages installed at runtime if a container is running."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -237,7 +351,7 @@ impl AgentTool for SandboxPackagesTool {
         })
     }
 
-    async fn execute(&self, _params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> Result<Value> {
         #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
 
@@ -265,6 +379,7 @@ impl AgentTool for SandboxPackagesTool {
             }));
         }
 
+        // Build categorized config list.
         let grouped = categorize_packages(packages);
 
         let mut categories = serde_json::Map::new();
@@ -281,6 +396,27 @@ impl AgentTool for SandboxPackagesTool {
             );
         }
 
+        let mut result = json!({
+            "total": visible_total,
+            "categories": categories
+        });
+
+        // Hybrid: try querying the running sandbox container for extra packages.
+        let session_key = params
+            .get("_session_key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+
+        if router.is_sandboxed(session_key).await
+            && let Some(sandbox_pkgs) = query_sandbox_packages(router, session_key).await
+        {
+            let extras = extra_packages(&sandbox_pkgs, packages);
+            if !extras.is_empty() {
+                result["additional_installed"] = json!(extras);
+                result["additional_installed_count"] = json!(extras.len());
+            }
+        }
+
         #[cfg(feature = "metrics")]
         {
             counter!("tools_sandbox_packages_total").increment(1);
@@ -288,10 +424,7 @@ impl AgentTool for SandboxPackagesTool {
                 .record(start.elapsed().as_secs_f64());
         }
 
-        Ok(json!({
-            "total": visible_total,
-            "categories": categories
-        }))
+        Ok(result)
     }
 }
 
@@ -347,7 +480,7 @@ mod tests {
         let tool = make_tool(vec![
             "libssl-dev".into(),
             "fonts-liberation".into(),
-            "libvips-tools".into(), // This one starts with "lib" but is in category map
+            "libvips-tools".into(),
             "curl".into(),
             "libxss1".into(),
             "libnss3".into(),
@@ -359,9 +492,6 @@ mod tests {
         // Only curl should remain (libvips-tools is filtered by is_infrastructure_package
         // because it starts with "lib")
         let cats = result["categories"].as_object().unwrap();
-
-        // libssl-dev, fonts-liberation, libxss1, libnss3, python3-dev are all filtered
-        // libvips-tools starts with "lib" so also filtered
         assert_eq!(result["total"], 1);
         assert!(cats.contains_key("Networking"));
         assert!(!cats.contains_key("Image processing"));
@@ -422,7 +552,6 @@ mod tests {
         let grouped = categorize_packages(&packages);
         let (cat, pkgs) = &grouped[0];
         assert_eq!(*cat, "Networking");
-        // Preserves input order
         assert_eq!(pkgs, &["wget", "curl", "dnsutils"]);
     }
 
@@ -441,5 +570,54 @@ mod tests {
         assert!(!is_infrastructure_package("ffmpeg"));
         assert!(!is_infrastructure_package("pandoc"));
         assert!(!is_infrastructure_package("imagemagick"));
+    }
+
+    #[test]
+    fn test_new_categories_exist() {
+        let packages = vec![
+            "vdirsyncer".into(),
+            "khal".into(),
+            "isync".into(),
+            "aerc".into(),
+            "notmuch".into(),
+            "tin".into(),
+            "slrn".into(),
+            "python3-discord".into(),
+        ];
+        let grouped = categorize_packages(&packages);
+        let cat_names: Vec<&str> = grouped.iter().map(|(c, _)| *c).collect();
+
+        assert!(cat_names.contains(&"CalDAV/CardDAV"));
+        assert!(cat_names.contains(&"Email"));
+        assert!(cat_names.contains(&"Newsgroups (NNTP)"));
+        assert!(cat_names.contains(&"Messaging APIs"));
+    }
+
+    #[test]
+    fn test_extra_packages_filters_config_and_base() {
+        let config = vec!["curl".into(), "wget".into(), "ffmpeg".into()];
+        let sandbox = vec![
+            "curl".into(),
+            "wget".into(),
+            "ffmpeg".into(),
+            "bash".into(),       // base OS
+            "coreutils".into(),  // base OS
+            "libssl3t64".into(), // infrastructure
+            "htop".into(),       // extra
+            "neovim".into(),     // extra
+            "fonts-noto".into(), // infrastructure (fonts-*)
+        ];
+
+        let extras = extra_packages(&sandbox, &config);
+        assert_eq!(extras, vec!["htop", "neovim"]);
+    }
+
+    #[test]
+    fn test_extra_packages_empty_when_same() {
+        let config = vec!["curl".into(), "wget".into()];
+        let sandbox = vec!["curl".into(), "wget".into(), "bash".into()];
+
+        let extras = extra_packages(&sandbox, &config);
+        assert!(extras.is_empty());
     }
 }
