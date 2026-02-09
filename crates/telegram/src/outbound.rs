@@ -121,8 +121,7 @@ impl ChannelOutbound for TelegramOutbound {
                     combined
                 } else {
                     // Send this chunk first, then the suffix as a separate message.
-                    let mut req =
-                        bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
+                    let mut req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
                     if i == 0 {
                         if let Some(ref rp) = rp {
                             req = req.reply_parameters(rp.clone());

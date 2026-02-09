@@ -6,7 +6,12 @@ use std::{
 
 use secrecy::{ExposeSecret, Secret};
 
-use {async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::{debug, info}};
+use {
+    async_trait::async_trait,
+    serde_json::Value,
+    tokio::sync::RwLock,
+    tracing::{debug, info},
+};
 
 use {
     moltis_agents::providers::ProviderRegistry,

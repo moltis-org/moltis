@@ -4560,9 +4560,7 @@ async fn send_tool_status_to_channels(
 
     // Buffer the status message for the logbook
     let message = format_tool_status_message(tool_name, arguments);
-    state
-        .push_channel_status_log(session_key, message)
-        .await;
+    state.push_channel_status_log(session_key, message).await;
 }
 
 /// Format a human-readable tool execution message.
@@ -5624,7 +5622,10 @@ mod tests {
         let html = format_logbook_html(&entries);
         // Verify all entries are present as bullet points.
         for entry in &entries {
-            let escaped = entry.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let escaped = entry
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
             assert!(
                 html.contains(&format!("\u{2022} {escaped}")),
                 "missing entry: {entry}"

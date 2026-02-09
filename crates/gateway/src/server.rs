@@ -1072,11 +1072,7 @@ pub async fn start_gateway(
 
     let webauthn_state = match webauthn_rs::prelude::Url::parse(&rp_origin_str) {
         Ok(rp_origin) => {
-            match crate::auth_webauthn::WebAuthnState::new(
-                &rp_id,
-                &rp_origin,
-                &extra_origins,
-            ) {
+            match crate::auth_webauthn::WebAuthnState::new(&rp_id, &rp_origin, &extra_origins) {
                 Ok(wa) => {
                     let origins = wa.get_allowed_origins();
                     info!(rp_id = %rp_id, origins = ?origins, "WebAuthn passkeys enabled");
