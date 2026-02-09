@@ -563,22 +563,19 @@ pub(crate) fn import_detected_oauth_tokens(
         if source.provider == "openai-codex"
             && source.source.contains(".codex/auth.json")
             && token_store.load("openai-codex").is_none()
+            && let Some(path) = codex_cli_auth_path()
+            && let Ok(data) = std::fs::read_to_string(&path)
+            && let Some(tokens) = parse_codex_cli_tokens(&data)
         {
-            if let Some(path) = codex_cli_auth_path() {
-                if let Ok(data) = std::fs::read_to_string(&path) {
-                    if let Some(tokens) = parse_codex_cli_tokens(&data) {
-                        match token_store.save("openai-codex", &tokens) {
-                            Ok(()) => info!(
-                                source = %path.display(),
-                                "imported openai-codex tokens from Codex CLI auth"
-                            ),
-                            Err(e) => debug!(
-                                error = %e,
-                                "failed to import openai-codex tokens"
-                            ),
-                        }
-                    }
-                }
+            match token_store.save("openai-codex", &tokens) {
+                Ok(()) => info!(
+                    source = %path.display(),
+                    "imported openai-codex tokens from Codex CLI auth"
+                ),
+                Err(e) => debug!(
+                    error = %e,
+                    "failed to import openai-codex tokens"
+                ),
             }
         }
     }
