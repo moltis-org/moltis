@@ -534,6 +534,32 @@ impl SessionService for LiveSessionService {
 
         Ok(serde_json::json!(enriched))
     }
+
+    async fn clear_all(&self) -> ServiceResult {
+        let all = self.metadata.list().await;
+        let mut deleted = 0u32;
+
+        for entry in &all {
+            // Keep main, channel-bound (telegram etc.), and cron sessions.
+            if entry.key == "main"
+                || entry.channel_binding.is_some()
+                || entry.key.starts_with("telegram:")
+                || entry.key.starts_with("cron:")
+            {
+                continue;
+            }
+
+            // Reuse delete logic via params.
+            let params = serde_json::json!({ "key": entry.key, "force": true });
+            if let Err(e) = self.delete(params).await {
+                warn!(session = %entry.key, error = %e, "clear_all: failed to delete session");
+                continue;
+            }
+            deleted += 1;
+        }
+
+        Ok(serde_json::json!({ "deleted": deleted }))
+    }
 }
 
 #[cfg(test)]

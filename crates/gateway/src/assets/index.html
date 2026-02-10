@@ -223,10 +223,13 @@
   <div class="w-[240px] border-r border-[var(--border)] flex flex-col bg-[var(--surface)] shrink-0 hidden" id="sessionsPanel">
     <div class="px-3 py-2.5 border-b border-[var(--border)] flex items-center justify-between">
       <span class="text-sm text-[var(--muted)] font-medium">Sessions</span>
-      <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent">+ New</button>
+      <div class="flex items-center gap-1">
+        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
+        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
+      </div>
     </div>
     <!-- Project selector -->
-    <div class="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2">
+    <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2 hidden">
       <select id="projectSelect" class="flex-1 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] cursor-pointer font-sans">
         <option value="">No project</option>
       </select>

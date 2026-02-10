@@ -194,6 +194,7 @@ export function renderSessionList() {
 	roots.forEach((s) => {
 		renderSession(s, 0);
 	});
+	updateClearAllVisibility();
 }
 
 // ── Braille spinner for active sessions ─────────────────────
@@ -245,6 +246,55 @@ newSessionBtn.addEventListener("click", () => {
 	var key = `session:${crypto.randomUUID()}`;
 	navigate(sessionPath(key));
 });
+
+// ── Clear all sessions button ───────────────────────────────
+var clearAllBtn = S.$("clearAllSessionsBtn");
+
+/** Show the Clear button only when there are deletable (session:*) sessions. */
+function updateClearAllVisibility() {
+	if (!clearAllBtn) return;
+	var hasClearable = S.sessions.some(
+		(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+	);
+	clearAllBtn.classList.toggle("hidden", !hasClearable);
+}
+
+if (clearAllBtn) {
+	clearAllBtn.addEventListener("click", () => {
+		var count = S.sessions.filter(
+			(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+		).length;
+		if (count === 0) return;
+		confirmDialog(
+			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, Telegram and cron sessions will be kept.`,
+		).then((yes) => {
+			if (!yes) return;
+			clearAllBtn.disabled = true;
+			clearAllBtn.textContent = "Clearing\u2026";
+			sendRpc("sessions.clear_all", {}).then((res) => {
+				clearAllBtn.disabled = false;
+				clearAllBtn.textContent = "Clear";
+				if (res?.ok) {
+					// If the active session was deleted, switch to main.
+					var active = S.sessions.find((s) => s.key === S.activeSessionKey);
+					var wasKept =
+						!active ||
+						active.key === "main" ||
+						active.key.startsWith("cron:") ||
+						active.key.startsWith("telegram:") ||
+						active.channelBinding;
+					if (!wasKept) {
+						switchSession("main");
+					}
+					fetchSessions();
+				}
+			});
+		});
+	});
+}
+
+// ── Re-render session list on project filter change ─────────
+document.addEventListener("moltis:render-session-list", renderSessionList);
 
 // ── MCP toggle restore ──────────────────────────────────────
 function restoreMcpToggle(mcpEnabled) {

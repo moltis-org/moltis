@@ -41,6 +41,18 @@ export function fetchProjects() {
 }
 
 export function renderProjectSelect() {
+	var wrapper = S.$("projectSelectWrapper");
+	if (S.projects.length === 0) {
+		if (wrapper) wrapper.classList.add("hidden");
+		// Reset filter when no projects exist
+		if (S.projectFilterId) {
+			S.setProjectFilterId("");
+			localStorage.removeItem("moltis-project-filter");
+		}
+		return;
+	}
+	if (wrapper) wrapper.classList.remove("hidden");
+
 	while (projectSelect.firstChild) projectSelect.removeChild(projectSelect.firstChild);
 	var defaultOpt = document.createElement("option");
 	defaultOpt.value = "";
