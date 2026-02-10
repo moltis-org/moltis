@@ -11,7 +11,11 @@ use {
 use crate::services::ServiceResult;
 
 #[cfg(feature = "voice")]
-use {base64::Engine, secrecy::Secret, tracing::{debug, info, warn}};
+use {
+    base64::Engine,
+    secrecy::Secret,
+    tracing::{debug, info, warn},
+};
 
 #[cfg(feature = "voice")]
 use moltis_voice::{
