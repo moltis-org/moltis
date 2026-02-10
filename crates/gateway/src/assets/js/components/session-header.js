@@ -135,7 +135,7 @@ export function SessionHeader() {
 			${
 				!(isMain || isCron) &&
 				html`
-				<button class="chat-session-btn chat-session-delete" onClick=${onDelete} title="Delete session">
+				<button class="provider-btn provider-btn-danger" onClick=${onDelete} title="Delete session">
 					Delete
 				</button>
 			`
