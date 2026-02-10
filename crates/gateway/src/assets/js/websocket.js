@@ -223,7 +223,13 @@ function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 	}
 }
 
-function handleChatChannelUser(p, _isActive, isChatPage) {
+function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
+	// Always bump the badge so the total message count stays accurate,
+	// even when the user is not on the chat page (e.g. Telegram messages).
+	bumpSessionCount(eventSession, 1);
+	if (!isActive) {
+		setSessionUnread(eventSession, true);
+	}
 	if (!isChatPage) return;
 	if (p.sessionKey && p.sessionKey !== S.activeSessionKey) {
 		switchSession(p.sessionKey);
