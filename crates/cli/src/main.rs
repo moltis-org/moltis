@@ -3,6 +3,7 @@ mod browser_commands;
 mod config_commands;
 mod db_commands;
 mod hooks_commands;
+mod memory_commands;
 mod sandbox_commands;
 #[cfg(feature = "tailscale")]
 mod tailscale_commands;
@@ -124,6 +125,11 @@ enum Commands {
     Db {
         #[command(subcommand)]
         action: db_commands::DbAction,
+    },
+    /// Memory search and status.
+    Memory {
+        #[command(subcommand)]
+        action: memory_commands::MemoryAction,
     },
     /// Tailscale Serve/Funnel management.
     #[cfg(feature = "tailscale")]
@@ -377,6 +383,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
+        Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
         Some(Commands::Skills { action }) => handle_skills(action).await,
