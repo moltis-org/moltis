@@ -2141,6 +2141,9 @@ impl MethodRegistry {
                             )
                         })?;
 
+                    // Mark the session as seen so unread state clears.
+                    ctx.state.services.session.mark_seen(key).await;
+
                     if let Some(pid) = ctx.params.get("project_id").and_then(|v| v.as_str()) {
                         let _ = ctx
                             .state

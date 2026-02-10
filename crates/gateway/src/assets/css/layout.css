@@ -282,19 +282,10 @@
   display: none;
 }
 
-.session-item.replying .session-icon > svg { display: none; }
+.session-item.replying .session-icon > svg,
+.session-item.replying .session-icon > .icon { display: none; }
 .session-item.replying .session-spinner { display: inline; }
 
-.session-item.unread .session-label:before {
-  content: "";
-  background: var(--accent);
-  vertical-align: middle;
-  border-radius: 50%;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  display: inline-block;
-}
 
 /* ── Search ── */
 

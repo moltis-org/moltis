@@ -220,7 +220,7 @@ export function ModelSelect({ models, value, onChange, placeholder }) {
 	return html`<div class="model-combo" ref=${ref} style="width:100%;">
     <button type="button" class="model-combo-btn" style="width:100%;" onClick=${() => setOpen(!open)}>
       <span class="model-item-label">${label}</span>
-      <svg class="model-combo-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>
+      <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
     </button>
     ${
 			open &&
@@ -313,7 +313,7 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
 	return html`<div class="model-combo" ref=${ref} style="width:100%;">
     <button type="button" class="model-combo-btn" style="width:100%;" onClick=${() => setOpen(!open)}>
       <span class="model-item-label">${label}</span>
-      <svg class="model-combo-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5l3 3 3-3"/></svg>
+      <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
     </button>
     ${
 			open &&

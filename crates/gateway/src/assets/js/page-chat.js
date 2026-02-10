@@ -44,7 +44,7 @@ function slashInjectStyles() {
 		".slash-menu-item .slash-desc{color:var(--muted);font-size:.75rem}" +
 		".ctx-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);align-self:center;max-width:520px;width:100%;padding:0;font-size:.8rem;line-height:1.55;animation:.2s ease-out msg-in;overflow:hidden;flex-shrink:0}" +
 		".ctx-header{background:var(--surface2);padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}" +
-		".ctx-header svg{flex-shrink:0;opacity:.7}" +
+		".ctx-header svg,.ctx-header .icon{flex-shrink:0;opacity:.7}" +
 		".ctx-header-title{font-weight:600;font-size:.85rem;color:var(--text)}" +
 		".ctx-section{padding:10px 16px;border-bottom:1px solid var(--border)}" +
 		".ctx-section:last-child{border-bottom:none}" +
@@ -60,7 +60,7 @@ function slashInjectStyles() {
 		".ctx-file-size{flex-shrink:0;opacity:.7}" +
 		".ctx-empty{color:var(--muted);font-style:italic;font-size:.78rem;padding:2px 0}" +
 		".ctx-warning{background:var(--warning-bg,rgba(234,179,8,.15));border:1px solid var(--warning-border,rgba(234,179,8,.3));border-radius:var(--radius-sm);padding:8px 12px;margin:8px 12px;font-size:.78rem;color:var(--text);display:flex;align-items:center;gap:8px}" +
-		".ctx-warning svg{flex-shrink:0;color:var(--warning,#eab308)}" +
+		".ctx-warning svg,.ctx-warning .icon{flex-shrink:0;color:var(--warning,#eab308)}" +
 		".ctx-disabled{color:var(--muted);font-style:italic;font-size:.78rem;padding:2px 0;background:var(--warning-bg,rgba(234,179,8,.1));border-radius:var(--radius-sm);padding:6px 10px;border-left:3px solid var(--warning,#eab308)}";
 	document.head.appendChild(s);
 }
@@ -337,58 +337,18 @@ function renderContextCard(data) {
 	var card = ctxEl("div", "ctx-card");
 
 	var header = ctxEl("div", "ctx-header");
-	var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.setAttribute("stroke-linecap", "round");
-	svg.setAttribute("stroke-linejoin", "round");
-	var path1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-	path1.setAttribute("cx", "12");
-	path1.setAttribute("cy", "12");
-	path1.setAttribute("r", "3");
-	var path2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
-	path2.setAttribute(
-		"d",
-		"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
-	);
-	svg.appendChild(path1);
-	svg.appendChild(path2);
-	header.appendChild(svg);
+	var icon = document.createElement("span");
+	icon.className = "icon icon-settings-gear";
+	header.appendChild(icon);
 	header.appendChild(ctxEl("span", "ctx-header-title", "Context"));
 	card.appendChild(header);
 
 	// Show warning if tools are disabled
 	if (data.supportsTools === false) {
 		var warning = ctxEl("div", "ctx-warning");
-		var warnSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-		warnSvg.setAttribute("width", "16");
-		warnSvg.setAttribute("height", "16");
-		warnSvg.setAttribute("viewBox", "0 0 24 24");
-		warnSvg.setAttribute("fill", "none");
-		warnSvg.setAttribute("stroke", "currentColor");
-		warnSvg.setAttribute("stroke-width", "2");
-		warnSvg.setAttribute("stroke-linecap", "round");
-		warnSvg.setAttribute("stroke-linejoin", "round");
-		var tri = document.createElementNS("http://www.w3.org/2000/svg", "path");
-		tri.setAttribute("d", "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z");
-		var line1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-		line1.setAttribute("x1", "12");
-		line1.setAttribute("y1", "9");
-		line1.setAttribute("x2", "12");
-		line1.setAttribute("y2", "13");
-		var line2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-		line2.setAttribute("x1", "12");
-		line2.setAttribute("y1", "17");
-		line2.setAttribute("x2", "12.01");
-		line2.setAttribute("y2", "17");
-		warnSvg.appendChild(tri);
-		warnSvg.appendChild(line1);
-		warnSvg.appendChild(line2);
-		warning.appendChild(warnSvg);
+		var warnIcon = document.createElement("span");
+		warnIcon.className = "icon icon-warn-triangle-light";
+		warning.appendChild(warnIcon);
 		warning.appendChild(
 			document.createTextNode(
 				"Tools disabled \u2014 the current model doesn't support tool calling. Running in chat-only mode.",
@@ -416,34 +376,9 @@ export function renderCompactCard(data) {
 	var card = ctxEl("div", "ctx-card");
 
 	var header = ctxEl("div", "ctx-header");
-	var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.setAttribute("stroke-linecap", "round");
-	svg.setAttribute("stroke-linejoin", "round");
-	var p1 = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-	p1.setAttribute("points", "4 14 10 14 10 20");
-	var p2 = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-	p2.setAttribute("points", "20 10 14 10 14 4");
-	var l1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-	l1.setAttribute("x1", "14");
-	l1.setAttribute("y1", "10");
-	l1.setAttribute("x2", "21");
-	l1.setAttribute("y2", "3");
-	var l2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
-	l2.setAttribute("x1", "3");
-	l2.setAttribute("y1", "21");
-	l2.setAttribute("x2", "10");
-	l2.setAttribute("y2", "14");
-	svg.appendChild(p1);
-	svg.appendChild(p2);
-	svg.appendChild(l1);
-	svg.appendChild(l2);
-	header.appendChild(svg);
+	var icon = document.createElement("span");
+	icon.className = "icon icon-compress";
+	header.appendChild(icon);
 	header.appendChild(ctxEl("span", "ctx-header-title", "Conversation compacted"));
 	card.appendChild(header);
 
@@ -922,7 +857,7 @@ var chatPageHTML =
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
 	'<span id="modelComboLabel">loading\u2026</span>' +
-	'<svg class="model-combo-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="12" height="12"><path d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>' +
+	'<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>' +
 	"</button>" +
 	'<div id="modelDropdown" class="model-dropdown hidden">' +
 	'<input id="modelSearchInput" type="text" placeholder="Search models\u2026" class="model-search-input" autocomplete="off" />' +
@@ -930,30 +865,30 @@ var chatPageHTML =
 	"</div>" +
 	"</div>" +
 	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle sandbox mode">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>' +
+	'<span class="icon icon-md icon-lock" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxLabel">sandboxed</span>' +
 	"</button>" +
 	'<div style="position:relative;display:inline-block">' +
 	'<button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Sandbox image">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>' +
+	'<span class="icon icon-md icon-cube" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxImageLabel" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ubuntu:25.10</span>' +
 	"</button>" +
 	'<div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div>' +
 	"</div>" +
 	'<button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle MCP tools for this session">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" /></svg>' +
+	'<span class="icon icon-md icon-link" style="flex-shrink:0;"></span>' +
 	'<span id="mcpToggleLabel">MCP</span>' +
 	"</button>" +
 	'<button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show context debug info">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.194-.14 1.743" /></svg>' +
+	'<span class="icon icon-md icon-wrench" style="flex-shrink:0;"></span>' +
 	'<span id="debugPanelLabel">Debug</span>' +
 	"</button>" +
 	'<button id="rawPromptBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show raw system prompt sent to model">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" /></svg>' +
+	'<span class="icon icon-md icon-code" style="flex-shrink:0;"></span>' +
 	'<span id="rawPromptLabel">Prompt</span>' +
 	"</button>" +
 	'<button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14" style="flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>' +
+	'<span class="icon icon-md icon-document" style="flex-shrink:0;"></span>' +
 	'<span id="fullContextLabel">Context</span>' +
 	"</button>" +
 	'<div class="ml-auto flex items-center gap-1.5">' +
@@ -976,7 +911,7 @@ var chatPageHTML =
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
 	'<button id="micBtn" disabled title="Click to start recording" ' +
 	'class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]">' +
-	'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>' +
+	'<span class="icon icon-lg icon-microphone"></span>' +
 	"</button>" +
 	'<button id="sendBtn" disabled ' +
 	'class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button>' +

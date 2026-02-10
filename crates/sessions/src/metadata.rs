@@ -21,6 +21,8 @@ pub struct SessionEntry {
     pub created_at: u64,
     pub updated_at: u64,
     pub message_count: u32,
+    #[serde(default)]
+    pub last_seen_message_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     #[serde(default)]
@@ -39,6 +41,8 @@ pub struct SessionEntry {
     pub fork_point: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 /// JSON file-backed index mapping session key → SessionEntry.
@@ -102,6 +106,7 @@ impl SessionMetadata {
                 created_at: now,
                 updated_at: now,
                 message_count: 0,
+                last_seen_message_count: 0,
                 project_id: None,
                 archived: false,
                 worktree_branch: None,
@@ -111,6 +116,7 @@ impl SessionMetadata {
                 parent_session_key: None,
                 fork_point: None,
                 mcp_disabled: None,
+                preview: None,
             })
     }
 
@@ -207,6 +213,7 @@ struct SessionRow {
     created_at: i64,
     updated_at: i64,
     message_count: i32,
+    last_seen_message_count: i32,
     project_id: Option<String>,
     archived: i32,
     worktree_branch: Option<String>,
@@ -216,6 +223,7 @@ struct SessionRow {
     parent_session_key: Option<String>,
     fork_point: Option<i32>,
     mcp_disabled: Option<i32>,
+    preview: Option<String>,
 }
 
 impl From<SessionRow> for SessionEntry {
@@ -228,6 +236,7 @@ impl From<SessionRow> for SessionEntry {
             created_at: r.created_at as u64,
             updated_at: r.updated_at as u64,
             message_count: r.message_count as u32,
+            last_seen_message_count: r.last_seen_message_count as u32,
             project_id: r.project_id,
             archived: r.archived != 0,
             worktree_branch: r.worktree_branch,
@@ -237,6 +246,7 @@ impl From<SessionRow> for SessionEntry {
             parent_session_key: r.parent_session_key,
             fork_point: r.fork_point.map(|v| v as u32),
             mcp_disabled: r.mcp_disabled.map(|v| v != 0),
+            preview: r.preview,
         }
     }
 }
@@ -261,6 +271,7 @@ impl SqliteSessionMetadata {
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL,
                 message_count   INTEGER NOT NULL DEFAULT 0,
+                last_seen_message_count INTEGER NOT NULL DEFAULT 0,
                 project_id      TEXT    REFERENCES projects(id) ON DELETE SET NULL,
                 archived        INTEGER NOT NULL DEFAULT 0,
                 worktree_branch TEXT,
@@ -269,7 +280,8 @@ impl SqliteSessionMetadata {
                 channel_binding     TEXT,
                 parent_session_key  TEXT,
                 fork_point          INTEGER,
-                mcp_disabled        INTEGER
+                mcp_disabled        INTEGER,
+                preview             TEXT
             )"#,
         )
         .execute(pool)
@@ -350,6 +362,26 @@ impl SqliteSessionMetadata {
         sqlx::query("UPDATE sessions SET message_count = ?, updated_at = ? WHERE key = ?")
             .bind(message_count as i32)
             .bind(now)
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .ok();
+    }
+
+    /// Store a short preview of the first user message for sidebar display.
+    pub async fn set_preview(&self, key: &str, preview: Option<&str>) {
+        sqlx::query("UPDATE sessions SET preview = ? WHERE key = ?")
+            .bind(preview)
+            .bind(key)
+            .execute(&self.pool)
+            .await
+            .ok();
+    }
+
+    /// Mark a session as "seen" by setting `last_seen_message_count` to the
+    /// current `message_count`.
+    pub async fn mark_seen(&self, key: &str) {
+        sqlx::query("UPDATE sessions SET last_seen_message_count = message_count WHERE key = ?")
             .bind(key)
             .execute(&self.pool)
             .await
@@ -681,6 +713,33 @@ mod tests {
         meta.upsert("main", None).await.unwrap();
         meta.touch("main", 5).await;
         assert_eq!(meta.get("main").await.unwrap().message_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_mark_seen() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        // New session starts with last_seen_message_count = 0.
+        assert_eq!(meta.get("main").await.unwrap().last_seen_message_count, 0);
+
+        // Simulate receiving messages.
+        meta.touch("main", 5).await;
+        // touch does NOT change last_seen_message_count.
+        assert_eq!(meta.get("main").await.unwrap().last_seen_message_count, 0);
+
+        // Mark as seen.
+        meta.mark_seen("main").await;
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.last_seen_message_count, 5);
+        assert_eq!(entry.message_count, 5);
+
+        // More messages arrive — last_seen stays at previous value.
+        meta.touch("main", 8).await;
+        let entry = meta.get("main").await.unwrap();
+        assert_eq!(entry.message_count, 8);
+        assert_eq!(entry.last_seen_message_count, 5);
     }
 
     #[test]

@@ -219,6 +219,7 @@ pub trait SessionService: Send + Sync {
     async fn fork(&self, params: Value) -> ServiceResult;
     async fn branches(&self, params: Value) -> ServiceResult;
     async fn clear_all(&self) -> ServiceResult;
+    async fn mark_seen(&self, key: &str);
 }
 
 pub struct NoopSessionService;
@@ -268,6 +269,8 @@ impl SessionService for NoopSessionService {
     async fn clear_all(&self) -> ServiceResult {
         Ok(serde_json::json!({ "deleted": 0 }))
     }
+
+    async fn mark_seen(&self, _key: &str) {}
 }
 
 // ── Channels ────────────────────────────────────────────────────────────────

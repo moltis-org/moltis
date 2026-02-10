@@ -49,50 +49,18 @@ function isIOSSafari() {
 	return isIOS() && /Safari/.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/.test(ua);
 }
 
-// Create share icon SVG element
+// Create share icon element
 function createShareIcon() {
-	var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "1.5");
-	svg.classList.add("inline-block", "text-[var(--accent)]");
-
-	var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-	path.setAttribute(
-		"d",
-		"M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15m0-3-3-3m0 0-3 3m3-3v12",
-	);
-	svg.appendChild(path);
-	return svg;
+	var el = document.createElement("span");
+	el.className = "icon icon-share inline-block text-[var(--accent)]";
+	return el;
 }
 
-// Create menu icon SVG element
+// Create menu icon element
 function createMenuIcon() {
-	var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	svg.setAttribute("width", "16");
-	svg.setAttribute("height", "16");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.classList.add("inline-block", "text-[var(--accent)]");
-
-	var circles = [
-		{ cx: "12", cy: "5" },
-		{ cx: "12", cy: "12" },
-		{ cx: "12", cy: "19" },
-	];
-	for (var c of circles) {
-		var circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-		circle.setAttribute("cx", c.cx);
-		circle.setAttribute("cy", c.cy);
-		circle.setAttribute("r", "1");
-		svg.appendChild(circle);
-	}
-	return svg;
+	var el = document.createElement("span");
+	el.className = "icon icon-menu-dots inline-block text-[var(--accent)]";
+	return el;
 }
 
 // Render iOS-specific instructions
