@@ -45,7 +45,7 @@ pub struct ApiKeyEntry {
     pub label: String,
     pub key_prefix: String,
     pub created_at: String,
-    /// Scopes granted to this API key. None/empty means full access (operator.admin).
+    /// Scopes granted to this API key. Empty/None means no access (must specify scopes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
 }
@@ -54,7 +54,7 @@ pub struct ApiKeyEntry {
 #[derive(Debug, Clone)]
 pub struct ApiKeyVerification {
     pub key_id: i64,
-    /// Scopes granted to this key. Empty means full access (all scopes).
+    /// Scopes granted to this key. Empty means no access (key must specify scopes).
     pub scopes: Vec<String>,
 }
 
@@ -346,7 +346,7 @@ impl CredentialStore {
     /// Generate a new API key with optional scopes. Returns (id, raw_key).
     /// The raw key is only shown once — we store only its SHA-256 hash.
     ///
-    /// If `scopes` is None or empty, the key has full access (operator.admin).
+    /// If `scopes` is None or empty, the key will have no access until scopes are set.
     pub async fn create_api_key(
         &self,
         label: &str,
@@ -835,12 +835,12 @@ mod tests {
         assert!(id > 0);
         assert!(raw_key.starts_with("mk_"));
 
-        // Verify returns Some with empty scopes (full access)
+        // Verify returns Some with empty scopes (no access — key must specify scopes)
         let verification = store.verify_api_key(&raw_key).await.unwrap();
         assert!(verification.is_some());
         let v = verification.unwrap();
         assert_eq!(v.key_id, id);
-        assert!(v.scopes.is_empty()); // empty = full access
+        assert!(v.scopes.is_empty()); // empty = no access
 
         // Invalid key returns None
         assert!(store.verify_api_key("mk_bogus").await.unwrap().is_none());
@@ -892,7 +892,7 @@ mod tests {
         let scoped = keys.iter().find(|k| k.id == id).unwrap();
         let full = keys.iter().find(|k| k.id == id2).unwrap();
         assert_eq!(scoped.scopes, Some(scopes));
-        assert!(full.scopes.is_none());
+        assert!(full.scopes.is_none()); // None = no scopes specified (no access)
 
         // Verify both keys work
         assert!(store.verify_api_key(&raw_key).await.unwrap().is_some());

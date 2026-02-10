@@ -167,28 +167,26 @@ The gateway API uses role-based access control with scopes:
 
 ### API Keys
 
-API keys authenticate external tools and scripts connecting to Moltis. Keys can
-have **full access** (all scopes) or be restricted to specific scopes for
-defense-in-depth.
+API keys authenticate external tools and scripts connecting to Moltis. Keys
+**must specify at least one scope** — keys without scopes are denied access
+(least-privilege by default).
 
 #### Creating API Keys
 
 **Web UI**: Settings > Security > API Keys
 
 1. Enter a label describing the key's purpose
-2. Choose "Full access" or select specific scopes
+2. Select the required scopes
 3. Click "Generate key"
 4. **Copy the key immediately** — it's only shown once
 
 **CLI**:
 
 ```bash
-# Full access key
-moltis auth create-api-key --label "CI pipeline"
-
 # Scoped key (comma-separated scopes)
 moltis auth create-api-key --label "Monitor" --scopes "operator.read"
 moltis auth create-api-key --label "Automation" --scopes "operator.read,operator.write"
+moltis auth create-api-key --label "CI pipeline" --scopes "operator.admin"
 ```
 
 #### Using API Keys
@@ -218,15 +216,15 @@ Authorization: Bearer mk_abc123...
 | Read-only monitoring | `operator.read` |
 | Automated workflows | `operator.read`, `operator.write` |
 | Approval handling | `operator.read`, `operator.approvals` |
-| Full automation | Full access (no scope restrictions) |
+| Full automation | `operator.admin` |
 
 **Best practice**: Use the minimum necessary scopes. If a key only needs to
 read status and logs, don't grant `operator.write`.
 
 #### Backward Compatibility
 
-Existing API keys (created before scopes were added) have full access. Newly
-created keys without explicit scopes also have full access.
+Existing API keys created without scopes will be **denied access** until
+scopes are added. Re-create keys with explicit scopes to restore access.
 
 ## Network Security
 

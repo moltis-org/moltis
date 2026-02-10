@@ -21,7 +21,7 @@ pub fn install_program_and_args(spec: &InstallSpec) -> anyhow::Result<(&'static 
                 .package
                 .as_deref()
                 .context("npm install requires 'package'")?;
-            ("npm", vec!["install", "-g", package])
+            ("npm", vec!["install", "-g", "--ignore-scripts", package])
         },
         InstallKind::Go => {
             let module = spec
@@ -363,5 +363,29 @@ mod tests {
 
         let preview = install_command_preview(&spec).unwrap();
         assert_eq!(preview, "cargo install ripgrep");
+    }
+
+    #[test]
+    fn test_npm_install_includes_ignore_scripts() {
+        let spec = InstallSpec {
+            kind: InstallKind::Npm,
+            formula: None,
+            package: Some("@anthropic/qmd".into()),
+            module: None,
+            url: None,
+            bins: vec!["qmd".into()],
+            os: Vec::new(),
+            label: None,
+        };
+
+        let (program, args) = install_program_and_args(&spec).unwrap();
+        assert_eq!(program, "npm");
+        assert!(
+            args.contains(&"--ignore-scripts"),
+            "npm install must include --ignore-scripts to prevent supply chain attacks"
+        );
+
+        let preview = install_command_preview(&spec).unwrap();
+        assert_eq!(preview, "npm install -g --ignore-scripts @anthropic/qmd");
     }
 }
