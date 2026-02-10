@@ -142,7 +142,7 @@ pub async fn handle_connection(
                 && let Ok(Some(verification)) = cred_store.verify_api_key(api_key).await
             {
                 authenticated = true;
-                // Store the scopes from the API key (empty = full access)
+                // Store the scopes from the API key (empty = no access)
                 api_key_scopes = Some(verification.scopes);
             }
             // Check password against DB hash.
@@ -197,12 +197,29 @@ pub async fn handle_connection(
 
     let role = params.role.clone().unwrap_or_else(|| "operator".into());
 
-    // Determine scopes: use API key scopes if provided, otherwise default to full access.
-    // Empty API key scopes means full access (backward compatibility).
+    // Determine scopes based on auth method.
+    // API keys MUST declare scopes explicitly — empty scopes means no access.
+    // Non-API-key auth (password, local, legacy) gets full access.
     let scopes = match api_key_scopes {
         Some(key_scopes) if !key_scopes.is_empty() => key_scopes,
-        _ => {
-            // Full access: either no API key used, or API key has no scope restrictions
+        Some(_empty) => {
+            // API key with no scopes → reject (least-privilege).
+            warn!(conn_id = %conn_id, "ws: API key has no scopes, denying access");
+            let err = ResponseFrame::err(
+                &request_id,
+                ErrorShape::new(
+                    error_codes::INVALID_REQUEST,
+                    "API key has no scopes — specify at least one scope when creating the key",
+                ),
+            );
+            #[allow(clippy::unwrap_used)] // serializing known-valid struct
+            let _ = client_tx.send(serde_json::to_string(&err).unwrap());
+            drop(client_tx);
+            write_handle.abort();
+            return;
+        },
+        None => {
+            // Non-API-key auth (password, local, legacy) → full access.
             vec![
                 "operator.admin".into(),
                 "operator.read".into(),
