@@ -10,6 +10,7 @@
 - [Installation](installation.md)
 - [Configuration](configuration.md)
 - [Local Validation](local-validation.md)
+- [End-to-End Testing](e2e-testing.md)
 
 ---
 

@@ -2,9 +2,14 @@
   "private": true,
   "scripts": {
     "build": "tailwindcss -i input.css -o ../src/assets/style.css --minify",
-    "watch": "tailwindcss -i input.css -o ../src/assets/style.css --watch"
+    "watch": "tailwindcss -i input.css -o ../src/assets/style.css --watch",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:debug": "playwright test --debug",
+    "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "tailwindcss": "^4.1.0",
     "@tailwindcss/cli": "^4.1.0"
   }
