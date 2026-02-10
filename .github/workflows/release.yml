@@ -105,7 +105,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Build .deb (${{ matrix.arch }})
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -167,17 +167,6 @@ jobs:
             target/${{ matrix.target }}/debian/*.sig
             target/${{ matrix.target }}/debian/*.crt
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
-            target/${{ matrix.target }}/debian/*.deb
-            target/${{ matrix.target }}/debian/*.sha256
-            target/${{ matrix.target }}/debian/*.sha512
-            target/${{ matrix.target }}/debian/*.sig
-            target/${{ matrix.target }}/debian/*.crt
-
   build-rpm:
     needs: [clippy, test]
     strategy:
@@ -193,7 +182,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Build .rpm (${{ matrix.arch }})
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -260,17 +249,6 @@ jobs:
             target/${{ matrix.target }}/generate-rpm/*.sig
             target/${{ matrix.target }}/generate-rpm/*.crt
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
-            target/${{ matrix.target }}/generate-rpm/*.rpm
-            target/${{ matrix.target }}/generate-rpm/*.sha256
-            target/${{ matrix.target }}/generate-rpm/*.sha512
-            target/${{ matrix.target }}/generate-rpm/*.sig
-            target/${{ matrix.target }}/generate-rpm/*.crt
-
   build-arch:
     needs: [clippy, test]
     strategy:
@@ -286,7 +264,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Build .pkg.tar.zst (${{ matrix.arch }})
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -360,17 +338,6 @@ jobs:
             *.pkg.tar.zst.sig
             *.pkg.tar.zst.crt
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
-            *.pkg.tar.zst
-            *.pkg.tar.zst.sha256
-            *.pkg.tar.zst.sha512
-            *.pkg.tar.zst.sig
-            *.pkg.tar.zst.crt
-
   build-appimage:
     needs: [clippy, test]
     strategy:
@@ -388,7 +355,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Build AppImage (${{ matrix.arch }})
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -482,23 +449,12 @@ jobs:
             *.AppImage.sig
             *.AppImage.crt
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
-            *.AppImage
-            *.AppImage.sha256
-            *.AppImage.sha512
-            *.AppImage.sig
-            *.AppImage.crt
-
   build-snap:
     needs: [clippy, test]
     runs-on: ubuntu-latest
     name: Build Snap
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -544,17 +500,6 @@ jobs:
             ${{ steps.build-snap.outputs.snap }}.sig
             ${{ steps.build-snap.outputs.snap }}.crt
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
-            ${{ steps.build-snap.outputs.snap }}
-            ${{ steps.build-snap.outputs.snap }}.sha256
-            ${{ steps.build-snap.outputs.snap }}.sha512
-            ${{ steps.build-snap.outputs.snap }}.sig
-            ${{ steps.build-snap.outputs.snap }}.crt
-
   build-homebrew-binaries:
     needs: [clippy, test]
     strategy:
@@ -572,7 +517,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Build binary (${{ matrix.target }})
     permissions:
-      contents: write
+      contents: read
       id-token: write # Required for Sigstore keyless signing
 
     steps:
@@ -622,17 +567,6 @@ jobs:
         with:
           name: moltis-${{ matrix.target }}
           path: |
-            *.tar.gz
-            *.tar.gz.sha256
-            *.tar.gz.sha512
-            *.tar.gz.sig
-            *.tar.gz.crt
-
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
-        with:
-          files: |
             *.tar.gz
             *.tar.gz.sha256
             *.tar.gz.sha512
@@ -804,8 +738,7 @@ jobs:
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             "ghcr.io/${{ github.repository }}@${DIGEST}"
 
-  # Generate SBOM for the entire release
-  generate-sbom:
+  upload-release:
     needs:
       - build-deb
       - build-rpm
@@ -813,6 +746,45 @@ jobs:
       - build-appimage
       - build-snap
       - build-homebrew-binaries
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Upload release assets
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          pattern: moltis-*
+
+      - name: Download snap artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: moltis.snap
+          path: artifacts/moltis.snap
+
+      - name: Collect all release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
+            -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' \
+            -o -name '*.sha256' -o -name '*.sha512' -o -name '*.sig' -o -name '*.crt' \
+          \) -exec cp {} release-files/ \;
+          echo "Files to upload:"
+          ls -lh release-files/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        with:
+          files: release-files/*
+
+  # Generate SBOM for the entire release
+  generate-sbom:
+    needs:
+      - upload-release
       - merge-docker
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -858,12 +830,7 @@ jobs:
 
   update-homebrew-tap:
     needs:
-      - build-deb
-      - build-rpm
-      - build-arch
-      - build-appimage
-      - build-snap
-      - build-homebrew-binaries
+      - upload-release
       - merge-docker
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
