@@ -187,6 +187,8 @@ function appendToolResult(toolCard, result, eventSession) {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
 function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
+	// Always bump badge — the server persists a tool_result message for each call.
+	bumpSessionCount(eventSession, 1);
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
 	if (!toolCard) return;
@@ -310,6 +312,8 @@ function appendFinalFooter(msgEl, p) {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
+	// Always bump badge — the server persists the final assistant message.
+	bumpSessionCount(eventSession, 1);
 	// Compare against the per-session history index so cross-session
 	// events aren't wrongly skipped by another session's index.
 	var evtSession = sessionStore.getByKey(eventSession);
@@ -318,7 +322,6 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		setSessionReplying(eventSession, false);
 		return;
 	}
-	bumpSessionCount(eventSession, 1);
 	setSessionReplying(eventSession, false);
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
@@ -464,9 +467,12 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 }
 
 function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
-	// Reset badge and unread state for every client.
+	// Reset badge, unread state, and history index for every client.
 	var session = sessionStore.getByKey(eventSession);
-	if (session) session.syncCounts(0, 0);
+	if (session) {
+		session.syncCounts(0, 0);
+		session.lastHistoryIndex.value = -1;
+	}
 	if (!(isActive && isChatPage)) return;
 	// Active viewer: clear the chat box and token bar.
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
