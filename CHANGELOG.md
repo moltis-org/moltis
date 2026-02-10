@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-10
+
 ### Added
 
 - **`BeforeLLMCall` / `AfterLLMCall` hooks**: New modifying hook events that fire
@@ -17,9 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hook events with correct PascalCase names and one-line descriptions.
 - **Hook event validation**: `moltis config check` now warns on unknown hook
   event names in the config file.
+- **Authentication docs**: Comprehensive `docs/src/authentication.md` with
+  decision matrix, credential types, API key scopes, session endpoints,
+  and WebSocket auth documentation.
 
 ### Changed
 
+- **Unified auth gate**: All auth decision logic is now in a single
+  `check_auth()` function called by one `auth_gate` middleware. This fixes
+  the split-brain bug where passkey-only setups (no password) were treated
+  differently by 4 out of 5 auth code paths — the middleware used
+  `is_setup_complete()` (correct) while the others used `has_password()`
+  (incorrect for passkey-only setups).
 - **Hooks documentation**: Rewritten `docs/src/hooks.md` with complete event
   reference, corrected `ToolResultPersist` classification (modifying, not
   read-only), and new "Prompt Injection Filtering" section with examples.
@@ -37,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header (`script-src 'self' 'nonce-<UUID>'`), preventing inline script
   injection (XSS defense-in-depth). The OAuth callback page also gets a
   restrictive CSP.
+- **Passkey-only auth fix**: Fixed authentication bypass where passkey-only
+  setups (without a password) would incorrectly allow unauthenticated access
+  on local connections, because the `has_password()` check returned false
+  even though `is_setup_complete()` was true.
 
 ## [0.5.0] - 2026-02-09
 
