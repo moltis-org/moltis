@@ -35,7 +35,6 @@ import {
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
-import { modelStore } from "./stores/model-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { connectWs, forceReconnect } from "./ws-connect.js";
 
@@ -231,7 +230,11 @@ function handleChatChannelUser(p, _isActive, isChatPage) {
 	}
 	var active = p.sessionKey ? p.sessionKey === S.activeSessionKey : p.sessionKey === undefined;
 	if (!active) return;
-	if (p.messageIndex !== undefined && p.messageIndex <= S.lastHistoryIndex) return;
+	// Compare against the per-session history index, not the global one,
+	// to avoid skipping events when viewing a different session.
+	var chanSession = sessionStore.getByKey(p.sessionKey || S.activeSessionKey);
+	var chanLastIdx = chanSession ? chanSession.lastHistoryIndex.value : S.lastHistoryIndex;
+	if (p.messageIndex !== undefined && p.messageIndex <= chanLastIdx) return;
 	var cleanText = stripChannelPrefix(p.text || "");
 	var el = chatAddMsg("user", renderMarkdown(cleanText), true);
 	if (el && p.channel) {
@@ -307,7 +310,11 @@ function appendFinalFooter(msgEl, p) {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
-	if (p.messageIndex !== undefined && p.messageIndex <= S.lastHistoryIndex) {
+	// Compare against the per-session history index so cross-session
+	// events aren't wrongly skipped by another session's index.
+	var evtSession = sessionStore.getByKey(eventSession);
+	var lastIdx = evtSession ? evtSession.lastHistoryIndex.value : S.lastHistoryIndex;
+	if (p.messageIndex !== undefined && p.messageIndex <= lastIdx) {
 		setSessionReplying(eventSession, false);
 		return;
 	}

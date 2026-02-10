@@ -42,6 +42,16 @@ export class Session {
 		this.contextWindow = signal(0);
 		this.toolsEnabled = signal(true);
 		this.lastToolOutput = signal("");
+		// Total message count — reactive signal that drives the sidebar badge.
+		// Components read this to show/hide badge and compute unread tinting.
+		this.badgeCount = signal(this.messageCount);
+		// Bumped whenever plain properties change so subscribed components re-render.
+		this.dataVersion = signal(0);
+	}
+
+	/** Recalculate badge from current messageCount. */
+	updateBadge() {
+		this.badgeCount.value = this.messageCount;
 	}
 
 	/** Merge server fields, preserving client signals. Returns false if stale. */
@@ -53,8 +63,14 @@ export class Session {
 		this.model = serverData.model || "";
 		this.provider = serverData.provider || "";
 		this.projectId = serverData.projectId || "";
-		this.messageCount = serverData.messageCount || 0;
-		this.lastSeenMessageCount = serverData.lastSeenMessageCount || 0;
+		// Only accept server counts when they've caught up with optimistic
+		// client bumps. Authoritative resets (/clear, switchSession) use
+		// syncCounts() which sets messageCount directly before any fetch.
+		var serverCount = serverData.messageCount || 0;
+		if (serverCount >= this.messageCount) {
+			this.messageCount = serverCount;
+			this.lastSeenMessageCount = serverData.lastSeenMessageCount || 0;
+		}
 		this.preview = serverData.preview || "";
 		this.updatedAt = serverData.updatedAt || 0;
 		this.createdAt = serverData.createdAt || 0;
@@ -67,15 +83,25 @@ export class Session {
 		this.mcpDisabled = serverData.mcpDisabled;
 		this.archived = serverData.archived;
 		this.activeChannel = serverData.activeChannel;
+		this.updateBadge();
+		this.dataVersion.value++;
 		return true;
 	}
 
-	/** Increment messageCount (+ sync lastSeenMessageCount if active). */
+	/** Optimistic bump: increment total and mark seen if active. */
 	bumpCount(increment) {
 		this.messageCount = (this.messageCount || 0) + increment;
 		if (this.key === activeSessionKey.value) {
 			this.lastSeenMessageCount = this.messageCount;
 		}
+		this.updateBadge();
+	}
+
+	/** Authoritative set (switchSession history, /clear). */
+	syncCounts(messageCount, lastSeenMessageCount) {
+		this.messageCount = messageCount;
+		this.lastSeenMessageCount = lastSeenMessageCount;
+		this.updateBadge();
 	}
 
 	/** Clear streaming state for this session. */
@@ -83,14 +109,6 @@ export class Session {
 		this.streamText.value = "";
 		this.voicePending.value = false;
 		this.lastToolOutput.value = "";
-	}
-
-	/** Whether this session has unread messages. */
-	get unread() {
-		return (
-			this.localUnread.value ||
-			(this.key !== activeSessionKey.value && this.messageCount > (this.lastSeenMessageCount || 0))
-		);
 	}
 }
 
@@ -146,6 +164,11 @@ export function fetch() {
 	});
 }
 
+/** Notify Preact that session data changed (triggers re-render). */
+export function notify() {
+	sessions.value = [...sessions.value];
+}
+
 /** Look up a session by key. */
 export function getByKey(key) {
 	return sessions.value.find((s) => s.key === key) || null;
@@ -167,4 +190,5 @@ export var sessionStore = {
 	fetch,
 	getByKey,
 	setActive,
+	notify,
 };

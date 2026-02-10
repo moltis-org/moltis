@@ -45,17 +45,17 @@ function formatHHMM(epochMs) {
 
 // ── Icon component (renders SVG icon into a ref) ────────────
 function SessionIcon({ session, isBranch }) {
-	var ref = useRef(null);
+	var iconRef = useRef(null);
 	useEffect(() => {
-		if (!ref.current) return;
-		ref.current.textContent = "";
+		if (!iconRef.current) return;
+		iconRef.current.textContent = "";
 		var key = session.key || "";
 		var icon;
 		if (isBranch) icon = makeBranchIcon();
 		else if (key.startsWith("cron:")) icon = makeCronIcon();
 		else if (isTelegramSession(session)) icon = makeTelegramIcon();
 		else icon = makeChatIcon();
-		ref.current.appendChild(icon);
+		iconRef.current.appendChild(icon);
 	}, [session.key, isBranch]);
 
 	var telegram = isTelegramSession(session);
@@ -68,16 +68,21 @@ function SessionIcon({ session, isBranch }) {
 	}
 	var title = telegram ? (session.activeChannel ? "Active Telegram session" : "Telegram session (inactive)") : "";
 
-	var count = session.messageCount || 0;
+	// Read the reactive signal — auto-subscribes for badge updates.
+	var count = session.badgeCount.value;
 
 	return html`
-		<span class="session-icon" ref=${ref} style=${iconStyle} title=${title}>
+		<span class="session-icon" style=${iconStyle} title=${title}>
+			<span ref=${iconRef}></span>
 			<span class="session-spinner"></span>
-			${count > 0 && html`
+			${
+				count > 0 &&
+				html`
 				<span class="session-badge" data-session-key=${session.key}>
 					${count > 99 ? "99+" : String(count)}
 				</span>
-			`}
+			`
+			}
 		</span>
 	`;
 }
@@ -120,9 +125,16 @@ function SessionMeta({ session }) {
 function SessionItem({ session, activeKey, depth }) {
 	var isBranch = depth > 0;
 	var active = session.key === activeKey;
-	// Read per-session signals — auto-subscribes for re-render
+	// Read per-session signals — auto-subscribes for re-render.
+	// dataVersion triggers re-render when plain properties (preview,
+	// updatedAt, label) change. Badge updates come from badgeCount
+	// signal read inside SessionIcon.
 	var replying = session.replying.value;
-	var unread = session.localUnread.value || (!active && session.messageCount > (session.lastSeenMessageCount || 0));
+	session.dataVersion.value;
+	// Unread tint: true when not viewing this session and there are messages
+	// beyond what we last saw (badgeCount is reactive, triggers re-render).
+	var badge = session.badgeCount.value;
+	var unread = session.localUnread.value || (!active && badge > (session.lastSeenMessageCount || 0));
 
 	var className = "session-item";
 	if (active) className += " active";
@@ -148,11 +160,14 @@ function SessionItem({ session, activeKey, depth }) {
 				<div class="session-label">
 					<${SessionIcon} session=${session} isBranch=${isBranch} />
 					<span data-label-text>${session.label || session.key}</span>
-					${ts > 0 && html`
+					${
+						ts > 0 &&
+						html`
 						<span class="session-time" title=${new Date(ts).toLocaleString()}>
 							${formatHHMM(ts)}
 						</span>
-					`}
+					`
+					}
 				</div>
 				${preview && html`<div class="session-preview">${preview}</div>`}
 				<${SessionMeta} session=${session} />

@@ -2583,8 +2583,9 @@ impl ChatService for LiveChatService {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Reset metadata message count.
+        // Reset metadata message count and preview.
         self.session_metadata.touch(&session_key, 0).await;
+        self.session_metadata.set_preview(&session_key, None).await;
 
         info!(session = %session_key, "chat.clear");
         Ok(serde_json::json!({ "ok": true }))

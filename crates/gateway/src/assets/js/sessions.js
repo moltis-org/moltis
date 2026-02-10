@@ -101,9 +101,11 @@ export function setSessionUnread(key, unread) {
 }
 
 export function bumpSessionCount(key, increment) {
-	// Update store — Preact SessionList re-renders badge automatically.
+	// Update store — bumpCount bumps dataVersion for automatic re-render.
 	var session = sessionStore.getByKey(key);
-	if (session) session.bumpCount(increment);
+	if (session) {
+		session.bumpCount(increment);
+	}
 
 	// Dual-write: update the underlying S.sessions data.
 	var entry = S.sessions.find((s) => s.key === key);
@@ -516,12 +518,12 @@ export function switchSession(key, searchContext, projectId) {
 				var ts = lastMsg.created_at;
 				if (ts) appendLastMessageTimestamp(ts);
 			}
-			// Sync the store entry — Preact SessionList re-renders badge automatically.
+			// Sync the store entry — syncCounts calls updateBadge() for re-render.
 			var sessionEntry = sessionStore.getByKey(key);
 			if (sessionEntry) {
-				sessionEntry.messageCount = history.length;
-				sessionEntry.lastSeenMessageCount = history.length;
+				sessionEntry.syncCounts(history.length, history.length);
 				sessionEntry.localUnread.value = false;
+				sessionEntry.lastHistoryIndex.value = history.length > 0 ? history.length - 1 : -1;
 			}
 			// Also sync the plain S.sessions entry for backward compat
 			var sEntry = S.sessions.find((s) => s.key === key);

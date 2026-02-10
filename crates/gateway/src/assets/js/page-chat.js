@@ -15,13 +15,9 @@ import {
 import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import {
-	bumpSessionCount,
-	fetchSessions,
-	setSessionReplying,
-	switchSession,
-} from "./sessions.js";
+import { bumpSessionCount, fetchSessions, setSessionReplying, switchSession } from "./sessions.js";
 import * as S from "./state.js";
+import { sessionStore } from "./stores/session-store.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
@@ -686,6 +682,10 @@ function handleSlashCommand(cmdName) {
 				if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 				S.setSessionTokens({ input: 0, output: 0 });
 				updateTokenBar();
+				// Reset client-side counts before fetch so the optimistic
+				// guard in update() doesn't block the server's zero.
+				var session = sessionStore.getByKey(S.activeSessionKey);
+				if (session) session.syncCounts(0, 0);
 				fetchSessions();
 			} else {
 				chatAddMsg("error", res?.error?.message || "Clear failed");

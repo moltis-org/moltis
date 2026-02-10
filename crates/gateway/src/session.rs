@@ -385,6 +385,7 @@ impl SessionService for LiveSessionService {
 
         self.store.clear(key).await.map_err(|e| e.to_string())?;
         self.metadata.touch(key, 0).await;
+        self.metadata.set_preview(key, None).await;
 
         Ok(serde_json::json!({}))
     }

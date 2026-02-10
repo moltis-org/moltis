@@ -1115,8 +1115,8 @@
     line-height: 16px;
     user-select: none;
   }
-  .session-item.replying .session-icon > svg,
-  .session-item.replying .session-icon > .icon {
+  .session-item.replying .session-icon svg,
+  .session-item.replying .session-icon .icon {
     display: none;
   }
   .session-item.replying .session-spinner {
