@@ -272,6 +272,17 @@ impl CredentialStore {
         Ok(())
     }
 
+    /// Recompute `setup_complete` from the current credentials in the database.
+    ///
+    /// Called after removing a credential to ensure the auth state reflects
+    /// reality. If no password and no passkeys remain, `setup_complete` is
+    /// cleared so the middleware falls back to the "no auth" path.
+    async fn recompute_setup_complete(&self) -> anyhow::Result<()> {
+        let has = self.has_password().await? || self.has_passkeys().await?;
+        self.setup_complete.store(has, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Verify a password against the stored hash.
     pub async fn verify_password(&self, password: &str) -> anyhow::Result<bool> {
         let row: Option<(String,)> =
@@ -542,11 +553,15 @@ impl CredentialStore {
     }
 
     /// Remove a passkey by id.
+    ///
+    /// If this was the last credential (no password, no other passkeys),
+    /// `setup_complete` is reset so the auth middleware stops requiring auth.
     pub async fn remove_passkey(&self, passkey_id: i64) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM passkeys WHERE id = ?")
             .bind(passkey_id)
             .execute(&self.pool)
             .await?;
+        self.recompute_setup_complete().await?;
         Ok(())
     }
 
@@ -1064,5 +1079,47 @@ mod tests {
         // Simulate restart: create a new store from the same DB.
         let store2 = CredentialStore::new(pool).await.unwrap();
         assert!(store2.is_setup_complete());
+    }
+
+    #[tokio::test]
+    async fn test_removing_last_passkey_clears_setup_complete() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        // Register a passkey and mark setup complete.
+        let id = store
+            .store_passkey(b"cred-1", "My Passkey", b"data")
+            .await
+            .unwrap();
+        store.mark_setup_complete().await.unwrap();
+        assert!(store.is_setup_complete());
+
+        // Removing the only passkey (no password) must clear setup_complete
+        // so the auth middleware falls back to "no auth required".
+        store.remove_passkey(id).await.unwrap();
+        assert!(!store.has_passkeys().await.unwrap());
+        assert!(!store.has_password().await.unwrap());
+        assert!(!store.is_setup_complete());
+    }
+
+    #[tokio::test]
+    async fn test_removing_passkey_keeps_setup_when_password_exists() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        // Set up both a password and a passkey.
+        store.set_initial_password("hunter2").await.unwrap();
+        let id = store
+            .store_passkey(b"cred-1", "My Passkey", b"data")
+            .await
+            .unwrap();
+        assert!(store.is_setup_complete());
+
+        // Removing the passkey should keep setup_complete because the
+        // password still exists.
+        store.remove_passkey(id).await.unwrap();
+        assert!(!store.has_passkeys().await.unwrap());
+        assert!(store.has_password().await.unwrap());
+        assert!(store.is_setup_complete());
     }
 }
