@@ -12,7 +12,7 @@ use axum::{
 
 use crate::{
     auth::CredentialStore,
-    auth_middleware::{AuthSession, SESSION_COOKIE},
+    auth_middleware::{AuthResult, AuthSession, SESSION_COOKIE, check_auth},
     auth_webauthn::WebAuthnState,
     server::is_local_connection,
     state::GatewayState,
@@ -89,25 +89,10 @@ async fn status_handler(
     let has_password = state.credential_store.has_password().await.unwrap_or(false);
     let has_passkeys = state.credential_store.has_passkeys().await.unwrap_or(false);
 
-    // Three-tier model: local connection + no password = dev convenience.
     let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
-    let auth_bypassed = auth_disabled || (is_local && !has_password);
-
-    let authenticated = if auth_bypassed {
-        true
-    } else {
-        let token = extract_session_token(&headers);
-        match token {
-            Some(t) => state
-                .credential_store
-                .validate_session(t)
-                .await
-                .unwrap_or(false),
-            None => false,
-        }
-    };
-
-    let setup_required = !auth_bypassed && !state.credential_store.is_setup_complete();
+    let auth_result = check_auth(&state.credential_store, &headers, is_local).await;
+    let authenticated = matches!(auth_result, AuthResult::Allowed(_));
+    let setup_required = matches!(auth_result, AuthResult::SetupRequired);
 
     let setup_code_required = state.gateway_state.inner.read().await.setup_code.is_some();
 

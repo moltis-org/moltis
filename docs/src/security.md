@@ -252,40 +252,23 @@ The `web_fetch` tool resolves DNS and blocks requests to private IP ranges
 (loopback, RFC 1918, link-local, CGNAT). This prevents server-side request
 forgery attacks.
 
-## Three-Tier Authentication Model
+## Authentication
 
-Moltis uses a per-request three-tier authentication model that balances
-local development convenience with production security:
+Moltis uses a unified auth gate that applies a single `check_auth()`
+function to every request. This prevents split-brain bugs where different
+code paths disagree on auth status.
+
+For full details — including the decision matrix, credential types, API
+key scopes, session management endpoints, and WebSocket auth — see the
+dedicated [Authentication](authentication.md) page.
+
+### Three-Tier Model (summary)
 
 | Tier | Condition | Behaviour |
 |------|-----------|-----------|
-| **1** | Password/passkey is set | Auth **always** required (any IP) |
-| **2** | No password + direct local connection | Full access (dev convenience) |
-| **3** | No password + remote/proxied connection | Onboarding only (setup code required) |
-
-### How "local" is determined
-
-Each incoming request is classified as **local** or **remote** using
-four checks that must **all** pass:
-
-1. `MOLTIS_BEHIND_PROXY` env var is **not** set (hard override)
-2. No proxy headers present (`X-Forwarded-For`, `X-Real-IP`,
-   `CF-Connecting-IP`, `Forwarded`)
-3. The `Host` header resolves to a loopback address (or is absent)
-4. The TCP source IP is loopback (`127.0.0.1`, `::1`)
-
-If **any** check fails, the connection is treated as remote.
-
-### Practical implications
-
-| Scenario | No password | Password set |
-|----------|-------------|-------------|
-| Local browser → `localhost:18789` | Full access | Auth required |
-| Local CLI/wscat → `localhost:18789` | Full access | Auth required |
-| Internet → Caddy (with XFF) → `127.0.0.1:18789` | Onboarding only | Auth required |
-| Internet → nginx (with `proxy_set_header`) → `127.0.0.1:18789` | Onboarding only | Auth required |
-| Internet → bare nginx (`proxy_pass` only) → `127.0.0.1:18789` | **See below** | Auth required |
-| Server bound to `0.0.0.0`, remote client | Onboarding only | Auth required |
+| **1** | Password/passkey is configured | Auth **always** required (any IP) |
+| **2** | No credentials + direct local connection | Full access (dev convenience) |
+| **3** | No credentials + remote/proxied connection | Onboarding only (setup code required) |
 
 ## Reverse Proxy Deployments
 
