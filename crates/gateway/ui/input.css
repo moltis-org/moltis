@@ -594,6 +594,28 @@
     height: 16px;
   }
 
+  /* Logout button — sized to match .theme-toggle panel height (28 + 2*2 padding + 2*1 border = 34px) */
+  .logout-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: var(--error, #e55);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .logout-btn:hover {
+    filter: brightness(1.15);
+  }
+  .logout-btn .icon {
+    width: 16px;
+    height: 16px;
+  }
+
   /* Approval card */
   .approval-card {
     align-self: center;
@@ -1705,6 +1727,12 @@
   .icon-monitor {
     -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Crect x='2' y='3' width='20' height='14' rx='2' stroke='black' stroke-width='1.5'/%3E%3Cpath stroke='black' stroke-width='1.5' d='M8 21h8m-4-4v4'/%3E%3C/svg%3E");
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Crect x='2' y='3' width='20' height='14' rx='2' stroke='black' stroke-width='1.5'/%3E%3Cpath stroke='black' stroke-width='1.5' d='M8 21h8m-4-4v4'/%3E%3C/svg%3E");
+  }
+
+  /* Logout icon (Heroicons: power) */
+  .icon-logout {
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='black'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9'/%3E%3C/svg%3E");
   }
 
   /* UI chrome icons */
