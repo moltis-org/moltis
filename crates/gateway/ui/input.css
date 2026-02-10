@@ -1027,6 +1027,7 @@
     padding: 8px 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border);
+    border-left: 3px solid transparent;
     transition: background 0.15s;
   }
   .session-item:hover {
@@ -1034,7 +1035,7 @@
   }
   .session-item.active {
     background: var(--accent-subtle);
-    border-left: 3px solid var(--accent);
+    border-left-color: var(--accent);
   }
   .session-info {
     flex: 1;
