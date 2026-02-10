@@ -343,7 +343,8 @@
   box-shadow: var(--shadow-sm);
 }
 
-.theme-btn svg {
+.theme-btn svg,
+.theme-btn .icon {
   width: 16px;
   height: 16px;
 }

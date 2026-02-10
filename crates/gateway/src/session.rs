@@ -33,6 +33,76 @@ fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
+/// Extract text content from a single message Value.
+fn message_text(msg: &Value) -> Option<String> {
+    let text = if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+        s.to_string()
+    } else if let Some(blocks) = msg.get("content").and_then(|v| v.as_array()) {
+        blocks
+            .iter()
+            .filter_map(|b| {
+                if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                    b.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        return None;
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Truncate a string to `max` chars, appending "…" if truncated.
+fn truncate_preview(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..s.floor_char_boundary(max)])
+    }
+}
+
+/// Extract preview from a single message (used for first-message preview in chat).
+pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
+    message_text(msg).map(|t| truncate_preview(&t, 200))
+}
+
+/// Build a preview by combining user and assistant messages until we
+/// have enough text (target ~80 chars). Skips tool_result messages.
+fn extract_preview(history: &[Value]) -> Option<String> {
+    const TARGET: usize = 80;
+    const MAX: usize = 200;
+
+    let mut combined = String::new();
+    for msg in history {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+        let Some(text) = message_text(msg) else {
+            continue;
+        };
+        if !combined.is_empty() {
+            combined.push_str(" — ");
+        }
+        combined.push_str(&text);
+        if combined.len() >= TARGET {
+            break;
+        }
+    }
+    if combined.is_empty() {
+        return None;
+    }
+    Some(truncate_preview(&combined, MAX))
+}
+
 /// Live session service backed by JSONL store + SQLite metadata.
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
@@ -112,6 +182,7 @@ impl SessionService for LiveSessionService {
                 "createdAt": e.created_at,
                 "updatedAt": e.updated_at,
                 "messageCount": e.message_count,
+                "lastSeenMessageCount": e.last_seen_message_count,
                 "projectId": e.project_id,
                 "sandbox_enabled": e.sandbox_enabled,
                 "sandbox_image": e.sandbox_image,
@@ -121,6 +192,7 @@ impl SessionService for LiveSessionService {
                 "parentSessionKey": e.parent_session_key,
                 "forkPoint": e.fork_point,
                 "mcpDisabled": e.mcp_disabled,
+                "preview": e.preview,
             }));
         }
         Ok(serde_json::json!(entries))
@@ -153,6 +225,15 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| e.to_string())?;
         let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+
+        // Recompute preview from combined messages every time resolve runs,
+        // so sessions get the latest multi-message preview algorithm.
+        if !history.is_empty() {
+            let new_preview = extract_preview(&history);
+            if new_preview.as_deref() != entry.preview.as_deref() {
+                self.metadata.set_preview(key, new_preview.as_deref()).await;
+            }
+        }
 
         // Dispatch SessionStart hook for newly created sessions (empty history).
         if history.is_empty()
@@ -534,9 +615,40 @@ impl SessionService for LiveSessionService {
 
         Ok(serde_json::json!(enriched))
     }
+
+    async fn mark_seen(&self, key: &str) {
+        self.metadata.mark_seen(key).await;
+    }
+
+    async fn clear_all(&self) -> ServiceResult {
+        let all = self.metadata.list().await;
+        let mut deleted = 0u32;
+
+        for entry in &all {
+            // Keep main, channel-bound (telegram etc.), and cron sessions.
+            if entry.key == "main"
+                || entry.channel_binding.is_some()
+                || entry.key.starts_with("telegram:")
+                || entry.key.starts_with("cron:")
+            {
+                continue;
+            }
+
+            // Reuse delete logic via params.
+            let params = serde_json::json!({ "key": entry.key, "force": true });
+            if let Err(e) = self.delete(params).await {
+                warn!(session = %entry.key, error = %e, "clear_all: failed to delete session");
+                continue;
+            }
+            deleted += 1;
+        }
+
+        Ok(serde_json::json!({ "deleted": deleted }))
+    }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -591,5 +703,122 @@ mod tests {
         // Non-assistant roles pass through even if content is empty.
         let filtered = filter_ui_history(messages);
         assert_eq!(filtered.len(), 3);
+    }
+
+    // --- Preview extraction tests ---
+
+    #[test]
+    fn message_text_from_string_content() {
+        let msg = serde_json::json!({"role": "user", "content": "hello world"});
+        assert_eq!(message_text(&msg), Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn message_text_from_content_blocks() {
+        let msg = serde_json::json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "image_url", "url": "http://example.com/img.png"},
+                {"type": "text", "text": "world"}
+            ]
+        });
+        assert_eq!(message_text(&msg), Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn message_text_empty_content() {
+        let msg = serde_json::json!({"role": "user", "content": "  "});
+        assert_eq!(message_text(&msg), None);
+    }
+
+    #[test]
+    fn message_text_no_content_field() {
+        let msg = serde_json::json!({"role": "user"});
+        assert_eq!(message_text(&msg), None);
+    }
+
+    #[test]
+    fn truncate_preview_short_string() {
+        assert_eq!(truncate_preview("short", 200), "short");
+    }
+
+    #[test]
+    fn truncate_preview_long_string() {
+        let long = "a".repeat(250);
+        let result = truncate_preview(&long, 200);
+        assert!(result.ends_with('…'));
+        // 200 'a' chars + the '…' char
+        assert!(result.len() <= 204); // 200 bytes + up to 3 for '…'
+    }
+
+    #[test]
+    fn extract_preview_from_value_basic() {
+        let msg = serde_json::json!({"role": "user", "content": "tell me a joke"});
+        let result = extract_preview_from_value(&msg);
+        assert_eq!(result, Some("tell me a joke".to_string()));
+    }
+
+    #[test]
+    fn extract_preview_single_short_message() {
+        let history = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let result = extract_preview(&history);
+        // Short message is still returned, just won't reach the 80-char target
+        assert_eq!(result, Some("hi".to_string()));
+    }
+
+    #[test]
+    fn extract_preview_combines_messages_until_target() {
+        let history = vec![
+            serde_json::json!({"role": "user", "content": "hi"}),
+            serde_json::json!({"role": "assistant", "content": "Hello! How can I help you today?"}),
+            serde_json::json!({"role": "user", "content": "Tell me about Rust programming language"}),
+        ];
+        let result = extract_preview(&history).expect("should produce preview");
+        assert!(result.contains("hi"));
+        assert!(result.contains(" — "));
+        assert!(result.contains("Hello!"));
+        // Should stop once target (80) is reached
+        assert!(result.len() >= 30);
+    }
+
+    #[test]
+    fn extract_preview_skips_system_and_tool_messages() {
+        let history = vec![
+            serde_json::json!({"role": "system", "content": "You are a helpful assistant."}),
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "tool", "content": "tool output"}),
+            serde_json::json!({"role": "assistant", "content": "Hi there!"}),
+        ];
+        let result = extract_preview(&history).expect("should produce preview");
+        // Should not contain system or tool content
+        assert!(!result.contains("helpful assistant"));
+        assert!(!result.contains("tool output"));
+        assert!(result.contains("hello"));
+        assert!(result.contains("Hi there!"));
+    }
+
+    #[test]
+    fn extract_preview_empty_history() {
+        let result = extract_preview(&[]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_preview_only_system_messages() {
+        let history =
+            vec![serde_json::json!({"role": "system", "content": "You are a helpful assistant."})];
+        let result = extract_preview(&history);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_preview_truncates_at_max() {
+        // Build a very long message that exceeds MAX (200)
+        let long_text = "a".repeat(300);
+        let history = vec![serde_json::json!({"role": "user", "content": long_text})];
+        let result = extract_preview(&history).expect("should produce preview");
+        assert!(result.ends_with('…'));
+        assert!(result.len() <= 204);
     }
 }

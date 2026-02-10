@@ -50,42 +50,42 @@ var sections = [
 	{
 		id: "identity",
 		label: "Identity",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></svg>`,
+		icon: html`<span class="icon icon-person"></span>`,
 	},
 	{
 		id: "memory",
 		label: "Memory",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>`,
+		icon: html`<span class="icon icon-database"></span>`,
 	},
 	{
 		id: "environment",
 		label: "Environment",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>`,
+		icon: html`<span class="icon icon-terminal"></span>`,
 	},
 	{
 		id: "security",
 		label: "Security",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>`,
+		icon: html`<span class="icon icon-lock"></span>`,
 	},
 	{
 		id: "tailscale",
 		label: "Tailscale",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.466.73-3.558"/></svg>`,
+		icon: html`<span class="icon icon-globe"></span>`,
 	},
 	{
 		id: "voice",
 		label: "Voice",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg>`,
+		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{
 		id: "notifications",
 		label: "Notifications",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>`,
+		icon: html`<span class="icon icon-bell"></span>`,
 	},
 	{
 		id: "config",
 		label: "Configuration",
-		icon: html`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>`,
+		icon: html`<span class="icon icon-document"></span>`,
 	},
 ];
 
@@ -1993,9 +1993,7 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 			${
 				testResult?.success === true
 					? html`<div class="voice-success-result">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-				</svg>
+				<span class="icon icon-md icon-check-circle"></span>
 				<span>Audio played successfully</span>
 			</div>`
 					: null
@@ -2341,7 +2339,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
 										<div class="text-xs text-[var(--muted)]">${p.description}</div>
 									</div>
-									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+									<span class="icon icon-chevron-right" style="color:var(--muted);"></span>
 								</div>
 							</button>
 						`,
@@ -2367,7 +2365,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
 										<div class="text-xs text-[var(--muted)]">${p.description}</div>
 									</div>
-									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+									<span class="icon icon-chevron-right" style="color:var(--muted);"></span>
 								</div>
 							</button>
 						`,
@@ -2393,7 +2391,7 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 										<div class="text-sm text-[var(--text-strong)]">${p.name}</div>
 										<div class="text-xs text-[var(--muted)]">${p.description}</div>
 									</div>
-									<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--muted);"><path d="M6 4l4 4-4 4"/></svg>
+									<span class="icon icon-chevron-right" style="color:var(--muted);"></span>
 								</div>
 							</button>
 						`,

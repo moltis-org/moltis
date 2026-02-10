@@ -85,14 +85,14 @@
 
 <!-- Git branch banner (shown when running on a non-main branch) -->
 <div id="branchBanner" class="branch-banner" style="display:none">
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
+  <span class="icon icon-md icon-link"></span>
   <span>Running on: <strong id="branchName"></strong></span>
 </div>
 
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
   <button id="burgerBtn" class="burger-btn" title="Navigation">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="20" height="20"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
+    <span class="icon icon-lg icon-burger"></span>
   </button>
   <a href="/chats" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
   <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name}()</script>
@@ -105,13 +105,13 @@
   <!-- Theme toggle -->
   <div class="theme-toggle" id="themeToggle">
     <button class="theme-btn" data-theme-val="light" title="Light theme">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      <span class="icon icon-sun"></span>
     </button>
     <button class="theme-btn" data-theme-val="system" title="System theme">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
+      <span class="icon icon-monitor"></span>
     </button>
     <button class="theme-btn" data-theme-val="dark" title="Dark theme">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75 9.75 9.75 0 0 1 8.25 6c0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25 9.75 9.75 0 0 0 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z"/></svg>
+      <span class="icon icon-moon"></span>
     </button>
   </div>
 
@@ -155,62 +155,62 @@
   <nav id="navPanel" class="nav-panel">
     <div class="flex-1 flex flex-col">
       <a href="/chats" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.3 48.3 0 0 0 5.862-.498c1.585-.233 2.708-1.626 2.708-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.4 48.4 0 0 0 12 3a48.4 48.4 0 0 0-5.775.514C4.623 3.746 3.5 5.14 3.5 6.74v6.009Z"/></svg>
+        <span class="icon icon-chat"></span>
         Chat
       </a>
       <a href="/channels" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5-3.9 19.5m-2.1-19.5-3.9 19.5"/></svg>
+        <span class="icon icon-channels"></span>
         Channels
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountChannels"></span>
       </a>
       <a href="/crons" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+        <span class="icon icon-cron"></span>
         Crons
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountCrons"></span>
       </a>
       <a href="/sandboxes" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
+        <span class="icon icon-cube"></span>
         Sandboxes
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountImages"></span>
       </a>
       <a href="/logs" data-nav class="nav-link relative" id="navLogs">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
+        <span class="icon icon-document"></span>
         Logs
         <span id="logsAlertDot" class="hidden absolute top-1/2 right-2 -translate-y-1/2 w-[7px] h-[7px] rounded-full bg-[var(--warn)]"></span>
       </a>
-      <a href="/mcp" data-nav class="nav-link" style="display:flex;align-items:center;gap:8px">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
+      <a href="/mcp" data-nav class="nav-link">
+        <span class="icon icon-link"></span>
         MCP Tools
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountMcp"></span>
       </a>
       <a href="/monitoring" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"/></svg>
+        <span class="icon icon-chart-bar"></span>
         Monitoring
       </a>
       <a href="/projects" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>
+        <span class="icon icon-folder"></span>
         Projects
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountProjects"></span>
       </a>
       <a href="/providers" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25H18.75M5.25 14.25C3.59315 14.25 2.25 12.9069 2.25 11.25M5.25 14.25C3.59315 14.25 2.25 15.5931 2.25 17.25C2.25 18.9069 3.59315 20.25 5.25 20.25H18.75C20.4069 20.25 21.75 18.9069 21.75 17.25C21.75 15.5931 20.4069 14.25 18.75 14.25M2.25 11.25C2.25 9.59315 3.59315 8.25 5.25 8.25H18.75C20.4069 8.25 21.75 9.59315 21.75 11.25M2.25 11.25C2.25 10.2763 2.5658 9.32893 3.15 8.55L5.7375 5.1C6.37488 4.25016 7.37519 3.75 8.4375 3.75H15.5625C16.6248 3.75 17.6251 4.25016 18.2625 5.1L20.85 8.55C21.4342 9.32893 21.75 10.2763 21.75 11.25M21.75 11.25C21.75 12.9069 20.4069 14.25 18.75 14.25M18.75 17.25H18.7575V17.2575H18.75V17.25ZM18.75 11.25H18.7575V11.2575H18.75V11.25ZM15.75 17.25H15.7575V17.2575H15.75V17.25ZM15.75 11.25H15.7575V11.2575H15.75V11.25Z"/></svg>
+        <span class="icon icon-server"></span>
         Providers
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountProviders"></span>
       </a>
       <a href="/skills" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"/></svg>
+        <span class="icon icon-sparkles"></span>
         Skills
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountSkills"></span>
       </a>
       <a href="/hooks" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085"/></svg>
+        <span class="icon icon-wrench"></span>
         Hooks
         <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountHooks"></span>
       </a>
     </div>
     <div class="border-t border-[var(--border)] border-b">
       <a href="/settings" data-nav class="nav-link">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.248a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
+        <span class="icon icon-settings"></span>
         Settings
       </a>
     </div>
@@ -223,14 +223,23 @@
   <div class="w-[240px] border-r border-[var(--border)] flex flex-col bg-[var(--surface)] shrink-0 hidden" id="sessionsPanel">
     <div class="px-3 py-2.5 border-b border-[var(--border)] flex items-center justify-between">
       <span class="text-sm text-[var(--muted)] font-medium">Sessions</span>
-      <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent">+ New</button>
+      <div class="flex items-center gap-1">
+        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
+        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
+      </div>
     </div>
     <!-- Project selector -->
-    <div class="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2">
-      <select id="projectSelect" class="flex-1 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] cursor-pointer font-sans">
-        <option value="">No project</option>
-      </select>
-      <button id="manageProjectsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="Manage projects">+</button>
+    <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] hidden">
+      <div id="projectFilterCombo" class="model-combo">
+        <button id="projectFilterBtn" class="model-combo-btn" type="button" style="width:100%;max-width:none;justify-content:space-between">
+          <span id="projectFilterLabel">All sessions</span>
+          <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
+        </button>
+        <div id="projectFilterDropdown" class="model-dropdown hidden" style="width:100%">
+          <input id="projectFilterSearch" type="text" placeholder="Search projects…" class="model-search-input" autocomplete="off" />
+          <div id="projectFilterList" class="model-dropdown-list"></div>
+        </div>
+      </div>
     </div>
     <div class="px-3 py-2 border-b border-[var(--border)] relative">
       <input id="sessionSearch" type="text" placeholder="Search sessions…"
@@ -246,9 +255,7 @@
 
 <!-- Mobile sessions toggle FAB -->
 <button id="sessionsToggle" class="sessions-toggle-btn" title="Toggle sessions">
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="24" height="24">
-    <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
-  </svg>
+  <span class="icon icon-xl icon-chat-dots"></span>
 </button>
 
 <!-- Modals (created on demand by modals.js) -->
@@ -295,7 +302,7 @@
 </div>
 
 <div id="ts-error" class="settings-alert-error whitespace-pre-line max-w-form" style="display:none">
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18" class="shrink-0 mt-0.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>
+  <span class="icon icon-lg icon-warn-triangle shrink-0 mt-0.5"></span>
   <span data-ts-error-text class="whitespace-pre-line"></span>
 </div>
 
@@ -469,10 +476,10 @@ endpoint = "http://localhost:8000"</code>
       <div class="session-label">
         <span class="session-icon"></span>
         <span data-label-text></span>
+        <span class="session-actions"></span>
       </div>
       <div class="session-meta"></div>
     </div>
-    <div class="session-actions"></div>
   </div>
 </template>
 
@@ -490,11 +497,7 @@ endpoint = "http://localhost:8000"</code>
 <template id="tpl-model-notice">
   <div class="ctx-card" style="max-width:400px">
     <div class="ctx-header">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--warning,#eab308)">
-        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-        <line x1="12" y1="9" x2="12" y2="13"/>
-        <line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
+      <span class="icon icon-warn-triangle-light" style="color:var(--warning,#eab308)"></span>
       <span class="ctx-header-title">Chat-only mode</span>
     </div>
     <div class="ctx-section">
@@ -525,31 +528,31 @@ endpoint = "http://localhost:8000"</code>
     <ul class="text-left text-sm text-[var(--muted)] flex flex-col gap-3 w-full">
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span class="icon icon-chat-bubble"></span>
         </span>
         <span>Chat with multiple AI providers and models</span>
       </li>
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span class="icon icon-terminal-cmd"></span>
         </span>
         <span>Run commands in a sandboxed environment</span>
       </li>
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span class="icon icon-search"></span>
         </span>
         <span>Browse the web and fetch content</span>
       </li>
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="icon icon-file"></span>
         </span>
         <span>Remember context across sessions with long-term memory</span>
       </li>
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span class="icon icon-layers"></span>
         </span>
         <span>Extend with MCP tools, skills, and plugins</span>
       </li>
@@ -563,15 +566,7 @@ endpoint = "http://localhost:8000"</code>
 <template id="tpl-no-providers-card">
   <div id="noProvidersCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
     <div class="text-[var(--muted)] mb-4">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M16 18a4 4 0 0 0-8 0"/>
-        <circle cx="12" cy="11" r="3"/>
-        <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"/>
-        <path d="M2 12h2"/>
-        <path d="M20 12h2"/>
-        <path d="M12 2v2"/>
-        <path d="M12 20v2"/>
-      </svg>
+      <span class="icon icon-no-providers" style="width:48px;height:48px"></span>
     </div>
     <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLM Providers Connected</h2>
     <p class="text-sm text-[var(--muted)] mb-6">

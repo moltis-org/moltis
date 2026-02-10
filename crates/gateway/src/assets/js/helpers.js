@@ -300,25 +300,16 @@ function formatAudioDuration(seconds) {
 	return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
-function svgEl(tag, attrs) {
-	var el = document.createElementNS("http://www.w3.org/2000/svg", tag);
-	if (attrs) {
-		for (var key in attrs) el.setAttribute(key, attrs[key]);
-	}
+function createPlaySvg() {
+	var el = document.createElement("span");
+	el.className = "icon icon-play";
 	return el;
 }
 
-function createPlaySvg() {
-	var svg = svgEl("svg", { viewBox: "0 0 24 24", fill: "currentColor" });
-	svg.appendChild(svgEl("path", { d: "M8 5v14l11-7z" }));
-	return svg;
-}
-
 function createPauseSvg() {
-	var svg = svgEl("svg", { viewBox: "0 0 24 24", fill: "currentColor" });
-	svg.appendChild(svgEl("rect", { x: "6", y: "4", width: "4", height: "16", rx: "1" }));
-	svg.appendChild(svgEl("rect", { x: "14", y: "4", width: "4", height: "16", rx: "1" }));
-	return svg;
+	var el = document.createElement("span");
+	el.className = "icon icon-pause";
+	return el;
 }
 
 // ── Audio autoplay unlock ────────────────────────────────────

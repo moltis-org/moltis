@@ -47,6 +47,7 @@ use crate::{
     broadcast::{BroadcastOpts, broadcast},
     chat_error::parse_chat_error,
     services::{ChatService, ModelService, ServiceResult},
+    session::extract_preview_from_value,
     state::GatewayState,
 };
 
@@ -2067,6 +2068,18 @@ impl ChatService for LiveChatService {
             .await
         {
             warn!("failed to persist user message: {e}");
+        }
+
+        // Set preview from the first user message if not already set.
+        if let Some(entry) = self.session_metadata.get(&session_key).await
+            && entry.preview.is_none()
+        {
+            let preview_text = extract_preview_from_value(&user_msg.to_value());
+            if let Some(preview) = preview_text {
+                self.session_metadata
+                    .set_preview(&session_key, Some(&preview))
+                    .await;
+            }
         }
 
         let agent_timeout_secs = moltis_config::discover_and_load().tools.agent_timeout_secs;

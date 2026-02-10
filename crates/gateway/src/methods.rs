@@ -141,6 +141,7 @@ const WRITE_METHODS: &[&str] = &[
     "channels.senders.deny",
     "sessions.switch",
     "sessions.fork",
+    "sessions.clear_all",
     "projects.upsert",
     "projects.delete",
     "projects.detect",
@@ -1345,6 +1346,19 @@ impl MethodRegistry {
             }),
         );
         self.register(
+            "sessions.clear_all",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .clear_all()
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
             "sessions.compact",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -2126,6 +2140,9 @@ impl MethodRegistry {
                                 format!("session resolve failed: {e}"),
                             )
                         })?;
+
+                    // Mark the session as seen so unread state clears.
+                    ctx.state.services.session.mark_seen(key).await;
 
                     if let Some(pid) = ctx.params.get("project_id").and_then(|v| v.as_str()) {
                         let _ = ctx

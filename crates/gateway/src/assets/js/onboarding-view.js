@@ -46,7 +46,7 @@ function StepIndicator({ steps, current }) {
 function StepDot({ index, label, state }) {
 	return html`<div class="onboarding-step ${state}">
 		<div class="onboarding-step-dot ${state}">
-			${state === "completed" ? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7" /></svg>` : index + 1}
+			${state === "completed" ? html`<span class="icon icon-md icon-checkmark"></span>` : index + 1}
 		</div>
 		<div class="onboarding-step-label">${label}</div>
 	</div>`;
@@ -276,7 +276,7 @@ function AuthStep({ onNext, skippable }) {
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 
 			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7" /></svg>
+				<span class="icon icon-checkmark"></span>
 				Passkey registered successfully!
 			</div>
 
@@ -568,9 +568,7 @@ function OnboardingProviderRow({
 					${provider.configured ? html`<span class="provider-item-badge configured">configured</span>` : null}
 					${
 						validationResult?.ok === true
-							? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="inline-block">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-							</svg>`
+							? html`<span class="icon icon-md icon-check-circle inline-block" style="color:var(--ok)"></span>`
 							: null
 					}
 					<span class="provider-item-badge ${provider.authType}">
@@ -1342,9 +1340,7 @@ function OnboardingVoiceRow({
 		${
 			voiceTestResult?.success === true
 				? html`<div class="voice-success-result mt-2">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="14" height="14">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-				</svg>
+				<span class="icon icon-md icon-check-circle"></span>
 				<span>Audio played successfully</span>
 			</div>`
 				: null
@@ -1822,9 +1818,7 @@ function ChannelStep({ onNext, onBack }) {
 		${
 			connected
 				? html`<div class="rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-				</svg>
+				<span class="icon icon-lg icon-check-circle shrink-0" style="color:var(--ok)"></span>
 				<div>
 					<div class="text-sm font-medium text-[var(--text-strong)]">Bot connected</div>
 					<div class="text-xs text-[var(--muted)] mt-0.5">@${connectedName} is now linked to your agent.</div>
@@ -1890,27 +1884,19 @@ function formatMemBytes(bytes) {
 }
 
 function CheckIcon() {
-	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" class="shrink-0">
-		<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-	</svg>`;
+	return html`<span class="icon icon-check-circle shrink-0" style="color:var(--ok)"></span>`;
 }
 
 function WarnIcon() {
-	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" class="shrink-0">
-		<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-	</svg>`;
+	return html`<span class="icon icon-warn-triangle shrink-0" style="color:var(--warn)"></span>`;
 }
 
 function ErrorIcon() {
-	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--error)" stroke-width="2.5" class="shrink-0">
-		<path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-	</svg>`;
+	return html`<span class="icon icon-x-circle shrink-0" style="color:var(--error)"></span>`;
 }
 
 function InfoIcon() {
-	return html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" class="shrink-0">
-		<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-	</svg>`;
+	return html`<span class="icon icon-info-circle shrink-0" style="color:var(--muted)"></span>`;
 }
 
 function SummaryRow({ icon, label, children }) {

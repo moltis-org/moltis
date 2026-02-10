@@ -19,7 +19,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
-import { makeBranchIcon, makeChatIcon, makeCronIcon, makeForkIcon, makeTelegramIcon } from "./icons.js";
+import { makeBranchIcon, makeChatIcon, makeCronIcon, makeProjectIcon, makeTelegramIcon } from "./icons.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -31,7 +31,28 @@ import { confirmDialog } from "./ui.js";
 export function fetchSessions() {
 	sendRpc("sessions.list", {}).then((res) => {
 		if (!res?.ok) return;
-		S.setSessions(res.payload || []);
+		var incoming = res.payload || [];
+		// Preserve in-memory messageCount and local unread flag when they're
+		// ahead of the server — the DB lags because touch() runs asynchronously.
+		var oldByKey = {};
+		for (var old of S.sessions) {
+			if (old.messageCount || old._localUnread) {
+				oldByKey[old.key] = {
+					messageCount: old.messageCount,
+					localUnread: old._localUnread,
+				};
+			}
+		}
+		for (var s of incoming) {
+			var prev = oldByKey[s.key];
+			if (prev) {
+				if (prev.messageCount && prev.messageCount > (s.messageCount || 0)) {
+					s.messageCount = prev.messageCount;
+				}
+				if (prev.localUnread) s._localUnread = true;
+			}
+		}
+		S.setSessions(incoming);
 		renderSessionList();
 		updateChatSessionHeader();
 	});
@@ -79,54 +100,72 @@ function createSessionIcon(s, isBranch) {
 	var spinner = document.createElement("span");
 	spinner.className = "session-spinner";
 	iconWrap.appendChild(spinner);
+	var count = s.messageCount || 0;
+	if (count > 0) {
+		var badge = document.createElement("span");
+		badge.className = "session-badge";
+		badge.setAttribute("data-session-key", s.key);
+		badge.textContent = count > 99 ? "99+" : String(count);
+		iconWrap.appendChild(badge);
+	}
 	return iconWrap;
 }
 
 function createSessionMeta(s) {
-	var meta = document.createElement("div");
-	meta.className = "session-meta";
-	meta.setAttribute("data-session-key", s.key);
-	var count = s.messageCount || 0;
-	var metaText = `${count} msg${count !== 1 ? "s" : ""}`;
+	var frag = document.createDocumentFragment();
+
+	// Preview line: first user message (2 lines max).
+	if (s.preview) {
+		var previewEl = document.createElement("div");
+		previewEl.className = "session-preview";
+		previewEl.textContent = s.preview;
+		frag.appendChild(previewEl);
+	}
+
+	// Meta line: fork info, worktree, project.
+	var parts = [];
 	if (s.forkPoint != null) {
-		metaText += ` \u00b7 fork@${s.forkPoint}`;
+		parts.push(`fork@${s.forkPoint}`);
 	}
 	if (s.worktree_branch) {
-		metaText += ` \u00b7 \u2387 ${s.worktree_branch}`;
+		parts.push(`\u2387 ${s.worktree_branch}`);
 	}
-	meta.textContent = metaText;
-	if (s.updatedAt) {
-		var sep = document.createTextNode(" \u00b7 ");
-		var t = document.createElement("time");
-		t.setAttribute("data-epoch-ms", String(s.updatedAt));
-		t.textContent = new Date(s.updatedAt).toISOString();
-		meta.appendChild(sep);
-		meta.appendChild(t);
+	var hasProject = false;
+	if (s.projectId) {
+		var proj = S.projects.find((p) => p.id === s.projectId);
+		if (proj) hasProject = true;
 	}
-	return meta;
+	if (parts.length > 0 || hasProject) {
+		var meta = document.createElement("div");
+		meta.className = "session-meta";
+		meta.setAttribute("data-session-key", s.key);
+		meta.textContent = parts.join(" \u00b7 ");
+		if (hasProject) {
+			if (parts.length > 0) meta.appendChild(document.createTextNode(" \u00b7 "));
+			var icon = makeProjectIcon();
+			icon.style.display = "inline";
+			icon.style.verticalAlign = "-1px";
+			icon.style.marginRight = "2px";
+			icon.style.opacity = "0.7";
+			meta.appendChild(icon);
+			meta.appendChild(document.createTextNode(proj.label || proj.id));
+		}
+		frag.appendChild(meta);
+	}
+	return frag;
 }
 
-function createSessionActions(s) {
-	var actions = document.createElement("div");
-	actions.className = "session-actions";
-	// Fork button — not available for cron sessions
-	if (!s.key.startsWith("cron:")) {
-		var forkBtn = document.createElement("button");
-		forkBtn.className = "session-fork-btn";
-		forkBtn.title = "Fork session";
-		forkBtn.appendChild(makeForkIcon());
-		forkBtn.addEventListener("click", (e) => {
-			e.stopPropagation();
-			sendRpc("sessions.fork", { key: s.key }).then((res) => {
-				if (res?.ok && res.payload?.sessionKey) {
-					fetchSessions();
-					switchSession(res.payload.sessionKey);
-				}
-			});
-		});
-		actions.appendChild(forkBtn);
-	}
-	return actions;
+function formatHHMM(epochMs) {
+	return new Date(epochMs).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function createSessionTime(s) {
+	if (!s.updatedAt) return null;
+	var t = document.createElement("span");
+	t.className = "session-time";
+	t.textContent = formatHHMM(s.updatedAt);
+	t.title = new Date(s.updatedAt).toLocaleString();
+	return t;
 }
 
 export function renderSessionList() {
@@ -156,7 +195,9 @@ export function renderSessionList() {
 		var isBranch = depth > 0;
 		var frag = tpl.content.cloneNode(true);
 		var item = frag.firstElementChild;
-		item.className = `session-item${s.key === S.activeSessionKey ? " active" : ""}`;
+		var active = s.key === S.activeSessionKey;
+		var unread = s._localUnread || (!active && s.messageCount > (s.lastSeenMessageCount || 0));
+		item.className = `session-item${active ? " active" : ""}${unread ? " unread" : ""}`;
 		item.setAttribute("data-session-key", s.key);
 		if (isBranch) {
 			item.style.paddingLeft = `${12 + depth * 16}px`;
@@ -172,7 +213,12 @@ export function renderSessionList() {
 		meta.replaceWith(newMeta);
 
 		var actionsSlot = item.querySelector(".session-actions");
-		actionsSlot.replaceWith(createSessionActions(s));
+		var timeEl = createSessionTime(s);
+		if (timeEl) {
+			actionsSlot.replaceWith(timeEl);
+		} else {
+			actionsSlot.remove();
+		}
 
 		item.addEventListener("click", () => {
 			if (currentPrefix !== "/chats") {
@@ -194,6 +240,7 @@ export function renderSessionList() {
 	roots.forEach((s) => {
 		renderSession(s, 0);
 	});
+	updateClearAllVisibility();
 }
 
 // ── Braille spinner for active sessions ─────────────────────
@@ -225,26 +272,95 @@ export function setSessionReplying(key, replying) {
 }
 
 export function setSessionUnread(key, unread) {
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry) entry._localUnread = unread;
 	var sessionList = S.$("sessionList");
 	var el = sessionList.querySelector(`.session-item[data-session-key="${key}"]`);
 	if (el) el.classList.toggle("unread", unread);
 }
 
 export function bumpSessionCount(key, increment) {
+	// Update the underlying data so re-renders preserve the count.
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry) entry.messageCount = (entry.messageCount || 0) + increment;
+
 	var sessionList = S.$("sessionList");
-	var el = sessionList.querySelector(`.session-meta[data-session-key="${key}"]`);
-	if (!el) return;
-	var current = parseInt(el.textContent, 10) || 0;
-	var next = current + increment;
-	el.textContent = `${next} msg${next !== 1 ? "s" : ""}`;
+	var item = sessionList.querySelector(`.session-item[data-session-key="${key}"]`);
+	if (!item) return;
+	var badge = item.querySelector(`.session-badge[data-session-key="${key}"]`);
+	var next = entry ? entry.messageCount : increment;
+	if (badge) {
+		badge.textContent = next > 99 ? "99+" : String(next);
+	} else {
+		var iconWrap = item.querySelector(".session-icon");
+		if (!iconWrap) return;
+		var newBadge = document.createElement("span");
+		newBadge.className = "session-badge";
+		newBadge.setAttribute("data-session-key", key);
+		newBadge.textContent = next > 99 ? "99+" : String(next);
+		iconWrap.appendChild(newBadge);
+	}
 }
 
 // ── New session button ──────────────────────────────────────
 var newSessionBtn = S.$("newSessionBtn");
 newSessionBtn.addEventListener("click", () => {
 	var key = `session:${crypto.randomUUID()}`;
-	navigate(sessionPath(key));
+	if (currentPrefix === "/chats") {
+		switchSession(key, null, S.projectFilterId || undefined);
+	} else {
+		navigate(sessionPath(key));
+	}
 });
+
+// ── Clear all sessions button ───────────────────────────────
+var clearAllBtn = S.$("clearAllSessionsBtn");
+
+/** Show the Clear button only when there are deletable (session:*) sessions. */
+function updateClearAllVisibility() {
+	if (!clearAllBtn) return;
+	var hasClearable = S.sessions.some(
+		(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+	);
+	clearAllBtn.classList.toggle("hidden", !hasClearable);
+}
+
+if (clearAllBtn) {
+	clearAllBtn.addEventListener("click", () => {
+		var count = S.sessions.filter(
+			(s) => s.key !== "main" && !s.key.startsWith("cron:") && !s.key.startsWith("telegram:") && !s.channelBinding,
+		).length;
+		if (count === 0) return;
+		confirmDialog(
+			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, Telegram and cron sessions will be kept.`,
+		).then((yes) => {
+			if (!yes) return;
+			clearAllBtn.disabled = true;
+			clearAllBtn.textContent = "Clearing\u2026";
+			sendRpc("sessions.clear_all", {}).then((res) => {
+				clearAllBtn.disabled = false;
+				clearAllBtn.textContent = "Clear";
+				if (res?.ok) {
+					// If the active session was deleted, switch to main.
+					var active = S.sessions.find((s) => s.key === S.activeSessionKey);
+					var wasKept =
+						!active ||
+						active.key === "main" ||
+						active.key.startsWith("cron:") ||
+						active.key.startsWith("telegram:") ||
+						active.channelBinding;
+					if (!wasKept) {
+						switchSession("main");
+					}
+					fetchSessions();
+				}
+			});
+		});
+	});
+}
+
+// ── Re-render session list on project filter change ─────────
+document.addEventListener("moltis:render-session-list", renderSessionList);
 
 // ── MCP toggle restore ──────────────────────────────────────
 function restoreMcpToggle(mcpEnabled) {
@@ -691,6 +807,26 @@ export function switchSession(key, searchContext, projectId) {
 				var lastMsg = history[history.length - 1];
 				var ts = lastMsg.created_at;
 				if (ts) appendLastMessageTimestamp(ts);
+			}
+			// Sync the badge with the authoritative history length and mark as seen.
+			var sessionEntry = S.sessions.find((s) => s.key === key);
+			if (sessionEntry) {
+				sessionEntry.messageCount = history.length;
+				sessionEntry.lastSeenMessageCount = history.length;
+				sessionEntry._localUnread = false;
+				var badge = sessionList.querySelector(`.session-badge[data-session-key="${key}"]`);
+				if (badge) {
+					badge.textContent = history.length > 99 ? "99+" : String(history.length);
+				} else if (history.length > 0) {
+					var iconWrap = sessionList.querySelector(`.session-item[data-session-key="${key}"] .session-icon`);
+					if (iconWrap) {
+						var b = document.createElement("span");
+						b.className = "session-badge";
+						b.setAttribute("data-session-key", key);
+						b.textContent = history.length > 99 ? "99+" : String(history.length);
+						iconWrap.appendChild(b);
+					}
+				}
 			}
 			S.setSessionSwitchInProgress(false);
 			postHistoryLoadActions(key, searchContext, msgEls, sessionList);
