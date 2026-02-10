@@ -9,7 +9,6 @@ import { sendRpc } from "./helpers.js";
 import { fetchModels } from "./models.js";
 import { updateNavCount } from "./nav-counts.js";
 import { openModelSelectorForProvider, openProviderModal } from "./providers.js";
-import { registerPage } from "./router.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
@@ -362,15 +361,16 @@ function ProvidersPage() {
 		`;
 }
 
-registerPage(
-	"/providers",
-	function initProviders(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		render(html`<${ProvidersPage} />`, container);
-	},
-	function teardownProviders() {
-		S.setRefreshProvidersPage(null);
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+var _providersContainer = null;
+
+export function initProviders(container) {
+	_providersContainer = container;
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	render(html`<${ProvidersPage} />`, container);
+}
+
+export function teardownProviders() {
+	S.setRefreshProvidersPage(null);
+	if (_providersContainer) render(null, _providersContainer);
+	_providersContainer = null;
+}

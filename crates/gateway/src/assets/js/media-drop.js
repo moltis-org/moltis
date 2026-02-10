@@ -14,6 +14,7 @@ var boundDragEnter = null;
 var boundDragLeave = null;
 var boundDrop = null;
 var boundPaste = null;
+var dragEnterCount = 0;
 
 var ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 var MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
@@ -106,18 +107,22 @@ function onDragOver(e) {
 
 function onDragEnter(e) {
 	e.preventDefault();
+	dragEnterCount++;
 	if (chatMsgBoxRef) chatMsgBoxRef.classList.add("drag-over");
 }
 
 function onDragLeave(e) {
-	// Only remove if leaving the container (not entering a child)
-	if (chatMsgBoxRef && !chatMsgBoxRef.contains(e.relatedTarget)) {
-		chatMsgBoxRef.classList.remove("drag-over");
+	e.preventDefault();
+	dragEnterCount--;
+	if (dragEnterCount <= 0) {
+		dragEnterCount = 0;
+		if (chatMsgBoxRef) chatMsgBoxRef.classList.remove("drag-over");
 	}
 }
 
 function onDrop(e) {
 	e.preventDefault();
+	dragEnterCount = 0;
 	if (chatMsgBoxRef) chatMsgBoxRef.classList.remove("drag-over");
 
 	var files = e.dataTransfer.files;
@@ -196,6 +201,7 @@ export function teardownMediaDrop() {
 	boundDragLeave = null;
 	boundDrop = null;
 	boundPaste = null;
+	dragEnterCount = 0;
 }
 
 /** @returns {Array<{dataUrl: string, file: File, name: string}>} */

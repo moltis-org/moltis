@@ -5,7 +5,6 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
-import { registerPage } from "./router.js";
 import * as S from "./state.js";
 
 var paused = signal(false);
@@ -204,20 +203,21 @@ function LogsPage() {
   `;
 }
 
-registerPage(
-	"/logs",
-	function initLogs(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		paused.value = false;
-		levelFilter.value = "";
-		targetFilter.value = "";
-		searchFilter.value = "";
-		entryCount.value = 0;
-		render(html`<${LogsPage} />`, container);
-	},
-	function teardownLogs() {
-		S.setLogsEventHandler(null);
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+var _logsContainer = null;
+
+export function initLogs(container) {
+	_logsContainer = container;
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	paused.value = false;
+	levelFilter.value = "";
+	targetFilter.value = "";
+	searchFilter.value = "";
+	entryCount.value = 0;
+	render(html`<${LogsPage} />`, container);
+}
+
+export function teardownLogs() {
+	S.setLogsEventHandler(null);
+	if (_logsContainer) render(null, _logsContainer);
+	_logsContainer = null;
+}

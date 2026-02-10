@@ -122,7 +122,7 @@ function SessionMeta({ session }) {
 }
 
 // ── SessionItem component ───────────────────────────────────
-function SessionItem({ session, activeKey, depth }) {
+function SessionItem({ session, activeKey, depth, keyMap }) {
 	var isBranch = depth > 0;
 	var active = session.key === activeKey;
 	// Read per-session signals — auto-subscribes for re-render.
@@ -143,7 +143,10 @@ function SessionItem({ session, activeKey, depth }) {
 
 	var style = isBranch ? { paddingLeft: `${12 + depth * 16}px` } : {};
 
-	var preview = session.preview || "";
+	var rawPreview = session.preview || "";
+	var parentPreview =
+		session.parentSessionKey && keyMap[session.parentSessionKey] ? keyMap[session.parentSessionKey].preview || "" : "";
+	var preview = rawPreview && rawPreview === parentPreview ? "" : rawPreview;
 	var ts = session.updatedAt || 0;
 
 	function onClick() {
@@ -217,6 +220,7 @@ export function SessionList() {
 				session=${session}
 				activeKey=${activeKey}
 				depth=${depth}
+				keyMap=${keyMap}
 			/>
 			${children.map((child) => renderTree(child, depth + 1))}
 		`;

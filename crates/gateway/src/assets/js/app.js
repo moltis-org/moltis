@@ -26,15 +26,9 @@ import { connect } from "./websocket.js";
 import "./page-chat.js";
 import "./page-crons.js";
 import "./page-projects.js";
-import "./page-providers.js";
-import "./page-channels.js";
-import "./page-logs.js";
 import "./page-skills.js";
-import "./page-mcp.js";
-import "./page-hooks.js";
 import "./page-metrics.js";
-import "./page-settings.js";
-import "./page-images.js";
+import "./page-settings.js"; // also imports channels, providers, mcp, hooks, images, logs
 import { setHasPasskeys } from "./page-login.js";
 
 // Import side-effect modules

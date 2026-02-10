@@ -7,8 +7,6 @@ import { useEffect } from "preact/hooks";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
-import { registerPage } from "./router.js";
-import * as S from "./state.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
 
 // ── Signals ─────────────────────────────────────────────────
@@ -610,15 +608,16 @@ function McpPage() {
   `;
 }
 
-// ── Router integration ──────────────────────────────────────
-registerPage(
-	"/mcp",
-	function initMcp(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		render(html`<${McpPage} />`, container);
-	},
-	function teardownMcp() {
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+// ── Exported init/teardown for settings integration ─────────
+var _mcpContainer = null;
+
+export function initMcp(container) {
+	_mcpContainer = container;
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	render(html`<${McpPage} />`, container);
+}
+
+export function teardownMcp() {
+	if (_mcpContainer) render(null, _mcpContainer);
+	_mcpContainer = null;
+}

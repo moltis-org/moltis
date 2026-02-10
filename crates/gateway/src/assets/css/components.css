@@ -701,6 +701,19 @@
   overflow-y: auto;
 }
 
+.settings-group-label {
+  padding: 12px 16px 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.settings-group-label:first-child {
+  padding-top: 8px;
+}
+
 .settings-nav-item {
   display: flex;
   align-items: center;

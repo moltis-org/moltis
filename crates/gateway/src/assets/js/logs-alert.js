@@ -3,9 +3,10 @@
 import { sendRpc } from "./helpers.js";
 import * as S from "./state.js";
 
-var logsAlertDot = S.$("logsAlertDot");
+var logsAlertDot = document.getElementById("logsAlertDot");
 
 export function updateLogsAlert() {
+	if (!logsAlertDot) return;
 	if (S.unseenErrors > 0) {
 		logsAlertDot.style.display = "";
 		logsAlertDot.style.background = "var(--error)";

@@ -252,6 +252,10 @@ body {
     padding: 8px;
   }
 
+  .settings-group-label {
+    display: none;
+  }
+
   .settings-nav-item {
     padding: 8px 12px;
     border-radius: var(--radius-sm);

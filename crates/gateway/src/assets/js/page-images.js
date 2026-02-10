@@ -5,9 +5,7 @@ import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { updateNavCount } from "./nav-counts.js";
-import { registerPage } from "./router.js";
 import { sandboxInfo } from "./signals.js";
-import * as S from "./state.js";
 
 var defaultImage = signal("");
 var savingDefault = signal(false);
@@ -373,18 +371,19 @@ function ImagesPage() {
   `;
 }
 
-registerPage(
-	"/sandboxes",
-	function initImages(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		images.value = [];
-		defaultImage.value = sandboxInfo.value?.default_image || "";
-		buildStatus.value = "";
-		buildWarning.value = "";
-		render(html`<${ImagesPage} />`, container);
-	},
-	function teardownImages() {
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+var _imagesContainer = null;
+
+export function initImages(container) {
+	_imagesContainer = container;
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	images.value = [];
+	defaultImage.value = sandboxInfo.value?.default_image || "";
+	buildStatus.value = "";
+	buildWarning.value = "";
+	render(html`<${ImagesPage} />`, container);
+}
+
+export function teardownImages() {
+	if (_imagesContainer) render(null, _imagesContainer);
+	_imagesContainer = null;
+}

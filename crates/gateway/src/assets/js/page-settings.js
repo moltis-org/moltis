@@ -9,6 +9,13 @@ import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+// Moved page init/teardown imports
+import { initChannels, teardownChannels } from "./page-channels.js";
+import { initHooks, teardownHooks } from "./page-hooks.js";
+import { initImages, teardownImages } from "./page-images.js";
+import { initLogs, teardownLogs } from "./page-logs.js";
+import { initMcp, teardownMcp } from "./page-mcp.js";
+import { initProviders, teardownProviders } from "./page-providers.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
@@ -47,6 +54,7 @@ function fetchIdentity() {
 // ── Sidebar navigation items ─────────────────────────────────
 
 var sections = [
+	{ group: "General" },
 	{
 		id: "identity",
 		label: "Identity",
@@ -63,6 +71,12 @@ var sections = [
 		icon: html`<span class="icon icon-terminal"></span>`,
 	},
 	{
+		id: "voice",
+		label: "Voice",
+		icon: html`<span class="icon icon-microphone"></span>`,
+	},
+	{ group: "Security" },
+	{
 		id: "security",
 		label: "Security",
 		icon: html`<span class="icon icon-lock"></span>`,
@@ -73,14 +87,47 @@ var sections = [
 		icon: html`<span class="icon icon-globe"></span>`,
 	},
 	{
-		id: "voice",
-		label: "Voice",
-		icon: html`<span class="icon icon-microphone"></span>`,
-	},
-	{
 		id: "notifications",
 		label: "Notifications",
 		icon: html`<span class="icon icon-bell"></span>`,
+	},
+	{ group: "Integrations" },
+	{
+		id: "providers",
+		label: "Providers",
+		icon: html`<span class="icon icon-server"></span>`,
+		page: true,
+	},
+	{
+		id: "channels",
+		label: "Channels",
+		icon: html`<span class="icon icon-channels"></span>`,
+		page: true,
+	},
+	{
+		id: "mcp",
+		label: "MCP Tools",
+		icon: html`<span class="icon icon-link"></span>`,
+		page: true,
+	},
+	{
+		id: "hooks",
+		label: "Hooks",
+		icon: html`<span class="icon icon-wrench"></span>`,
+		page: true,
+	},
+	{ group: "System" },
+	{
+		id: "sandboxes",
+		label: "Sandboxes",
+		icon: html`<span class="icon icon-cube"></span>`,
+		page: true,
+	},
+	{
+		id: "logs",
+		label: "Logs",
+		icon: html`<span class="icon icon-document"></span>`,
+		page: true,
 	},
 	{
 		id: "config",
@@ -91,25 +138,32 @@ var sections = [
 
 function getVisibleSections() {
 	var voiceEnabled = gon.get("voice_enabled");
-	return sections.filter((s) => s.id !== "voice" || voiceEnabled);
+	return sections.filter((s) => s.group || s.id !== "voice" || voiceEnabled);
+}
+
+/** Return only items with an id (no group headings). */
+function getSectionItems() {
+	return sections.filter((s) => s.id);
 }
 
 function SettingsSidebar() {
 	return html`<div class="settings-sidebar">
 		<div class="settings-sidebar-nav">
-			${getVisibleSections().map(
-				(s) => html`
-				<button
-					key=${s.id}
-					class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
-					onClick=${() => {
-						navigate(`/settings/${s.id}`);
-					}}
-				>
-					${s.icon}
-					${s.label}
-				</button>
-			`,
+			${getVisibleSections().map((s) =>
+				s.group
+					? html`<div key=${s.group} class="settings-group-label">
+							${s.group}
+						</div>`
+					: html`<button
+							key=${s.id}
+							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
+							onClick=${() => {
+								navigate(`/settings/${s.id}`);
+							}}
+						>
+							${s.icon}
+							${s.label}
+						</button>`,
 			)}
 		</div>
 	</div>`;
@@ -2929,6 +2983,32 @@ function NotificationsSection() {
 	</div>`;
 }
 
+// ── Page-section init/teardown map ──────────────────────────
+
+var pageSectionHandlers = {
+	providers: { init: initProviders, teardown: teardownProviders },
+	channels: { init: initChannels, teardown: teardownChannels },
+	mcp: { init: initMcp, teardown: teardownMcp },
+	hooks: { init: initHooks, teardown: teardownHooks },
+	sandboxes: { init: initImages, teardown: teardownImages },
+	logs: { init: initLogs, teardown: teardownLogs },
+};
+
+/** Wrapper that mounts a page init/teardown pair into a ref div. */
+function PageSection({ initFn, teardownFn }) {
+	var ref = useRef(null);
+	useEffect(() => {
+		if (ref.current) initFn(ref.current);
+		return () => {
+			if (teardownFn) teardownFn();
+		};
+	}, []);
+	return html`<div
+		ref=${ref}
+		class="flex-1 flex flex-col min-w-0 overflow-hidden"
+	/>`;
+}
+
 // ── Main layout ──────────────────────────────────────────────
 
 function SettingsPage() {
@@ -2937,9 +3017,11 @@ function SettingsPage() {
 	}, []);
 
 	var section = activeSection.value;
+	var ps = pageSectionHandlers[section];
 
 	return html`<div class="settings-layout">
 		<${SettingsSidebar} />
+		${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
 		${section === "identity" ? html`<${IdentitySection} />` : null}
 		${section === "memory" ? html`<${MemorySection} />` : null}
 		${section === "environment" ? html`<${EnvironmentSection} />` : null}
@@ -2951,14 +3033,16 @@ function SettingsPage() {
 	</div>`;
 }
 
+var DEFAULT_SECTION = "identity";
+
 registerPrefix(
 	"/settings",
 	(container, param) => {
 		mounted = true;
 		containerRef = container;
 		container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
-		var isValidSection = param && sections.some((s) => s.id === param);
-		var section = isValidSection ? param : "identity";
+		var isValidSection = param && getSectionItems().some((s) => s.id === param);
+		var section = isValidSection ? param : DEFAULT_SECTION;
 		activeSection.value = section;
 		if (!isValidSection) {
 			history.replaceState(null, "", `/settings/${section}`);
@@ -2972,6 +3056,6 @@ registerPrefix(
 		containerRef = null;
 		identity.value = null;
 		loading.value = true;
-		activeSection.value = "identity";
+		activeSection.value = DEFAULT_SECTION;
 	},
 );

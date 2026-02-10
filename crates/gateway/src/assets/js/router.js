@@ -97,7 +97,7 @@ export function mount(path) {
 	}
 
 	// Clear unseen logs alert when viewing the logs page
-	if (path === "/logs") clearLogsAlert();
+	if (path === "/logs" || path === "/settings/logs") clearLogsAlert();
 
 	if (page) page.init(pageContent, route.param);
 }

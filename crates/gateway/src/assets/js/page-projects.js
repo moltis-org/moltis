@@ -7,8 +7,8 @@ import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
 import { fetchProjects } from "./projects.js";
 import { registerPage } from "./router.js";
-import { projects as projectsSig } from "./stores/project-store.js";
 import * as S from "./state.js";
+import { projects as projectsSig } from "./stores/project-store.js";
 
 var completions = signal([]);
 var editingProject = signal(null);
@@ -242,7 +242,7 @@ function ProjectsPage() {
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">Projects</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">Repositories</h2>
         <button class="provider-btn provider-btn-secondary"
           onClick=${onDetect} disabled=${detecting.value}
           title="Scan common locations for git repositories and add them as projects">

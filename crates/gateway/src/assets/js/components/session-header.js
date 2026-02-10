@@ -109,29 +109,37 @@ export function SessionHeader() {
 
 	return html`
 		<div class="flex items-center gap-2">
-			${renaming
-				? html`<input
+			${
+				renaming
+					? html`<input
 						ref=${inputRef}
 						class="chat-session-rename-input"
 						onBlur=${commitRename}
 						onKeyDown=${onKeyDown}
 					/>`
-				: html`<span
+					: html`<span
 						class="chat-session-name"
 						style=${{ cursor: canRename ? "pointer" : "default" }}
 						title=${canRename ? "Click to rename" : ""}
 						onClick=${startRename}
-					>${displayName}</span>`}
-			${!isCron && html`
+					>${displayName}</span>`
+			}
+			${
+				!isCron &&
+				html`
 				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
-					\u2442
+					Fork
 				</button>
-			`}
-			${!(isMain || isCron) && html`
+			`
+			}
+			${
+				!(isMain || isCron) &&
+				html`
 				<button class="chat-session-btn chat-session-delete" onClick=${onDelete} title="Delete session">
-					\u2715
+					Delete
 				</button>
-			`}
+			`
+			}
 		</div>
 	`;
 }
