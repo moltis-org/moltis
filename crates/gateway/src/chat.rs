@@ -2071,14 +2071,14 @@ impl ChatService for LiveChatService {
         }
 
         // Set preview from the first user message if not already set.
-        if let Some(entry) = self.session_metadata.get(&session_key).await {
-            if entry.preview.is_none() {
-                let preview_text = extract_preview_from_value(&user_msg.to_value());
-                if let Some(preview) = preview_text {
-                    self.session_metadata
-                        .set_preview(&session_key, Some(&preview))
-                        .await;
-                }
+        if let Some(entry) = self.session_metadata.get(&session_key).await
+            && entry.preview.is_none()
+        {
+            let preview_text = extract_preview_from_value(&user_msg.to_value());
+            if let Some(preview) = preview_text {
+                self.session_metadata
+                    .set_preview(&session_key, Some(&preview))
+                    .await;
             }
         }
 
