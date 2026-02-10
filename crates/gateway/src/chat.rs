@@ -2587,6 +2587,19 @@ impl ChatService for LiveChatService {
         self.session_metadata.touch(&session_key, 0).await;
         self.session_metadata.set_preview(&session_key, None).await;
 
+        // Notify all WebSocket clients so the web UI clears the session
+        // even when /clear is issued from a channel (e.g. Telegram).
+        broadcast(
+            &self.state,
+            "chat",
+            serde_json::json!({
+                "sessionKey": session_key,
+                "state": "session_cleared",
+            }),
+            BroadcastOpts::default(),
+        )
+        .await;
+
         info!(session = %session_key, "chat.clear");
         Ok(serde_json::json!({ "ok": true }))
     }

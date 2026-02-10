@@ -463,6 +463,17 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 	}
 }
 
+function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
+	// Reset badge and unread state for every client.
+	var session = sessionStore.getByKey(eventSession);
+	if (session) session.syncCounts(0, 0);
+	if (!(isActive && isChatPage)) return;
+	// Active viewer: clear the chat box and token bar.
+	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+	S.setSessionTokens({ input: 0, output: 0 });
+	updateTokenBar();
+}
+
 var chatHandlers = {
 	thinking: handleChatThinking,
 	thinking_text: handleChatThinkingText,
@@ -477,6 +488,7 @@ var chatHandlers = {
 	error: handleChatError,
 	notice: handleChatNotice,
 	queue_cleared: handleChatQueueCleared,
+	session_cleared: handleChatSessionCleared,
 };
 
 function handleChatEvent(p) {
