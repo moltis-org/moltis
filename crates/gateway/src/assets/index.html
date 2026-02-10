@@ -231,11 +231,12 @@
     <!-- Project selector -->
     <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] hidden">
       <div id="projectFilterCombo" class="model-combo">
-        <button id="projectFilterBtn" class="model-combo-btn" type="button" style="width:100%">
+        <button id="projectFilterBtn" class="model-combo-btn" type="button" style="width:100%;max-width:none;justify-content:space-between">
           <span id="projectFilterLabel">All sessions</span>
           <svg class="model-combo-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="12" height="12"><path d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
         </button>
         <div id="projectFilterDropdown" class="model-dropdown hidden" style="width:100%">
+          <input id="projectFilterSearch" type="text" placeholder="Search projects…" class="model-search-input" autocomplete="off" />
           <div id="projectFilterList" class="model-dropdown-list"></div>
         </div>
       </div>
