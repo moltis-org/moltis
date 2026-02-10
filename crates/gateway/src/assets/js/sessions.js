@@ -244,7 +244,11 @@ export function bumpSessionCount(key, increment) {
 var newSessionBtn = S.$("newSessionBtn");
 newSessionBtn.addEventListener("click", () => {
 	var key = `session:${crypto.randomUUID()}`;
-	navigate(sessionPath(key));
+	if (currentPrefix === "/chats") {
+		switchSession(key, null, S.projectFilterId || undefined);
+	} else {
+		navigate(sessionPath(key));
+	}
 });
 
 // ── Clear all sessions button ───────────────────────────────
