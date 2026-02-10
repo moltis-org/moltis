@@ -4304,12 +4304,15 @@ dependencies = [
  "moltis-tools",
  "open",
  "reqwest 0.12.28",
+ "secrecy 0.8.0",
  "serde_json",
  "sqlx",
  "tempfile",
+ "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "which 8.0.0",
 ]
 
 [[package]]

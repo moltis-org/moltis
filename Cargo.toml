@@ -141,6 +141,7 @@ notify-debouncer-full = "0.7"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
+which                 = "8"
 
 # Workspace crates
 moltis            = { path = "crates/cli" }
