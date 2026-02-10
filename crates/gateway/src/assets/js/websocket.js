@@ -32,7 +32,6 @@ import {
 	fetchSessions,
 	setSessionReplying,
 	setSessionUnread,
-	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
 import { sessionStore } from "./stores/session-store.js";
@@ -230,12 +229,7 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
 	}
-	if (!isChatPage) return;
-	if (p.sessionKey && p.sessionKey !== S.activeSessionKey) {
-		switchSession(p.sessionKey);
-	}
-	var active = p.sessionKey ? p.sessionKey === S.activeSessionKey : p.sessionKey === undefined;
-	if (!active) return;
+	if (!(isChatPage && isActive)) return;
 	// Compare against the per-session history index, not the global one,
 	// to avoid skipping events when viewing a different session.
 	var chanSession = sessionStore.getByKey(p.sessionKey || S.activeSessionKey);
