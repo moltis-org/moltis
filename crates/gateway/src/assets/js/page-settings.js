@@ -1043,7 +1043,9 @@ function SecuritySection() {
 		</div>
 
 		<!-- Danger zone (only when auth has been set up) -->
-		${!setupComplete ? "" : html`<div style="max-width:600px;margin-top:8px;border-top:1px solid var(--error);padding-top:16px;">
+		${
+			setupComplete
+				? html`<div style="max-width:600px;margin-top:8px;border-top:1px solid var(--error);padding-top:16px;">
 			<h3 class="text-sm font-medium" style="color:var(--error);margin-bottom:8px;">Danger Zone</h3>
 			<div style="padding:12px 16px;border:1px solid var(--error);border-radius:6px;background:color-mix(in srgb, var(--error) 5%, transparent);">
 				<strong class="text-sm" style="color:var(--text-strong);">Remove all authentication</strong>
@@ -1067,7 +1069,9 @@ function SecuritySection() {
 						onClick=${onResetAuth}>Remove all authentication</button>`
 				}
 			</div>
-		</div>`}
+		</div>`
+				: ""
+		}
 	</div>`;
 }
 

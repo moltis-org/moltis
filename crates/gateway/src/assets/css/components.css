@@ -305,8 +305,14 @@
   background: var(--bg-hover);
 }
 
-.cron-action-danger:hover {
+.cron-action-danger {
   color: var(--error);
+  border-color: var(--error);
+}
+
+.cron-action-danger:hover {
+  background: var(--error);
+  color: #fff;
   border-color: var(--error);
 }
 
