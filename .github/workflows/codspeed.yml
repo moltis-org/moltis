@@ -8,12 +8,29 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  zizmor:
+    name: Workflow Security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
+        with:
+          advanced-security: false
+          online-audits: false
+
   codspeed:
     name: Run Benchmarks
+    needs: zizmor
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
