@@ -478,6 +478,14 @@ pub async fn run_agent_loop_with_context(
         &vec![]
     };
 
+    // Extract session key once for hook payloads.
+    let session_key_for_hooks = tool_context
+        .as_ref()
+        .and_then(|ctx| ctx.get("_session_key"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let mut iterations = 0;
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
@@ -503,6 +511,35 @@ pub async fn run_agent_loop_with_context(
             "calling LLM"
         );
         trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+
+        // Dispatch BeforeLLMCall hook — may block the LLM call.
+        if let Some(ref hooks) = hook_registry {
+            let msgs_json: Vec<serde_json::Value> =
+                messages.iter().map(|m| m.to_openai_value()).collect();
+            let payload = HookPayload::BeforeLLMCall {
+                session_key: session_key_for_hooks.clone(),
+                provider: provider.name().to_string(),
+                model: provider.id().to_string(),
+                messages: serde_json::Value::Array(msgs_json),
+                tool_count: schemas_for_api.len(),
+                iteration: iterations,
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Block(reason)) => {
+                    warn!(reason = %reason, "LLM call blocked by BeforeLLMCall hook");
+                    return Err(AgentRunError::Other(anyhow::anyhow!(
+                        "blocked by BeforeLLMCall hook: {reason}"
+                    )));
+                },
+                Ok(HookAction::ModifyPayload(_)) => {
+                    debug!("BeforeLLMCall ModifyPayload ignored (messages are typed)");
+                },
+                Ok(HookAction::Continue) => {},
+                Err(e) => {
+                    warn!(error = %e, "BeforeLLMCall hook dispatch failed");
+                },
+            }
+        }
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -576,6 +613,46 @@ pub async fn run_agent_loop_with_context(
             );
         }
 
+        // Dispatch AfterLLMCall hook — may block tool execution.
+        if let Some(ref hooks) = hook_registry {
+            let tc_json: Vec<serde_json::Value> = response
+                .tool_calls
+                .iter()
+                .map(|tc| {
+                    serde_json::json!({
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    })
+                })
+                .collect();
+            let payload = HookPayload::AfterLLMCall {
+                session_key: session_key_for_hooks.clone(),
+                provider: provider.name().to_string(),
+                model: provider.id().to_string(),
+                text: response.text.clone(),
+                tool_calls: tc_json,
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                iteration: iterations,
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Block(reason)) => {
+                    warn!(reason = %reason, "LLM response blocked by AfterLLMCall hook");
+                    return Err(AgentRunError::Other(anyhow::anyhow!(
+                        "blocked by AfterLLMCall hook: {reason}"
+                    )));
+                },
+                Ok(HookAction::ModifyPayload(_)) => {
+                    debug!("AfterLLMCall ModifyPayload ignored (response is typed)");
+                },
+                Ok(HookAction::Continue) => {},
+                Err(e) => {
+                    warn!(error = %e, "AfterLLMCall hook dispatch failed");
+                },
+            }
+        }
+
         // If no tool calls, return the text response.
         if response.tool_calls.is_empty() {
             let text = response.text.unwrap_or_default();
@@ -608,14 +685,6 @@ pub async fn run_agent_loop_with_context(
             response.tool_calls.clone(),
         ));
 
-        // Extract session key from tool_context for hook payloads.
-        let session_key = tool_context
-            .as_ref()
-            .and_then(|ctx| ctx.get("_session_key"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
         // Execute tool calls concurrently.
         total_tool_calls += response.tool_calls.len();
 
@@ -641,7 +710,7 @@ pub async fn run_agent_loop_with_context(
 
                 // Dispatch BeforeToolCall hook — may block or modify arguments.
                 let hook_registry = hook_registry.clone();
-                let session_key = session_key.clone();
+                let session_key = session_key_for_hooks.clone();
                 let tc_name = tc.name.clone();
                 let _tc_id = tc.id.clone();
 
@@ -854,6 +923,14 @@ pub async fn run_agent_loop_streaming(
         "schemas_for_api prepared for streaming"
     );
 
+    // Extract session key once for hook payloads.
+    let session_key_for_hooks = tool_context
+        .as_ref()
+        .and_then(|ctx| ctx.get("_session_key"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let mut iterations = 0;
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
@@ -882,6 +959,35 @@ pub async fn run_agent_loop_streaming(
             "calling LLM (streaming)"
         );
         trace!(iteration = iterations, messages = ?messages, "LLM request messages");
+
+        // Dispatch BeforeLLMCall hook — may block the LLM call.
+        if let Some(ref hooks) = hook_registry {
+            let msgs_json: Vec<serde_json::Value> =
+                messages.iter().map(|m| m.to_openai_value()).collect();
+            let payload = HookPayload::BeforeLLMCall {
+                session_key: session_key_for_hooks.clone(),
+                provider: provider.name().to_string(),
+                model: provider.id().to_string(),
+                messages: serde_json::Value::Array(msgs_json),
+                tool_count: schemas_for_api.len(),
+                iteration: iterations,
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Block(reason)) => {
+                    warn!(reason = %reason, "LLM call blocked by BeforeLLMCall hook");
+                    return Err(AgentRunError::Other(anyhow::anyhow!(
+                        "blocked by BeforeLLMCall hook: {reason}"
+                    )));
+                },
+                Ok(HookAction::ModifyPayload(_)) => {
+                    debug!("BeforeLLMCall ModifyPayload ignored (messages are typed)");
+                },
+                Ok(HookAction::Continue) => {},
+                Err(e) => {
+                    warn!(error = %e, "BeforeLLMCall hook dispatch failed");
+                },
+            }
+        }
 
         if let Some(cb) = on_event {
             cb(RunnerEvent::Thinking);
@@ -1058,6 +1164,49 @@ pub async fn run_agent_loop_streaming(
             tool_calls = vec![tc];
         }
 
+        // Dispatch AfterLLMCall hook — may block tool execution.
+        if let Some(ref hooks) = hook_registry {
+            let tc_json: Vec<serde_json::Value> = tool_calls
+                .iter()
+                .map(|tc| {
+                    serde_json::json!({
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    })
+                })
+                .collect();
+            let payload = HookPayload::AfterLLMCall {
+                session_key: session_key_for_hooks.clone(),
+                provider: provider.name().to_string(),
+                model: provider.id().to_string(),
+                text: if accumulated_text.is_empty() {
+                    None
+                } else {
+                    Some(accumulated_text.clone())
+                },
+                tool_calls: tc_json,
+                input_tokens,
+                output_tokens,
+                iteration: iterations,
+            };
+            match hooks.dispatch(&payload).await {
+                Ok(HookAction::Block(reason)) => {
+                    warn!(reason = %reason, "LLM response blocked by AfterLLMCall hook");
+                    return Err(AgentRunError::Other(anyhow::anyhow!(
+                        "blocked by AfterLLMCall hook: {reason}"
+                    )));
+                },
+                Ok(HookAction::ModifyPayload(_)) => {
+                    debug!("AfterLLMCall ModifyPayload ignored (response is typed)");
+                },
+                Ok(HookAction::Continue) => {},
+                Err(e) => {
+                    warn!(error = %e, "AfterLLMCall hook dispatch failed");
+                },
+            }
+        }
+
         // If no tool calls, return the text response.
         if tool_calls.is_empty() {
             info!(
@@ -1091,14 +1240,6 @@ pub async fn run_agent_loop_streaming(
             tool_calls.clone(),
         ));
 
-        // Extract session key from tool_context for hook payloads.
-        let session_key = tool_context
-            .as_ref()
-            .and_then(|ctx| ctx.get("_session_key"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
         // Execute tool calls concurrently.
         total_tool_calls += tool_calls.len();
 
@@ -1122,7 +1263,7 @@ pub async fn run_agent_loop_streaming(
                 let mut args = tc.arguments.clone();
 
                 let hook_registry = hook_registry.clone();
-                let session_key = session_key.clone();
+                let session_key = session_key_for_hooks.clone();
                 let tc_name = tc.name.clone();
 
                 if let Some(ref ctx) = tool_context

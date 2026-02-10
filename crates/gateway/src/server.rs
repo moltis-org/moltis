@@ -3719,16 +3719,30 @@ async fn oauth_callback_handler(
         }))
         .await
     {
-        Ok(_) => Html(
-            "<h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script>"
-                .to_string(),
-        )
-        .into_response(),
+        Ok(_) => {
+            let nonce = uuid::Uuid::new_v4().to_string();
+            let html = format!(
+                "<h1>Authentication successful!</h1><p>You can close this window.</p>\
+                 <script nonce=\"{nonce}\">window.close();</script>"
+            );
+            let csp = format!(
+                "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'"
+            );
+            let mut resp = Html(html).into_response();
+            if let Ok(val) = csp.parse() {
+                resp.headers_mut()
+                    .insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
+            }
+            resp
+        },
         Err(e) => {
             tracing::warn!(error = %e, "OAuth callback completion failed");
             (
                 StatusCode::BAD_REQUEST,
-                Html("<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>".to_string()),
+                Html(
+                    "<h1>Authentication failed</h1><p>Could not complete OAuth flow.</p>"
+                        .to_string(),
+                ),
             )
                 .into_response()
         },
@@ -3811,11 +3825,14 @@ async fn render_spa_template(
             .replace("/assets/", &versioned)
     };
 
+    // Generate a per-request nonce for CSP script-src.
+    let nonce = uuid::Uuid::new_v4().to_string();
+
     if !onboarding_shell {
         // Build server-side data blob (gon pattern) injected into <head>.
         let gon = build_gon_data(gateway).await;
         let gon_script = format!(
-            "<script>window.__MOLTIS__={};</script>",
+            "<script nonce=\"{nonce}\">window.__MOLTIS__={};</script>",
             serde_json::to_string(&gon).unwrap_or_else(|_| "{}".into()),
         );
         // Inject gon data into <head> so it's available before any module scripts run.
@@ -3824,7 +3841,36 @@ async fn render_spa_template(
         body = body.replace("</head>", &format!("{gon_script}\n</head>"));
     }
 
-    ([("cache-control", "no-cache, no-store")], Html(body)).into_response()
+    // Inject nonce into all existing inline <script> tags.
+    body = body.replace("<script>", &format!("<script nonce=\"{nonce}\">"));
+    // Import maps and module scripts also need the nonce.
+    body = body.replace(
+        "<script type=\"importmap\">",
+        &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
+    );
+
+    let csp = format!(
+        "default-src 'self'; \
+         script-src 'self' 'nonce-{nonce}'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data: blob:; \
+         font-src 'self'; \
+         connect-src 'self' ws: wss:; \
+         frame-ancestors 'none'; \
+         form-action 'self'; \
+         base-uri 'self'; \
+         object-src 'none'"
+    );
+
+    let mut response = Html(body).into_response();
+    let headers = response.headers_mut();
+    if let Ok(val) = "no-cache, no-store".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, val);
+    }
+    if let Ok(val) = csp.parse() {
+        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
+    }
+    response
 }
 
 #[cfg(feature = "web-ui")]
@@ -5610,5 +5656,56 @@ mod tests {
             "moltis.example.com".parse().unwrap(),
         );
         assert!(!is_local_connection(&headers, addr, false));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn csp_nonce_injected_into_inline_scripts() {
+        let html = r#"<head>
+<script>theme()</script>
+<script type="importmap">{"imports":{}}</script>
+</head>
+<body>
+<script>init()</script>
+<script type="module" src="/app.js"></script>
+</body>"#;
+
+        let nonce = "test-nonce-abc";
+        let mut body = html.to_string();
+        body = body.replace("<script>", &format!("<script nonce=\"{nonce}\">"));
+        body = body.replace(
+            "<script type=\"importmap\">",
+            &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
+        );
+
+        // All inline <script> tags should have the nonce.
+        assert!(body.contains(&format!("<script nonce=\"{nonce}\">theme()")));
+        assert!(body.contains(&format!("<script nonce=\"{nonce}\">init()")));
+        assert!(body.contains(&format!("<script nonce=\"{nonce}\" type=\"importmap\">")));
+        // Module script with src= is NOT modified — covered by 'self' in CSP.
+        assert!(body.contains("<script type=\"module\" src=\"/app.js\">"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn csp_header_contains_nonce() {
+        let nonce = "abc-123";
+        let csp = format!(
+            "default-src 'self'; \
+             script-src 'self' 'nonce-{nonce}'; \
+             style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: blob:; \
+             font-src 'self'; \
+             connect-src 'self' ws: wss:; \
+             frame-ancestors 'none'; \
+             form-action 'self'; \
+             base-uri 'self'; \
+             object-src 'none'"
+        );
+
+        assert!(csp.contains("'nonce-abc-123'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("connect-src 'self' ws: wss:"));
     }
 }

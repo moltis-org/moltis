@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`BeforeLLMCall` / `AfterLLMCall` hooks**: New modifying hook events that fire
+  before sending prompts to the LLM provider and after receiving responses
+  (before tool execution). Enables prompt injection filtering, PII redaction,
+  and response auditing via shell hooks.
+- **Config template**: The generated `moltis.toml` template now lists all 17
+  hook events with correct PascalCase names and one-line descriptions.
+- **Hook event validation**: `moltis config check` now warns on unknown hook
+  event names in the config file.
+
+### Changed
+
+- **Hooks documentation**: Rewritten `docs/src/hooks.md` with complete event
+  reference, corrected `ToolResultPersist` classification (modifying, not
+  read-only), and new "Prompt Injection Filtering" section with examples.
+
+### Security
+
+- **Content-Security-Policy header**: HTML pages now include a nonce-based CSP
+  header (`script-src 'self' 'nonce-<UUID>'`), preventing inline script
+  injection (XSS defense-in-depth). The OAuth callback page also gets a
+  restrictive CSP.
+
 ## [0.5.0] - 2026-02-09
 
 ### Added
