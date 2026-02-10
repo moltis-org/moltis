@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{FromRef, FromRequestParts, State},
+    extract::{ConnectInfo, FromRef, FromRequestParts, State},
     http::{StatusCode, request::Parts},
     middleware::Next,
     response::{IntoResponse, Json},
@@ -9,6 +9,7 @@ use axum::{
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
+    server::is_local_connection,
     state::GatewayState,
 };
 
@@ -31,11 +32,18 @@ where
         let store = Arc::<CredentialStore>::from_ref(state);
         let gw = Arc::<GatewayState>::from_ref(state);
 
-        // On localhost with no password, grant access without a session.
-        if gw.localhost_only && !store.has_password().await.unwrap_or(true) {
-            return Ok(AuthSession(AuthIdentity {
-                method: AuthMethod::Loopback,
-            }));
+        // Three-tier model: local connection + no password = dev convenience.
+        if !store.has_password().await.unwrap_or(true) {
+            let is_local = parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .is_some_and(|ci| is_local_connection(&parts.headers, ci.0, gw.behind_proxy));
+            if is_local {
+                return Ok(AuthSession(AuthIdentity {
+                    method: AuthMethod::Loopback,
+                }));
+            }
+            return Err((StatusCode::UNAUTHORIZED, "not authenticated"));
         }
 
         let cookie_header = parts
@@ -79,8 +87,23 @@ pub async fn require_auth(
     }
 
     if !cred_store.is_setup_complete() {
-        // Setup not yet done — pass through.
-        return next.run(request).await;
+        // Setup not yet done — only allow local connections through.
+        // Remote connections must use /api/auth/* (setup flow) which is
+        // excluded from this middleware.
+        let is_local = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .is_some_and(|ci| {
+                is_local_connection(request.headers(), ci.0, state.gateway.behind_proxy)
+            });
+        if is_local {
+            return next.run(request).await;
+        }
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "setup required"})),
+        )
+            .into_response();
     }
 
     // Check session cookie.
