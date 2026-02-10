@@ -4,6 +4,7 @@ import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import * as S from "./state.js";
+import { projectStore } from "./stores/project-store.js";
 
 var combo = S.$("projectFilterCombo");
 var btn = S.$("projectFilterBtn");
@@ -14,9 +15,9 @@ var searchInput = S.$("projectFilterSearch");
 var kbIdx = -1;
 
 export function fetchProjects() {
-	sendRpc("projects.list", {}).then((res) => {
-		if (!res?.ok) return;
-		var projects = res.payload || [];
+	projectStore.fetch().then(() => {
+		var projects = projectStore.projects.value;
+		// Dual-write to state.js for backward compat
 		S.setProjects(projects);
 		renderProjectSelect();
 		renderSessionProjectSelect();
@@ -25,9 +26,10 @@ export function fetchProjects() {
 }
 
 function selectFilter(id) {
+	projectStore.setFilterId(id);
+	// Dual-write to state.js for backward compat
 	S.setProjectFilterId(id);
-	localStorage.setItem("moltis-project-filter", id);
-	var p = S.projects.find((x) => x.id === id);
+	var p = projectStore.getById(id);
 	label.textContent = p ? p.label || p.id : "All sessions";
 	closeDropdown();
 	document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
@@ -51,12 +53,14 @@ function openDropdown() {
 function renderList(query) {
 	list.textContent = "";
 	var q = (query || "").toLowerCase();
+	var filterId = projectStore.projectFilterId.value;
+	var allProjects = projectStore.projects.value;
 
 	// "All sessions" option — always shown unless query excludes it
 	if (!q || "all sessions".indexOf(q) !== -1) {
 		var allEl = document.createElement("div");
 		allEl.className = "model-dropdown-item";
-		if (!S.projectFilterId) allEl.classList.add("selected");
+		if (!filterId) allEl.classList.add("selected");
 		var allLabel = document.createElement("span");
 		allLabel.className = "model-item-label";
 		allLabel.textContent = "All sessions";
@@ -65,7 +69,7 @@ function renderList(query) {
 		list.appendChild(allEl);
 	}
 
-	var filtered = S.projects.filter((p) => {
+	var filtered = allProjects.filter((p) => {
 		if (!q) return true;
 		var name = (p.label || p.id).toLowerCase();
 		return name.indexOf(q) !== -1 || p.id.toLowerCase().indexOf(q) !== -1;
@@ -74,7 +78,7 @@ function renderList(query) {
 	filtered.forEach((p) => {
 		var el = document.createElement("div");
 		el.className = "model-dropdown-item";
-		if (p.id === S.projectFilterId) el.classList.add("selected");
+		if (p.id === filterId) el.classList.add("selected");
 		var itemLabel = document.createElement("span");
 		itemLabel.className = "model-item-label";
 		itemLabel.textContent = p.label || p.id;
@@ -103,18 +107,20 @@ function updateKbActive() {
 
 export function renderProjectSelect() {
 	var wrapper = S.$("projectSelectWrapper");
-	if (S.projects.length === 0) {
+	var allProjects = projectStore.projects.value;
+	var filterId = projectStore.projectFilterId.value;
+	if (allProjects.length === 0) {
 		if (wrapper) wrapper.classList.add("hidden");
-		if (S.projectFilterId) {
+		if (filterId) {
+			projectStore.setFilterId("");
 			S.setProjectFilterId("");
-			localStorage.removeItem("moltis-project-filter");
 		}
 		label.textContent = "All sessions";
 		return;
 	}
 	if (wrapper) wrapper.classList.remove("hidden");
 
-	var p = S.projects.find((x) => x.id === S.projectFilterId);
+	var p = projectStore.getById(filterId);
 	label.textContent = p ? p.label || p.id : "All sessions";
 }
 

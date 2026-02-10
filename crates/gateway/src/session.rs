@@ -193,6 +193,7 @@ impl SessionService for LiveSessionService {
                 "forkPoint": e.fork_point,
                 "mcpDisabled": e.mcp_disabled,
                 "preview": e.preview,
+                "version": e.version,
             }));
         }
         Ok(serde_json::json!(entries))
@@ -262,6 +263,7 @@ impl SessionService for LiveSessionService {
                 "sandbox_image": entry.sandbox_image,
                 "worktree_branch": entry.worktree_branch,
                 "mcpDisabled": entry.mcp_disabled,
+                "version": entry.version,
             },
             "history": filter_ui_history(history),
         }))
@@ -371,6 +373,7 @@ impl SessionService for LiveSessionService {
             "sandbox_image": entry.sandbox_image,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
+            "version": entry.version,
         }))
     }
 
@@ -510,7 +513,7 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| e.to_string())?;
 
-        let entry = self
+        let _entry = self
             .metadata
             .upsert(&new_key, label)
             .await
@@ -544,12 +547,19 @@ impl SessionService for LiveSessionService {
             )
             .await;
 
+        // Re-fetch after all mutations to get the final version.
+        let final_entry = self
+            .metadata
+            .get(&new_key)
+            .await
+            .ok_or_else(|| format!("forked session '{new_key}' not found after creation"))?;
         Ok(serde_json::json!({
             "sessionKey": new_key,
-            "id": entry.id,
-            "label": entry.label,
+            "id": final_entry.id,
+            "label": final_entry.label,
             "forkPoint": fork_point,
             "messageCount": fork_point,
+            "version": final_entry.version,
         }))
     }
 

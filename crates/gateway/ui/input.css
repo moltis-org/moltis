@@ -1123,6 +1123,43 @@
     display: inline;
   }
 
+  /* Session header (Preact component in chat page header) */
+  .chat-session-name {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .chat-session-rename-input {
+    font-size: 0.75rem;
+    color: var(--text);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+    outline: none;
+    max-width: 200px;
+  }
+  .chat-session-rename-input:focus {
+    border-color: var(--border-strong);
+  }
+  .chat-session-btn {
+    font-size: 0.7rem;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .chat-session-btn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .chat-session-delete:hover {
+    color: var(--error);
+    border-color: var(--error);
+  }
+
   /* Token usage bar (bottom of chat, above input) */
   .token-bar {
     font-size: 0.7rem;

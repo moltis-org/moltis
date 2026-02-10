@@ -1,6 +1,9 @@
 // ── Chat page ────────────────────────────────────────────
 
+import { html } from "htm/preact";
+import { render } from "preact";
 import { chatAddMsg, chatAddMsgWithImages, updateTokenBar } from "./chat-ui.js";
+import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
 	clearPendingImages,
@@ -17,7 +20,6 @@ import {
 	fetchSessions,
 	setSessionReplying,
 	switchSession,
-	updateChatSessionHeader,
 } from "./sessions.js";
 import * as S from "./state.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
@@ -891,12 +893,7 @@ var chatPageHTML =
 	'<span class="icon icon-md icon-document" style="flex-shrink:0;"></span>' +
 	'<span id="fullContextLabel">Context</span>' +
 	"</button>" +
-	'<div class="ml-auto flex items-center gap-1.5">' +
-	'<span id="chatSessionName" class="text-xs text-[var(--muted)] cursor-default" title="Click to rename"></span>' +
-	'<input id="chatSessionRenameInput" class="hidden text-xs text-[var(--text)] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius-sm)] px-1.5 py-0.5 outline-none max-w-[200px]" style="width:0" />' +
-	'<button id="chatSessionFork" class="provider-btn provider-btn-secondary provider-btn-sm hidden">Fork</button>' +
-	'<button id="chatSessionDelete" class="provider-btn provider-btn-danger provider-btn-sm hidden">Delete</button>' +
-	"</div>" +
+	'<div id="sessionHeaderMount" class="ml-auto flex items-center gap-1.5"></div>' +
 	"</div>" +
 	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
@@ -972,7 +969,9 @@ registerPrefix(
 		S.setSandboxImageDropdown(S.$("sandboxImageDropdown"));
 		bindSandboxImageEvents();
 		updateSandboxImageUI(null);
-		updateChatSessionHeader();
+		// Mount reactive SessionHeader component
+		var headerMount = S.$("sessionHeaderMount");
+		if (headerMount) render(html`<${SessionHeader} />`, headerMount);
 
 		var mcpToggle = S.$("mcpToggleBtn");
 		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
@@ -1048,6 +1047,9 @@ registerPrefix(
 		teardownVoiceInput();
 		teardownMediaDrop();
 		slashHideMenu();
+		// Unmount reactive SessionHeader
+		var headerMount = S.$("sessionHeaderMount");
+		if (headerMount) render(null, headerMount);
 		S.setChatMsgBox(null);
 		S.setChatInput(null);
 		S.setChatSendBtn(null);

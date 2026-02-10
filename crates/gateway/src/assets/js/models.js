@@ -3,6 +3,7 @@
 import { sendRpc } from "./helpers.js";
 import { showModelNotice } from "./page-chat.js";
 import * as S from "./state.js";
+import { modelStore } from "./stores/model-store.js";
 
 function setSessionModel(sessionKey, modelId) {
 	sendRpc("sessions.patch", { key: sessionKey, model: modelId });
@@ -15,16 +16,12 @@ function updateModelComboLabel(model) {
 }
 
 export function fetchModels() {
-	return sendRpc("models.list", {}).then((res) => {
-		if (!res?.ok) return;
-		S.setModels(res.payload || []);
-		if (S.models.length === 0) return;
-		var saved = localStorage.getItem("moltis-model") || "";
-		var found = S.models.find((m) => m.id === saved);
-		var model = found || S.models[0];
-		S.setSelectedModelId(model.id);
-		updateModelComboLabel(model);
-		if (!found) localStorage.setItem("moltis-model", S.selectedModelId);
+	return modelStore.fetch().then(() => {
+		// Dual-write to state.js for backward compat
+		S.setModels(modelStore.models.value);
+		S.setSelectedModelId(modelStore.selectedModelId.value);
+		var model = modelStore.selectedModel.value;
+		if (model) updateModelComboLabel(model);
 
 		// If the dropdown is currently open, re-render to reflect updated flags
 		// (for example when a model becomes unsupported via a WS event).
@@ -36,6 +33,8 @@ export function fetchModels() {
 }
 
 export function selectModel(m) {
+	modelStore.select(m.id);
+	// Dual-write to state.js for backward compat
 	S.setSelectedModelId(m.id);
 	updateModelComboLabel(m);
 	localStorage.setItem("moltis-model", m.id);
@@ -67,7 +66,8 @@ export function renderModelList(query) {
 	if (!S.modelDropdownList) return;
 	S.modelDropdownList.textContent = "";
 	var q = query.toLowerCase();
-	var filtered = S.models.filter((m) => {
+	var allModels = modelStore.models.value;
+	var filtered = allModels.filter((m) => {
 		var label = (m.displayName || m.id).toLowerCase();
 		var provider = (m.provider || "").toLowerCase();
 		return !q || label.indexOf(q) !== -1 || provider.indexOf(q) !== -1 || m.id.toLowerCase().indexOf(q) !== -1;
@@ -79,10 +79,11 @@ export function renderModelList(query) {
 		S.modelDropdownList.appendChild(empty);
 		return;
 	}
+	var currentId = modelStore.selectedModelId.value;
 	filtered.forEach((m) => {
 		var el = document.createElement("div");
 		el.className = "model-dropdown-item";
-		if (m.id === S.selectedModelId) el.classList.add("selected");
+		if (m.id === currentId) el.classList.add("selected");
 		if (m.unsupported) el.classList.add("model-dropdown-item-unsupported");
 		var label = document.createElement("span");
 		label.className = "model-item-label";

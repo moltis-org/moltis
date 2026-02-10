@@ -109,22 +109,22 @@ export function setReconnectDelay(v) {
 }
 export function setModels(v) {
 	models = v;
-	sig.models.value = v;
+	// Store signal is now owned by model-store.js; don't overwrite here.
 }
 export function setActiveSessionKey(v) {
 	activeSessionKey = v;
-	sig.activeSessionKey.value = v;
+	// Store signal is now owned by session-store.js; don't overwrite here.
 }
 export function setActiveProjectId(v) {
 	activeProjectId = v;
 }
 export function setSessions(v) {
 	sessions = v;
-	sig.sessions.value = v;
+	// Store signal is now owned by session-store.js; don't overwrite here.
 }
 export function setProjects(v) {
 	projects = v;
-	sig.projects.value = v;
+	// Store signal is now owned by project-store.js; don't overwrite here.
 }
 export function setStreamEl(v) {
 	streamEl = v;
@@ -173,7 +173,7 @@ export function setModelDropdownList(v) {
 }
 export function setSelectedModelId(v) {
 	selectedModelId = v;
-	sig.selectedModelId.value = v;
+	// Store signal is now owned by model-store.js; don't overwrite here.
 }
 export function setModelIdx(v) {
 	modelIdx = v;

@@ -7,7 +7,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
 import { fetchProjects } from "./projects.js";
 import { registerPage } from "./router.js";
-import { projects as projectsSig } from "./signals.js";
+import { projects as projectsSig } from "./stores/project-store.js";
 import * as S from "./state.js";
 
 var completions = signal([]);

@@ -8,7 +8,8 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
-import { connected, models as modelsSig } from "./signals.js";
+import { connected } from "./signals.js";
+import { models as modelsSig } from "./stores/model-store.js";
 import * as S from "./state.js";
 import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./ui.js";
 

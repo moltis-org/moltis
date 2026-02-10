@@ -1,6 +1,9 @@
 // ── Entry point ────────────────────────────────────────────
 
+import { html } from "htm/preact";
+import { render } from "preact";
 import prettyBytes from "pretty-bytes";
+import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { initMobile } from "./mobile.js";
@@ -13,6 +16,9 @@ import { mount, registerPage, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
+import { modelStore } from "./stores/model-store.js";
+import { projectStore } from "./stores/project-store.js";
+import { sessionStore } from "./stores/session-store.js";
 import { initTheme, injectMarkdownStyles } from "./theme.js";
 import { connect } from "./websocket.js";
 
@@ -230,15 +236,20 @@ function applyIdentity(identity) {
 }
 
 function applyModels(models) {
-	S.setModels(models || []);
-	if (S.models.length === 0) return;
+	var arr = models || [];
+	modelStore.setAll(arr);
+	// Dual-write to state.js for backward compat
+	S.setModels(arr);
+	if (arr.length === 0) return;
 	var saved = localStorage.getItem("moltis-model") || "";
-	var found = S.models.find((m) => m.id === saved);
+	var found = arr.find((m) => m.id === saved);
 	if (found) {
+		modelStore.select(found.id);
 		S.setSelectedModelId(found.id);
 	} else {
-		S.setSelectedModelId(S.models[0].id);
-		localStorage.setItem("moltis-model", S.selectedModelId);
+		modelStore.select(arr[0].id);
+		S.setSelectedModelId(arr[0].id);
+		localStorage.setItem("moltis-model", modelStore.selectedModelId.value);
 	}
 }
 
@@ -250,13 +261,19 @@ function fetchBootstrap() {
 		.then((boot) => {
 			if (boot.channels) S.setCachedChannels(boot.channels.channels || boot.channels || []);
 			if (boot.sessions) {
-				S.setSessions(boot.sessions || []);
+				var bootSessions = boot.sessions || [];
+				sessionStore.setAll(bootSessions);
+				// Dual-write to state.js for backward compat
+				S.setSessions(bootSessions);
 				renderSessionList();
 			}
 			if (boot.models) applyModels(boot.models);
 			refreshWelcomeCardIfNeeded();
 			if (boot.projects) {
-				S.setProjects(boot.projects || []);
+				var bootProjects = boot.projects || [];
+				projectStore.setAll(bootProjects);
+				// Dual-write to state.js for backward compat
+				S.setProjects(bootProjects);
 				renderProjectSelect();
 				renderSessionProjectSelect();
 			}
@@ -273,6 +290,10 @@ function fetchBootstrap() {
 }
 
 function startApp() {
+	// Mount the reactive SessionList once — signals drive all re-renders.
+	var sessionListEl = S.$("sessionList");
+	if (sessionListEl) render(html`<${SessionList} />`, sessionListEl);
+
 	var path = location.pathname;
 	if (path === "/") {
 		path = preferredChatPath();

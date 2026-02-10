@@ -35,6 +35,8 @@ import {
 	switchSession,
 } from "./sessions.js";
 import * as S from "./state.js";
+import { modelStore } from "./stores/model-store.js";
+import { sessionStore } from "./stores/session-store.js";
 import { connectWs, forceReconnect } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
@@ -114,13 +116,20 @@ function handleChatThinkingDone(_p, isActive, isChatPage) {
 	if (isActive && isChatPage) removeThinking();
 }
 
-function handleChatVoicePending(_p, isActive, isChatPage) {
+function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
+	// Update per-session signal
+	var session = sessionStore.getByKey(eventSession);
+	if (session) session.voicePending.value = true;
 	if (!(isActive && isChatPage)) return;
+	// Dual-write to global state for backward compat
 	S.setVoicePending(true);
 	// Keep the existing thinking dots visible — no separate voice indicator.
 }
 
-function handleChatToolCallStart(p, isActive, isChatPage) {
+function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
+	// Update per-session signal
+	var session = sessionStore.getByKey(eventSession);
+	if (session) session.streamText.value = "";
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
 	// Close the current streaming element so new text deltas after this tool
@@ -139,8 +148,12 @@ function handleChatToolCallStart(p, isActive, isChatPage) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
-function appendToolResult(toolCard, result) {
+function appendToolResult(toolCard, result, eventSession) {
 	var out = (result.stdout || "").replace(/\n+$/, "");
+	// Update per-session signal
+	var toolSession = sessionStore.getByKey(eventSession);
+	if (toolSession) toolSession.lastToolOutput.value = out;
+	// Dual-write to global state for backward compat
 	S.setLastToolOutput(out);
 	if (out) {
 		var outEl = document.createElement("pre");
@@ -175,7 +188,7 @@ function appendToolResult(toolCard, result) {
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
-function handleChatToolCallEnd(p, isActive, isChatPage) {
+function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
 	if (!toolCard) return;
@@ -202,7 +215,7 @@ function handleChatToolCallEnd(p, isActive, isChatPage) {
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
 	if (p.success && p.result) {
-		appendToolResult(toolCard, p.result);
+		appendToolResult(toolCard, p.result, eventSession);
 	} else if (!p.success && p.error && p.error.detail) {
 		var errMsg = document.createElement("div");
 		errMsg.className = isValidationError ? "exec-retry-detail" : "exec-error-detail";
@@ -232,8 +245,12 @@ function setSafeMarkdownHtml(el, text) {
 	el.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
 }
 
-function handleChatDelta(p, isActive, isChatPage) {
-	if (!(p.text && isActive && isChatPage)) return;
+function handleChatDelta(p, isActive, isChatPage, eventSession) {
+	if (!p.text) return;
+	// Update per-session signal
+	var session = sessionStore.getByKey(eventSession);
+	if (session) session.streamText.value += p.text;
+	if (!(isActive && isChatPage)) return;
 	// When voice is pending, accumulate text silently without rendering.
 	if (S.voicePending) {
 		S.setStreamText(S.streamText + p.text);
@@ -370,6 +387,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		updateTokenBar();
 	}
 	appendLastMessageTimestamp(Date.now());
+	// Reset per-session stream state
+	var finalSession = sessionStore.getByKey(eventSession);
+	if (finalSession) finalSession.resetStreamState();
+	// Dual-write to global state for backward compat
 	S.setStreamEl(null);
 	S.setStreamText("");
 	S.setLastToolOutput("");
@@ -398,6 +419,9 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 
 function handleChatError(p, isActive, isChatPage, eventSession) {
 	setSessionReplying(eventSession, false);
+	// Reset per-session stream state
+	var errSession = sessionStore.getByKey(eventSession);
+	if (errSession) errSession.resetStreamState();
 	if (!(isActive && isChatPage)) {
 		S.setVoicePending(false);
 		return;
@@ -449,13 +473,13 @@ var chatHandlers = {
 };
 
 function handleChatEvent(p) {
-	var eventSession = p.sessionKey || S.activeSessionKey;
-	var isActive = eventSession === S.activeSessionKey;
+	var eventSession = p.sessionKey || sessionStore.activeSessionKey.value;
+	var isActive = eventSession === sessionStore.activeSessionKey.value;
 	var isChatPage = currentPrefix === "/chats";
 
-	if (isActive && S.sessionSwitchInProgress) return;
+	if (isActive && sessionStore.switchInProgress.value) return;
 
-	if (p.sessionKey && !S.sessions.find((s) => s.key === p.sessionKey)) {
+	if (p.sessionKey && !sessionStore.getByKey(p.sessionKey)) {
 		fetchSessions();
 	}
 
@@ -636,6 +660,7 @@ function handleModelsUpdated(payload) {
 	if (modelsUpdatedTimer) return;
 	modelsUpdatedTimer = setTimeout(() => {
 		modelsUpdatedTimer = null;
+		// fetchModels() delegates to modelStore.fetch() internally
 		fetchModels();
 		if (S.refreshProvidersPage) S.refreshProvidersPage();
 	}, 150);
@@ -747,6 +772,9 @@ var connectOpts = {
 		if (wasConnected) {
 			setStatus("", "disconnected \u2014 reconnecting\u2026");
 		}
+		// Reset active session's stream state
+		var activeS = sessionStore.activeSession.value;
+		if (activeS) activeS.resetStreamState();
 		S.setStreamEl(null);
 		S.setStreamText("");
 	},

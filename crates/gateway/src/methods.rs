@@ -1310,12 +1310,32 @@ impl MethodRegistry {
             "sessions.patch",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let key = ctx
+                        .params
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let result = ctx
+                        .state
                         .services
                         .session
                         .patch(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+                    broadcast(
+                        &ctx.state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "patched",
+                            "sessionKey": key,
+                            "version": version,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                    Ok(result)
                 })
             }),
         );

@@ -9,7 +9,7 @@ import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { navigate, registerPrefix } from "./router.js";
-import { models as modelsSig } from "./signals.js";
+import { models as modelsSig } from "./stores/model-store.js";
 import * as S from "./state.js";
 import { ComboSelect, ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
 
