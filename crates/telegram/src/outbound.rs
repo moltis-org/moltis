@@ -3,7 +3,7 @@ use {
     async_trait::async_trait,
     base64::Engine,
     teloxide::{
-        payloads::SendMessageSetters,
+        payloads::{SendLocationSetters, SendMessageSetters, SendVenueSetters},
         prelude::*,
         types::{ChatAction, ChatId, InputFile, MessageId, ParseMode, ReplyParameters},
     },
@@ -329,6 +329,38 @@ impl ChannelOutbound for TelegramOutbound {
 
         Ok(())
     }
+
+    async fn send_location(
+        &self,
+        account_id: &str,
+        to: &str,
+        latitude: f64,
+        longitude: f64,
+        title: Option<&str>,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let bot = self.get_bot(account_id)?;
+        let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = self.reply_params(account_id, reply_to);
+
+        if let Some(name) = title {
+            // Venue shows the place name in the chat bubble.
+            let address = format!("{latitude:.6}, {longitude:.6}");
+            let mut req = bot.send_venue(chat_id, latitude, longitude, name, address);
+            if let Some(ref rp) = rp {
+                req = req.reply_parameters(rp.clone());
+            }
+            req.await?;
+        } else {
+            let mut req = bot.send_location(chat_id, latitude, longitude);
+            if let Some(ref rp) = rp {
+                req = req.reply_parameters(rp.clone());
+            }
+            req.await?;
+        }
+
+        Ok(())
+    }
 }
 
 impl TelegramOutbound {
@@ -451,5 +483,31 @@ impl ChannelStreamOutbound for TelegramOutbound {
         }
 
         Ok(())
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::{collections::HashMap, sync::Arc},
+    };
+
+    #[tokio::test]
+    async fn send_location_unknown_account_returns_error() {
+        let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let outbound = TelegramOutbound {
+            accounts: Arc::clone(&accounts),
+        };
+
+        let result = outbound
+            .send_location("nonexistent", "12345", 48.8566, 2.3522, Some("Paris"), None)
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("unknown account"),
+            "should report unknown account"
+        );
     }
 }
