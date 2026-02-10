@@ -185,5 +185,17 @@ ci: format-check lint build test
 test:
     cargo test --all-features
 
+# Install browser tooling for gateway web UI e2e tests.
+ui-e2e-install:
+    cd crates/gateway/ui && npm install && npm run e2e:install
+
+# Run gateway web UI e2e tests (Playwright).
+ui-e2e:
+    cd crates/gateway/ui && npm run e2e
+
+# Run gateway web UI e2e tests with headed browser.
+ui-e2e-headed:
+    cd crates/gateway/ui && npm run e2e:headed
+
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
 packages-all: deb-all rpm-all arch-pkg-all

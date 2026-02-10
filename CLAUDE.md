@@ -528,6 +528,44 @@ cargo test <module>::               # Run all tests in a module
 cargo test -- --nocapture            # Run tests with stdout visible
 ```
 
+### E2E Tests (Web UI)
+
+**Every change to the web UI must have a matching E2E test.** This applies to:
+
+- **JavaScript changes** — new features, event handlers, state management,
+  WebSocket behavior, RPC calls.
+- **HTML changes** — new pages, layout changes, element additions/removals,
+  form inputs, navigation.
+- **CSS/Tailwind changes** — theme behavior, dark mode, visibility toggles,
+  responsive layout. Test that the right classes are applied and elements
+  are visible/hidden as expected.
+- **Feature completeness** — when adding a full feature (new settings page,
+  new wizard step, etc.), write E2E tests that exercise the entire user flow,
+  not just that the page loads.
+
+E2E tests live in `crates/gateway/ui/e2e/specs/` and use Playwright. Shared
+helpers are in `crates/gateway/ui/e2e/helpers.js`.
+
+```bash
+cd crates/gateway/ui
+npx playwright test                  # Run all E2E tests
+npx playwright test e2e/specs/chat-input.spec.js  # Run a specific spec
+npx playwright test --headed         # Run with visible browser
+```
+
+**Writing E2E tests:**
+
+- Use specific selectors — `getByRole()`, `getByPlaceholder()`, `getByText()`
+  with `{ exact: true }` — over loose CSS selectors or regex patterns.
+- Use the shared helpers (`navigateAndWait`, `waitForWsConnected`,
+  `expectPageContentMounted`, `watchPageErrors`) for consistency.
+- Always assert no JS errors: `const pageErrors = watchPageErrors(page);`
+  at the start, `expect(pageErrors).toEqual([]);` at the end.
+- Avoid `waitForTimeout()` — prefer Playwright's built-in auto-waiting
+  (`toBeVisible()`, `toHaveURL()`, `expect.poll()`).
+- Place new tests in the appropriate existing spec file, or create a new
+  spec file if the feature maps to a new page/domain.
+
 ## Code Quality
 
 ```bash

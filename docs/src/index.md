@@ -92,6 +92,7 @@ Authentication is only required when accessing Moltis from a non-localhost addre
 - **[Quickstart](quickstart.md)** — Up and running in 5 minutes
 - **[Installation](installation.md)** — All installation methods
 - **[Configuration](configuration.md)** — `moltis.toml` reference
+- **[End-to-End Testing](e2e-testing.md)** — Browser regression coverage for the web UI
 
 ### Features
 - **[Providers](providers.md)** — Configure LLM providers
