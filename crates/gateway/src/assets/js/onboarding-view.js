@@ -1345,7 +1345,14 @@ function OnboardingVoiceRow({
 			</div>`
 				: null
 		}
-		${voiceTestResult?.error ? html`<span class="text-xs text-[var(--error)] mt-1 block">${voiceTestResult.error}</span>` : null}
+		${
+			voiceTestResult?.error
+				? html`<div class="voice-error-result">
+			<span class="icon icon-md icon-x-circle"></span>
+			<span>${voiceTestResult.error}</span>
+		</div>`
+				: null
+		}
 		${
 			isConfiguring
 				? html`<form onSubmit=${onSaveKey} class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
@@ -1581,11 +1588,22 @@ function VoiceStep({ onNext, onBack }) {
 				});
 				if (res?.ok && res.payload?.audio) {
 					var bytes = decodeBase64Safe(res.payload.audio);
-					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
+					var audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
+					console.log(
+						"[TTS] audio received: %d bytes, mime=%s, format=%s",
+						bytes.length,
+						audioMime,
+						res.payload.format,
+					);
+					var blob = new Blob([bytes], { type: audioMime });
 					var url = URL.createObjectURL(blob);
 					var audio = new Audio(url);
+					audio.onerror = (e) => {
+						console.error("[TTS] audio element error:", audio.error?.message || e);
+						URL.revokeObjectURL(url);
+					};
 					audio.onended = () => URL.revokeObjectURL(url);
-					audio.play().catch(() => undefined);
+					audio.play().catch((e) => console.error("[TTS] play() failed:", e));
 					setVoiceTestResults((prev) => ({ ...prev, [providerId]: { success: true, error: null } }));
 				} else {
 					setVoiceTestResults((prev) => ({
@@ -1634,20 +1652,36 @@ function VoiceStep({ onNext, onBack }) {
 								body: audioBlob,
 							},
 						);
-						var sttRes = await resp.json();
+						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
+						if (resp.ok) {
+							var sttRes = await resp.json();
 
-						if (sttRes.ok && sttRes.transcription?.text) {
-							setVoiceTestResults((prev) => ({
-								...prev,
-								[providerId]: { text: sttRes.transcription.text, error: null },
-							}));
+							if (sttRes.ok && sttRes.transcription?.text) {
+								setVoiceTestResults((prev) => ({
+									...prev,
+									[providerId]: { text: sttRes.transcription.text, error: null },
+								}));
+							} else {
+								setVoiceTestResults((prev) => ({
+									...prev,
+									[providerId]: {
+										text: null,
+										error: sttRes.transcriptionError || sttRes.error || "STT test failed",
+									},
+								}));
+							}
 						} else {
+							var errBody = await resp.text();
+							console.error("[STT] upload failed: status=%d body=%s", resp.status, errBody);
+							var errMsg = "STT test failed";
+							try {
+								errMsg = JSON.parse(errBody)?.error || errMsg;
+							} catch (_e) {
+								// not JSON
+							}
 							setVoiceTestResults((prev) => ({
 								...prev,
-								[providerId]: {
-									text: null,
-									error: sttRes.transcriptionError || sttRes.error || "STT test failed",
-								},
+								[providerId]: { text: null, error: `${errMsg} (HTTP ${resp.status})` },
 							}));
 						}
 					} catch (fetchErr) {

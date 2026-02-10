@@ -845,6 +845,19 @@
     font-size: 0.75rem;
     color: var(--accent);
   }
+  /* Voice error result */
+  .voice-error-result {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--error) 10%, transparent);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--error);
+    font-size: 0.75rem;
+    color: var(--error);
+  }
   .voice-transcription-label {
     font-size: 0.7rem;
     font-weight: 500;

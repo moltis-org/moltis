@@ -11,7 +11,7 @@ use {
 use crate::services::ServiceResult;
 
 #[cfg(feature = "voice")]
-use {base64::Engine, secrecy::Secret, tracing::debug};
+use {base64::Engine, secrecy::Secret, tracing::{debug, info, warn}};
 
 #[cfg(feature = "voice")]
 use moltis_voice::{
@@ -255,6 +255,7 @@ impl TtsService for LiveTtsService {
         let config = Self::load_config();
 
         if !config.enabled {
+            warn!("TTS convert called but TTS is not enabled");
             return Err("TTS is not enabled".to_string());
         }
 
@@ -278,6 +279,12 @@ impl TtsService for LiveTtsService {
 
         let provider_id = TtsProviderId::parse(provider_str)
             .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
+
+        info!(
+            provider = %provider_id,
+            text_len = text.len(),
+            "TTS convert request"
+        );
 
         let provider = Self::create_provider(provider_id)
             .ok_or_else(|| format!("provider '{}' not configured", provider_id))?;
@@ -320,10 +327,18 @@ impl TtsService for LiveTtsService {
                 .map(|v| v as f32),
         };
 
-        let output = provider
-            .synthesize(request)
-            .await
-            .map_err(|e| format!("TTS synthesis failed: {}", e))?;
+        let output = provider.synthesize(request).await.map_err(|e| {
+            warn!(provider = %provider_id, error = %e, "TTS synthesis failed");
+            format!("TTS synthesis failed: {}", e)
+        })?;
+
+        info!(
+            provider = %provider_id,
+            format = ?output.format,
+            audio_bytes = output.data.len(),
+            duration_ms = ?output.duration_ms,
+            "TTS synthesis complete"
+        );
 
         let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&output.data);
 

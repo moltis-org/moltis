@@ -920,7 +920,7 @@ function SecuritySection() {
 								</form>`
 								: html`<div style="flex:1;min-width:0;">
 									<div class="provider-item-name" style="font-size:.85rem;">${pk.name}</div>
-									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;">${pk.created_at}</div>
+									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;"><time datetime=${pk.created_at}>${pk.created_at}</time></div>
 								</div>
 								<div style="display:flex;gap:4px;">
 									<button class="provider-btn" onClick=${() => onStartRename(pk.id, pk.name)}>Rename</button>
@@ -971,7 +971,7 @@ function SecuritySection() {
 							<div class="provider-item-name" style="font-size:.85rem;">${ak.label}</div>
 							<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;flex-wrap:wrap;">
 								<span style="font-family:var(--font-mono);">${ak.key_prefix}...</span>
-								<span>${ak.created_at}</span>
+								<span><time datetime=${ak.created_at}>${ak.created_at}</time></span>
 								${ak.scopes ? html`<span style="color:var(--accent);">${ak.scopes.join(", ")}</span>` : html`<span style="color:var(--accent);">Full access</span>`}
 							</div>
 						</div>
@@ -1819,11 +1819,22 @@ function VoiceSection() {
 				if (res?.ok && res.payload?.audio) {
 					// Decode base64 audio and play it
 					var bytes = decodeBase64Safe(res.payload.audio);
-					var blob = new Blob([bytes], { type: res.payload.content_type || "audio/mpeg" });
+					var audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
+					console.log(
+						"[TTS] audio received: %d bytes, mime=%s, format=%s",
+						bytes.length,
+						audioMime,
+						res.payload.format,
+					);
+					var blob = new Blob([bytes], { type: audioMime });
 					var url = URL.createObjectURL(blob);
 					var audio = new Audio(url);
+					audio.onerror = (e) => {
+						console.error("[TTS] audio element error:", audio.error?.message || e);
+						URL.revokeObjectURL(url);
+					};
 					audio.onended = () => URL.revokeObjectURL(url);
-					audio.play().catch(() => undefined);
+					audio.play().catch((e) => console.error("[TTS] play() failed:", e));
 					setVoiceTestResults((prev) => ({
 						...prev,
 						[providerId]: { success: true, error: null },
@@ -1877,20 +1888,36 @@ function VoiceSection() {
 								body: audioBlob,
 							},
 						);
-						var sttRes = await resp.json();
+						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
+						if (resp.ok) {
+							var sttRes = await resp.json();
 
-						if (sttRes.ok && sttRes.transcription?.text) {
-							setVoiceTestResults((prev) => ({
-								...prev,
-								[providerId]: { text: sttRes.transcription.text, error: null },
-							}));
+							if (sttRes.ok && sttRes.transcription?.text) {
+								setVoiceTestResults((prev) => ({
+									...prev,
+									[providerId]: { text: sttRes.transcription.text, error: null },
+								}));
+							} else {
+								setVoiceTestResults((prev) => ({
+									...prev,
+									[providerId]: {
+										text: null,
+										error: sttRes.transcriptionError || sttRes.error || "STT test failed",
+									},
+								}));
+							}
 						} else {
+							var errBody = await resp.text();
+							console.error("[STT] upload failed: status=%d body=%s", resp.status, errBody);
+							var errMsg = "STT test failed";
+							try {
+								errMsg = JSON.parse(errBody)?.error || errMsg;
+							} catch (_e) {
+								// not JSON
+							}
 							setVoiceTestResults((prev) => ({
 								...prev,
-								[providerId]: {
-									text: null,
-									error: sttRes.transcriptionError || sttRes.error || "STT test failed",
-								},
+								[providerId]: { text: null, error: `${errMsg} (HTTP ${resp.status})` },
 							}));
 						}
 					} catch (fetchErr) {
@@ -2052,7 +2079,14 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 			</div>`
 					: null
 			}
-			${testResult?.error ? html`<span class="text-xs text-[var(--error)]">${testResult.error}</span>` : null}
+			${
+				testResult?.error
+					? html`<div class="voice-error-result">
+				<span class="icon icon-md icon-x-circle"></span>
+				<span>${testResult.error}</span>
+			</div>`
+					: null
+			}
 		</div>
 		<div style="display:flex;align-items:center;gap:8px;">
 			<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onConfigure}>
