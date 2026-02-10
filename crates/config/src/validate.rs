@@ -952,6 +952,44 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
         }
     }
 
+    // Unknown hook event names
+    let valid_hook_events = [
+        "BeforeAgentStart",
+        "AgentEnd",
+        "BeforeLLMCall",
+        "AfterLLMCall",
+        "BeforeCompaction",
+        "AfterCompaction",
+        "MessageReceived",
+        "MessageSending",
+        "MessageSent",
+        "BeforeToolCall",
+        "AfterToolCall",
+        "ToolResultPersist",
+        "SessionStart",
+        "SessionEnd",
+        "GatewayStart",
+        "GatewayStop",
+        "Command",
+    ];
+    if let Some(ref hooks_config) = config.hooks {
+        for (hook_idx, hook) in hooks_config.hooks.iter().enumerate() {
+            for (ev_idx, event) in hook.events.iter().enumerate() {
+                if !valid_hook_events.contains(&event.as_str()) {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        category: "unknown-field",
+                        path: format!("hooks.hooks[{hook_idx}].events[{ev_idx}]"),
+                        message: format!(
+                            "unknown hook event \"{event}\"; expected one of: {}",
+                            valid_hook_events.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
     // port == 0
     if config.server.port == 0 {
         diagnostics.push(Diagnostic {

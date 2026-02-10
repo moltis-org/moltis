@@ -29,6 +29,8 @@ use {
 pub enum HookEvent {
     BeforeAgentStart,
     AgentEnd,
+    BeforeLLMCall,
+    AfterLLMCall,
     BeforeCompaction,
     AfterCompaction,
     MessageReceived,
@@ -55,6 +57,8 @@ impl HookEvent {
     pub const ALL: &'static [HookEvent] = &[
         Self::BeforeAgentStart,
         Self::AgentEnd,
+        Self::BeforeLLMCall,
+        Self::AfterLLMCall,
         Self::BeforeCompaction,
         Self::AfterCompaction,
         Self::MessageReceived,
@@ -103,6 +107,24 @@ pub enum HookPayload {
         text: String,
         iterations: usize,
         tool_calls: usize,
+    },
+    BeforeLLMCall {
+        session_key: String,
+        provider: String,
+        model: String,
+        messages: Value,
+        tool_count: usize,
+        iteration: usize,
+    },
+    AfterLLMCall {
+        session_key: String,
+        provider: String,
+        model: String,
+        text: Option<String>,
+        tool_calls: Vec<Value>,
+        input_tokens: u32,
+        output_tokens: u32,
+        iteration: usize,
     },
     BeforeCompaction {
         session_key: String,
@@ -164,6 +186,8 @@ impl HookPayload {
         match self {
             Self::BeforeAgentStart { .. } => HookEvent::BeforeAgentStart,
             Self::AgentEnd { .. } => HookEvent::AgentEnd,
+            Self::BeforeLLMCall { .. } => HookEvent::BeforeLLMCall,
+            Self::AfterLLMCall { .. } => HookEvent::AfterLLMCall,
             Self::BeforeCompaction { .. } => HookEvent::BeforeCompaction,
             Self::AfterCompaction { .. } => HookEvent::AfterCompaction,
             Self::MessageReceived { .. } => HookEvent::MessageReceived,
@@ -822,8 +846,74 @@ mod tests {
         assert!(HookEvent::GatewayStart.is_read_only());
         assert!(HookEvent::Command.is_read_only());
         assert!(!HookEvent::BeforeAgentStart.is_read_only());
+        assert!(!HookEvent::BeforeLLMCall.is_read_only());
+        assert!(!HookEvent::AfterLLMCall.is_read_only());
         assert!(!HookEvent::BeforeToolCall.is_read_only());
         assert!(!HookEvent::MessageSending.is_read_only());
         assert!(!HookEvent::ToolResultPersist.is_read_only());
+    }
+
+    #[test]
+    fn before_llm_call_payload_event() {
+        let payload = HookPayload::BeforeLLMCall {
+            session_key: "sess-1".into(),
+            provider: "openai".into(),
+            model: "gpt-4o".into(),
+            messages: serde_json::json!([{"role": "user", "content": "hello"}]),
+            tool_count: 3,
+            iteration: 1,
+        };
+        assert_eq!(payload.event(), HookEvent::BeforeLLMCall);
+    }
+
+    #[test]
+    fn after_llm_call_payload_event() {
+        let payload = HookPayload::AfterLLMCall {
+            session_key: "sess-1".into(),
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4-20250514".into(),
+            text: Some("Hello!".into()),
+            tool_calls: vec![serde_json::json!({"name": "exec"})],
+            input_tokens: 100,
+            output_tokens: 50,
+            iteration: 2,
+        };
+        assert_eq!(payload.event(), HookEvent::AfterLLMCall);
+    }
+
+    #[test]
+    fn all_events_array_includes_llm_hooks() {
+        assert!(HookEvent::ALL.contains(&HookEvent::BeforeLLMCall));
+        assert!(HookEvent::ALL.contains(&HookEvent::AfterLLMCall));
+        assert_eq!(HookEvent::ALL.len(), 17);
+    }
+
+    #[test]
+    fn llm_hook_payloads_serialize_round_trip() {
+        let before = HookPayload::BeforeLLMCall {
+            session_key: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            messages: serde_json::json!([]),
+            tool_count: 0,
+            iteration: 1,
+        };
+        let json = serde_json::to_string(&before).unwrap();
+        let deser: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.event(), HookEvent::BeforeLLMCall);
+
+        let after = HookPayload::AfterLLMCall {
+            session_key: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            text: None,
+            tool_calls: vec![],
+            input_tokens: 0,
+            output_tokens: 0,
+            iteration: 1,
+        };
+        let json = serde_json::to_string(&after).unwrap();
+        let deser: HookPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.event(), HookEvent::AfterLLMCall);
     }
 }
