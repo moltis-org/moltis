@@ -3542,6 +3542,18 @@ async fn run_with_tools(
                         .filter(|s| s.starts_with("data:image/"))
                         .map(String::from);
 
+                    // Extract location from show_map results for native pin
+                    let location_to_send = if name == "show_map" {
+                        result.as_ref().and_then(|r| {
+                            let lat = r.get("latitude")?.as_f64()?;
+                            let lon = r.get("longitude")?.as_f64()?;
+                            let label = r.get("label").and_then(|l| l.as_str()).map(String::from);
+                            Some((lat, lon, label))
+                        })
+                    } else {
+                        None
+                    };
+
                     if let Some(res) = result {
                         // Cap output sent to the UI to avoid huge WS frames.
                         let mut capped = res.clone();
@@ -3558,6 +3570,22 @@ async fn run_with_tools(
                             }
                         }
                         payload["result"] = capped;
+                    }
+
+                    // Send native location pin to channels before the screenshot
+                    if let Some((lat, lon, label)) = location_to_send {
+                        let state_clone = Arc::clone(&state);
+                        let sk_clone = sk.clone();
+                        tokio::spawn(async move {
+                            send_location_to_channels(
+                                &state_clone,
+                                &sk_clone,
+                                lat,
+                                lon,
+                                label.as_deref(),
+                            )
+                            .await;
+                        });
                     }
 
                     // Send screenshot to channel targets (Telegram) if present
@@ -4715,6 +4743,66 @@ async fn send_screenshot_to_channels(
     }
 }
 
+/// Send a native location pin to all pending channel targets for a session.
+/// Uses `peek_channel_replies` so targets remain for the final text response.
+async fn send_location_to_channels(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    latitude: f64,
+    longitude: f64,
+    title: Option<&str>,
+) {
+    let targets = state.peek_channel_replies(session_key).await;
+    if targets.is_empty() {
+        return;
+    }
+
+    let outbound = match state.services.channel_outbound_arc() {
+        Some(o) => o,
+        None => return,
+    };
+
+    let title_owned = title.map(String::from);
+
+    let mut tasks = Vec::with_capacity(targets.len());
+    for target in targets {
+        let outbound = Arc::clone(&outbound);
+        let title_ref = title_owned.clone();
+        tasks.push(tokio::spawn(async move {
+            let reply_to = target.message_id.as_deref();
+            if let Err(e) = outbound
+                .send_location(
+                    &target.account_id,
+                    &target.chat_id,
+                    latitude,
+                    longitude,
+                    title_ref.as_deref(),
+                    reply_to,
+                )
+                .await
+            {
+                warn!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "failed to send location to channel: {e}"
+                );
+            } else {
+                debug!(
+                    account_id = target.account_id,
+                    chat_id = target.chat_id,
+                    "sent location pin to telegram"
+                );
+            }
+        }));
+    }
+
+    for task in tasks {
+        if let Err(e) = task.await {
+            warn!(error = %e, "channel location task join failed");
+        }
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -5629,5 +5717,77 @@ mod tests {
         let html = format_logbook_html(&entries);
         assert!(!html.contains("<script>"));
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn extract_location_from_show_map_result() {
+        let result = serde_json::json!({
+            "latitude": 37.76,
+            "longitude": -122.42,
+            "label": "La Taqueria",
+            "screenshot": "data:image/png;base64,abc",
+            "map_links": {}
+        });
+
+        // Extraction logic mirrors the ToolCallEnd handler
+        let extracted = result
+            .get("latitude")
+            .and_then(|v| v.as_f64())
+            .and_then(|lat| {
+                let lon = result.get("longitude")?.as_f64()?;
+                let label = result
+                    .get("label")
+                    .and_then(|l| l.as_str())
+                    .map(String::from);
+                Some((lat, lon, label))
+            });
+
+        let (lat, lon, label) = extracted.unwrap();
+        assert!((lat - 37.76).abs() < f64::EPSILON);
+        assert!((lon - (-122.42)).abs() < f64::EPSILON);
+        assert_eq!(label.as_deref(), Some("La Taqueria"));
+    }
+
+    #[test]
+    fn extract_location_without_label() {
+        let result = serde_json::json!({
+            "latitude": 48.8566,
+            "longitude": 2.3522,
+            "screenshot": "data:image/png;base64,abc"
+        });
+
+        let extracted = result
+            .get("latitude")
+            .and_then(|v| v.as_f64())
+            .and_then(|lat| {
+                let lon = result.get("longitude")?.as_f64()?;
+                let label = result
+                    .get("label")
+                    .and_then(|l| l.as_str())
+                    .map(String::from);
+                Some((lat, lon, label))
+            });
+
+        let (lat, lon, label) = extracted.unwrap();
+        assert!((lat - 48.8566).abs() < f64::EPSILON);
+        assert!((lon - 2.3522).abs() < f64::EPSILON);
+        assert!(label.is_none());
+    }
+
+    #[test]
+    fn extract_location_missing_coords_returns_none() {
+        let result = serde_json::json!({
+            "screenshot": "data:image/png;base64,abc"
+        });
+
+        let extracted = result
+            .get("latitude")
+            .and_then(|v| v.as_f64())
+            .and_then(|_lat| {
+                let _lon = result.get("longitude")?.as_f64()?;
+                Some(())
+            });
+
+        assert!(extracted.is_none());
     }
 }

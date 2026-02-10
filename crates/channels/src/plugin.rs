@@ -285,6 +285,26 @@ pub trait ChannelOutbound: Send + Sync {
     ) -> Result<()> {
         self.send_text(account_id, to, text, reply_to).await
     }
+    /// Send a native location pin to the channel.
+    ///
+    /// When `title` is provided, platforms that support it (e.g. Telegram) send
+    /// a venue with the place name visible in the chat bubble. Otherwise a raw
+    /// location pin is sent.
+    ///
+    /// Default implementation is a no-op so channels that don't support native
+    /// location pins are unaffected.
+    async fn send_location(
+        &self,
+        account_id: &str,
+        to: &str,
+        latitude: f64,
+        longitude: f64,
+        title: Option<&str>,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let _ = (account_id, to, latitude, longitude, title, reply_to);
+        Ok(())
+    }
 }
 
 /// Probe channel account health.
@@ -376,5 +396,39 @@ mod tests {
             message_id: None,
         };
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+    }
+
+    struct DummyOutbound;
+
+    #[async_trait]
+    impl ChannelOutbound for DummyOutbound {
+        async fn send_text(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _reply_to: Option<&str>,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn default_send_location_is_noop() {
+        let out = DummyOutbound;
+        let result = out
+            .send_location("acct", "42", 48.8566, 2.3522, Some("Eiffel Tower"), None)
+            .await;
+        assert!(result.is_ok());
     }
 }
