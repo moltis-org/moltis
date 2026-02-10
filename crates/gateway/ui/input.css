@@ -1155,8 +1155,13 @@
     color: var(--text);
     border-color: var(--border-strong);
   }
-  .chat-session-delete:hover {
+  .chat-session-delete {
     color: var(--error);
+    border-color: var(--error);
+  }
+  .chat-session-delete:hover {
+    color: #fff;
+    background: var(--error);
     border-color: var(--error);
   }
 
