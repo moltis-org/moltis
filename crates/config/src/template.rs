@@ -84,6 +84,11 @@ auto_generate = true              # Auto-generate local CA and server certificat
 
 [providers]
 offered = ["openai", "github-copilot"]      # Providers shown in onboarding/picker UI ([] = show all)
+# All available providers:
+#   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
+#   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
+#   "venice", "ollama", "local-llm", "openai-codex", "github-copilot",
+#   "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
