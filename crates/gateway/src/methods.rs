@@ -3017,12 +3017,30 @@ impl MethodRegistry {
             "providers.save_key",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let provider_name = ctx
+                        .params
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+
+                    let result = ctx
+                        .state
                         .services
                         .provider_setup
                         .save_key(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // Kick off background model detection after saving provider
+                    // credentials, matching the behaviour of oauth.complete.
+                    let model_service = Arc::clone(&ctx.state.services.model);
+                    tokio::spawn(async move {
+                        let _ = model_service
+                            .detect_supported(model_probe_params(provider_name.as_deref()))
+                            .await;
+                    });
+
+                    Ok(result)
                 })
             }),
         );
