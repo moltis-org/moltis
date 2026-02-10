@@ -45,18 +45,13 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
-        with:
-          shared-key: e2e-v1
-
       - name: Build moltis binary
         run: cargo build --bin moltis
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: crates/gateway/ui/package-lock.json
+          package-manager-cache: false
 
       - name: Install npm dependencies
         working-directory: crates/gateway/ui
