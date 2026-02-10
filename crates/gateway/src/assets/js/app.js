@@ -104,6 +104,16 @@ applyMemory(gon.get("mem"));
 gon.onChange("mem", applyMemory);
 onEvent("tick", (payload) => applyMemory(payload.mem));
 
+// Logout button — wire up click handler once.
+var logoutBtn = document.getElementById("logoutBtn");
+if (logoutBtn) {
+	logoutBtn.addEventListener("click", () => {
+		fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+			location.href = "/";
+		});
+	});
+}
+
 // Seed sandbox info from gon so the settings page can render immediately
 // without waiting for the auth-protected /api/bootstrap fetch.
 try {
@@ -112,7 +122,6 @@ try {
 } catch (_) {
 	// Non-fatal — sandbox info will arrive via bootstrap.
 }
-
 // Check auth status before mounting the app.
 fetch("/api/auth/status")
 	.then((r) => (r.ok ? r.json() : null))
@@ -130,6 +139,11 @@ fetch("/api/auth/status")
 		if (!auth.authenticated) {
 			mount("/login");
 			return;
+		}
+		// Show logout button when user authenticated via real credentials
+		// (not bypassed via auth_disabled or localhost-no-password).
+		if (!auth.auth_disabled && (auth.has_password || auth.has_passkeys) && logoutBtn) {
+			logoutBtn.style.display = "";
 		}
 		if (auth.auth_disabled && !auth.localhost_only) {
 			showAuthDisabledBanner();
