@@ -2,6 +2,7 @@ mod auth_commands;
 mod browser_commands;
 mod config_commands;
 mod db_commands;
+mod doctor_commands;
 mod hooks_commands;
 mod memory_commands;
 mod sandbox_commands;
@@ -388,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
         Some(Commands::Skills { action }) => handle_skills(action).await,
         Some(Commands::Config { action }) => config_commands::handle_config(action).await,
+        Some(Commands::Doctor) => doctor_commands::handle_doctor().await,
         Some(Commands::Hooks { action }) => hooks_commands::handle_hooks(action).await,
         #[cfg(feature = "tls")]
         Some(Commands::TrustCa) => trust_ca().await,
