@@ -685,3 +685,115 @@ async fn proxied_with_password_requires_auth() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 }
+
+// ── Cookie domain tests ─────────────────────────────────────────────────────
+
+/// Login via /api/auth/login with a Host header containing a .localhost
+/// subdomain (e.g. moltis.localhost) should set Domain=localhost on the
+/// session cookie so the cookie is shared across all loopback hostnames.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn login_cookie_includes_domain_for_localhost_subdomain() {
+    let (addr, store, _state) = start_localhost_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .post(format!("http://{addr}/api/auth/login"))
+        .header("Host", "moltis.localhost:18080")
+        .header("Content-Type", "application/json")
+        .body(r#"{"password":"testpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "login should succeed");
+
+    let cookie_header = resp
+        .headers()
+        .get("set-cookie")
+        .expect("login response must set a session cookie")
+        .to_str()
+        .unwrap();
+
+    assert!(
+        cookie_header.contains("Domain=localhost"),
+        "session cookie should include Domain=localhost for .localhost host, got: {cookie_header}"
+    );
+    assert!(cookie_header.contains("moltis_session="));
+}
+
+/// Login with a plain localhost Host should also include Domain=localhost
+/// so the cookie works for both localhost and moltis.localhost.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn login_cookie_includes_domain_for_plain_localhost() {
+    let (addr, store, _state) = start_localhost_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .post(format!("http://{addr}/api/auth/login"))
+        .header("Host", "localhost:18080")
+        .header("Content-Type", "application/json")
+        .body(r#"{"password":"testpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let cookie_header = resp
+        .headers()
+        .get("set-cookie")
+        .expect("login response must set a session cookie")
+        .to_str()
+        .unwrap();
+
+    assert!(
+        cookie_header.contains("Domain=localhost"),
+        "session cookie should include Domain=localhost for localhost host, got: {cookie_header}"
+    );
+}
+
+/// Login with an external Host header should NOT add a Domain attribute
+/// to the cookie (host-only cookie, no domain sharing).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn login_cookie_omits_domain_for_external_host() {
+    let (addr, store, _state) = start_localhost_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .post(format!("http://{addr}/api/auth/login"))
+        .header("Host", "mybox.example.com:443")
+        .header("Content-Type", "application/json")
+        .body(r#"{"password":"testpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let cookie_header = resp
+        .headers()
+        .get("set-cookie")
+        .expect("login response must set a session cookie")
+        .to_str()
+        .unwrap();
+
+    assert!(
+        !cookie_header.contains("Domain="),
+        "session cookie should NOT include Domain for external host, got: {cookie_header}"
+    );
+}

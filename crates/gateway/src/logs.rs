@@ -27,7 +27,7 @@ use {
     serde_json::Value,
     tokio::sync::broadcast,
     tracing::field::{Field, Visit},
-    tracing_subscriber::{Layer, layer::Context},
+    tracing_subscriber::{Layer, filter::LevelFilter, layer::Context},
 };
 
 use crate::services::{LogsService, ServiceResult};
@@ -43,6 +43,32 @@ pub struct LogEntry {
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     #[serde(default)]
     pub fields: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnabledLogLevels {
+    pub debug: bool,
+    pub trace: bool,
+}
+
+impl EnabledLogLevels {
+    #[must_use]
+    pub const fn from_max_level_hint(hint: Option<LevelFilter>) -> Self {
+        match hint {
+            Some(LevelFilter::TRACE) => Self {
+                debug: true,
+                trace: true,
+            },
+            Some(LevelFilter::DEBUG) => Self {
+                debug: true,
+                trace: false,
+            },
+            _ => Self {
+                debug: false,
+                trace: false,
+            },
+        }
+    }
 }
 
 // ── LogBuffer ───────────────────────────────────────────────────────────────
@@ -68,6 +94,8 @@ pub struct LogBuffer {
     /// Snapshot of totals at last ack (visit).
     acked_warns: Arc<AtomicU64>,
     acked_errors: Arc<AtomicU64>,
+    /// Log-level capabilities derived from the active tracing filter.
+    enabled_levels: Arc<RwLock<EnabledLogLevels>>,
 }
 
 impl LogBuffer {
@@ -84,6 +112,7 @@ impl LogBuffer {
             total_errors: Arc::new(AtomicU64::new(0)),
             acked_warns: Arc::new(AtomicU64::new(0)),
             acked_errors: Arc::new(AtomicU64::new(0)),
+            enabled_levels: Arc::new(RwLock::new(EnabledLogLevels::default())),
         }
     }
 
@@ -261,6 +290,20 @@ impl LogBuffer {
         {
             let _ = std::fs::write(path, format!("{tw} {te}"));
         }
+    }
+
+    pub fn set_enabled_levels(&self, levels: EnabledLogLevels) {
+        if let Ok(mut current) = self.enabled_levels.write() {
+            *current = levels;
+        }
+    }
+
+    #[must_use]
+    pub fn enabled_levels(&self) -> EnabledLogLevels {
+        self.enabled_levels
+            .read()
+            .map(|levels| *levels)
+            .unwrap_or_default()
     }
 }
 
@@ -458,7 +501,10 @@ impl LogsService for LiveLogsService {
 
     async fn status(&self) -> ServiceResult {
         let (warns, errors) = self.buffer.count_unseen();
-        Ok(serde_json::json!({ "unseen_warns": warns, "unseen_errors": errors }))
+        let enabled_levels = self.buffer.enabled_levels();
+        Ok(
+            serde_json::json!({ "unseen_warns": warns, "unseen_errors": errors, "enabled_levels": enabled_levels }),
+        )
     }
 
     async fn ack(&self) -> ServiceResult {
@@ -534,6 +580,38 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].level, "ERROR");
+    }
+
+    #[test]
+    fn enabled_levels_from_max_hint() {
+        assert_eq!(
+            EnabledLogLevels::from_max_level_hint(Some(LevelFilter::TRACE)),
+            EnabledLogLevels {
+                debug: true,
+                trace: true
+            }
+        );
+        assert_eq!(
+            EnabledLogLevels::from_max_level_hint(Some(LevelFilter::DEBUG)),
+            EnabledLogLevels {
+                debug: true,
+                trace: false
+            }
+        );
+        assert_eq!(
+            EnabledLogLevels::from_max_level_hint(Some(LevelFilter::INFO)),
+            EnabledLogLevels {
+                debug: false,
+                trace: false
+            }
+        );
+        assert_eq!(
+            EnabledLogLevels::from_max_level_hint(None),
+            EnabledLogLevels {
+                debug: false,
+                trace: false
+            }
+        );
     }
 
     #[test]
@@ -841,6 +919,10 @@ mod tests {
 
         let buf = LogBuffer::default();
         buf.enable_persistence(path);
+        buf.set_enabled_levels(EnabledLogLevels {
+            debug: true,
+            trace: false,
+        });
 
         buf.push(make_entry_ts("ERROR", "a", "e", 100));
         buf.push(make_entry_ts("WARN", "a", "w", 200));
@@ -851,12 +933,16 @@ mod tests {
         let status = svc.status().await.unwrap();
         assert_eq!(status["unseen_errors"], 1);
         assert_eq!(status["unseen_warns"], 1);
+        assert_eq!(status["enabled_levels"]["debug"], true);
+        assert_eq!(status["enabled_levels"]["trace"], false);
 
         // Ack clears them.
         svc.ack().await.unwrap();
         let status = svc.status().await.unwrap();
         assert_eq!(status["unseen_errors"], 0);
         assert_eq!(status["unseen_warns"], 0);
+        assert_eq!(status["enabled_levels"]["debug"], true);
+        assert_eq!(status["enabled_levels"]["trace"], false);
     }
 
     #[test]

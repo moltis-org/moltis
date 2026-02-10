@@ -248,25 +248,27 @@ export function ModelSelect({ models, value, onChange, placeholder }) {
 }
 
 /**
- * Generic searchable combo select for simple value/label options.
+ * Generic combo select for simple value/label options.
  * @param {Array<{value: string, label: string}>} options
  * @param {string} value - current selected value
  * @param {function} onChange - callback with selected value
  * @param {string} placeholder - placeholder when nothing selected
  * @param {string} searchPlaceholder - placeholder for search input
+ * @param {boolean} searchable - whether to show the search input
  */
-export function ComboSelect({ options, value, onChange, placeholder, searchPlaceholder }) {
+export function ComboSelect({ options, value, onChange, placeholder, searchPlaceholder, searchable = true }) {
 	var [open, setOpen] = useState(false);
 	var [query, setQuery] = useState("");
 	var [kbIndex, setKbIndex] = useState(-1);
 	var ref = useRef(null);
 	var searchRef = useRef(null);
+	var dropdownRef = useRef(null);
 
 	var selected = options.find((o) => o.value === value);
 	var label = selected ? selected.label : placeholder || "(none)";
 
 	var filtered = options.filter((o) => {
-		if (!query) return true;
+		if (!(searchable && query)) return true;
 		var q = query.toLowerCase();
 		return o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q);
 	});
@@ -281,8 +283,10 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
 	}, [open]);
 
 	useEffect(() => {
-		if (open && searchRef.current) searchRef.current.focus();
-	}, [open]);
+		if (!open) return;
+		if (searchable && searchRef.current) searchRef.current.focus();
+		else if (!searchable && dropdownRef.current) dropdownRef.current.focus();
+	}, [open, searchable]);
 
 	useEffect(() => {
 		setKbIndex(-1);
@@ -317,9 +321,12 @@ export function ComboSelect({ options, value, onChange, placeholder, searchPlace
     </button>
     ${
 			open &&
-			html`<div class="model-dropdown" style="width:100%;" onKeyDown=${onKeyDown}>
-      <input class="model-search-input" ref=${searchRef} placeholder=${searchPlaceholder || "Search\u2026"}
-        value=${query} onInput=${(e) => setQuery(e.target.value)} />
+			html`<div class="model-dropdown" ref=${dropdownRef} tabIndex="-1" style="width:100%;" onKeyDown=${onKeyDown}>
+      ${
+				searchable &&
+				html`<input class="model-search-input" ref=${searchRef} placeholder=${searchPlaceholder || "Search\u2026"}
+        value=${query} onInput=${(e) => setQuery(e.target.value)} />`
+			}
       <div class="model-dropdown-list">
         <div class="model-dropdown-item ${value ? "" : "selected"}"
           onClick=${() => pick(null)}>

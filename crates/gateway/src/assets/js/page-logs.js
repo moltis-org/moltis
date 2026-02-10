@@ -6,12 +6,15 @@ import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
 import * as S from "./state.js";
+import { ComboSelect } from "./ui.js";
 
 var paused = signal(false);
 var levelFilter = signal("");
 var targetFilter = signal("");
 var searchFilter = signal("");
 var entryCount = signal(0);
+var debugEnabled = signal(false);
+var traceEnabled = signal(false);
 var maxEntries = 2000;
 
 function levelColor(level) {
@@ -69,6 +72,16 @@ function renderEntry(entry) {
 	return row;
 }
 
+function levelFilterOptions() {
+	var options = [];
+	if (traceEnabled.value) options.push({ value: "trace", label: "TRACE" });
+	if (debugEnabled.value) options.push({ value: "debug", label: "DEBUG" });
+	options.push({ value: "info", label: "INFO" });
+	options.push({ value: "warn", label: "WARN" });
+	options.push({ value: "error", label: "ERROR" });
+	return options;
+}
+
 function Toolbar() {
 	var targetRef = useRef(null);
 	var searchRef = useRef(null);
@@ -84,17 +97,17 @@ function Toolbar() {
 	}
 
 	return html`<div class="logs-toolbar">
-    <select class="logs-select" value=${levelFilter.value}
-      onChange=${(e) => {
-				levelFilter.value = e.target.value;
-			}}>
-      <option value="">All levels</option>
-      <option value="trace">TRACE</option>
-      <option value="debug">DEBUG</option>
-      <option value="info">INFO</option>
-      <option value="warn">WARN</option>
-      <option value="error">ERROR</option>
-    </select>
+    <div class="logs-level-filter">
+      <${ComboSelect}
+        options=${levelFilterOptions()}
+        value=${levelFilter.value}
+        onChange=${(value) => {
+					levelFilter.value = value;
+				}}
+        placeholder="All levels"
+        searchable=${false}
+      />
+    </div>
     <input ref=${targetRef} type="text" placeholder="Filter target\u2026"
       class="logs-input" style="width:140px;"
       onInput=${debouncedUpdate((v) => {
@@ -124,6 +137,14 @@ function Toolbar() {
 
 function LogsPage() {
 	var logAreaRef = useRef(null);
+
+	function updateEnabledLevels(statusPayload) {
+		var enabled = statusPayload?.enabled_levels || {};
+		traceEnabled.value = !!enabled.trace;
+		debugEnabled.value = !!enabled.debug || traceEnabled.value;
+		if (levelFilter.value === "trace" && !traceEnabled.value) levelFilter.value = "";
+		if (levelFilter.value === "debug" && !debugEnabled.value) levelFilter.value = "";
+	}
 
 	function appendEntry(entry) {
 		var area = logAreaRef.current;
@@ -183,6 +204,12 @@ function LogsPage() {
 	}
 
 	useEffect(() => {
+		sendRpc("logs.status", {})
+			.then((res) => {
+				if (!res?.ok) return;
+				updateEnabledLevels(res.payload || {});
+			})
+			.catch(() => undefined);
 		refetch();
 		S.setLogsEventHandler((entry) => {
 			if (paused.value) return;
@@ -213,6 +240,8 @@ export function initLogs(container) {
 	targetFilter.value = "";
 	searchFilter.value = "";
 	entryCount.value = 0;
+	debugEnabled.value = false;
+	traceEnabled.value = false;
 	render(html`<${LogsPage} />`, container);
 }
 
