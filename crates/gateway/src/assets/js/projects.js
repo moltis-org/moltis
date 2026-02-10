@@ -1,6 +1,5 @@
 // ── Projects (sidebar filter) ────────────────────────────────
 
-import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import * as S from "./state.js";
