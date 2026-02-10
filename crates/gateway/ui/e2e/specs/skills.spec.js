@@ -13,24 +13,15 @@ test.describe("Skills page", () => {
 	test("install input present", async ({ page }) => {
 		await navigateAndWait(page, "/skills");
 
-		// Skills page should have an input for installing from URL/repo
-		const content = page.locator("#pageContent");
-		await expect(content).not.toBeEmpty();
-
-		// Look for text input (repo URL) or install area
-		const inputs = page.locator('#pageContent input[type="text"]');
-		const textareas = page.locator("#pageContent textarea");
-		const totalInputs = (await inputs.count()) + (await textareas.count());
-		// There should be at least one input on the skills page
-		expect(totalInputs).toBeGreaterThanOrEqual(0);
+		await expect(page.getByPlaceholder("owner/repo or full URL (e.g. anthropics/skills)")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Install", exact: true }).first()).toBeVisible();
 	});
 
 	test("featured repos shown", async ({ page }) => {
 		await navigateAndWait(page, "/skills");
 
-		// Featured repos or skill cards should appear
-		const content = page.locator("#pageContent");
-		await expect(content).not.toBeEmpty();
+		await expect(page.getByRole("heading", { name: "Featured Repositories", exact: true })).toBeVisible();
+		await expect(page.getByRole("link", { name: "openclaw/skills", exact: true })).toBeVisible();
 	});
 
 	test("page has no JS errors", async ({ page }) => {

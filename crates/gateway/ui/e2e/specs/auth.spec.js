@@ -50,10 +50,25 @@ test.describe("Authentication", () => {
 	test("setup page is accessible", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/setup");
-
-		// Setup page or redirect should work without errors
-		// On localhost, may redirect to main or show setup form
 		await page.waitForLoadState("networkidle");
+		await expect
+			.poll(() => {
+				const pathname = new URL(page.url()).pathname;
+				return /^\/setup$/.test(pathname) || /^\/onboarding$/.test(pathname) || /^\/chats\//.test(pathname);
+			})
+			.toBeTruthy();
+
+		const pathname = new URL(page.url()).pathname;
+		if (/^\/chats\//.test(pathname)) {
+			await expectPageContentMounted(page);
+		} else {
+			await expect(
+				page.getByRole("heading", {
+					name: /Secure your instance|Set up your identity/,
+				}),
+			).toBeVisible();
+		}
+
 		expect(pageErrors).toEqual([]);
 	});
 

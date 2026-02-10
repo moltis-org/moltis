@@ -13,16 +13,16 @@ test.describe("Projects page", () => {
 	test("add project input present", async ({ page }) => {
 		await navigateAndWait(page, "/projects");
 
-		// Projects page should have a directory input for adding repos
-		const content = page.locator("#pageContent");
-		await expect(content).not.toBeEmpty();
+		await expect(page.getByText("Directory", { exact: true })).toBeVisible();
+		await expect(page.getByPlaceholder("/path/to/project")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
 	});
 
 	test("auto-detect button present", async ({ page }) => {
 		await navigateAndWait(page, "/projects");
 
-		const content = page.locator("#pageContent");
-		await expect(content).not.toBeEmpty();
+		await expect(page.getByRole("button", { name: "Auto-detect", exact: true })).toBeVisible();
+		await expect(page.getByText(/scans common directories/i)).toBeVisible();
 	});
 
 	test("page has no JS errors", async ({ page }) => {

@@ -22,57 +22,67 @@ test.describe("Onboarding wizard", () => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		// The onboarding page should show step indicators
-		const onboardingRoot = page.locator("#onboardingRoot, #pageContent");
-		await expect(onboardingRoot.first()).not.toBeEmpty({
-			timeout: 10_000,
-		});
+		await expect(page.locator(".onboarding-step-dot").first()).toHaveClass(/active/);
+		await expect(page.locator(".onboarding-step-label", { hasText: "Identity" })).toBeVisible();
 	});
 
-	test("auth step renders with skip option on localhost", async ({ page }) => {
+	test("auth step renders actionable controls when shown", async ({ page }) => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		// On localhost, the auth step should show a skip button or
-		// the password setup is optional
-		const content = page.locator("#onboardingRoot, #pageContent");
-		await expect(content.first()).not.toBeEmpty({ timeout: 10_000 });
+		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
+		const isAuthStepVisible = await authHeading.isVisible().catch(() => false);
 
-		// Look for skip/next button — on localhost either skip or password setup is fine
-		const skipBtn = page.getByRole("button", { name: /skip|next|continue/i });
-		await skipBtn
-			.first()
-			.isVisible()
-			.catch(() => false);
+		if (!isAuthStepVisible) {
+			await expect(page.getByRole("heading", { name: "Set up your identity", exact: true })).toBeVisible();
+			await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
+			return;
+		}
+
+		const passkeyCard = page.locator(".backend-card").filter({ hasText: "Passkey" }).first();
+		const passwordCard = page.locator(".backend-card").filter({ hasText: "Password" }).first();
+		await expect(passkeyCard).toBeVisible();
+		await expect(passwordCard).toBeVisible();
+
+		await passwordCard.click();
+		await expect(page.getByRole("button", { name: /Set password|Skip/i }).first()).toBeVisible();
 	});
 
 	test("identity step has name input", async ({ page }) => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		const content = page.locator("#onboardingRoot, #pageContent");
-		await expect(content.first()).not.toBeEmpty({ timeout: 10_000 });
-
-		// Try to advance to the identity step by clicking through
-		const nextBtn = page.getByRole("button", { name: /skip|next|continue/i });
-		if (
-			await nextBtn
-				.first()
-				.isVisible()
-				.catch(() => false)
-		) {
-			await nextBtn.first().click();
-			await page.waitForTimeout(500);
+		const identityHeading = page.getByRole("heading", {
+			name: "Set up your identity",
+			exact: true,
+		});
+		const isIdentityStepVisible = await identityHeading.isVisible().catch(() => false);
+		if (!isIdentityStepVisible) {
+			const skipBtn = page.getByRole("button", { name: /skip/i });
+			if (
+				await skipBtn
+					.first()
+					.isVisible()
+					.catch(() => false)
+			) {
+				await skipBtn.first().click();
+			} else {
+				const authHeading = page.getByRole("heading", {
+					name: "Secure your instance",
+					exact: true,
+				});
+				await expect(authHeading).toBeVisible();
+				await expect(page.locator(".backend-card").filter({ hasText: "Passkey" }).first()).toBeVisible();
+				await expect(page.locator(".backend-card").filter({ hasText: "Password" }).first()).toBeVisible();
+				await expect(page.getByText("Setup code", { exact: true })).toBeVisible();
+				return;
+			}
 		}
 
-		// The identity step should have a name text input
-		const nameInput = page.locator('input[type="text"]');
-		// May or may not be on the current step yet
-		const hasNameInput = await nameInput
-			.first()
-			.isVisible()
-			.catch(() => false);
-		expect(typeof hasNameInput).toBe("boolean");
+		await expect(identityHeading).toBeVisible();
+		await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
+		await expect(page.getByPlaceholder("e.g. Rex")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
 	});
 
 	test("page has no JS errors through wizard", async ({ page }) => {
@@ -80,8 +90,8 @@ test.describe("Onboarding wizard", () => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		// Wait a moment for any async errors to surface
-		await page.waitForTimeout(1_000);
+		await expect(page.locator(".onboarding-card")).toBeVisible();
+		await expect(page.getByText("Loading…")).toHaveCount(0);
 		expect(pageErrors).toEqual([]);
 	});
 });
