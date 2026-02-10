@@ -135,7 +135,7 @@ export function SessionHeader() {
 			${
 				!(isMain || isCron) &&
 				html`
-				<button class="provider-btn provider-btn-danger text-[0.7rem] !px-1.5 !py-0.5 !font-normal !leading-tight" onClick=${onDelete} title="Delete session">
+				<button class="chat-session-btn chat-session-btn-danger" onClick=${onDelete} title="Delete session">
 					Delete
 				</button>
 			`

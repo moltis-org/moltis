@@ -702,16 +702,20 @@
 }
 
 .settings-group-label {
-  padding: 12px 16px 4px;
-  font-size: 0.65rem;
-  font-weight: 600;
+  padding: 16px 16px 6px;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
+  letter-spacing: 0.06em;
+  color: var(--text);
+  border-top: 1px solid var(--border);
 }
 
 .settings-group-label:first-child {
-  padding-top: 8px;
+  padding-top: 10px;
+  margin-top: 0;
+  border-top: none;
 }
 
 .settings-nav-item {

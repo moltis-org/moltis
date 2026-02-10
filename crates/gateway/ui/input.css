@@ -1155,14 +1155,14 @@
     color: var(--text);
     border-color: var(--border-strong);
   }
-  .chat-session-delete {
-    color: var(--error);
-    border-color: var(--error);
-  }
-  .chat-session-delete:hover {
+  .chat-session-btn-danger {
     color: #fff;
     background: var(--error);
     border-color: var(--error);
+  }
+  .chat-session-btn-danger:hover {
+    color: #fff;
+    opacity: 0.85;
   }
 
   /* Token usage bar (bottom of chat, above input) */
