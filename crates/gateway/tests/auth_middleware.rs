@@ -23,16 +23,23 @@ async fn start_auth_server() -> (SocketAddr, Arc<CredentialStore>) {
 
 /// Start a test server and also return the GatewayState for setup code tests.
 async fn start_auth_server_with_state() -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
-    start_auth_server_impl(false).await
+    start_auth_server_impl(false, false).await
 }
 
 /// Start a localhost-only test server.
 async fn start_localhost_server() -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
-    start_auth_server_impl(true).await
+    start_auth_server_impl(true, false).await
+}
+
+/// Start a test server that simulates being behind a proxy (all connections
+/// treated as remote even though they originate from loopback).
+async fn start_proxied_server() -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
+    start_auth_server_impl(false, true).await
 }
 
 async fn start_auth_server_impl(
     localhost_only: bool,
+    behind_proxy: bool,
 ) -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     let auth_config = moltis_config::AuthConfig::default();
@@ -50,6 +57,7 @@ async fn start_auth_server_impl(
         None,
         Some(Arc::clone(&cred_store)),
         localhost_only,
+        behind_proxy,
         false,
         None,
         None,
@@ -450,10 +458,13 @@ async fn setup_code_not_required_when_already_setup() {
 }
 
 /// Status reports setup_code_required when code is set.
+/// Uses a "proxied" server so the local connection is treated as remote
+/// (otherwise the three-tier model auto-bypasses auth for local connections
+/// without a password, making setup_required = false).
 #[cfg(feature = "web-ui")]
 #[tokio::test]
 async fn status_reports_setup_code_required() {
-    let (addr, _store, state) = start_auth_server_with_state().await;
+    let (addr, _store, state) = start_proxied_server().await;
     state.inner.write().await.setup_code = Some(secrecy::Secret::new("654321".to_string()));
 
     let resp = reqwest::get(format!("http://{addr}/api/auth/status"))
@@ -616,4 +627,61 @@ async fn localhost_with_password_requires_login() {
     assert_eq!(body["setup_required"], false);
     // Not authenticated without a session.
     assert_eq!(body["authenticated"], false);
+}
+
+// ── Three-tier model tests ──────────────────────────────────────────────────
+
+/// Tier 3: proxied server + no password → protected API returns 401.
+/// Remote connections without a password can only reach /api/auth/* for setup.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn proxied_no_password_protected_returns_401() {
+    let (addr, _store, _state) = start_proxied_server().await;
+    let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        401,
+        "remote connection without password must not access protected API"
+    );
+}
+
+/// Tier 3: proxied server + no password → auth status is accessible (public route).
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn proxied_no_password_auth_status_accessible() {
+    let (addr, _store, _state) = start_proxied_server().await;
+    let resp = reqwest::get(format!("http://{addr}/api/auth/status"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // Remote connection: not auto-authenticated despite no password.
+    assert_eq!(body["authenticated"], false);
+    assert_eq!(body["setup_required"], true);
+}
+
+/// Tier 1: proxied server + password set → always requires auth.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn proxied_with_password_requires_auth() {
+    let (addr, store, _state) = start_proxied_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // With a valid session, it works.
+    let token = store.create_session().await.unwrap();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/api/bootstrap"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 }

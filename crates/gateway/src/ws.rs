@@ -38,6 +38,7 @@ pub async fn handle_connection(
     accept_language: Option<String>,
     remote_ip: Option<String>,
     header_authenticated: bool,
+    is_local: bool,
 ) {
     let conn_id = uuid::Uuid::new_v4().to_string();
     let conn_remote_ip = remote_addr.ip().to_string();
@@ -117,14 +118,19 @@ pub async fn handle_connection(
     }
 
     // ── Auth validation ──────────────────────────────────────────────────
-    // SECURITY: do NOT auto-authenticate based on the TCP source IP being
-    // loopback. Behind a reverse proxy (Caddy, nginx, etc.) running on the
-    // same machine, every external request arrives from 127.0.0.1, so an
-    // unconditional `is_loopback` bypass would let unauthenticated internet
-    // traffic through.  The localhost-no-password convenience shortcut is
-    // already handled by `websocket_header_authenticated()` in server.rs
-    // (via the `localhost_only && !has_password` check), which correctly
-    // gates on the *bind address*, not the connecting peer's IP.
+    // SECURITY: Three-tier auth model (see docs/src/security.md):
+    //
+    // 1. Password set → always require credentials, any IP.
+    // 2. No password + genuine local connection → full access (dev convenience).
+    // 3. No password + remote/proxied → onboarding only.
+    //
+    // `is_local` is computed per-request by `is_local_connection()` using:
+    //   - MOLTIS_BEHIND_PROXY env var (hard override)
+    //   - Proxy header detection (X-Forwarded-For, X-Real-IP, etc.)
+    //   - Host header loopback check
+    //   - TCP source IP loopback check
+    //
+    // See CVE-2026-25253 for the analogous OpenClaw vulnerability.
     let mut authenticated = header_authenticated;
     // Scopes from API key verification (if any).
     let mut api_key_scopes: Option<Vec<String>> = None;
@@ -147,8 +153,11 @@ pub async fn handle_connection(
                 authenticated = true;
             }
         } else {
-            // Setup not complete yet — allow all connections.
-            authenticated = true;
+            // Setup not complete yet — only allow local connections.
+            // Remote connections must go through the onboarding/setup flow.
+            if is_local {
+                authenticated = true;
+            }
         }
     }
 

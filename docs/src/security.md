@@ -254,6 +254,94 @@ The `web_fetch` tool resolves DNS and blocks requests to private IP ranges
 (loopback, RFC 1918, link-local, CGNAT). This prevents server-side request
 forgery attacks.
 
+## Three-Tier Authentication Model
+
+Moltis uses a per-request three-tier authentication model that balances
+local development convenience with production security:
+
+| Tier | Condition | Behaviour |
+|------|-----------|-----------|
+| **1** | Password/passkey is set | Auth **always** required (any IP) |
+| **2** | No password + direct local connection | Full access (dev convenience) |
+| **3** | No password + remote/proxied connection | Onboarding only (setup code required) |
+
+### How "local" is determined
+
+Each incoming request is classified as **local** or **remote** using
+four checks that must **all** pass:
+
+1. `MOLTIS_BEHIND_PROXY` env var is **not** set (hard override)
+2. No proxy headers present (`X-Forwarded-For`, `X-Real-IP`,
+   `CF-Connecting-IP`, `Forwarded`)
+3. The `Host` header resolves to a loopback address (or is absent)
+4. The TCP source IP is loopback (`127.0.0.1`, `::1`)
+
+If **any** check fails, the connection is treated as remote.
+
+### Practical implications
+
+| Scenario | No password | Password set |
+|----------|-------------|-------------|
+| Local browser → `localhost:18789` | Full access | Auth required |
+| Local CLI/wscat → `localhost:18789` | Full access | Auth required |
+| Internet → Caddy (with XFF) → `127.0.0.1:18789` | Onboarding only | Auth required |
+| Internet → nginx (with `proxy_set_header`) → `127.0.0.1:18789` | Onboarding only | Auth required |
+| Internet → bare nginx (`proxy_pass` only) → `127.0.0.1:18789` | **See below** | Auth required |
+| Server bound to `0.0.0.0`, remote client | Onboarding only | Auth required |
+
+## Reverse Proxy Deployments
+
+Running Moltis behind a reverse proxy (Caddy, nginx, Traefik, etc.)
+requires understanding how authentication interacts with loopback
+connections.
+
+### The problem
+
+When Moltis binds to `127.0.0.1` and a proxy on the same machine
+forwards traffic to it, **every** incoming TCP connection appears to
+originate from `127.0.0.1` — including requests from the public
+internet.  A naive "trust all loopback connections" check would bypass
+authentication for all proxied traffic.
+
+This is the same class of vulnerability as
+[CVE-2026-25253](https://github.com/openclaw/openclaw/security/advisories/GHSA-g8p2-7wf7-98mq),
+which allowed one-click remote code execution on OpenClaw through
+authentication token exfiltration and cross-site WebSocket hijacking.
+
+### How Moltis handles it
+
+Moltis uses the per-request `is_local_connection()` check described
+above.  Most reverse proxies add forwarding headers or change the
+`Host` header, which automatically triggers the "remote" classification.
+
+For proxies that **strip all signals** (e.g. a bare nginx `proxy_pass`
+that rewrites `Host` to the upstream address and adds no `X-Forwarded-For`),
+use the `MOLTIS_BEHIND_PROXY` environment variable as a hard override:
+
+```bash
+MOLTIS_BEHIND_PROXY=true moltis
+```
+
+When this variable is set, **all** connections are treated as remote —
+no loopback bypass, no exceptions.
+
+### Deploying behind a proxy
+
+1. **Set `MOLTIS_BEHIND_PROXY=true`** if your proxy does not add
+   forwarding headers (safest option — eliminates any ambiguity).
+
+2. **Set a password or register a passkey** during initial setup.
+   Once a password is configured (Tier 1), authentication is required
+   for all traffic regardless of `is_local_connection()`.
+
+3. **WebSocket proxying** must forward the `Origin` and `Host` headers
+   correctly.  Moltis validates same-origin on WebSocket upgrades to
+   prevent cross-site WebSocket hijacking (CSWSH).
+
+4. **TLS termination** should happen at the proxy.  Moltis can also
+   serve TLS directly (`[tls] enabled = true`), but most proxy setups
+   handle certificates at the edge.
+
 ## Production Recommendations
 
 ### 1. Enable Authentication

@@ -364,6 +364,10 @@ pub struct GatewayState {
     pub memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
+    /// Whether the server is known to be behind a reverse proxy.
+    /// Set via `MOLTIS_BEHIND_PROXY=true`.  When true, loopback source IPs are
+    /// never treated as proof of a direct local connection.
+    pub behind_proxy: bool,
     /// Whether TLS is active on the gateway listener.
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
@@ -400,6 +404,7 @@ impl GatewayState {
             None,
             false,
             false,
+            false,
             None,
             None,
             18789,
@@ -419,6 +424,7 @@ impl GatewayState {
         sandbox_router: Option<Arc<SandboxRouter>>,
         credential_store: Option<Arc<CredentialStore>>,
         localhost_only: bool,
+        behind_proxy: bool,
         tls_active: bool,
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
@@ -442,6 +448,7 @@ impl GatewayState {
             sandbox_router,
             memory_manager,
             localhost_only,
+            behind_proxy,
             tls_active,
             ws_request_logs,
             deploy_platform,

@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
 use axum::{
     Json,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, post},
@@ -14,6 +14,7 @@ use crate::{
     auth::CredentialStore,
     auth_middleware::{AuthSession, SESSION_COOKIE},
     auth_webauthn::WebAuthnState,
+    server::is_local_connection,
     state::GatewayState,
 };
 
@@ -80,6 +81,7 @@ pub fn auth_router() -> axum::Router<AuthState> {
 
 async fn status_handler(
     State(state): State<AuthState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let auth_disabled = state.credential_store.is_auth_disabled();
@@ -87,8 +89,9 @@ async fn status_handler(
     let has_password = state.credential_store.has_password().await.unwrap_or(false);
     let has_passkeys = state.credential_store.has_passkeys().await.unwrap_or(false);
 
-    // Localhost with no password is treated as fully open (no auth needed).
-    let auth_bypassed = auth_disabled || (localhost_only && !has_password);
+    // Three-tier model: local connection + no password = dev convenience.
+    let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
+    let auth_bypassed = auth_disabled || (is_local && !has_password);
 
     let authenticated = if auth_bypassed {
         true
@@ -139,6 +142,8 @@ struct SetupRequest {
 
 async fn setup_handler(
     State(state): State<AuthState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<SetupRequest>,
 ) -> impl IntoResponse {
     if state.credential_store.is_setup_complete() {
@@ -157,8 +162,9 @@ async fn setup_handler(
 
     let password = body.password.unwrap_or_default();
 
-    if password.is_empty() && state.gateway_state.localhost_only {
-        // Localhost with no password: skip setup without setting one.
+    let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
+    if password.is_empty() && is_local {
+        // Local connection with no password: skip setup without setting one.
         state.credential_store.clear_auth_disabled();
     } else {
         if password.len() < 8 {
