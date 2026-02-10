@@ -532,6 +532,7 @@ function SecuritySection() {
 	var [authDisabled, setAuthDisabled] = useState(false);
 	var [localhostOnly, setLocalhostOnly] = useState(false);
 	var [hasPassword, setHasPassword] = useState(true);
+	var [setupComplete, setSetupComplete] = useState(false);
 	var [authLoading, setAuthLoading] = useState(true);
 
 	var [curPw, setCurPw] = useState("");
@@ -568,6 +569,7 @@ function SecuritySection() {
 				if (d?.auth_disabled) setAuthDisabled(true);
 				if (d?.localhost_only) setLocalhostOnly(true);
 				if (d?.has_password === false) setHasPassword(false);
+				if (d?.setup_complete) setSetupComplete(true);
 				if (d?.passkey_origins) setPasskeyOrigins(d.passkey_origins);
 				setAuthLoading(false);
 				rerender();
@@ -915,16 +917,16 @@ function SecuritySection() {
 									<input type="text" class="provider-key-input" value=${editingPkName}
 										onInput=${(e) => setEditingPkName(e.target.value)}
 										style="flex:1" autofocus />
-									<button type="submit" class="provider-btn">Save</button>
-									<button type="button" class="provider-btn" onClick=${onCancelRename}>Cancel</button>
+									<button type="submit" class="provider-btn provider-btn-sm">Save</button>
+									<button type="button" class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${onCancelRename}>Cancel</button>
 								</form>`
 								: html`<div style="flex:1;min-width:0;">
 									<div class="provider-item-name" style="font-size:.85rem;">${pk.name}</div>
 									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;"><time datetime=${pk.created_at}>${pk.created_at}</time></div>
 								</div>
 								<div style="display:flex;gap:4px;">
-									<button class="provider-btn" onClick=${() => onStartRename(pk.id, pk.name)}>Rename</button>
-									<button class="provider-btn provider-btn-danger"
+									<button class="provider-btn provider-btn-sm provider-btn-secondary" onClick=${() => onStartRename(pk.id, pk.name)}>Rename</button>
+									<button class="provider-btn provider-btn-sm provider-btn-danger"
 										onClick=${() => onRemovePasskey(pk.id)}>Remove</button>
 								</div>`
 						}
@@ -1040,8 +1042,8 @@ function SecuritySection() {
 			}
 		</div>
 
-		<!-- Danger zone -->
-		<div style="max-width:600px;margin-top:8px;border-top:1px solid var(--error);padding-top:16px;">
+		<!-- Danger zone (only when auth has been set up) -->
+		${!setupComplete ? "" : html`<div style="max-width:600px;margin-top:8px;border-top:1px solid var(--error);padding-top:16px;">
 			<h3 class="text-sm font-medium" style="color:var(--error);margin-bottom:8px;">Danger Zone</h3>
 			<div style="padding:12px 16px;border:1px solid var(--error);border-radius:6px;background:color-mix(in srgb, var(--error) 5%, transparent);">
 				<strong class="text-sm" style="color:var(--text-strong);">Remove all authentication</strong>
@@ -1065,7 +1067,7 @@ function SecuritySection() {
 						onClick=${onResetAuth}>Remove all authentication</button>`
 				}
 			</div>
-		</div>
+		</div>`}
 	</div>`;
 }
 

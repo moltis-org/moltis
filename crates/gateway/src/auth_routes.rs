@@ -119,8 +119,11 @@ async fn status_handler(
         .map(|wa| wa.get_allowed_origins())
         .unwrap_or_default();
 
+    let setup_complete = state.credential_store.is_setup_complete();
+
     Json(serde_json::json!({
         "setup_required": setup_required,
+        "setup_complete": setup_complete,
         "has_passkeys": has_passkeys,
         "authenticated": authenticated,
         "auth_disabled": auth_disabled,
