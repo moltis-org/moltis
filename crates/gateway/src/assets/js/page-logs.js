@@ -12,6 +12,8 @@ var levelFilter = signal("");
 var targetFilter = signal("");
 var searchFilter = signal("");
 var entryCount = signal(0);
+var debugEnabled = signal(false);
+var traceEnabled = signal(false);
 var maxEntries = 2000;
 
 function levelColor(level) {
@@ -89,8 +91,8 @@ function Toolbar() {
 				levelFilter.value = e.target.value;
 			}}>
       <option value="">All levels</option>
-      <option value="trace">TRACE</option>
-      <option value="debug">DEBUG</option>
+      ${traceEnabled.value ? html`<option value="trace">TRACE</option>` : null}
+      ${debugEnabled.value ? html`<option value="debug">DEBUG</option>` : null}
       <option value="info">INFO</option>
       <option value="warn">WARN</option>
       <option value="error">ERROR</option>
@@ -124,6 +126,14 @@ function Toolbar() {
 
 function LogsPage() {
 	var logAreaRef = useRef(null);
+
+	function updateEnabledLevels(statusPayload) {
+		var enabled = statusPayload?.enabled_levels || {};
+		traceEnabled.value = !!enabled.trace;
+		debugEnabled.value = !!enabled.debug || traceEnabled.value;
+		if (levelFilter.value === "trace" && !traceEnabled.value) levelFilter.value = "";
+		if (levelFilter.value === "debug" && !debugEnabled.value) levelFilter.value = "";
+	}
 
 	function appendEntry(entry) {
 		var area = logAreaRef.current;
@@ -183,6 +193,12 @@ function LogsPage() {
 	}
 
 	useEffect(() => {
+		sendRpc("logs.status", {})
+			.then((res) => {
+				if (!res?.ok) return;
+				updateEnabledLevels(res.payload || {});
+			})
+			.catch(() => undefined);
 		refetch();
 		S.setLogsEventHandler((entry) => {
 			if (paused.value) return;
@@ -213,6 +229,8 @@ export function initLogs(container) {
 	targetFilter.value = "";
 	searchFilter.value = "";
 	entryCount.value = 0;
+	debugEnabled.value = false;
+	traceEnabled.value = false;
 	render(html`<${LogsPage} />`, container);
 }
 

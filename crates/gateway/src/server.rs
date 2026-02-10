@@ -3459,6 +3459,19 @@ struct GonData {
     deploy_platform: Option<String>,
     /// Availability of newer GitHub release for this running version.
     update: crate::update_check::UpdateAvailability,
+    /// Sandbox runtime info so the UI can render sandbox status without
+    /// waiting for the auth-protected `/api/bootstrap` endpoint.
+    sandbox: SandboxGonInfo,
+}
+
+/// Sandbox runtime snapshot included in gon data so the settings page
+/// can show the correct backend status before bootstrap completes.
+#[cfg(feature = "web-ui")]
+#[derive(serde::Serialize)]
+struct SandboxGonInfo {
+    backend: String,
+    os: &'static str,
+    default_image: String,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -3575,6 +3588,20 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
+    let sandbox = if let Some(ref router) = gw.sandbox_router {
+        SandboxGonInfo {
+            backend: router.backend_name().to_owned(),
+            os: std::env::consts::OS,
+            default_image: router.default_image().await,
+        }
+    } else {
+        SandboxGonInfo {
+            backend: "none".to_owned(),
+            os: std::env::consts::OS,
+            default_image: moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned(),
+        }
+    };
+
     GonData {
         identity,
         port,
@@ -3588,6 +3615,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
         update: gw.inner.read().await.update.clone(),
+        sandbox,
     }
 }
 
@@ -3843,10 +3871,14 @@ async fn render_spa_template(
 
     // Inject nonce into all existing inline <script> tags.
     body = body.replace("<script>", &format!("<script nonce=\"{nonce}\">"));
-    // Import maps and module scripts also need the nonce.
+    // Import maps, module scripts, and module preloads also need the nonce.
     body = body.replace(
         "<script type=\"importmap\">",
         &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
+    );
+    body = body.replace(
+        "<script type=\"module\"",
+        &format!("<script nonce=\"{nonce}\" type=\"module\""),
     );
 
     let csp = format!(
@@ -5678,13 +5710,19 @@ mod tests {
             "<script type=\"importmap\">",
             &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
         );
+        body = body.replace(
+            "<script type=\"module\"",
+            &format!("<script nonce=\"{nonce}\" type=\"module\""),
+        );
 
         // All inline <script> tags should have the nonce.
         assert!(body.contains(&format!("<script nonce=\"{nonce}\">theme()")));
         assert!(body.contains(&format!("<script nonce=\"{nonce}\">init()")));
         assert!(body.contains(&format!("<script nonce=\"{nonce}\" type=\"importmap\">")));
-        // Module script with src= is NOT modified — covered by 'self' in CSP.
-        assert!(body.contains("<script type=\"module\" src=\"/app.js\">"));
+        // Module script with src= also gets the nonce (Safari enforces this).
+        assert!(body.contains(&format!(
+            "<script nonce=\"{nonce}\" type=\"module\" src=\"/app.js\">"
+        )));
     }
 
     #[cfg(feature = "web-ui")]

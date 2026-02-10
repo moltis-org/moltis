@@ -1840,7 +1840,11 @@ impl LogsService for NoopLogsService {
     }
 
     async fn status(&self) -> ServiceResult {
-        Ok(serde_json::json!({ "unseen_warns": 0, "unseen_errors": 0 }))
+        Ok(serde_json::json!({
+            "unseen_warns": 0,
+            "unseen_errors": 0,
+            "enabled_levels": { "debug": false, "trace": false }
+        }))
     }
 
     async fn ack(&self) -> ServiceResult {

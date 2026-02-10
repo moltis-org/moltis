@@ -104,6 +104,15 @@ applyMemory(gon.get("mem"));
 gon.onChange("mem", applyMemory);
 onEvent("tick", (payload) => applyMemory(payload.mem));
 
+// Seed sandbox info from gon so the settings page can render immediately
+// without waiting for the auth-protected /api/bootstrap fetch.
+try {
+	var gonSandbox = gon.get("sandbox");
+	if (gonSandbox) S.setSandboxInfo(gonSandbox);
+} catch (_) {
+	// Non-fatal — sandbox info will arrive via bootstrap.
+}
+
 // Check auth status before mounting the app.
 fetch("/api/auth/status")
 	.then((r) => (r.ok ? r.json() : null))

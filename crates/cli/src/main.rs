@@ -12,7 +12,7 @@ mod tailscale_commands;
 use {
     anyhow::anyhow,
     clap::{Parser, Subcommand},
-    moltis_gateway::logs::{LogBroadcastLayer, LogBuffer},
+    moltis_gateway::logs::{EnabledLogLevels, LogBroadcastLayer, LogBuffer},
     tracing::info,
     tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt},
 };
@@ -194,6 +194,11 @@ fn init_telemetry(cli: &Cli, log_buffer: Option<LogBuffer>) {
     } else {
         base_filter
     };
+
+    if let Some(ref buffer) = log_buffer {
+        let levels = EnabledLogLevels::from_max_level_hint(filter.max_level_hint());
+        buffer.set_enabled_levels(levels);
+    }
 
     let registry = tracing_subscriber::registry().with(filter);
 

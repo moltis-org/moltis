@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hooks documentation**: Rewritten `docs/src/hooks.md` with complete event
   reference, corrected `ToolResultPersist` classification (modifying, not
   read-only), and new "Prompt Injection Filtering" section with examples.
+- **Logs level filter UI**: Settings -> Logs now shows `DEBUG`/`TRACE` level
+  options only when they are enabled by the active tracing filter (including
+  target-specific directives). Default view remains `INFO` and above.
 
 ### Security
 
