@@ -4349,16 +4349,79 @@ async fn deliver_channel_replies_to_targets(
             let reply_to = target.message_id.as_deref();
             match target.channel_type {
                 moltis_channels::ChannelType::Telegram => match tts_payload {
-                    Some(payload) => {
-                        if let Err(e) = outbound
-                            .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
-                            .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                "failed to send channel voice reply: {e}"
-                            );
+                    Some(mut payload) => {
+                        let transcript = std::mem::take(&mut payload.text);
+
+                        // Short transcript fits as a caption on the voice message.
+                        if transcript.len() <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT {
+                            payload.text = transcript;
+                            if let Err(e) = outbound
+                                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                                .await
+                            {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send channel voice reply: {e}"
+                                );
+                            }
+                            // Send logbook as a follow-up if present.
+                            if !logbook_html.is_empty()
+                                && let Err(e) = outbound
+                                    .send_text(
+                                        &target.account_id,
+                                        &target.chat_id,
+                                        &logbook_html,
+                                        None,
+                                    )
+                                    .await
+                            {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send logbook follow-up: {e}"
+                                );
+                            }
+                        } else {
+                            // Transcript too long for a caption — send voice
+                            // without caption, then the full text as a follow-up.
+                            if let Err(e) = outbound
+                                .send_media(&target.account_id, &target.chat_id, &payload, reply_to)
+                                .await
+                            {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send channel voice reply: {e}"
+                                );
+                            }
+                            let text_result = if logbook_html.is_empty() {
+                                outbound
+                                    .send_text(
+                                        &target.account_id,
+                                        &target.chat_id,
+                                        &transcript,
+                                        None,
+                                    )
+                                    .await
+                            } else {
+                                outbound
+                                    .send_text_with_suffix(
+                                        &target.account_id,
+                                        &target.chat_id,
+                                        &transcript,
+                                        &logbook_html,
+                                        None,
+                                    )
+                                    .await
+                            };
+                            if let Err(e) = text_result {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send transcript follow-up: {e}"
+                                );
+                            }
                         }
                     },
                     None => {
@@ -4488,8 +4551,9 @@ async fn build_tts_payload(
         return None;
     }
 
-    // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
-    let text = moltis_voice::tts::sanitize_text_for_tts(text);
+    // Strip markdown/URLs the LLM may have included — use sanitized text
+    // only for TTS conversion, but keep the original for the caption.
+    let sanitized = moltis_voice::tts::sanitize_text_for_tts(text);
 
     let channel_key = format!("{}:{}", target.channel_type.as_str(), target.account_id);
     let (channel_override, session_override) = {
@@ -4502,7 +4566,7 @@ async fn build_tts_payload(
     let resolved = channel_override.or(session_override);
 
     let request = TtsConvertRequest {
-        text: &text,
+        text: &sanitized,
         format: "ogg",
         provider: resolved.as_ref().and_then(|o| o.provider.clone()),
         voice_id: resolved.as_ref().and_then(|o| o.voice_id.clone()),
@@ -4523,7 +4587,7 @@ async fn build_tts_payload(
         .unwrap_or_else(|| "audio/ogg".to_string());
 
     Some(ReplyPayload {
-        text: String::new(),
+        text: text.to_string(),
         media: Some(MediaAttachment {
             url: format!("data:{mime_type};base64,{}", response.audio),
             mime_type,

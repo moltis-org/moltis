@@ -234,6 +234,9 @@ fn escape_html(text: &str) -> String {
 /// Telegram message size limit.
 pub const TELEGRAM_MAX_MESSAGE_LEN: usize = 4096;
 
+/// Telegram caption size limit for media messages (voice, photo, document).
+pub const TELEGRAM_CAPTION_LIMIT: usize = 1024;
+
 /// Split text into chunks that fit within Telegram's message limit.
 /// Tries to split at newlines or spaces to avoid breaking words.
 pub fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
