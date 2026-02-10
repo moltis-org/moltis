@@ -210,9 +210,8 @@ function SandboxBanner() {
 			html`
       <div class="${rec.level === "warn" ? "alert-warning-text" : "alert-info-text"}">
         <span class="${rec.level === "warn" ? "alert-label-warn" : "alert-label-info"}">
-          ${rec.level === "warn" ? "Warning" : "Tip"}:
-        </span>
-        ${" "}${rec.text}
+          ${rec.level === "warn" ? "Warning: " : "Tip: "}
+        </span>${rec.text}
       </div>
     `
 		}
@@ -294,7 +293,7 @@ function ImagesPage() {
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       ${
 				!sandboxRuntimeAvailable() &&
-				html`<div class="alert-warning-text"><span class="alert-label-warn">Warning:</span> ${" "}${SANDBOX_DISABLED_HINT}</div>`
+				html`<div class="alert-warning-text max-w-form"><span class="alert-label-warn">Warning: </span>${SANDBOX_DISABLED_HINT}</div>`
 			}
       <div class="flex items-center gap-3">
         <h2 class="text-lg font-medium text-[var(--text-strong)]">Sandboxes</h2>
@@ -357,7 +356,7 @@ function ImagesPage() {
         ${
 					buildWarning.value &&
 					html`<div class="alert-warning-text" style="margin-top:8px;">
-          <span class="alert-label-warn">Warning:</span>${" "}${buildWarning.value}
+          <span class="alert-label-warn">Warning: </span>${buildWarning.value}
         </div>`
 				}
         ${
