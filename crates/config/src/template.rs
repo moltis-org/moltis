@@ -84,6 +84,11 @@ auto_generate = true              # Auto-generate local CA and server certificat
 
 [providers]
 offered = ["openai", "github-copilot"]      # Providers shown in onboarding/picker UI ([] = show all)
+# All available providers:
+#   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
+#   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
+#   "venice", "ollama", "local-llm", "openai-codex", "github-copilot",
+#   "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
@@ -449,11 +454,16 @@ fallback_models = []              # Ordered list of fallback models
 enabled = false                   # Enable text-to-speech
 provider = "elevenlabs"           # Active TTS provider
 providers = ["elevenlabs"]        # UI allowlist (empty = show all TTS providers)
+# All available TTS providers:
+#   "elevenlabs", "openai", "google", "piper", "coqui"
 
 [voice.stt]
 enabled = false                   # Enable speech-to-text
 provider = "mistral"              # Active STT provider
 providers = ["mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+# All available STT providers:
+#   "whisper", "groq", "deepgram", "google", "mistral",
+#   "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs-stt"
 
 # [voice.tts.elevenlabs]
 # api_key = "${{ELEVENLABS_API_KEY}}" # Or set ELEVENLABS_API_KEY env var
