@@ -342,14 +342,12 @@
   flex-wrap: wrap;
 }
 
-.logs-select {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  font-size: 0.78rem;
-  padding: 4px 8px;
-  font-family: var(--font-body);
+.logs-level-filter {
+  width: 150px;
+}
+
+.logs-level-filter .model-combo-chevron {
+  margin-left: auto;
 }
 
 .logs-input {

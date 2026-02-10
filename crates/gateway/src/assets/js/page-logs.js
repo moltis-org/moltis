@@ -6,6 +6,7 @@ import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
 import * as S from "./state.js";
+import { ComboSelect } from "./ui.js";
 
 var paused = signal(false);
 var levelFilter = signal("");
@@ -71,6 +72,16 @@ function renderEntry(entry) {
 	return row;
 }
 
+function levelFilterOptions() {
+	var options = [];
+	if (traceEnabled.value) options.push({ value: "trace", label: "TRACE" });
+	if (debugEnabled.value) options.push({ value: "debug", label: "DEBUG" });
+	options.push({ value: "info", label: "INFO" });
+	options.push({ value: "warn", label: "WARN" });
+	options.push({ value: "error", label: "ERROR" });
+	return options;
+}
+
 function Toolbar() {
 	var targetRef = useRef(null);
 	var searchRef = useRef(null);
@@ -86,17 +97,17 @@ function Toolbar() {
 	}
 
 	return html`<div class="logs-toolbar">
-    <select class="logs-select" value=${levelFilter.value}
-      onChange=${(e) => {
-				levelFilter.value = e.target.value;
-			}}>
-      <option value="">All levels</option>
-      ${traceEnabled.value ? html`<option value="trace">TRACE</option>` : null}
-      ${debugEnabled.value ? html`<option value="debug">DEBUG</option>` : null}
-      <option value="info">INFO</option>
-      <option value="warn">WARN</option>
-      <option value="error">ERROR</option>
-    </select>
+    <div class="logs-level-filter">
+      <${ComboSelect}
+        options=${levelFilterOptions()}
+        value=${levelFilter.value}
+        onChange=${(value) => {
+					levelFilter.value = value;
+				}}
+        placeholder="All levels"
+        searchable=${false}
+      />
+    </div>
     <input ref=${targetRef} type="text" placeholder="Filter target\u2026"
       class="logs-input" style="width:140px;"
       onInput=${debouncedUpdate((v) => {

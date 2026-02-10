@@ -197,7 +197,7 @@ function showBranchBanner(branch) {
 		document.getElementById("branchName").textContent = branch;
 		el.style.display = "";
 
-		// Swap favicon to red SVG variant
+		// Swap favicon to high-contrast branch SVG variant
 		document.querySelectorAll('link[rel="icon"]').forEach((link) => {
 			link.type = "image/svg+xml";
 			link.removeAttribute("sizes");
