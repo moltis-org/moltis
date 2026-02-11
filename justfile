@@ -2,13 +2,16 @@
 default:
     @just --list
 
+# Keep local formatting/linting toolchain aligned with CI/release workflows.
+nightly_toolchain := "nightly-2025-11-30"
+
 # Format Rust code
 format:
-    cargo +nightly fmt --all
+    cargo +{{nightly_toolchain}} fmt --all
 
 # Check if code is formatted
 format-check:
-    cargo +nightly fmt -- --check
+    cargo +{{nightly_toolchain}} fmt --all -- --check
 
 # Lint Rust code using clippy
 lint:
@@ -180,6 +183,11 @@ flatpak:
 
 # Run all CI checks (format, lint, build, test)
 ci: format-check lint build test
+
+# Run the same Rust preflight gates used before release packaging.
+release-preflight:
+    cargo +{{nightly_toolchain}} fmt --all -- --check
+    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
 
 # Run all tests
 test:

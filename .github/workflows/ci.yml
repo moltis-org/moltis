@@ -16,6 +16,7 @@ permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
+  NIGHTLY_TOOLCHAIN: nightly-2025-11-30
 
 jobs:
   local-validation:
@@ -95,7 +96,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
-          toolchain: nightly
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -123,7 +124,7 @@ jobs:
           nvcc --version
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
-          toolchain: nightly
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: clippy
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |
@@ -168,7 +169,7 @@ jobs:
           sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
-          toolchain: nightly
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
         with:
@@ -224,7 +225,7 @@ jobs:
           nvcc --version
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
-          toolchain: nightly
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: clippy
       - name: Initialize git repo in llama-cpp source to satisfy cmake
         run: |

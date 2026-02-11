@@ -594,8 +594,9 @@ npx playwright test --headed         # Run with visible browser
 ## Code Quality
 
 ```bash
-cargo +nightly fmt       # Format code (uses nightly)
-cargo +nightly clippy    # Run linter (uses nightly)
+just format              # Format Rust with pinned nightly toolchain
+just format-check        # Exact format check used by CI/release
+just release-preflight   # Rust pre-release gates (fmt + clippy)
 cargo check              # Fast compile check without producing binary
 taplo fmt                # Format TOML files (Cargo.toml, etc.)
 biome check --write      # Lint & format JavaScript files (installed via mise)
@@ -963,8 +964,8 @@ concrete (commands to run, UI paths to click, and expected results).
 - [ ] **No secrets or private tokens are included** (CRITICAL)
 - [ ] `taplo fmt` (when TOML files were modified)
 - [ ] `biome check --write` (when JS files were modified; CI runs `biome ci`)
-- [ ] Code is formatted (`cargo +nightly fmt --all` / `just format-check` passes)
-- [ ] Code passes clippy linting (`cargo +nightly clippy --workspace --all-targets --all-features` / `just lint` passes)
+- [ ] Code is formatted (`just format-check` passes)
+- [ ] Code passes release clippy gate (`just release-preflight` passes)
 - [ ] All tests pass (`cargo test`)
 - [ ] Commit message follows conventional commit format
 - [ ] Changes are logically grouped in the commit
