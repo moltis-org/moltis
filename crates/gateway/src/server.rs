@@ -3901,7 +3901,7 @@ async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> im
     if should_redirect_to_onboarding(path, onboarded) {
         return Redirect::to("/onboarding").into_response();
     }
-    render_spa_template(&state.gateway, "index.html").await
+    render_spa_template(&state.gateway, SpaTemplate::Index).await
 }
 
 #[cfg(feature = "web-ui")]
@@ -3912,16 +3912,24 @@ async fn onboarding_handler(State(state): State<AppState>) -> impl IntoResponse 
         return Redirect::to("/").into_response();
     }
 
-    render_spa_template(&state.gateway, "onboarding.html").await
+    render_spa_template(&state.gateway, SpaTemplate::Onboarding).await
 }
 
 #[cfg(feature = "web-ui")]
 async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse {
-    render_spa_template(&state.gateway, "login.html").await
+    render_spa_template(&state.gateway, SpaTemplate::Login).await
 }
 
 #[cfg(feature = "web-ui")]
 const SHARE_IMAGE_URL: &str = "https://www.moltis.org/og-social.jpg?v=4";
+
+#[cfg(feature = "web-ui")]
+#[derive(Clone, Copy)]
+enum SpaTemplate {
+    Index,
+    Login,
+    Onboarding,
+}
 
 #[cfg(feature = "web-ui")]
 struct ShareMeta {
@@ -3936,11 +3944,49 @@ struct ShareMeta {
 #[template(path = "index.html", escape = "html")]
 struct IndexHtmlTemplate<'a> {
     build_ts: &'a str,
+    asset_prefix: &'a str,
+    nonce: &'a str,
+    gon_json: &'a str,
     share_title: &'a str,
     share_description: &'a str,
     share_site_name: &'a str,
     share_image_url: &'a str,
     share_image_alt: &'a str,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(askama::Template)]
+#[template(path = "login.html", escape = "html")]
+struct LoginHtmlTemplate<'a> {
+    build_ts: &'a str,
+    asset_prefix: &'a str,
+    nonce: &'a str,
+    gon_json: &'a str,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(askama::Template)]
+#[template(path = "onboarding.html", escape = "html")]
+struct OnboardingHtmlTemplate<'a> {
+    build_ts: &'a str,
+    asset_prefix: &'a str,
+    nonce: &'a str,
+}
+
+#[cfg(feature = "web-ui")]
+fn script_safe_json<T: serde::Serialize>(value: &T) -> String {
+    let json = match serde_json::to_string(value) {
+        Ok(json) => json,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize gon data for html template");
+            "{}".to_owned()
+        },
+    };
+    json.replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 #[cfg(feature = "web-ui")]
@@ -3982,9 +4028,9 @@ fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
 #[cfg(feature = "web-ui")]
 async fn render_spa_template(
     gateway: &GatewayState,
-    template_name: &str,
+    template: SpaTemplate,
 ) -> axum::response::Response {
-    let (build_ts, versioned) = if is_dev_assets() {
+    let (build_ts, asset_prefix) = if is_dev_assets() {
         // Dev: bust browser cache by routing through the versioned path with a
         // timestamp that changes every request.  Safari aggressively caches even
         // with no-cache headers, so a changing URL is the only reliable fix.
@@ -3998,66 +4044,65 @@ async fn render_spa_template(
         static HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(asset_content_hash);
         (HASH.to_string(), format!("/assets/v/{}/", *HASH))
     };
-    let mut precomputed_gon: Option<GonData> = None;
-
-    let mut body = if template_name == "index.html" {
-        let gon = build_gon_data(gateway).await;
-        let share_meta = build_share_meta(&gon.identity);
-        let template = IndexHtmlTemplate {
-            build_ts: &build_ts,
-            share_title: &share_meta.title,
-            share_description: &share_meta.description,
-            share_site_name: &share_meta.site_name,
-            share_image_url: SHARE_IMAGE_URL,
-            share_image_alt: &share_meta.image_alt,
-        };
-        precomputed_gon = Some(gon);
-        match template.render() {
-            Ok(html) => html,
-            Err(e) => {
-                warn!(error = %e, "failed to render index template");
-                String::new()
-            },
-        }
-    } else {
-        read_asset(template_name)
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default()
-            .replace("__BUILD_TS__", &build_ts)
-    };
-    body = body.replace("/assets/", &versioned);
 
     // Generate a per-request nonce for CSP script-src.
     let nonce = uuid::Uuid::new_v4().to_string();
-
-    if template_name != "onboarding.html" {
-        // Build server-side data blob (gon pattern) injected into <head>.
-        let gon = match precomputed_gon {
-            Some(gon) => gon,
-            None => build_gon_data(gateway).await,
-        };
-
-        let gon_script = format!(
-            "<script nonce=\"{nonce}\">window.__MOLTIS__={};</script>",
-            serde_json::to_string(&gon).unwrap_or_else(|_| "{}".into()),
-        );
-        // Inject gon data into <head> so it's available before any module scripts run.
-        // An inline <script> in the <body> (right after the title elements) reads
-        // window.__MOLTIS__.identity to set emoji/name before the first paint.
-        body = body.replace("</head>", &format!("{gon_script}\n</head>"));
-    }
-
-    // Inject nonce into all existing inline <script> tags.
-    body = body.replace("<script>", &format!("<script nonce=\"{nonce}\">"));
-    // Import maps, module scripts, and module preloads also need the nonce.
-    body = body.replace(
-        "<script type=\"importmap\">",
-        &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
-    );
-    body = body.replace(
-        "<script type=\"module\"",
-        &format!("<script nonce=\"{nonce}\" type=\"module\""),
-    );
+    let body = match template {
+        SpaTemplate::Index => {
+            let gon = build_gon_data(gateway).await;
+            let share_meta = build_share_meta(&gon.identity);
+            let gon_json = script_safe_json(&gon);
+            let template = IndexHtmlTemplate {
+                build_ts: &build_ts,
+                asset_prefix: &asset_prefix,
+                nonce: &nonce,
+                gon_json: &gon_json,
+                share_title: &share_meta.title,
+                share_description: &share_meta.description,
+                share_site_name: &share_meta.site_name,
+                share_image_url: SHARE_IMAGE_URL,
+                share_image_alt: &share_meta.image_alt,
+            };
+            match template.render() {
+                Ok(html) => html,
+                Err(e) => {
+                    warn!(error = %e, "failed to render index template");
+                    String::new()
+                },
+            }
+        },
+        SpaTemplate::Login => {
+            let gon = build_gon_data(gateway).await;
+            let gon_json = script_safe_json(&gon);
+            let template = LoginHtmlTemplate {
+                build_ts: &build_ts,
+                asset_prefix: &asset_prefix,
+                nonce: &nonce,
+                gon_json: &gon_json,
+            };
+            match template.render() {
+                Ok(html) => html,
+                Err(e) => {
+                    warn!(error = %e, "failed to render login template");
+                    String::new()
+                },
+            }
+        },
+        SpaTemplate::Onboarding => {
+            let template = OnboardingHtmlTemplate {
+                build_ts: &build_ts,
+                asset_prefix: &asset_prefix,
+                nonce: &nonce,
+            };
+            match template.render() {
+                Ok(html) => html,
+                Err(e) => {
+                    warn!(error = %e, "failed to render onboarding template");
+                    String::new()
+                },
+            }
+        },
+    };
 
     let csp = format!(
         "default-src 'self'; \
@@ -5579,11 +5624,23 @@ mod tests {
     #[cfg(feature = "web-ui")]
     #[test]
     fn onboarding_template_uses_dedicated_entrypoint() {
-        let raw = read_asset("onboarding.html").expect("onboarding template should exist");
-        let html = String::from_utf8(raw).expect("onboarding template should be valid utf-8");
-        assert!(html.contains("/assets/js/onboarding-app.js"));
-        assert!(!html.contains("/assets/js/app.js"));
+        let template = OnboardingHtmlTemplate {
+            build_ts: "dev",
+            asset_prefix: "/assets/v/test/",
+            nonce: "nonce-123",
+        };
+        let html = match template.render() {
+            Ok(html) => html,
+            Err(e) => panic!("failed to render onboarding template: {e}"),
+        };
+        assert!(html.contains("/assets/v/test/js/onboarding-app.js"));
+        assert!(!html.contains("/assets/v/test/js/app.js"));
         assert!(!html.contains("/manifest.json"));
+        assert!(html.contains("<script nonce=\"nonce-123\">"));
+        assert!(html.contains("<script nonce=\"nonce-123\" type=\"importmap\">"));
+        assert!(html.contains(
+            "<script nonce=\"nonce-123\" type=\"module\" src=\"/assets/v/test/js/onboarding-app.js\">"
+        ));
     }
 
     #[cfg(feature = "web-ui")]
@@ -5628,6 +5685,9 @@ mod tests {
     fn askama_template_escapes_share_meta_values() {
         let template = IndexHtmlTemplate {
             build_ts: "dev",
+            asset_prefix: "/assets/v/test/",
+            nonce: "nonce-123",
+            gon_json: "{}",
             share_title: "A&B <tag>",
             share_description: "desc <b>safe</b>",
             share_site_name: "moltis",
@@ -5647,6 +5707,38 @@ mod tests {
         assert!(!html.contains("desc <b>safe</b>"));
         assert!(html.contains("preview &#60;image&#62;") || html.contains("preview &lt;image&gt;"));
         assert!(!html.contains("preview <image>"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn login_template_includes_gon_script_with_nonce() {
+        let template = LoginHtmlTemplate {
+            build_ts: "dev",
+            asset_prefix: "/assets/v/test/",
+            nonce: "nonce-abc",
+            gon_json: "{\"identity\":{\"name\":\"moltis\"}}",
+        };
+        let html = match template.render() {
+            Ok(html) => html,
+            Err(e) => panic!("failed to render login template: {e}"),
+        };
+        assert!(html.contains("<script nonce=\"nonce-abc\">window.__MOLTIS__={\"identity\":{\"name\":\"moltis\"}};</script>"));
+        assert!(html.contains(
+            "<script nonce=\"nonce-abc\" type=\"module\" src=\"/assets/v/test/js/login-app.js\"></script>"
+        ));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn script_safe_json_escapes_html_sensitive_chars() {
+        let input = serde_json::json!({
+            "value": "</script><b>&\u{2028}\u{2029}",
+        });
+        let json = script_safe_json(&input);
+        assert!(json.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026\\u2028\\u2029"));
+        assert!(!json.contains("</script>"));
+        assert!(!json.contains("<b>"));
+        assert!(!json.contains("&"));
     }
 
     #[test]
@@ -5906,35 +5998,43 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
-    fn csp_nonce_injected_into_inline_scripts() {
-        let html = r#"<head>
-<script>theme()</script>
-<script type="importmap">{"imports":{}}</script>
-</head>
-<body>
-<script>init()</script>
-<script type="module" src="/app.js"></script>
-</body>"#;
-
+    fn askama_templates_emit_nonce_on_scripts() {
         let nonce = "test-nonce-abc";
-        let mut body = html.to_string();
-        body = body.replace("<script>", &format!("<script nonce=\"{nonce}\">"));
-        body = body.replace(
-            "<script type=\"importmap\">",
-            &format!("<script nonce=\"{nonce}\" type=\"importmap\">"),
-        );
-        body = body.replace(
-            "<script type=\"module\"",
-            &format!("<script nonce=\"{nonce}\" type=\"module\""),
-        );
+        let index_template = IndexHtmlTemplate {
+            build_ts: "dev",
+            asset_prefix: "/assets/v/test/",
+            nonce,
+            gon_json: "{}",
+            share_title: "moltis: AI assistant",
+            share_description: "desc",
+            share_site_name: "moltis",
+            share_image_url: SHARE_IMAGE_URL,
+            share_image_alt: "preview",
+        };
+        let index_html = match index_template.render() {
+            Ok(html) => html,
+            Err(e) => panic!("failed to render index template: {e}"),
+        };
+        assert!(index_html.contains(&format!("<script nonce=\"{nonce}\">!function()")));
+        assert!(index_html.contains(&format!(
+            "<script nonce=\"{nonce}\">window.__MOLTIS__={{}};</script>"
+        )));
+        assert!(index_html.contains(&format!("<script nonce=\"{nonce}\" type=\"importmap\">")));
+        assert!(index_html.contains(&format!(
+            "<script nonce=\"{nonce}\" type=\"module\" src=\"/assets/v/test/js/app.js\"></script>"
+        )));
 
-        // All inline <script> tags should have the nonce.
-        assert!(body.contains(&format!("<script nonce=\"{nonce}\">theme()")));
-        assert!(body.contains(&format!("<script nonce=\"{nonce}\">init()")));
-        assert!(body.contains(&format!("<script nonce=\"{nonce}\" type=\"importmap\">")));
-        // Module script with src= also gets the nonce (Safari enforces this).
-        assert!(body.contains(&format!(
-            "<script nonce=\"{nonce}\" type=\"module\" src=\"/app.js\">"
+        let onboarding_template = OnboardingHtmlTemplate {
+            build_ts: "dev",
+            asset_prefix: "/assets/v/test/",
+            nonce,
+        };
+        let onboarding_html = match onboarding_template.render() {
+            Ok(html) => html,
+            Err(e) => panic!("failed to render onboarding template: {e}"),
+        };
+        assert!(onboarding_html.contains(&format!(
+            "<script nonce=\"{nonce}\" type=\"module\" src=\"/assets/v/test/js/onboarding-app.js\"></script>"
         )));
     }
 
