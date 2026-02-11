@@ -60,13 +60,63 @@ test.describe("Provider setup page", () => {
 		const localLlmIndex = names.indexOf("Local LLM (Offline)");
 
 		expect(openAiIndex).toBeGreaterThanOrEqual(0);
-		if (copilotIndex >= 0) {
-			expect(openAiIndex).toBeLessThan(copilotIndex);
-		}
 		if (localLlmIndex >= 0) {
-			const anchorIndex = copilotIndex >= 0 ? copilotIndex : openAiIndex;
-			expect(anchorIndex).toBeLessThan(localLlmIndex);
+			expect(openAiIndex).toBeLessThan(localLlmIndex);
+			if (copilotIndex >= 0) {
+				expect(copilotIndex).toBeLessThan(localLlmIndex);
+			}
 		}
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("api key forms include provider key source hints", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/providers");
+		await page.getByRole("button", { name: "Add LLM" }).click();
+
+		const openaiItem = page.locator(".provider-modal-backdrop .provider-item").filter({ hasText: "OpenAI" }).first();
+		await expect(openaiItem).toBeVisible();
+		await openaiItem.click();
+
+		await expect(page.getByRole("link", { name: "OpenAI Platform" })).toBeVisible();
+		await page.getByRole("button", { name: "Back", exact: true }).click();
+
+		const optionalCandidates = [
+			{ providerName: "Kimi Code", linkName: "Kimi Code Console" },
+			{ providerName: "Anthropic", linkName: "Anthropic Console" },
+			{ providerName: "Moonshot", linkName: "Moonshot Platform" },
+		];
+		for (const candidate of optionalCandidates) {
+			const item = page
+				.locator(".provider-modal-backdrop .provider-item")
+				.filter({ hasText: candidate.providerName })
+				.first();
+			if ((await item.count()) === 0) continue;
+
+			await item.click();
+			await expect(page.getByRole("link", { name: candidate.linkName })).toBeVisible();
+			await page.getByRole("button", { name: "Back", exact: true }).click();
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("provider validation errors render in danger panel", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/providers");
+		await page.getByRole("button", { name: "Add LLM" }).click();
+
+		const openaiItem = page.locator(".provider-modal-backdrop .provider-item").filter({ hasText: "OpenAI" }).first();
+		await expect(openaiItem).toBeVisible();
+		await openaiItem.click();
+
+		await page.getByRole("button", { name: "Save & Validate", exact: true }).click();
+
+		const errorPanel = page.locator(".provider-modal-backdrop .alert-error-text");
+		await expect(errorPanel).toBeVisible();
+		await expect(errorPanel).toContainText("Error:");
+		await expect(errorPanel).toContainText("API key is required");
+
 		expect(pageErrors).toEqual([]);
 	});
 });

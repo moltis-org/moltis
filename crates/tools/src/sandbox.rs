@@ -1021,12 +1021,16 @@ impl Sandbox for CgroupSandbox {
 #[cfg(target_os = "macos")]
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
+    name_generations: tokio::sync::RwLock<HashMap<String, u32>>,
 }
 
 #[cfg(target_os = "macos")]
 impl AppleContainerSandbox {
     pub fn new(config: SandboxConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            name_generations: tokio::sync::RwLock::new(HashMap::new()),
+        }
     }
 
     fn image(&self) -> &str {
@@ -1043,8 +1047,42 @@ impl AppleContainerSandbox {
             .unwrap_or("moltis-sandbox")
     }
 
-    fn container_name(&self, id: &SandboxId) -> String {
+    fn base_container_name(&self, id: &SandboxId) -> String {
         format!("{}-{}", self.container_prefix(), id.key)
+    }
+
+    async fn container_name(&self, id: &SandboxId) -> String {
+        let base = self.base_container_name(id);
+        let generation = self
+            .name_generations
+            .read()
+            .await
+            .get(&id.key)
+            .copied()
+            .unwrap_or(0);
+        if generation == 0 {
+            base
+        } else {
+            format!("{base}-g{generation}")
+        }
+    }
+
+    async fn bump_container_generation(&self, id: &SandboxId) -> String {
+        let next_generation = {
+            let mut generations = self.name_generations.write().await;
+            let entry = generations.entry(id.key.clone()).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+        let base = self.base_container_name(id);
+        let next_name = format!("{base}-g{next_generation}");
+        warn!(
+            session_key = %id.key,
+            generation = next_generation,
+            name = %next_name,
+            "rotating apple container name generation after stale container conflict"
+        );
+        next_name
     }
 
     fn image_repo(&self) -> &str {
@@ -1058,6 +1096,60 @@ impl AppleContainerSandbox {
             .output()
             .await
             .is_ok_and(|o| o.status.success())
+    }
+
+    async fn container_exists(name: &str) -> Result<bool> {
+        let output = tokio::process::Command::new("container")
+            .args(["inspect", name])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(!(stdout.trim().is_empty() || stdout.trim() == "[]"))
+    }
+
+    async fn remove_container_force(name: &str) {
+        let remove = tokio::process::Command::new("container")
+            .args(["rm", "-f", name])
+            .output()
+            .await;
+
+        match remove {
+            Ok(output) if output.status.success() => {
+                info!(name, "removed stale apple container");
+            },
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(name, %stderr, "failed to remove stale apple container");
+            },
+            Err(e) => {
+                debug!(name, error = %e, "failed to run apple container remove command");
+            },
+        }
+    }
+
+    async fn wait_for_container_absent(name: &str) {
+        const MAX_WAIT_ITERS: usize = 20;
+        const WAIT_MS: u64 = 100;
+
+        for _ in 0..MAX_WAIT_ITERS {
+            match Self::container_exists(name).await {
+                Ok(false) => return,
+                Ok(true) => tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await,
+                Err(e) => {
+                    debug!(name, error = %e, "failed while waiting for container removal");
+                    return;
+                },
+            }
+        }
+    }
+
+    async fn force_remove_and_wait(name: &str) {
+        Self::remove_container_force(name).await;
+        Self::wait_for_container_absent(name).await;
     }
 }
 
@@ -1114,6 +1206,180 @@ fn ensure_apple_container_service() -> bool {
     try_start_apple_container_service()
 }
 
+fn is_apple_container_service_error(stderr: &str) -> bool {
+    stderr.contains("XPC connection error") || stderr.contains("Connection invalid")
+}
+
+fn is_apple_container_exists_error(stderr: &str) -> bool {
+    stderr.contains("already exists") || stderr.contains("exists: \"container with id")
+}
+
+fn is_apple_container_corruption_error(stderr: &str) -> bool {
+    is_apple_container_service_error(stderr)
+        || is_apple_container_exists_error(stderr)
+        || stderr.contains("cannot exec: container is not running")
+        || stderr.contains("failed to bootstrap container")
+        || stderr.contains("config.json")
+}
+
+/// Wrapper sandbox that can fail over from a primary backend to a fallback backend.
+///
+/// This is used on macOS to fail over from Apple Container to Docker when the
+/// Apple runtime enters a corrupted state (stale metadata, missing config.json,
+/// service errors, etc.).
+pub struct FailoverSandbox {
+    primary: Arc<dyn Sandbox>,
+    fallback: Arc<dyn Sandbox>,
+    primary_name: &'static str,
+    fallback_name: &'static str,
+    use_fallback: RwLock<bool>,
+}
+
+impl FailoverSandbox {
+    pub fn new(primary: Arc<dyn Sandbox>, fallback: Arc<dyn Sandbox>) -> Self {
+        let primary_name = primary.backend_name();
+        let fallback_name = fallback.backend_name();
+        Self {
+            primary,
+            fallback,
+            primary_name,
+            fallback_name,
+            use_fallback: RwLock::new(false),
+        }
+    }
+
+    async fn fallback_enabled(&self) -> bool {
+        *self.use_fallback.read().await
+    }
+
+    async fn switch_to_fallback(&self, error: &anyhow::Error) {
+        let mut use_fallback = self.use_fallback.write().await;
+        if !*use_fallback {
+            warn!(
+                primary = self.primary_name,
+                fallback = self.fallback_name,
+                %error,
+                "sandbox primary backend failed, switching to fallback backend"
+            );
+            *use_fallback = true;
+        }
+    }
+
+    fn should_failover(&self, error: &anyhow::Error) -> bool {
+        if self.primary_name != "apple-container" {
+            return false;
+        }
+        let message = format!("{error:#}");
+        is_apple_container_corruption_error(&message)
+    }
+}
+
+#[async_trait]
+impl Sandbox for FailoverSandbox {
+    fn backend_name(&self) -> &'static str {
+        self.primary_name
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        if self.fallback_enabled().await {
+            return self.fallback.ensure_ready(id, image_override).await;
+        }
+
+        match self.primary.ensure_ready(id, image_override).await {
+            Ok(()) => Ok(()),
+            Err(primary_error) => {
+                if !self.should_failover(&primary_error) {
+                    return Err(primary_error);
+                }
+
+                self.switch_to_fallback(&primary_error).await;
+                let primary_message = format!("{primary_error:#}");
+                self.fallback
+                    .ensure_ready(id, image_override)
+                    .await
+                    .map_err(|fallback_error| {
+                        anyhow::anyhow!(
+                            "primary sandbox backend ({}) failed: {}; fallback backend ({}) also failed: {}",
+                            self.primary_name,
+                            primary_message,
+                            self.fallback_name,
+                            fallback_error
+                        )
+                    })
+            },
+        }
+    }
+
+    async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.exec(id, command, opts).await;
+        }
+
+        match self.primary.exec(id, command, opts).await {
+            Ok(result) => Ok(result),
+            Err(primary_error) => {
+                if !self.should_failover(&primary_error) {
+                    return Err(primary_error);
+                }
+
+                self.switch_to_fallback(&primary_error).await;
+                let primary_message = format!("{primary_error:#}");
+                self.fallback
+                    .ensure_ready(id, None)
+                    .await
+                    .map_err(|fallback_error| {
+                        anyhow::anyhow!(
+                            "primary sandbox backend ({}) failed during exec: {}; fallback backend ({}) failed to initialize: {}",
+                            self.primary_name,
+                            primary_message,
+                            self.fallback_name,
+                            fallback_error
+                        )
+                    })?;
+                self.fallback.exec(id, command, opts).await
+            },
+        }
+    }
+
+    async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        if self.fallback_enabled().await {
+            let result = self.fallback.cleanup(id).await;
+            if let Err(error) = self.primary.cleanup(id).await {
+                debug!(
+                    backend = self.primary_name,
+                    %error,
+                    "primary sandbox cleanup failed after failover"
+                );
+            }
+            return result;
+        }
+
+        self.primary.cleanup(id).await
+    }
+
+    async fn build_image(
+        &self,
+        base: &str,
+        packages: &[String],
+    ) -> Result<Option<BuildImageResult>> {
+        if self.fallback_enabled().await {
+            return self.fallback.build_image(base, packages).await;
+        }
+
+        match self.primary.build_image(base, packages).await {
+            Ok(result) => Ok(result),
+            Err(primary_error) => {
+                if !self.should_failover(&primary_error) {
+                    return Err(primary_error);
+                }
+
+                self.switch_to_fallback(&primary_error).await;
+                self.fallback.build_image(base, packages).await
+            },
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[async_trait]
 impl Sandbox for AppleContainerSandbox {
@@ -1122,7 +1388,7 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
-        let name = self.container_name(id);
+        let mut name = self.container_name(id).await;
         let image = image_override.unwrap_or_else(|| self.image());
 
         // Check if container exists and parse its state.
@@ -1156,10 +1422,7 @@ impl Sandbox for AppleContainerSandbox {
                 if !start.status.success() {
                     let stderr = String::from_utf8_lossy(&start.stderr);
                     warn!(name, %stderr, "container start failed, removing and recreating");
-                    let _ = tokio::process::Command::new("container")
-                        .args(["rm", &name])
-                        .output()
-                        .await;
+                    Self::force_remove_and_wait(&name).await;
                 } else {
                     info!(name, "apple container restarted");
                     return Ok(());
@@ -1167,10 +1430,7 @@ impl Sandbox for AppleContainerSandbox {
             } else {
                 // Unknown state — log and recreate.
                 info!(name, state = %stdout.chars().take(200).collect::<String>(), "apple container in unknown state, removing and recreating");
-                let _ = tokio::process::Command::new("container")
-                    .args(["rm", "-f", &name])
-                    .output()
-                    .await;
+                Self::force_remove_and_wait(&name).await;
             }
         } else {
             info!(name, "apple container not found, creating");
@@ -1197,14 +1457,62 @@ impl Sandbox for AppleContainerSandbox {
             "infinity".to_string(),
         ]);
 
-        let output = tokio::process::Command::new("container")
-            .args(&args)
+        let mut run_args = args;
+        let mut output = tokio::process::Command::new("container")
+            .args(&run_args)
             .output()
             .await?;
 
+        // Recovery loop for poisoned container names:
+        // - If container metadata says "exists" but cleanup can't remove it, rotate
+        //   to a new generation-specific name and retry.
+        // - Also rotate on other non-service create failures to avoid repeatedly
+        //   binding to a potentially corrupted name entry.
+        for attempt in 0..2 {
+            if output.status.success() {
+                break;
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if is_apple_container_service_error(&stderr) {
+                break;
+            }
+
+            if is_apple_container_exists_error(&stderr) {
+                warn!(
+                    name,
+                    %stderr,
+                    attempt,
+                    "container already exists during create, removing stale entry and rotating name"
+                );
+                Self::force_remove_and_wait(&name).await;
+            } else {
+                warn!(
+                    name,
+                    %stderr,
+                    attempt,
+                    "container create failed, rotating name and retrying"
+                );
+            }
+
+            name = self.bump_container_generation(id).await;
+            if let Some(slot) = run_args
+                .iter()
+                .position(|arg| arg == "--name")
+                .and_then(|idx| run_args.get_mut(idx + 1))
+            {
+                *slot = name.clone();
+            }
+
+            output = tokio::process::Command::new("container")
+                .args(&run_args)
+                .output()
+                .await?;
+        }
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("XPC connection error") || stderr.contains("Connection invalid") {
+            if is_apple_container_service_error(&stderr) {
                 anyhow::bail!(
                     "apple container service is not running. \
                      Start it with `container system start` and restart moltis"
@@ -1229,7 +1537,7 @@ impl Sandbox for AppleContainerSandbox {
     }
 
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
-        let name = self.container_name(id);
+        let name = self.container_name(id).await;
         info!(name, command, "apple container exec");
 
         let mut args = vec!["exec".to_string(), name.clone()];
@@ -1373,16 +1681,32 @@ WORKDIR /home/sandbox\n"
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
-        let name = self.container_name(id);
-        info!(name, "cleaning up apple container");
-        let _ = tokio::process::Command::new("container")
-            .args(["stop", &name])
-            .output()
-            .await;
-        let _ = tokio::process::Command::new("container")
-            .args(["rm", &name])
-            .output()
-            .await;
+        let base = self.base_container_name(id);
+        let max_generation = self
+            .name_generations
+            .read()
+            .await
+            .get(&id.key)
+            .copied()
+            .unwrap_or(0);
+
+        for generation in 0..=max_generation {
+            let name = if generation == 0 {
+                base.clone()
+            } else {
+                format!("{base}-g{generation}")
+            };
+            info!(name, "cleaning up apple container");
+            let _ = tokio::process::Command::new("container")
+                .args(["stop", &name])
+                .output()
+                .await;
+            let _ = tokio::process::Command::new("container")
+                .args(["rm", &name])
+                .output()
+                .await;
+        }
+        self.name_generations.write().await.remove(&id.key);
         Ok(())
     }
 }
@@ -1420,10 +1744,34 @@ fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
                      run `container system start` manually, then restart moltis"
                 );
             }
-            Arc::new(AppleContainerSandbox::new(config))
+            let apple_backend: Arc<dyn Sandbox> =
+                Arc::new(AppleContainerSandbox::new(config.clone()));
+            maybe_wrap_with_docker_failover(apple_backend, &config)
         },
         _ => auto_detect_backend(config),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn maybe_wrap_with_docker_failover(
+    primary: Arc<dyn Sandbox>,
+    config: &SandboxConfig,
+) -> Arc<dyn Sandbox> {
+    let docker_usable =
+        should_use_docker_backend(is_cli_available("docker"), is_docker_daemon_available());
+    if !docker_usable {
+        return primary;
+    }
+
+    tracing::info!(
+        primary = primary.backend_name(),
+        fallback = "docker",
+        "sandbox backend failover enabled"
+    );
+    Arc::new(FailoverSandbox::new(
+        primary,
+        Arc::new(DockerSandbox::new(config.clone())),
+    ))
 }
 
 fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
@@ -1432,7 +1780,9 @@ fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         if is_cli_available("container") {
             if ensure_apple_container_service() {
                 tracing::info!("sandbox backend: apple-container (VM-isolated, preferred)");
-                return Arc::new(AppleContainerSandbox::new(config));
+                let apple_backend: Arc<dyn Sandbox> =
+                    Arc::new(AppleContainerSandbox::new(config.clone()));
+                return maybe_wrap_with_docker_failover(apple_backend, &config);
             }
             tracing::warn!(
                 "apple container CLI found but service could not be started; \
@@ -1673,7 +2023,80 @@ impl SandboxRouter {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    struct TestSandbox {
+        name: &'static str,
+        ensure_ready_error: Option<String>,
+        exec_error: Option<String>,
+        ensure_ready_calls: AtomicUsize,
+        exec_calls: AtomicUsize,
+        cleanup_calls: AtomicUsize,
+    }
+
+    impl TestSandbox {
+        fn new(
+            name: &'static str,
+            ensure_ready_error: Option<&str>,
+            exec_error: Option<&str>,
+        ) -> Self {
+            Self {
+                name,
+                ensure_ready_error: ensure_ready_error.map(ToOwned::to_owned),
+                exec_error: exec_error.map(ToOwned::to_owned),
+                ensure_ready_calls: AtomicUsize::new(0),
+                exec_calls: AtomicUsize::new(0),
+                cleanup_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn ensure_ready_calls(&self) -> usize {
+            self.ensure_ready_calls.load(Ordering::SeqCst)
+        }
+
+        fn exec_calls(&self) -> usize {
+            self.exec_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Sandbox for TestSandbox {
+        fn backend_name(&self) -> &'static str {
+            self.name
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+            self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(ref error) = self.ensure_ready_error {
+                anyhow::bail!("{error}");
+            }
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            _opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            self.exec_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(ref error) = self.exec_error {
+                anyhow::bail!("{error}");
+            }
+            Ok(ExecResult {
+                stdout: "ok".into(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_sandbox_mode_display() {
@@ -1741,10 +2164,14 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(
-            args,
-            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
-        );
+        assert_eq!(args, vec![
+            "--memory",
+            "256M",
+            "--cpus",
+            "0.5",
+            "--pids-limit",
+            "50"
+        ]);
     }
 
     #[test]
@@ -2133,6 +2560,25 @@ mod tests {
         assert_eq!(router.backend_name(), "apple-container");
     }
 
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn test_apple_container_name_generation_rotation() {
+        let sandbox = AppleContainerSandbox::new(SandboxConfig::default());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-abc".into(),
+        };
+
+        let first_name = sandbox.container_name(&id).await;
+        assert_eq!(first_name, "moltis-sandbox-session-abc");
+
+        let rotated_name = sandbox.bump_container_generation(&id).await;
+        assert_eq!(rotated_name, "moltis-sandbox-session-abc-g1");
+
+        let current_name = sandbox.container_name(&id).await;
+        assert_eq!(current_name, "moltis-sandbox-session-abc-g1");
+    }
+
     /// When both Docker and Apple Container are available, test that we can
     /// explicitly select each one.
     #[test]
@@ -2157,6 +2603,106 @@ mod tests {
             let backend = select_backend(config);
             assert_eq!(backend.backend_name(), "apple-container");
         }
+    }
+
+    #[test]
+    fn test_is_apple_container_service_error() {
+        assert!(is_apple_container_service_error(
+            "Error: internalError: \"XPC connection error\""
+        ));
+        assert!(is_apple_container_service_error(
+            "Error: Connection invalid while contacting service"
+        ));
+        assert!(!is_apple_container_service_error(
+            "Error: something else happened"
+        ));
+    }
+
+    #[test]
+    fn test_is_apple_container_exists_error() {
+        assert!(is_apple_container_exists_error(
+            "Error: exists: \"container with id moltis-sandbox-main already exists\""
+        ));
+        assert!(is_apple_container_exists_error(
+            "Error: container already exists"
+        ));
+        assert!(!is_apple_container_exists_error("Error: no such container"));
+    }
+
+    #[test]
+    fn test_is_apple_container_corruption_error() {
+        assert!(is_apple_container_corruption_error(
+            "failed to bootstrap container because config.json is missing"
+        ));
+        assert!(is_apple_container_corruption_error(
+            "cannot exec: container is not running"
+        ));
+        assert!(!is_apple_container_corruption_error("permission denied"));
+    }
+
+    #[tokio::test]
+    async fn test_failover_sandbox_switches_from_apple_to_docker() {
+        let primary = Arc::new(TestSandbox::new(
+            "apple-container",
+            Some("failed to bootstrap container: config.json missing"),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("docker", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-abc".into(),
+        };
+
+        sandbox.ensure_ready(&id, None).await.unwrap();
+        sandbox.ensure_ready(&id, None).await.unwrap();
+
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_failover_sandbox_does_not_switch_on_unrelated_error() {
+        let primary = Arc::new(TestSandbox::new(
+            "apple-container",
+            Some("permission denied"),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("docker", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-abc".into(),
+        };
+
+        let error = sandbox.ensure_ready(&id, None).await.unwrap_err();
+        assert!(format!("{error:#}").contains("permission denied"));
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_failover_sandbox_switches_exec_path() {
+        let primary = Arc::new(TestSandbox::new(
+            "apple-container",
+            None,
+            Some("cannot exec: container is not running"),
+        ));
+        let fallback = Arc::new(TestSandbox::new("docker", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-abc".into(),
+        };
+
+        let result = sandbox
+            .exec(&id, "uname -a", &ExecOpts::default())
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(primary.exec_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 1);
+        assert_eq!(fallback.exec_calls(), 1);
     }
 
     #[test]

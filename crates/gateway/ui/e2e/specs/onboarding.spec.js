@@ -1,6 +1,47 @@
 const { expect, test } = require("@playwright/test");
 const { watchPageErrors } = require("../helpers");
 
+function isVisible(locator) {
+	return locator.isVisible().catch(() => false);
+}
+
+async function maybeSkipAuth(page) {
+	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
+	if (!(await isVisible(authHeading))) return false;
+
+	const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
+	await expect(authSkip).toBeVisible();
+	await authSkip.click();
+	return true;
+}
+
+async function maybeCompleteIdentity(page) {
+	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+	if (!(await isVisible(identityHeading))) return false;
+
+	await page.getByPlaceholder("e.g. Alice").fill("E2E User");
+	await page.getByPlaceholder("e.g. Rex").fill("E2E Bot");
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
+	return true;
+}
+
+async function moveToLlmStep(page) {
+	const llmHeading = page.getByRole("heading", { name: "Add LLMs", exact: true });
+	for (let i = 0; i < 4; i++) {
+		if (await isVisible(llmHeading)) return;
+		if (await maybeSkipAuth(page)) continue;
+		if (await maybeCompleteIdentity(page)) continue;
+
+		const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
+		if (await isVisible(backBtn)) {
+			await backBtn.click();
+			continue;
+		}
+
+		break;
+	}
+}
+
 /**
  * Onboarding tests run against a server started WITHOUT seeded
  * IDENTITY.md and USER.md, so the app enters onboarding mode.
@@ -101,11 +142,7 @@ test.describe("Onboarding wizard", () => {
 		await page.waitForLoadState("networkidle");
 
 		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
-		if (
-			await authHeading
-				.isVisible()
-				.catch(() => false)
-		) {
+		if (await authHeading.isVisible().catch(() => false)) {
 			const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
 			await expect(authSkip).toBeVisible();
 			await authSkip.click();
@@ -122,11 +159,7 @@ test.describe("Onboarding wizard", () => {
 
 		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
 		for (let i = 0; i < 3; i++) {
-			if (
-				await channelHeading
-					.isVisible()
-					.catch(() => false)
-			) {
+			if (await channelHeading.isVisible().catch(() => false)) {
 				break;
 			}
 			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
@@ -139,6 +172,42 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
 		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("autocomplete", "off");
 		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("name", "telegram_bot_token");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("llm provider api key form includes key source hint", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		await moveToLlmStep(page);
+
+		const llmHeading = page.getByRole("heading", { name: "Add LLMs", exact: true });
+		await expect(llmHeading).toBeVisible();
+
+		const candidates = [
+			{ providerName: "OpenAI", linkName: "OpenAI Platform" },
+			{ providerName: "Kimi Code", linkName: "Kimi Code Console" },
+			{ providerName: "Anthropic", linkName: "Anthropic Console" },
+		];
+		let matched = false;
+		for (const candidate of candidates) {
+			const row = page
+				.locator(".onboarding-card .rounded-md.border")
+				.filter({ hasText: candidate.providerName })
+				.first();
+			if ((await row.count()) === 0) continue;
+
+			const configureBtn = row.getByRole("button", { name: "Configure", exact: true }).first();
+			if (await configureBtn.isVisible().catch(() => false)) {
+				await configureBtn.click();
+				await expect(page.getByRole("link", { name: candidate.linkName })).toBeVisible();
+				matched = true;
+				break;
+			}
+		}
+
+		expect(matched).toBeTruthy();
 		expect(pageErrors).toEqual([]);
 	});
 });

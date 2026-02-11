@@ -11,6 +11,7 @@ import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { detectPasskeyName } from "./passkey-detect.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
@@ -558,6 +559,7 @@ function OnboardingProviderRow({
 
 	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
 	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+	var keyHelp = providerApiKeyHelp(provider);
 
 	// Filter models for the model selector.
 	var filteredModels = (providerModels || []).filter(
@@ -606,6 +608,17 @@ function OnboardingProviderRow({
 						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
 						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+					${
+						keyHelp
+							? html`<div class="text-xs text-[var(--muted)] mt-1">
+							${
+								keyHelp.url
+									? html`${keyHelp.text} <a href=${keyHelp.url} target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] underline">${keyHelp.label || keyHelp.url}</a>`
+									: keyHelp.text
+							}
+						</div>`
+							: null
+					}
 				</div>
 				${
 					supportsEndpoint

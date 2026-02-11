@@ -4,6 +4,7 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
@@ -111,6 +112,17 @@ export function closeProviderModal() {
 	els().modal.classList.add("hidden");
 }
 
+function setFormError(errorPanel, message) {
+	if (!errorPanel) return;
+	if (!message) {
+		errorPanel.style.display = "none";
+		errorPanel.textContent = "";
+		return;
+	}
+	errorPanel.textContent = `Error: ${message}`;
+	errorPanel.style.display = "";
+}
+
 export function showApiKeyForm(provider) {
 	var m = els();
 	m.title.textContent = provider.displayName;
@@ -133,6 +145,30 @@ export function showApiKeyForm(provider) {
 	keyInp.type = "password";
 	keyInp.placeholder = provider.name === "ollama" ? "(optional for Ollama)" : "sk-...";
 	form.appendChild(keyInp);
+
+	var errorPanel = document.createElement("div");
+	errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+	errorPanel.style.display = "none";
+	form.appendChild(errorPanel);
+
+	var keyHelp = providerApiKeyHelp(provider);
+	if (keyHelp) {
+		var keyHelpLine = document.createElement("div");
+		keyHelpLine.className = "text-xs text-[var(--muted)] mt-1";
+		if (keyHelp.url) {
+			keyHelpLine.append(`${keyHelp.text} `);
+			var keyLink = document.createElement("a");
+			keyLink.href = keyHelp.url;
+			keyLink.target = "_blank";
+			keyLink.rel = "noopener noreferrer";
+			keyLink.className = "text-[var(--accent)] underline";
+			keyLink.textContent = keyHelp.label || keyHelp.url;
+			keyHelpLine.appendChild(keyLink);
+		} else {
+			keyHelpLine.textContent = keyHelp.text;
+		}
+		form.appendChild(keyHelpLine);
+	}
 
 	// Endpoint field for OpenAI-compatible providers
 	var endpointInp = null;
@@ -189,19 +225,20 @@ export function showApiKeyForm(provider) {
 	saveBtn.addEventListener("click", () => {
 		var key = keyInp.value.trim();
 		// Ollama doesn't require a key
-		if (!key && provider.name !== "ollama") return;
+		if (!key && provider.name !== "ollama") {
+			setFormError(errorPanel, "API key is required.");
+			return;
+		}
 
 		// Model is required for bring-your-own providers
 		if (needsModel && modelInp && !modelInp.value.trim()) {
-			keyLabel.textContent = "Model ID is required";
-			keyLabel.classList.add("text-error");
+			setFormError(errorPanel, "Model ID is required.");
 			return;
 		}
 
 		saveBtn.disabled = true;
 		saveBtn.textContent = "Validating...";
-		keyLabel.classList.remove("text-error");
-		keyLabel.textContent = "API Key";
+		setFormError(errorPanel, null);
 
 		var keyVal = key || "ollama";
 		var endpointVal = endpointInp?.value.trim() || null;
@@ -212,8 +249,7 @@ export function showApiKeyForm(provider) {
 				if (!result.valid) {
 					saveBtn.disabled = false;
 					saveBtn.textContent = "Save & Validate";
-					keyLabel.textContent = result.error || "Validation failed. Please check your credentials.";
-					keyLabel.classList.add("text-error");
+					setFormError(errorPanel, result.error || "Validation failed. Please check your credentials.");
 					return;
 				}
 
@@ -229,8 +265,7 @@ export function showApiKeyForm(provider) {
 			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Save & Validate";
-				keyLabel.textContent = err?.message || "Validation failed.";
-				keyLabel.classList.add("text-error");
+				setFormError(errorPanel, err?.message || "Validation failed.");
 			});
 	});
 	btns.appendChild(saveBtn);
@@ -267,7 +302,7 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 	wrapper.appendChild(list);
 
 	var errorArea = document.createElement("div");
-	errorArea.className = "text-xs text-[var(--error)] mt-2";
+	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
 	errorArea.style.display = "none";
 	wrapper.appendChild(errorArea);
 
@@ -382,8 +417,7 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
 		if (wrapper?._errorArea) {
-			wrapper._errorArea.textContent = msg;
-			wrapper._errorArea.style.display = "";
+			setFormError(wrapper._errorArea, msg);
 			if (wrapper._resetSelection) wrapper._resetSelection();
 		}
 	}

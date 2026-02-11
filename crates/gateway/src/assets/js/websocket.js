@@ -273,11 +273,23 @@ function handleChatDelta(p, isActive, isChatPage, eventSession) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
+function normalizeEchoComparable(text) {
+	if (!text) return "";
+	return text
+		.replace(/```[a-zA-Z0-9_-]*\n?/g, "")
+		.replace(/```/g, "")
+		.replace(/[`\s]/g, "");
+}
+
+function isPureToolOutputEcho(finalText, toolOutput) {
+	var finalComparable = normalizeEchoComparable(finalText);
+	var toolComparable = normalizeEchoComparable(toolOutput);
+	if (!(finalComparable && toolComparable)) return false;
+	return finalComparable === toolComparable;
+}
+
 function resolveFinalMessageEl(p) {
-	var isEcho =
-		S.lastToolOutput &&
-		p.text &&
-		p.text.replace(/[`\s]/g, "").indexOf(S.lastToolOutput.replace(/\s/g, "").substring(0, 80)) !== -1;
+	var isEcho = isPureToolOutputEcho(p.text, S.lastToolOutput);
 	if (!isEcho) {
 		if (p.text && S.streamEl) {
 			setSafeMarkdownHtml(S.streamEl, p.text);
