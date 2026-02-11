@@ -2296,9 +2296,8 @@ mod tests {
             .position(|name| *name == "anthropic")
             .expect("anthropic should be present");
 
-        assert_eq!(
+        assert!(
             openai_idx < anthropic_idx,
-            true,
             "configured providers outside offered should appear after offered providers, got: {names:?}"
         );
     }
