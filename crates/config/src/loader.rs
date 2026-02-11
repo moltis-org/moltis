@@ -623,15 +623,84 @@ pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
+/// Serialize `config` to TOML and write it to the provided path.
+///
+/// For existing TOML files, this preserves user comments by merging the new
+/// serialized values into the current document structure before writing.
+pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let toml_str =
         toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
-    std::fs::write(path, toml_str)?;
+
+    let is_toml_path = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+
+    if is_toml_path && path.exists() {
+        if let Err(error) = merge_toml_preserving_comments(path, &toml_str) {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to preserve TOML comments, rewriting config without comments"
+            );
+            std::fs::write(path, toml_str)?;
+        }
+    } else {
+        std::fs::write(path, toml_str)?;
+    }
+
     debug!(path = %path.display(), "saved config");
     Ok(path.to_path_buf())
+}
+
+fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> anyhow::Result<()> {
+    let current_toml = std::fs::read_to_string(path)?;
+    let mut current_doc = current_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| anyhow::anyhow!("parse existing TOML: {e}"))?;
+    let updated_doc = updated_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| anyhow::anyhow!("parse updated TOML: {e}"))?;
+
+    merge_toml_tables(current_doc.as_table_mut(), updated_doc.as_table());
+    std::fs::write(path, current_doc.to_string())?;
+    Ok(())
+}
+
+fn merge_toml_tables(current: &mut toml_edit::Table, updated: &toml_edit::Table) {
+    let current_keys: Vec<String> = current.iter().map(|(key, _)| key.to_string()).collect();
+    for key in current_keys {
+        if !updated.contains_key(&key) {
+            let _ = current.remove(&key);
+        }
+    }
+
+    for (key, updated_item) in updated.iter() {
+        if let Some(current_item) = current.get_mut(key) {
+            merge_toml_items(current_item, updated_item);
+        } else {
+            current.insert(key, updated_item.clone());
+        }
+    }
+}
+
+fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
+    match (current, updated) {
+        (toml_edit::Item::Table(current_table), toml_edit::Item::Table(updated_table)) => {
+            merge_toml_tables(current_table, updated_table);
+        },
+        (toml_edit::Item::Value(current_value), toml_edit::Item::Value(updated_value)) => {
+            let existing_decor = current_value.decor().clone();
+            *current_value = updated_value.clone();
+            *current_value.decor_mut() = existing_decor;
+        },
+        (current_item, updated_item) => {
+            *current_item = updated_item.clone();
+        },
+    }
 }
 
 /// Write the default config file to the user-global config path.
@@ -968,6 +1037,54 @@ mod tests {
             unique.len() >= 2,
             "expected variation in generated ports, got {:?}",
             ports
+        );
+    }
+
+    #[test]
+    fn save_config_to_path_preserves_provider_and_voice_comment_blocks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(&path, crate::template::default_config_template(18789))
+            .expect("write template");
+
+        let mut config = load_config(&path).expect("load template config");
+        config.auth.disabled = true;
+        config.server.http_request_logs = true;
+
+        save_config_to_path(&path, &config).expect("save config");
+
+        let saved = std::fs::read_to_string(&path).expect("read saved config");
+        assert!(saved.contains("# All available providers:"));
+        assert!(saved.contains("# All available TTS providers:"));
+        assert!(saved.contains("# All available STT providers:"));
+        assert!(saved.contains("disabled = true"));
+        assert!(saved.contains("http_request_logs = true"));
+    }
+
+    #[test]
+    fn save_config_to_path_removes_stale_keys_when_values_are_cleared() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(
+            &path,
+            r#"[server]
+bind = "127.0.0.1"
+port = 18789
+
+[identity]
+name = "Rex"
+"#,
+        )
+        .expect("write seed config");
+
+        let mut config = load_config(&path).expect("load seed config");
+        config.identity.name = None;
+        save_config_to_path(&path, &config).expect("save config");
+
+        let reloaded = load_config(&path).expect("reload config");
+        assert!(
+            reloaded.identity.name.is_none(),
+            "identity.name should be removed when cleared"
         );
     }
 

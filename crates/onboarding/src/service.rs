@@ -24,12 +24,7 @@ impl LiveOnboardingService {
 
     /// Save config to the service's config path.
     fn save(&self, config: &MoltisConfig) -> anyhow::Result<()> {
-        if let Some(parent) = self.config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let toml_str =
-            toml::to_string_pretty(config).map_err(|e| anyhow::anyhow!("serialize config: {e}"))?;
-        std::fs::write(&self.config_path, toml_str)?;
+        moltis_config::loader::save_config_to_path(&self.config_path, config)?;
         Ok(())
     }
 
