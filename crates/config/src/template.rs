@@ -83,7 +83,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["openai", "github-copilot"]      # Providers shown in onboarding/picker UI ([] = show all)
+offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama"] # Providers shown in onboarding/picker UI ([] = show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",

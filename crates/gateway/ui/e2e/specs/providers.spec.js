@@ -45,4 +45,28 @@ test.describe("Provider setup page", () => {
 		await navigateAndWait(page, "/settings/providers");
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("provider modal honors configured provider order", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/providers");
+		await page.getByRole("button", { name: "Add LLM" }).click();
+
+		const providerNames = page.locator(".provider-modal-backdrop .provider-item .provider-item-name");
+		await expect(providerNames.first()).toBeVisible();
+		const names = await providerNames.allTextContents();
+
+		const openAiIndex = names.indexOf("OpenAI");
+		const copilotIndex = names.indexOf("GitHub Copilot");
+		const localLlmIndex = names.indexOf("Local LLM (Offline)");
+
+		expect(openAiIndex).toBeGreaterThanOrEqual(0);
+		if (copilotIndex >= 0) {
+			expect(openAiIndex).toBeLessThan(copilotIndex);
+		}
+		if (localLlmIndex >= 0) {
+			const anchorIndex = copilotIndex >= 0 ? copilotIndex : openAiIndex;
+			expect(anchorIndex).toBeLessThan(localLlmIndex);
+		}
+		expect(pageErrors).toEqual([]);
+	});
 });

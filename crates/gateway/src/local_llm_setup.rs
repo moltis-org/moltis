@@ -562,6 +562,20 @@ impl LiveLocalLlmService {
     }
 }
 
+fn has_enough_ram(total_ram_gb: u32, required_ram_gb: u32) -> bool {
+    total_ram_gb >= required_ram_gb
+}
+
+fn insufficient_ram_error(
+    model_display_name: &str,
+    required_ram_gb: u32,
+    total_ram_gb: u32,
+) -> String {
+    format!(
+        "not enough RAM for {model_display_name}: requires at least {required_ram_gb}GB, detected {total_ram_gb}GB. Choose a smaller model."
+    )
+}
+
 #[async_trait]
 impl LocalLlmService for LiveLocalLlmService {
     async fn system_info(&self) -> ServiceResult {
@@ -705,6 +719,15 @@ impl LocalLlmService for LiveLocalLlmService {
         // Validate model exists in registry
         let model_def = local_gguf::models::find_model(&model_id)
             .ok_or_else(|| format!("unknown model: {model_id}"))?;
+
+        let total_ram_gb = sys.total_ram_gb();
+        if !has_enough_ram(total_ram_gb, model_def.min_ram_gb) {
+            return Err(insufficient_ram_error(
+                model_def.display_name,
+                model_def.min_ram_gb,
+                total_ram_gb,
+            ));
+        }
 
         info!(model = %model_id, backend = %backend, "configuring local-llm");
 
@@ -1181,6 +1204,20 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["status"], "ready");
         assert_eq!(json["model_id"], "test-model");
+    }
+
+    #[test]
+    fn test_has_enough_ram() {
+        assert!(has_enough_ram(8, 8));
+        assert!(has_enough_ram(16, 8));
+        assert!(!has_enough_ram(0, 4));
+    }
+
+    #[test]
+    fn test_insufficient_ram_error() {
+        let message = insufficient_ram_error("Qwen 2.5 Coder 7B", 8, 0);
+        assert!(message.contains("requires at least 8GB"));
+        assert!(message.contains("detected 0GB"));
     }
 
     #[test]

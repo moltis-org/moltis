@@ -198,12 +198,12 @@ test.describe("Settings navigation", () => {
 			"Crons",
 			"Security",
 			"Tailscale",
-			"LLMs",
 			"Channels",
-			"Voice",
-			"MCP",
 			"Hooks",
+			"LLMs",
+			"MCP",
 			"Skills",
+			"Voice",
 			"Sandboxes",
 			"Monitoring",
 			"Logs",
@@ -211,5 +211,16 @@ test.describe("Settings navigation", () => {
 		];
 		const expectedWithoutVoice = expectedWithVoice.filter((item) => item !== "Voice");
 		expect(navItems).toEqual(navItems.includes("Voice") ? expectedWithVoice : expectedWithoutVoice);
+
+		const llmsNavItem = page.locator(".settings-nav-item", { hasText: "LLMs" });
+		await expect(llmsNavItem.locator(".icon-layers")).toHaveCount(1);
+		await expect(llmsNavItem.locator(".icon-server")).toHaveCount(0);
+
+		const logsNavItem = page.locator(".settings-nav-item", { hasText: "Logs" });
+		await expect(logsNavItem.locator(".icon-document")).toHaveCount(1);
+
+		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
+		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);
+		await expect(configNavItem.locator(".icon-document")).toHaveCount(0);
 	});
 });

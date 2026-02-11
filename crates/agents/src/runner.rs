@@ -139,6 +139,10 @@ pub enum RunnerEvent {
 /// This function extracts that JSON and returns a synthetic `ToolCall` plus the
 /// remaining text (if any) outside the fence.
 fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
+    parse_fenced_tool_call_from_text(text).or_else(|| parse_function_tool_call_from_text(text))
+}
+
+fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
     // Look for ```tool_call ... ``` blocks.
     let start_marker = "```tool_call";
     let start = text.find(start_marker)?;
@@ -160,16 +164,7 @@ fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
     let before = text[..start].trim();
     let after_end = after_marker + end + 3; // skip closing ```
     let after = text.get(after_end..).unwrap_or("").trim();
-
-    let remaining = if before.is_empty() && after.is_empty() {
-        None
-    } else if before.is_empty() {
-        Some(after.to_string())
-    } else if after.is_empty() {
-        Some(before.to_string())
-    } else {
-        Some(format!("{before}\n{after}"))
-    };
+    let remaining = compose_remaining_text(before, after);
 
     Some((
         ToolCall {
@@ -179,6 +174,123 @@ fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
         },
         remaining,
     ))
+}
+
+fn parse_function_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
+    // Parse XML-like function calls some providers emit:
+    // <function=process>
+    // <parameter=action>start</parameter>
+    // <parameter=command>pwd</parameter>
+    // </function>
+    // </tool_call>
+    let start_marker = "<function=";
+    let start = text.find(start_marker)?;
+    let after_marker = start + start_marker.len();
+    let rest = &text[after_marker..];
+    let open_end_rel = rest.find('>')?;
+    let tool_name = rest[..open_end_rel].trim();
+    if tool_name.is_empty()
+        || !tool_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return None;
+    }
+
+    let body_start = after_marker + open_end_rel + 1;
+    let after_open = text.get(body_start..)?;
+    let body_end_rel = after_open.find("</function>")?;
+    let body = &after_open[..body_end_rel];
+
+    let mut args = serde_json::Map::new();
+    let mut found_parameter = false;
+    let mut cursor = 0usize;
+    while let Some(param_rel) = body[cursor..].find("<parameter=") {
+        let param_start = cursor + param_rel;
+        let after_param_marker = param_start + "<parameter=".len();
+        let param_rest = body.get(after_param_marker..)?;
+        let param_name_end_rel = param_rest.find('>')?;
+        let param_name = param_rest[..param_name_end_rel].trim();
+        if param_name.is_empty()
+            || !param_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            cursor = after_param_marker + param_name_end_rel + 1;
+            continue;
+        }
+
+        let value_start = after_param_marker + param_name_end_rel + 1;
+        let value_rest = body.get(value_start..)?;
+        let value_end_rel = value_rest.find("</parameter>")?;
+        let value_end = value_start + value_end_rel;
+        let value_raw = body.get(value_start..value_end)?.trim();
+
+        args.insert(param_name.to_string(), parse_param_value(value_raw));
+        found_parameter = true;
+        cursor = value_end + "</parameter>".len();
+    }
+
+    if !found_parameter {
+        return None;
+    }
+
+    let id = format!("text-{}", uuid::Uuid::new_v4());
+    let before = trim_tool_call_wrappers(text[..start].trim());
+    let after_start = body_start + body_end_rel + "</function>".len();
+    let after = trim_tool_call_wrappers(text.get(after_start..).unwrap_or("").trim());
+    let remaining = compose_remaining_text(before, after);
+
+    Some((
+        ToolCall {
+            id,
+            name: tool_name.to_string(),
+            arguments: serde_json::Value::Object(args),
+        },
+        remaining,
+    ))
+}
+
+fn parse_param_value(value_raw: &str) -> serde_json::Value {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(value_raw) {
+        return v;
+    }
+    serde_json::Value::String(value_raw.to_string())
+}
+
+fn compose_remaining_text(before: &str, after: &str) -> Option<String> {
+    if before.is_empty() && after.is_empty() {
+        None
+    } else if before.is_empty() {
+        Some(after.to_string())
+    } else if after.is_empty() {
+        Some(before.to_string())
+    } else {
+        Some(format!("{before}\n{after}"))
+    }
+}
+
+fn trim_tool_call_wrappers(text: &str) -> &str {
+    let mut value = text.trim();
+    loop {
+        let stripped = value
+            .strip_prefix("<tool_call>")
+            .or_else(|| value.strip_prefix("</tool_call>"));
+        match stripped {
+            Some(s) => value = s.trim(),
+            None => break,
+        }
+    }
+    loop {
+        let stripped = value
+            .strip_suffix("<tool_call>")
+            .or_else(|| value.strip_suffix("</tool_call>"));
+        match stripped {
+            Some(s) => value = s.trim(),
+            None => break,
+        }
+    }
+    value
 }
 
 // ── Tool result sanitization ────────────────────────────────────────────
@@ -590,15 +702,16 @@ pub async fn run_agent_loop_with_context(
             trace!(iteration = iterations, text = %text, "LLM response text");
         }
 
-        // For providers without native tool calling, try parsing tool calls from text.
-        if !native_tools
-            && response.tool_calls.is_empty()
+        // Fallback: parse tool calls from model text if the provider returned
+        // no structured tool calls (some providers/models emit XML-like calls).
+        if response.tool_calls.is_empty()
             && let Some(ref text) = response.text
             && let Some((tc, remaining_text)) = parse_tool_call_from_text(text)
         {
             info!(
+                native_tools,
                 tool = %tc.name,
-                "parsed tool call from text (non-native provider)"
+                "parsed tool call from text fallback"
             );
             response.text = remaining_text;
             response.tool_calls = vec![tc];
@@ -1150,15 +1263,16 @@ pub async fn run_agent_loop_streaming(
             "streaming LLM response complete"
         );
 
-        // For providers without native tool calling, try parsing tool calls from text.
-        if !native_tools
-            && tool_calls.is_empty()
+        // Fallback: parse tool calls from model text if the provider returned
+        // no structured tool calls (some providers/models emit XML-like calls).
+        if tool_calls.is_empty()
             && !accumulated_text.is_empty()
             && let Some((tc, remaining_text)) = parse_tool_call_from_text(&accumulated_text)
         {
             info!(
+                native_tools,
                 tool = %tc.name,
-                "parsed tool call from text (non-native provider)"
+                "parsed tool call from text fallback"
             );
             accumulated_text = remaining_text.unwrap_or_default();
             tool_calls = vec![tc];
@@ -1455,6 +1569,30 @@ mod tests {
         assert!(parse_tool_call_from_text(text).is_none());
     }
 
+    #[test]
+    fn test_parse_tool_call_function_block() {
+        let text = "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>";
+        let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
+        assert_eq!(tc.name, "process");
+        assert_eq!(tc.arguments["action"], "start");
+        assert_eq!(tc.arguments["command"], "pwd");
+        assert!(remaining.is_none());
+    }
+
+    #[test]
+    fn test_parse_tool_call_function_block_with_wrapper_and_text() {
+        let text = "I'll do it.\n<tool_call>\n<function=process>\n<parameter=action>start</parameter>\n<parameter=command>pwd</parameter>\n</function>\n</tool_call>\nDone.";
+        let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
+        assert_eq!(tc.name, "process");
+        assert_eq!(tc.arguments["action"], "start");
+        assert_eq!(tc.arguments["command"], "pwd");
+        let remaining = remaining.unwrap();
+        assert!(remaining.contains("I'll do it."));
+        assert!(remaining.contains("Done."));
+        assert!(!remaining.contains("<tool_call>"));
+        assert!(!remaining.contains("</tool_call>"));
+    }
+
     // ── Mock helpers ─────────────────────────────────────────────────
 
     /// A mock provider that returns text on the first call.
@@ -1688,6 +1826,36 @@ mod tests {
         }
     }
 
+    /// Minimal process tool for testing `<function=process>` parsing.
+    struct TestProcessTool;
+
+    #[async_trait]
+    impl crate::tool_registry::AgentTool for TestProcessTool {
+        fn name(&self) -> &str {
+            "process"
+        }
+
+        fn description(&self) -> &str {
+            "Process tool for tests"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string" },
+                    "command": { "type": "string" }
+                }
+            })
+        }
+
+        async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({
+                "received": params,
+            }))
+        }
+    }
+
     // ── Tests ────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1896,6 +2064,136 @@ mod tests {
             evts.iter()
                 .any(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }))
         );
+    }
+
+    /// Native-tool provider that emits XML-like function text instead of
+    /// structured tool calls. We should still execute it via text fallback.
+    struct NativeTextFunctionProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NativeTextFunctionProvider {
+        fn name(&self) -> &str {
+            "mock-native-function"
+        }
+
+        fn id(&self) -> &str {
+            "mock-native-function"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Ok(CompletionResponse {
+                    text: Some(
+                        "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>\n</tool_call>"
+                            .into(),
+                    ),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 20,
+                        ..Default::default()
+                    },
+                })
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    tool_content.contains("\"action\":\"start\""),
+                    "tool result should include action=start, got: {tool_content}"
+                );
+                assert!(
+                    tool_content.contains("\"command\":\"pwd\""),
+                    "tool result should include command=pwd, got: {tool_content}"
+                );
+
+                Ok(CompletionResponse {
+                    text: Some("Process started for pwd".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 30,
+                        output_tokens: 10,
+                        ..Default::default()
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_native_text_function_tool_calling_non_streaming() {
+        let provider = Arc::new(NativeTextFunctionProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestProcessTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("execute pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.text.contains("pwd"), "got: {}", result.text);
+        assert_eq!(result.iterations, 2, "should take 2 iterations");
+        assert_eq!(result.tool_calls_made, 1, "should execute 1 tool call");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                arguments, name, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "process");
+        assert_eq!(args["action"], "start");
+        assert_eq!(args["command"], "pwd");
     }
 
     // ── Parallel tool execution tests ────────────────────────────────
@@ -2695,6 +2993,151 @@ mod tests {
 
         // Image should still be present
         assert_eq!(arr[1]["type"], "image_url");
+    }
+
+    /// Native streaming provider that emits XML-like function text instead of
+    /// structured tool events on the first pass.
+    struct NativeTextFunctionStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NativeTextFunctionStreamProvider {
+        fn name(&self) -> &str {
+            "mock-native-function-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-native-function-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta(
+                        "<function=process>\n<parameter=action>\nstart\n</parameter>\n<parameter=command>\npwd\n</parameter>\n</function>\n</tool_call>"
+                            .into(),
+                    ),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 15,
+                        ..Default::default()
+                    }),
+                ]))
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    tool_content.contains("\"action\":\"start\""),
+                    "tool result should include action=start, got: {tool_content}"
+                );
+                assert!(
+                    tool_content.contains("\"command\":\"pwd\""),
+                    "tool result should include command=pwd, got: {tool_content}"
+                );
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Process executed in fallback mode".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_native_text_function_tool_calling() {
+        let provider = Arc::new(NativeTextFunctionStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestProcessTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("execute pwd".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.text.contains("fallback mode"),
+            "got: {}",
+            result.text
+        );
+        assert_eq!(result.tool_calls_made, 1, "should execute 1 tool call");
+        assert_eq!(result.iterations, 2, "tool call + final text");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                arguments, name, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should have ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "process");
+        assert_eq!(args["action"], "start");
+        assert_eq!(args["command"], "pwd");
     }
 
     // ── Streaming tool-call index mapping tests ─────────────────────

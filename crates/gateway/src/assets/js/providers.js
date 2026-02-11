@@ -44,7 +44,7 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 	"ollama",
 ];
 
-var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
+var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 export function openProviderModal() {
 	var m = els();
@@ -58,12 +58,10 @@ export function openProviderModal() {
 		}
 		var providers = res.payload || [];
 
-		// Sort: local/ollama first, then alphabetically
 		providers.sort((a, b) => {
-			var aIsLocal = a.authType === "local" || a.name === "ollama";
-			var bIsLocal = b.authType === "local" || b.name === "ollama";
-			if (aIsLocal && !bIsLocal) return -1;
-			if (!aIsLocal && bIsLocal) return 1;
+			var aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+			var bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+			if (aOrder !== bOrder) return aOrder - bOrder;
 			return a.displayName.localeCompare(b.displayName);
 		});
 
@@ -379,6 +377,7 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 
 function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
 	var m = els();
+	var effectiveModelVal = provider.name === "ollama" && selectedModelId ? selectedModelId : modelVal;
 
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
@@ -391,7 +390,7 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 
 	var savePromise = skipSave
 		? Promise.resolve({ ok: true })
-		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, modelVal));
+		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, effectiveModelVal));
 
 	savePromise
 		.then(async (res) => {
@@ -406,8 +405,10 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
-				// Persist model preference for the provider.
-				await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				// For Ollama we persisted the model via save_key so the registry can probe it.
+				if (provider.name !== "ollama") {
+					await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				}
 				localStorage.setItem("moltis-model", selectedModelId);
 			}
 
@@ -802,7 +803,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 			return;
 		}
 		filtered.forEach((model) => {
-			var card = createModelCard(model, provider);
+			var card = createModelCard(model, provider, sysInfo.totalRamGb);
 			modelsList.appendChild(card);
 		});
 	}
@@ -1065,9 +1066,11 @@ function formatDownloads(n) {
 	return n.toString();
 }
 
-function createModelCard(model, provider) {
+function createModelCard(model, provider, totalRamGb) {
 	var card = document.createElement("div");
 	card.className = "model-card";
+	var detectedRamGb = Number.isFinite(totalRamGb) ? totalRamGb : 0;
+	var hasEnoughRam = detectedRamGb >= model.minRamGb;
 
 	var header = document.createElement("div");
 	header.className = "flex items-center justify-between";
@@ -1085,11 +1088,18 @@ function createModelCard(model, provider) {
 	ramBadge.textContent = `${model.minRamGb}GB`;
 	badges.appendChild(ramBadge);
 
-	if (model.suggested) {
+	if (model.suggested && hasEnoughRam) {
 		var suggestedBadge = document.createElement("span");
 		suggestedBadge.className = "recommended-badge";
 		suggestedBadge.textContent = "Recommended";
 		badges.appendChild(suggestedBadge);
+	}
+
+	if (!hasEnoughRam) {
+		var insufficientBadge = document.createElement("span");
+		insufficientBadge.className = "tier-badge";
+		insufficientBadge.textContent = "Insufficient RAM";
+		badges.appendChild(insufficientBadge);
 	}
 
 	header.appendChild(badges);
@@ -1099,6 +1109,15 @@ function createModelCard(model, provider) {
 	meta.className = "text-xs text-[var(--muted)] mt-1";
 	meta.textContent = `Context: ${(model.contextWindow / 1000).toFixed(0)}k tokens`;
 	card.appendChild(meta);
+
+	if (!hasEnoughRam) {
+		card.classList.add("disabled");
+		var warning = document.createElement("div");
+		warning.className = "text-xs text-[var(--error)] mt-1";
+		warning.textContent = `You do not have enough RAM for this model (${detectedRamGb}GB detected, ${model.minRamGb}GB required).`;
+		card.appendChild(warning);
+		return card;
+	}
 
 	card.addEventListener("click", () => selectLocalModel(model, provider));
 

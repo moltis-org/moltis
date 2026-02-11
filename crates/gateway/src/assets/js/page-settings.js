@@ -107,26 +107,9 @@ var sections = [
 	},
 	{ group: "Integrations" },
 	{
-		id: "providers",
-		label: "LLMs",
-		icon: html`<span class="icon icon-server"></span>`,
-		page: true,
-	},
-	{
 		id: "channels",
 		label: "Channels",
 		icon: html`<span class="icon icon-channels"></span>`,
-		page: true,
-	},
-	{
-		id: "voice",
-		label: "Voice",
-		icon: html`<span class="icon icon-microphone"></span>`,
-	},
-	{
-		id: "mcp",
-		label: "MCP",
-		icon: html`<span class="icon icon-link"></span>`,
 		page: true,
 	},
 	{
@@ -136,10 +119,27 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "providers",
+		label: "LLMs",
+		icon: html`<span class="icon icon-layers"></span>`,
+		page: true,
+	},
+	{
+		id: "mcp",
+		label: "MCP",
+		icon: html`<span class="icon icon-link"></span>`,
+		page: true,
+	},
+	{
 		id: "skills",
 		label: "Skills",
 		icon: html`<span class="icon icon-sparkles"></span>`,
 		page: true,
+	},
+	{
+		id: "voice",
+		label: "Voice",
+		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
 	{
@@ -163,7 +163,7 @@ var sections = [
 	{
 		id: "config",
 		label: "Configuration",
-		icon: html`<span class="icon icon-document"></span>`,
+		icon: html`<span class="icon icon-code"></span>`,
 	},
 ];
 

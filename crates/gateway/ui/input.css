@@ -1367,6 +1367,14 @@
     border-color: var(--accent);
     background: var(--accent-subtle);
   }
+  .model-card.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .model-card.disabled:hover {
+    border-color: var(--border);
+    background: transparent;
+  }
 
   .tier-badge {
     font-size: 0.68rem;
