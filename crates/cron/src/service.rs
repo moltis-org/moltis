@@ -801,13 +801,10 @@ mod tests {
             .unwrap();
 
         let updated = svc
-            .update(
-                &job.id,
-                CronJobPatch {
-                    name: Some("renamed".into()),
-                    ..Default::default()
-                },
-            )
+            .update(&job.id, CronJobPatch {
+                name: Some("renamed".into()),
+                ..Default::default()
+            })
             .await
             .unwrap();
 

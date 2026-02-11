@@ -167,13 +167,10 @@ mod tests {
     #[test]
     fn test_registry_add_remove() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "test".into(),
-            McpServerConfig {
-                command: "echo".into(),
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("test".into(), McpServerConfig {
+            command: "echo".into(),
+            ..Default::default()
+        });
         assert_eq!(reg.list().len(), 1);
         assert!(reg.get("test").is_some());
 
@@ -184,13 +181,10 @@ mod tests {
     #[test]
     fn test_registry_enable_disable() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "srv".into(),
-            McpServerConfig {
-                command: "test".into(),
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("srv".into(), McpServerConfig {
+            command: "test".into(),
+            ..Default::default()
+        });
 
         assert_eq!(reg.enabled_servers().len(), 1);
 
@@ -201,14 +195,11 @@ mod tests {
     #[test]
     fn test_registry_serialization() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "fs".into(),
-            McpServerConfig {
-                command: "mcp-server-filesystem".into(),
-                args: vec!["/tmp".into()],
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("fs".into(), McpServerConfig {
+            command: "mcp-server-filesystem".into(),
+            args: vec!["/tmp".into()],
+            ..Default::default()
+        });
 
         let json = serde_json::to_string(&reg).unwrap();
         let parsed: McpRegistry = serde_json::from_str(&json).unwrap();
@@ -229,15 +220,12 @@ mod tests {
         let path = dir.path().join("mcp.json");
 
         let mut reg = McpRegistry::load(&path).unwrap();
-        reg.servers.insert(
-            "test".into(),
-            McpServerConfig {
-                command: "echo".into(),
-                args: vec!["hello".into()],
-                env: HashMap::from([("FOO".into(), "bar".into())]),
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("test".into(), McpServerConfig {
+            command: "echo".into(),
+            args: vec!["hello".into()],
+            env: HashMap::from([("FOO".into(), "bar".into())]),
+            ..Default::default()
+        });
         reg.save().unwrap();
 
         let loaded = McpRegistry::load(&path).unwrap();

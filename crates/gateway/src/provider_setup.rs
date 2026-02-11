@@ -86,14 +86,11 @@ impl KeyStore {
             return old_format
                 .into_iter()
                 .map(|(k, v)| {
-                    (
-                        k,
-                        ProviderConfig {
-                            api_key: Some(v),
-                            base_url: None,
-                            model: None,
-                        },
-                    )
+                    (k, ProviderConfig {
+                        api_key: Some(v),
+                        base_url: None,
+                        model: None,
+                    })
                 })
                 .collect();
         }
@@ -1890,13 +1887,12 @@ mod tests {
             .expect("openai-codex should exist");
 
         let mut config = ProvidersConfig::default();
-        config.providers.insert(
-            "openai-codex".into(),
-            ProviderEntry {
+        config
+            .providers
+            .insert("openai-codex".into(), ProviderEntry {
                 enabled: false,
                 ..Default::default()
-            },
-        );
+            });
 
         assert!(!svc.is_provider_configured(&provider, &config));
     }
@@ -1923,13 +1919,10 @@ mod tests {
         store.save("anthropic", "sk-saved").unwrap();
 
         let mut base = ProvidersConfig::default();
-        base.providers.insert(
-            "anthropic".into(),
-            ProviderEntry {
-                api_key: Some(Secret::new("sk-config".into())),
-                ..Default::default()
-            },
-        );
+        base.providers.insert("anthropic".into(), ProviderEntry {
+            api_key: Some(Secret::new("sk-config".into())),
+            ..Default::default()
+        });
         let merged = config_with_saved_keys(&base, &store);
         let entry = merged.get("anthropic").unwrap();
         // Config key takes precedence over saved key.
@@ -2128,14 +2121,11 @@ mod tests {
             Some(&home)
         ));
 
-        home.save(
-            "github-copilot",
-            &OAuthTokens {
-                access_token: Secret::new("home-token".to_string()),
-                refresh_token: None,
-                expires_at: None,
-            },
-        )
+        home.save("github-copilot", &OAuthTokens {
+            access_token: Secret::new("home-token".to_string()),
+            refresh_token: None,
+            expires_at: None,
+        })
         .expect("save home token");
 
         assert!(has_oauth_tokens_for_provider(
@@ -2330,23 +2320,17 @@ mod tests {
         let mut empty = ProvidersConfig::default();
         assert!(!has_explicit_provider_settings(&empty));
 
-        empty.providers.insert(
-            "openai".into(),
-            ProviderEntry {
-                api_key: Some(Secret::new("sk-test".into())),
-                ..Default::default()
-            },
-        );
+        empty.providers.insert("openai".into(), ProviderEntry {
+            api_key: Some(Secret::new("sk-test".into())),
+            ..Default::default()
+        });
         assert!(has_explicit_provider_settings(&empty));
 
         let mut model_only = ProvidersConfig::default();
-        model_only.providers.insert(
-            "ollama".into(),
-            ProviderEntry {
-                model: Some("llama3".into()),
-                ..Default::default()
-            },
-        );
+        model_only.providers.insert("ollama".into(), ProviderEntry {
+            model: Some("llama3".into()),
+            ..Default::default()
+        });
         assert!(has_explicit_provider_settings(&model_only));
     }
 
