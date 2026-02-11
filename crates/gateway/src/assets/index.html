@@ -95,7 +95,7 @@
     <span class="icon icon-lg icon-burger"></span>
   </button>
   <a href="/chats" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
-  <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name}()</script>
+  <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;if(i.name)document.title=i.name}()</script>
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
   <div class="flex-1"></div>

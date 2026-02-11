@@ -345,7 +345,6 @@ body {
   .provider-btn,
   .cron-action-btn,
   .logs-btn,
-  .auth-submit,
   [role="button"] {
     min-height: 44px;
   }

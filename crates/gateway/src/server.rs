@@ -681,6 +681,7 @@ pub fn build_gateway_app(
         router
             .route("/auth/callback", get(oauth_callback_handler))
             .route("/onboarding", get(onboarding_handler))
+            .route("/login", get(login_handler_page))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -744,6 +745,7 @@ pub fn build_gateway_app(
         router
             .route("/auth/callback", get(oauth_callback_handler))
             .route("/onboarding", get(onboarding_handler))
+            .route("/login", get(login_handler_page))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
             .route("/assets/{*path}", get(asset_handler))
             .route("/manifest.json", get(manifest_handler))
@@ -3762,7 +3764,7 @@ async fn spa_fallback(State(state): State<AppState>, uri: axum::http::Uri) -> im
     if should_redirect_to_onboarding(path, onboarded) {
         return Redirect::to("/onboarding").into_response();
     }
-    render_spa_template(&state.gateway, false).await
+    render_spa_template(&state.gateway, "index.html").await
 }
 
 #[cfg(feature = "web-ui")]
@@ -3773,19 +3775,19 @@ async fn onboarding_handler(State(state): State<AppState>) -> impl IntoResponse 
         return Redirect::to("/").into_response();
     }
 
-    render_spa_template(&state.gateway, true).await
+    render_spa_template(&state.gateway, "onboarding.html").await
+}
+
+#[cfg(feature = "web-ui")]
+async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse {
+    render_spa_template(&state.gateway, "login.html").await
 }
 
 #[cfg(feature = "web-ui")]
 async fn render_spa_template(
     gateway: &GatewayState,
-    onboarding_shell: bool,
+    template_name: &str,
 ) -> axum::response::Response {
-    let template_name = if onboarding_shell {
-        "onboarding.html"
-    } else {
-        "index.html"
-    };
 
     let raw = read_asset(template_name)
         .and_then(|b| String::from_utf8(b).ok())
@@ -3813,7 +3815,7 @@ async fn render_spa_template(
     // Generate a per-request nonce for CSP script-src.
     let nonce = uuid::Uuid::new_v4().to_string();
 
-    if !onboarding_shell {
+    if template_name != "onboarding.html" {
         // Build server-side data blob (gon pattern) injected into <head>.
         let gon = build_gon_data(gateway).await;
         let gon_script = format!(

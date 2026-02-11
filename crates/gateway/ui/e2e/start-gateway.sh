@@ -41,10 +41,10 @@ export MOLTIS_SERVER__PORT="${PORT}"
 # Prefer a pre-built binary to avoid recompiling every test run.
 BINARY="${MOLTIS_BINARY:-}"
 if [ -z "${BINARY}" ]; then
-	for candidate in target/release/moltis target/debug/moltis; do
-		if [ -x "${candidate}" ]; then
+	# Pick the newest local build so tests don't accidentally run stale binaries.
+	for candidate in target/debug/moltis target/release/moltis; do
+		if [ -x "${candidate}" ] && { [ -z "${BINARY}" ] || [ "${candidate}" -nt "${BINARY}" ]; }; then
 			BINARY="${candidate}"
-			break
 		fi
 	done
 fi

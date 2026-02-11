@@ -1,14 +1,42 @@
-// ── Login page ───────────────────────────────────────────────
-
 import { html } from "htm/preact";
 import { render } from "preact";
-import { useState } from "preact/hooks";
-import { registerPage } from "./router.js";
+import { useEffect, useState } from "preact/hooks";
+import { initTheme } from "./theme.js";
 
-function LoginPage({ hasPasskeys }) {
+initTheme();
+
+// Read identity from server-injected gon data (for emoji + name in title).
+var gon = window.__MOLTIS__ || {};
+var identity = gon.identity || null;
+
+// Set page title from identity.
+if (identity?.name) document.title = identity.name;
+
+// ── Login form component ─────────────────────────────────────
+
+function LoginApp() {
 	var [password, setPassword] = useState("");
 	var [error, setError] = useState(null);
 	var [loading, setLoading] = useState(false);
+	var [hasPasskeys, setHasPasskeys] = useState(false);
+	var [hasPassword, setHasPassword] = useState(false);
+	var [ready, setReady] = useState(false);
+
+	useEffect(() => {
+		fetch("/api/auth/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				if (!data) return;
+				if (data.authenticated) {
+					location.href = "/";
+					return;
+				}
+				setHasPasskeys(data.has_passkeys);
+				setHasPassword(data.has_password);
+				setReady(true);
+			})
+			.catch(() => setReady(true));
+	}, []);
 
 	function onPasswordLogin(e) {
 		e.preventDefault();
@@ -91,40 +119,54 @@ function LoginPage({ hasPasskeys }) {
 			});
 	}
 
-	return html`<div class="auth-page">
-		<div class="auth-card">
-			<h1 class="auth-title">moltis</h1>
-			<form onSubmit=${onPasswordLogin}>
-				<div class="auth-field">
-					<label class="settings-label">Password</label>
-					<input
-						type="password"
-						class="settings-input"
-						value=${password}
-						onInput=${(e) => setPassword(e.target.value)}
-						placeholder="Enter password"
-						autofocus
-					/>
-				</div>
-				${error ? html`<p class="auth-error">${error}</p>` : null}
-				<button type="submit" class="settings-btn auth-submit" disabled=${loading}>
-					${loading ? "Signing in\u2026" : "Sign in"}
-				</button>
-			</form>
-			${
-				hasPasskeys
-					? html`<div class="auth-divider"><span>or</span></div>
-				<button
-					type="button"
-					class="settings-btn auth-submit auth-passkey-btn"
-					onClick=${onPasskeyLogin}
-					disabled=${loading}
-				>
-					Sign in with passkey
-				</button>`
-					: null
-			}
-		</div>
+	if (!ready) {
+		return html`<div class="auth-card">
+			<div class="text-sm text-[var(--muted)]">Loading\u2026</div>
+		</div>`;
+	}
+
+	var title = (identity?.emoji ? `${identity.emoji} ` : "") + (identity?.name || "moltis");
+	var showPassword = hasPassword || !hasPasskeys;
+	var showPasskeys = hasPasskeys;
+	var showDivider = showPassword && showPasskeys;
+
+	return html`<div class="auth-card">
+		<h1 class="auth-title">${title}</h1>
+		<p class="auth-subtitle">Sign in to continue</p>
+		${
+			showPassword
+				? html`<form onSubmit=${onPasswordLogin} class="flex flex-col gap-3">
+			<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+				<input
+					type="password"
+					class="provider-key-input w-full"
+					value=${password}
+					onInput=${(e) => setPassword(e.target.value)}
+					placeholder="Enter password"
+					autofocus
+				/>
+			</div>
+			<button type="submit" class="provider-btn w-full mt-1" disabled=${loading}>
+				${loading ? "Signing in\u2026" : "Sign in"}
+			</button>
+		</form>`
+				: null
+		}
+		${showDivider ? html`<div class="auth-divider"><span>or</span></div>` : null}
+		${
+			showPasskeys
+				? html`<button
+				type="button"
+				class="provider-btn ${showPassword ? "provider-btn-secondary" : ""} w-full"
+				onClick=${onPasskeyLogin}
+				disabled=${loading}
+			>
+				Sign in with passkey
+			</button>`
+				: null
+		}
+		${error ? html`<p class="auth-error mt-2">${error}</p>` : null}
 	</div>`;
 }
 
@@ -146,24 +188,9 @@ function bufferToBase64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ── Module state ─────────────────────────────────────────────
+// ── Mount ────────────────────────────────────────────────────
 
-var containerRef = null;
-var cachedHasPasskeys = false;
-
-export function setHasPasskeys(v) {
-	cachedHasPasskeys = v;
+var root = document.getElementById("loginRoot");
+if (root) {
+	render(html`<${LoginApp} />`, root);
 }
-
-registerPage(
-	"/login",
-	(container) => {
-		containerRef = container;
-		container.style.cssText = "display:flex;align-items:center;justify-content:center;height:100%;";
-		render(html`<${LoginPage} hasPasskeys=${cachedHasPasskeys} />`, container);
-	},
-	() => {
-		if (containerRef) render(null, containerRef);
-		containerRef = null;
-	},
-);

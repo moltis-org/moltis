@@ -131,8 +131,7 @@ pub async fn auth_gate(
                 )
                     .into_response()
             } else {
-                // Serve SPA — client-side shows login page.
-                next.run(request).await
+                Redirect::to("/login").into_response()
             }
         },
     }
@@ -143,7 +142,7 @@ pub async fn auth_gate(
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js"
+        "/health" | "/auth/callback" | "/manifest.json" | "/sw.js" | "/login"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/assets/")
 }

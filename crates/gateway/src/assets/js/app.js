@@ -29,7 +29,6 @@ import "./page-projects.js";
 import "./page-skills.js";
 import "./page-metrics.js";
 import "./page-settings.js"; // also imports channels, providers, mcp, hooks, images, logs
-import { setHasPasskeys } from "./page-login.js";
 
 // Import side-effect modules
 import "./nav-counts.js";
@@ -135,9 +134,11 @@ fetch("/api/auth/status")
 			window.location.assign("/onboarding");
 			return;
 		}
-		setHasPasskeys(auth.has_passkeys);
 		if (!auth.authenticated) {
-			mount("/login");
+			// Server-side middleware handles the redirect to /login.
+			// This is a defense-in-depth fallback for edge cases
+			// (e.g. session expired after the page was already served).
+			window.location.assign("/login");
 			return;
 		}
 		// Show logout button when user authenticated via real credentials
