@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-02-11
+
+### Fixed
+
+- **Release clippy environment parity**: The release workflow clippy job now
+  runs in the same CUDA-capable environment as main CI, includes the llama
+  source git bootstrap step, and installs `rustfmt` alongside `clippy`. This
+  fixes release clippy failures caused by missing CUDA toolchain/runtime.
+
 ## [0.8.1] - 2026-02-11
 
 ### Fixed
