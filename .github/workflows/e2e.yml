@@ -1,8 +1,6 @@
 name: E2E Tests
 
 on:
-  push:
-    branches: [main]
   pull_request:
     paths:
       - "crates/gateway/**"
@@ -19,7 +17,6 @@ on:
       - ".github/workflows/e2e.yml"
       - "scripts/local-validate.sh"
       - "scripts/check-local-status.py"
-  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,13 +24,9 @@ concurrency:
 
 permissions: {}
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   local-validation:
     name: Local E2E Validation
-    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,67 +42,3 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REQUIRED_CONTEXT: local/e2e
         run: python3 scripts/check-local-status.py
-
-  zizmor:
-    name: Workflow Security
-    if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - uses: zizmorcore/zizmor-action@135698455da5c3b3e55f73f4419e481ab68cdd95 # v0.4.1
-        with:
-          advanced-security: false
-          online-audits: false
-
-  e2e:
-    name: E2E Tests
-    if: ${{ github.event_name != 'pull_request' }}
-    needs: zizmor
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
-        with:
-          toolchain: stable
-
-      - name: Build moltis binary
-        run: cargo build --bin moltis
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-          package-manager-cache: false
-
-      - name: Install npm dependencies
-        working-directory: crates/gateway/ui
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: crates/gateway/ui
-        run: npx playwright install --with-deps chromium
-
-      - name: Run E2E tests
-        working-directory: crates/gateway/ui
-        env:
-          CI: "true"
-        run: npx playwright test
-
-      - name: Upload test results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            crates/gateway/ui/playwright-report/
-            crates/gateway/ui/test-results/
-          if-no-files-found: ignore
-          retention-days: 14
