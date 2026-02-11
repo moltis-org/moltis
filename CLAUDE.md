@@ -1,3 +1,4 @@
+---
 description: "Moltis engineering guide for Claude/Codex agents: Rust architecture, testing, security, and release workflows"
 alwaysApply: true
 ---
