@@ -619,6 +619,23 @@ function SecuritySection() {
 		window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 	}
 
+	// A credential added while localhost-bypass is active can immediately make the
+	// current session unauthenticated (no session cookie). Reload so middleware
+	// can route to /login in that transition.
+	function reloadIfAuthNowRequiresLogin() {
+		return fetch("/api/auth/status")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				var mustLogin = !!(d && d.auth_disabled === false && d.setup_required === false && d.authenticated === false);
+				if (mustLogin) {
+					window.location.reload();
+					return true;
+				}
+				return false;
+			})
+			.catch(() => false);
+	}
+
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
@@ -676,18 +693,26 @@ function SecuritySection() {
 			body: JSON.stringify(payload),
 		})
 			.then((r) => {
-				if (r.ok) {
-					setPwMsg(hasPassword ? "Password changed." : "Password set.");
-					setCurPw("");
-					setNewPw("");
-					setConfirmPw("");
-					setHasPassword(true);
-					setSetupComplete(true);
-					setAuthDisabled(false);
-					notifyAuthStatusChanged();
-				} else return r.text().then((t) => setPwErr(t));
-				setPwSaving(false);
-				rerender();
+				if (!r.ok) {
+					return r.text().then((t) => {
+						setPwErr(t);
+						setPwSaving(false);
+						rerender();
+					});
+				}
+
+				setPwMsg(hasPassword ? "Password changed." : "Password set.");
+				setCurPw("");
+				setNewPw("");
+				setConfirmPw("");
+				setHasPassword(true);
+				setSetupComplete(true);
+				setAuthDisabled(false);
+				return reloadIfAuthNowRequiresLogin().then((reloaded) => {
+					if (!reloaded) notifyAuthStatusChanged();
+					setPwSaving(false);
+					rerender();
+				});
 			})
 			.catch((err) => {
 				setPwErr(err.message);
@@ -739,17 +764,20 @@ function SecuritySection() {
 			.then((r) => {
 				if (r.ok) {
 					setPkName("");
-					return fetch("/api/auth/passkeys")
-						.then((r2) => r2.json())
-						.then((d) => {
-							setPasskeys(d.passkeys || []);
-							setHasPasskeys((d.passkeys || []).length > 0);
-							setSetupComplete(true);
-							setAuthDisabled(false);
-							setPkMsg("Passkey added.");
-							notifyAuthStatusChanged();
-							rerender();
-						});
+					return reloadIfAuthNowRequiresLogin().then((reloaded) => {
+						if (reloaded) return;
+						return fetch("/api/auth/passkeys")
+							.then((r2) => r2.json())
+							.then((d) => {
+								setPasskeys(d.passkeys || []);
+								setHasPasskeys((d.passkeys || []).length > 0);
+								setSetupComplete(true);
+								setAuthDisabled(false);
+								setPkMsg("Passkey added.");
+								notifyAuthStatusChanged();
+								rerender();
+							});
+					});
 				} else
 					return r.text().then((t) => {
 						setPkMsg(t);

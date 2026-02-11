@@ -219,6 +219,94 @@ test.describe("Authentication", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("setting password after reset reloads and routes to login", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.addInitScript(() => {
+			if (localStorage.getItem("__e2eCredentialSet") === null) {
+				localStorage.setItem("__e2eCredentialSet", "0");
+			}
+
+			const origFetch = window.fetch;
+			window.fetch = function (...args) {
+				var url = typeof args[0] === "string" ? args[0] : args[0].url;
+				var credentialSet = localStorage.getItem("__e2eCredentialSet") === "1";
+
+				if (url.endsWith("/api/auth/status")) {
+					var status = credentialSet
+						? {
+								authenticated: false,
+								setup_required: false,
+								auth_disabled: false,
+								localhost_only: true,
+								has_password: true,
+								has_passkeys: false,
+								setup_complete: true,
+								webauthn_available: true,
+								passkey_origins: ["http://localhost"],
+							}
+						: {
+								authenticated: true,
+								setup_required: false,
+								auth_disabled: true,
+								localhost_only: true,
+								has_password: false,
+								has_passkeys: false,
+								setup_complete: false,
+								webauthn_available: true,
+								passkey_origins: ["http://localhost"],
+							};
+					return Promise.resolve(
+						new Response(JSON.stringify(status), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+
+				if (url.endsWith("/api/auth/password/change")) {
+					localStorage.setItem("__e2eCredentialSet", "1");
+					return Promise.resolve(
+						new Response(JSON.stringify({ ok: true }), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+
+				if (url.endsWith("/api/auth/passkeys")) {
+					return Promise.resolve(
+						new Response(JSON.stringify({ passkeys: [] }), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+
+				if (url.endsWith("/api/auth/api-keys")) {
+					return Promise.resolve(
+						new Response(JSON.stringify({ api_keys: [] }), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+
+				return origFetch.apply(this, args);
+			};
+		});
+
+		await page.goto("/settings/security");
+		await expectPageContentMounted(page);
+		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		var passwordForm = page.locator("form").first();
+		var passwordInputs = passwordForm.locator("input[type='password']");
+		await passwordInputs.first().fill("testpass123");
+		await passwordInputs.nth(1).fill("testpass123");
+		await passwordForm.getByRole("button", { name: "Set password" }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/login");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("logout button updates after runtime auth status change", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.addInitScript(() => {
