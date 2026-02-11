@@ -73,7 +73,7 @@ jobs:
         with:
           toolchain: nightly
           components: clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
 
   test:
     needs: [fmt, biome]

@@ -700,12 +700,15 @@ fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    #[allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn headers_with_host(host: &str) -> axum::http::HeaderMap {
         let mut h = axum::http::HeaderMap::new();
-        h.insert(axum::http::header::HOST, host.parse().unwrap());
+        h.insert(
+            axum::http::header::HOST,
+            host.parse().expect("valid host header"),
+        );
         h
     }
 
@@ -758,9 +761,9 @@ mod tests {
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
-            .unwrap()
+            .expect("login response must set a session cookie")
             .to_str()
-            .unwrap();
+            .expect("cookie header must be valid UTF-8");
         assert!(
             cookie.contains("; Domain=localhost"),
             "cookie should include Domain=localhost for .localhost host, got: {cookie}"
@@ -775,9 +778,9 @@ mod tests {
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
-            .unwrap()
+            .expect("login response must set a session cookie")
             .to_str()
-            .unwrap();
+            .expect("cookie header must be valid UTF-8");
         assert!(
             !cookie.contains("Domain="),
             "cookie should NOT include Domain for external host, got: {cookie}"
@@ -791,9 +794,9 @@ mod tests {
         let cookie = resp
             .headers()
             .get(axum::http::header::SET_COOKIE)
-            .unwrap()
+            .expect("clear response must set a session cookie")
             .to_str()
-            .unwrap();
+            .expect("cookie header must be valid UTF-8");
         assert!(
             cookie.contains("; Domain=localhost"),
             "clear cookie should include Domain=localhost, got: {cookie}"
