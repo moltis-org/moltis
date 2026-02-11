@@ -735,17 +735,17 @@ function SecuritySection() {
 				});
 			})
 			.then((r) => {
-					if (r.ok) {
-						setPkName("");
-						return fetch("/api/auth/passkeys")
-							.then((r2) => r2.json())
-							.then((d) => {
-								setPasskeys(d.passkeys || []);
-								setHasPasskeys((d.passkeys || []).length > 0);
-								setPkMsg("Passkey added.");
-								notifyAuthStatusChanged();
-								rerender();
-							});
+				if (r.ok) {
+					setPkName("");
+					return fetch("/api/auth/passkeys")
+						.then((r2) => r2.json())
+						.then((d) => {
+							setPasskeys(d.passkeys || []);
+							setHasPasskeys((d.passkeys || []).length > 0);
+							setPkMsg("Passkey added.");
+							notifyAuthStatusChanged();
+							rerender();
+						});
 				} else
 					return r.text().then((t) => {
 						setPkMsg(t);
