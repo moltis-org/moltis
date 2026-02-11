@@ -56,7 +56,7 @@ export var EMOJI_LIST = [
 	"\u{2744}\ufe0f",
 ];
 
-export function EmojiPicker({ value, onChange }) {
+export function EmojiPicker({ value, onChange, onSelect }) {
 	var [open, setOpen] = useState(false);
 	var wrapRef = useRef(null);
 
@@ -89,19 +89,20 @@ export function EmojiPicker({ value, onChange }) {
 		${
 			open
 				? html`<div class="settings-emoji-picker">
-				${EMOJI_LIST.map(
-					(em) =>
-						html`<button
-							type="button"
-							class="settings-emoji-btn ${value === em ? "active" : ""}"
-							onClick=${() => {
-								onChange(em);
-								setOpen(false);
-							}}
-						>
+					${EMOJI_LIST.map(
+						(em) =>
+							html`<button
+								type="button"
+								class="settings-emoji-btn ${value === em ? "active" : ""}"
+								onClick=${() => {
+									onChange(em);
+									if (onSelect) onSelect(em);
+									setOpen(false);
+								}}
+							>
 							${em}
 						</button>`,
-				)}
+					)}
 			</div>`
 				: null
 		}

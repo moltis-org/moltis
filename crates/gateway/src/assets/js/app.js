@@ -3,6 +3,7 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import prettyBytes from "pretty-bytes";
+import { applyIdentityFavicon, formatPageTitle } from "./branding.js";
 import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
@@ -60,7 +61,6 @@ initMobile();
 
 // State for favicon/title restoration when switching branches.
 var originalFavicons = [];
-var originalTitle = document.title;
 var UPDATE_DISMISS_KEY = "moltis-update-dismissed-version";
 var currentUpdateVersion = null;
 
@@ -195,15 +195,6 @@ fetch("/api/auth/status")
 		startApp();
 	});
 
-function formatShareTitle(identity) {
-	var emoji = identity?.emoji || "";
-	var name = identity?.name || "moltis";
-	var prefix = emoji ? `${emoji} ${name}` : name;
-	var userName = identity?.user_name ? String(identity.user_name).trim() : "";
-	if (userName) return `${prefix}: ${userName} AI assistant`;
-	return `${prefix}: AI assistant`;
-}
-
 function showUpdateBanner(update) {
 	var el = document.getElementById("updateBanner");
 	if (!el) return;
@@ -263,7 +254,7 @@ function showBranchBanner(branch) {
 		});
 
 		// Prefix page title with branch name.
-		document.title = `[${branch}] ${formatShareTitle(gon.get("identity"))}`;
+		document.title = `[${branch}] ${formatPageTitle(gon.get("identity"))}`;
 	} else {
 		el.style.display = "none";
 
@@ -273,9 +264,10 @@ function showBranchBanner(branch) {
 			if (o.sizes) o.el.sizes = o.sizes;
 			o.el.href = o.href;
 		});
+		applyIdentityFavicon(gon.get("identity"));
 
 		// Restore original title
-		document.title = originalTitle;
+		document.title = formatPageTitle(gon.get("identity"));
 	}
 }
 
@@ -285,8 +277,12 @@ function applyIdentity(identity) {
 	if (emojiEl) emojiEl.textContent = identity?.emoji ? `${identity.emoji} ` : "";
 	if (nameEl) nameEl.textContent = identity?.name || "moltis";
 
+	if (!gon.get("git_branch")) {
+		applyIdentityFavicon(identity);
+	}
+
 	// Keep page title in sync with identity and branch.
-	var title = formatShareTitle(identity);
+	var title = formatPageTitle(identity);
 	var branch = gon.get("git_branch");
 	if (branch) {
 		document.title = `[${branch}] ${title}`;

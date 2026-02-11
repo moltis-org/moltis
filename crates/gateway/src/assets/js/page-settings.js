@@ -229,6 +229,7 @@ function IdentitySection() {
 	var [userName, setUserName] = useState(id?.user_name || "");
 	var [soul, setSoul] = useState(id?.soul || "");
 	var [saving, setSaving] = useState(false);
+	var [emojiSaving, setEmojiSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -242,6 +243,14 @@ function IdentitySection() {
 		setUserName(id.user_name || "");
 		setSoul(id.soul || "");
 	}, [id]);
+
+	function flashSaved() {
+		setSaved(true);
+		setTimeout(() => {
+			setSaved(false);
+			rerender();
+		}, 2000);
+	}
 
 	if (loading.value) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -279,13 +288,28 @@ function IdentitySection() {
 			if (res?.ok) {
 				identity.value = res.payload;
 				refreshGon();
-				setSaved(true);
-				setTimeout(() => {
-					setSaved(false);
-					rerender();
-				}, 2000);
+				flashSaved();
 			} else {
 				setError(res?.error?.message || "Failed to save");
+			}
+			rerender();
+		});
+	}
+
+	function onEmojiSelect(nextEmoji) {
+		setEmoji(nextEmoji);
+		setError(null);
+		setSaved(false);
+		setEmojiSaving(true);
+		sendRpc("agent.identity.update", { emoji: nextEmoji.trim() || "" }).then((res) => {
+			setEmojiSaving(false);
+			if (res?.ok) {
+				identity.value = res.payload;
+				setEmoji(res.payload?.emoji || "");
+				refreshGon();
+				flashSaved();
+			} else {
+				setError(res?.error?.message || "Failed to save emoji");
 			}
 			rerender();
 		});
@@ -317,10 +341,10 @@ function IdentitySection() {
 							value=${name} onInput=${(e) => setName(e.target.value)}
 							placeholder="e.g. Rex" />
 					</div>
-					<div>
-						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Emoji</div>
-						<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
-					</div>
+						<div>
+							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Emoji</div>
+							<${EmojiPicker} value=${emoji} onChange=${setEmoji} onSelect=${onEmojiSelect} />
+						</div>
 					<div>
 						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Creature</div>
 						<input type="text" class="provider-key-input" style="width:100%;"
@@ -368,10 +392,10 @@ function IdentitySection() {
 				}
 			</div>
 
-			<div style="display:flex;align-items:center;gap:8px;">
-				<button type="submit" class="provider-btn" disabled=${saving}>
-					${saving ? "Saving\u2026" : "Save"}
-				</button>
+				<div style="display:flex;align-items:center;gap:8px;">
+					<button type="submit" class="provider-btn" disabled=${saving || emojiSaving}>
+						${saving || emojiSaving ? "Saving\u2026" : "Save"}
+					</button>
 				${saved ? html`<span class="text-xs" style="color:var(--accent);">Saved</span>` : null}
 				${error ? html`<span class="text-xs" style="color:var(--error);">${error}</span>` : null}
 			</div>

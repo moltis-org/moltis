@@ -53,6 +53,32 @@ test.describe("Settings navigation", () => {
 		await expect(content).not.toBeEmpty();
 	});
 
+	test("selecting identity emoji autosaves and updates favicon without clicking Save", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+
+		const pickBtn = page.getByRole("button", { name: "Pick", exact: true });
+		await expect(pickBtn).toBeVisible();
+		await pickBtn.click();
+
+		const selectedEmoji = "🦊";
+		await page.getByRole("button", { name: selectedEmoji, exact: true }).click();
+		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+		await expect
+			.poll(() => {
+				return page.evaluate((emoji) => {
+					var href = document.querySelector('link[rel="icon"]')?.href || "";
+					if (!href.startsWith("data:image/svg+xml,")) return false;
+					var decoded = decodeURIComponent(href.slice("data:image/svg+xml,".length));
+					return decoded.includes(emoji);
+				}, selectedEmoji);
+			})
+			.toBeTruthy();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("environment page has add form", async ({ page }) => {
 		await navigateAndWait(page, "/settings/environment");
 		await expect(page.getByRole("heading", { name: "Environment" })).toBeVisible();

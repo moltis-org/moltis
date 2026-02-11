@@ -4054,7 +4054,6 @@ fn script_safe_json<T: serde::Serialize>(value: &T) -> String {
 #[cfg(feature = "web-ui")]
 fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
     let agent_name = identity_name(identity);
-    let display_name = identity_display_name(identity);
     let user_name = identity
         .user_name
         .as_deref()
@@ -4062,8 +4061,8 @@ fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
         .filter(|name| !name.is_empty());
 
     let title = match user_name {
-        Some(user_name) => format!("{display_name}: {user_name} AI assistant"),
-        None => format!("{display_name}: AI assistant"),
+        Some(user_name) => format!("{agent_name}: {user_name} AI assistant"),
+        None => format!("{agent_name}: AI assistant"),
     };
     let description = match user_name {
         Some(user_name) => format!(
@@ -4090,20 +4089,6 @@ fn identity_name(identity: &moltis_config::ResolvedIdentity) -> &str {
         "moltis"
     } else {
         name
-    }
-}
-
-#[cfg(feature = "web-ui")]
-fn identity_display_name(identity: &moltis_config::ResolvedIdentity) -> String {
-    let name = identity_name(identity);
-    let emoji = identity
-        .emoji
-        .as_deref()
-        .map(str::trim)
-        .filter(|e| !e.is_empty());
-    match emoji {
-        Some(emoji) => format!("{emoji} {name}"),
-        None => name.to_owned(),
     }
 }
 
@@ -4157,7 +4142,7 @@ async fn render_spa_template(
         SpaTemplate::Login => {
             let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
-            let page_title = identity_display_name(&gon.identity);
+            let page_title = identity_name(&gon.identity).to_owned();
             let template = LoginHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
@@ -4182,7 +4167,7 @@ async fn render_spa_template(
                 .ok()
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_default();
-            let page_title = format!("{} onboarding", identity_display_name(&identity));
+            let page_title = format!("{} onboarding", identity_name(&identity));
             let template = OnboardingHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
@@ -5723,13 +5708,19 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-123",
-            page_title: "\u{1f525} sparky onboarding",
+            page_title: "sparky onboarding",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render onboarding template: {e}"),
         };
-        assert!(html.contains("<title>\u{1f525} sparky onboarding</title>"));
+        assert!(html.contains("<title>sparky onboarding</title>"));
+        assert!(html.contains(
+            "<link rel=\"icon\" type=\"image/png\" sizes=\"96x96\" href=\"/assets/v/test/icons/icon-96.png\">"
+        ));
+        assert!(html.contains(
+            "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/assets/v/test/icons/icon-72.png\">"
+        ));
         assert!(html.contains("/assets/v/test/js/onboarding-app.js"));
         assert!(!html.contains("/assets/v/test/js/app.js"));
         assert!(!html.contains("/manifest.json"));
@@ -5779,7 +5770,7 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
-    fn share_meta_includes_emoji_in_title() {
+    fn share_meta_omits_emoji_in_title() {
         let identity = moltis_config::ResolvedIdentity {
             name: "sparky".to_owned(),
             emoji: Some("\u{1f525}".to_owned()),
@@ -5788,7 +5779,7 @@ mod tests {
         };
 
         let meta = build_share_meta(&identity);
-        assert_eq!(meta.title, "\u{1f525} sparky: penso AI assistant");
+        assert_eq!(meta.title, "sparky: penso AI assistant");
         assert_eq!(meta.site_name, "sparky");
     }
 
@@ -5829,14 +5820,20 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-abc",
-            page_title: "\u{1f525} sparky",
+            page_title: "sparky",
             gon_json: "{\"identity\":{\"name\":\"moltis\"}}",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render login template: {e}"),
         };
-        assert!(html.contains("<title>\u{1f525} sparky</title>"));
+        assert!(html.contains("<title>sparky</title>"));
+        assert!(html.contains(
+            "<link rel=\"icon\" type=\"image/png\" sizes=\"96x96\" href=\"/assets/v/test/icons/icon-96.png\">"
+        ));
+        assert!(html.contains(
+            "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/assets/v/test/icons/icon-72.png\">"
+        ));
         assert!(html.contains("<script nonce=\"nonce-abc\">window.__MOLTIS__={\"identity\":{\"name\":\"moltis\"}};</script>"));
         assert!(html.contains(
             "<script nonce=\"nonce-abc\" type=\"module\" src=\"/assets/v/test/js/login-app.js\"></script>"
