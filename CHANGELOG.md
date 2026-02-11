@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-02-11
+
+### Fixed
+
+- **Linux clippy `unused_mut` failure**: Fixed a target-specific `unused_mut`
+  warning in browser stale-container cleanup that failed release clippy on
+  Linux with `-D warnings`.
+
 ## [0.8.2] - 2026-02-11
 
 ### Fixed
