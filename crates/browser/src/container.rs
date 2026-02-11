@@ -588,20 +588,27 @@ fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usiz
     Ok(removed)
 }
 
+#[cfg(target_os = "macos")]
+fn cleanup_stale_apple_browser_containers_for_current_platform(
+    container_prefix: &str,
+) -> Result<usize> {
+    cleanup_stale_apple_browser_containers(container_prefix)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn cleanup_stale_apple_browser_containers_for_current_platform(
+    _container_prefix: &str,
+) -> Result<usize> {
+    Ok(0)
+}
+
 /// Remove stale browser containers left behind by previous runs.
 ///
 /// Browser containers are named with an instance-specific prefix so startup can
 /// clean up orphaned instances before creating new ones.
 pub fn cleanup_stale_browser_containers(container_prefix: &str) -> Result<usize> {
-    #[cfg(target_os = "macos")]
-    let mut removed = cleanup_stale_docker_browser_containers(container_prefix)?;
-    #[cfg(not(target_os = "macos"))]
-    let removed = cleanup_stale_docker_browser_containers(container_prefix)?;
-    #[cfg(target_os = "macos")]
-    {
-        removed += cleanup_stale_apple_browser_containers(container_prefix)?;
-    }
-    Ok(removed)
+    Ok(cleanup_stale_docker_browser_containers(container_prefix)?
+        + cleanup_stale_apple_browser_containers_for_current_platform(container_prefix)?)
 }
 
 /// Pull the browser container image if not present.
