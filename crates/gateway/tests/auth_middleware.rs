@@ -565,6 +565,20 @@ async fn localhost_set_password_without_current() {
     // Password should now be set.
     assert!(store.has_password().await.unwrap());
     assert!(store.verify_password("newpass123").await.unwrap());
+
+    // After adding a password, localhost bypass should stop applying.
+    let status = reqwest::get(format!("http://{addr}/api/auth/status"))
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    let body: serde_json::Value = status.json().await.unwrap();
+    assert_eq!(body["has_password"], true);
+    assert_eq!(body["authenticated"], false);
+
+    let protected = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(protected.status(), 401);
 }
 
 /// Unauthenticated POST to /api/sessions/:key/upload returns 401.
@@ -639,6 +653,31 @@ async fn localhost_with_password_requires_login() {
     assert_eq!(body["setup_required"], false);
     // Not authenticated without a session.
     assert_eq!(body["authenticated"], false);
+}
+
+/// On localhost with a passkey registered, unauthenticated requests require login.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn localhost_with_passkey_requires_login() {
+    let (addr, store, _state) = start_localhost_server().await;
+    store
+        .store_passkey(b"cred-1", "MacBook Touch ID", b"serialized-passkey")
+        .await
+        .unwrap();
+
+    let status = reqwest::get(format!("http://{addr}/api/auth/status"))
+        .await
+        .unwrap();
+    assert_eq!(status.status(), 200);
+    let body: serde_json::Value = status.json().await.unwrap();
+    assert_eq!(body["has_passkeys"], true);
+    assert_eq!(body["setup_required"], false);
+    assert_eq!(body["authenticated"], false);
+
+    let protected = reqwest::get(format!("http://{addr}/api/bootstrap"))
+        .await
+        .unwrap();
+    assert_eq!(protected.status(), 401);
 }
 
 // ── Three-tier model tests ──────────────────────────────────────────────────
