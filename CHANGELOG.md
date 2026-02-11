@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Session delete UX**: Forked sessions with no new messages beyond the fork
+  point are deleted immediately without a confirmation dialog.
+
 ## [0.8.3] - 2026-02-11
 
 ### Fixed

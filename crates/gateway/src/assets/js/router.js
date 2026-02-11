@@ -73,6 +73,12 @@ function updateNavActiveState(path) {
 		var active = href === path || (href !== "/" && path.indexOf(href) === 0);
 		a.classList.toggle("active", active);
 	});
+
+	var settingsBtn = document.getElementById("settingsBtn");
+	if (settingsBtn) {
+		var settingsActive = path === "/settings" || path.indexOf("/settings/") === 0;
+		settingsBtn.classList.toggle("active", settingsActive);
+	}
 }
 
 export function mount(path) {
@@ -110,16 +116,20 @@ window.addEventListener("popstate", () => {
 var burgerBtn = S.$("burgerBtn");
 var navPanel = S.$("navPanel");
 
-burgerBtn.addEventListener("click", () => {
-	navPanel.classList.toggle("hidden");
-});
+if (burgerBtn && navPanel) {
+	burgerBtn.addEventListener("click", () => {
+		navPanel.classList.toggle("hidden");
+	});
+}
 
-navPanel.addEventListener("click", (e) => {
-	var link = e.target.closest("[data-nav]");
-	if (!link) return;
-	e.preventDefault();
-	navigate(link.getAttribute("href"));
-});
+if (navPanel) {
+	navPanel.addEventListener("click", (e) => {
+		var link = e.target.closest("[data-nav]");
+		if (!link) return;
+		e.preventDefault();
+		navigate(link.getAttribute("href"));
+	});
+}
 
 var titleLink = document.getElementById("titleLink");
 if (titleLink) {

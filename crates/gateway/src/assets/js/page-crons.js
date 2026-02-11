@@ -9,7 +9,6 @@ import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { navigate, registerPrefix } from "./router.js";
-import * as S from "./state.js";
 import { models as modelsSig } from "./stores/model-store.js";
 import { ComboSelect, ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
 
@@ -23,6 +22,9 @@ var runsHistory = signal(null); // { jobId, jobName, runs }
 var showModal = signal(false);
 var editingJob = signal(null);
 var activeSection = signal("jobs");
+var _cronsContainer = null;
+var cronsRouteBase = "/crons";
+var syncCronsRoute = true;
 
 // ── Heartbeat state ──────────────────────────────────────────
 var heartbeatStatus = signal(null);
@@ -123,6 +125,15 @@ var sections = [
 
 var sectionIds = sections.map((s) => s.id);
 
+function setCronsSection(sectionId) {
+	if (!sectionIds.includes(sectionId)) return;
+	if (syncCronsRoute) {
+		navigate(`${cronsRouteBase}/${sectionId}`);
+		return;
+	}
+	activeSection.value = sectionId;
+}
+
 function CronsSidebar() {
 	return html`<div class="settings-sidebar">
 		<div class="settings-sidebar-nav">
@@ -131,9 +142,7 @@ function CronsSidebar() {
 				<button
 					key=${s.id}
 					class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
-					onClick=${() => {
-						navigate(`/crons/${s.id}`);
-					}}
+					onClick=${() => setCronsSection(s.id)}
 				>
 					${s.icon}
 					${s.label}
@@ -766,36 +775,42 @@ function CronsPage() {
   `;
 }
 
-registerPrefix(
-	"/crons",
-	function initCrons(container, param) {
-		container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
-		cronJobs.value = gon.get("crons") || [];
-		cronStatus.value = gon.get("cron_status");
-		heartbeatConfig.value = gon.get("heartbeat_config") || {};
-		runsHistory.value = null;
-		showModal.value = false;
-		editingJob.value = null;
-		heartbeatStatus.value = null;
-		heartbeatRuns.value = gon.get("heartbeat_runs") || [];
-		sandboxImages.value = [];
-		heartbeatModel.value = gon.get("heartbeat_config")?.model || "";
-		heartbeatSandboxImage.value = gon.get("heartbeat_config")?.sandbox_image || "";
+registerPrefix("/crons", initCrons, teardownCrons);
 
-		var section = param && sectionIds.includes(param) ? param : "jobs";
-		if (param && !sectionIds.includes(param)) {
-			history.replaceState(null, "", "/crons/jobs");
-		}
-		activeSection.value = section;
+export function initCrons(container, param, options) {
+	_cronsContainer = container;
+	cronsRouteBase = options?.routeBase || "/crons";
+	syncCronsRoute = options?.syncRoute !== false;
 
-		// Eagerly load heartbeat data so it's ready when the panel mounts.
-		loadHeartbeatRuns();
-		loadHeartbeatStatus();
+	container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
+	cronJobs.value = gon.get("crons") || [];
+	cronStatus.value = gon.get("cron_status");
+	heartbeatConfig.value = gon.get("heartbeat_config") || {};
+	runsHistory.value = null;
+	showModal.value = false;
+	editingJob.value = null;
+	heartbeatStatus.value = null;
+	heartbeatRuns.value = gon.get("heartbeat_runs") || [];
+	sandboxImages.value = [];
+	heartbeatModel.value = gon.get("heartbeat_config")?.model || "";
+	heartbeatSandboxImage.value = gon.get("heartbeat_config")?.sandbox_image || "";
 
-		render(html`<${CronsPage} />`, container);
-	},
-	function teardownCrons() {
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+	var section = param && sectionIds.includes(param) ? param : "jobs";
+	if (syncCronsRoute && param && !sectionIds.includes(param)) {
+		history.replaceState(null, "", `${cronsRouteBase}/jobs`);
+	}
+	activeSection.value = section;
+
+	// Eagerly load heartbeat data so it's ready when the panel mounts.
+	loadHeartbeatRuns();
+	loadHeartbeatStatus();
+
+	render(html`<${CronsPage} />`, container);
+}
+
+export function teardownCrons() {
+	if (_cronsContainer) render(null, _cronsContainer);
+	_cronsContainer = null;
+	cronsRouteBase = "/crons";
+	syncCronsRoute = true;
+}

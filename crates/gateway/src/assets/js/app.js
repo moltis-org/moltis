@@ -12,7 +12,7 @@ import { renderSessionProjectSelect } from "./project-combo.js";
 import { renderProjectSelect } from "./projects.js";
 import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
-import { mount, registerPage, sessionPath } from "./router.js";
+import { mount, navigate, registerPage, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
@@ -21,6 +21,9 @@ import { projectStore } from "./stores/project-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { initTheme, injectMarkdownStyles } from "./theme.js";
 import { connect } from "./websocket.js";
+
+// Expose stores on window for E2E test access.
+window.__moltis_stores = { sessionStore, modelStore, projectStore };
 
 // Import page modules to register their routes
 import "./page-chat.js";
@@ -105,11 +108,17 @@ onEvent("tick", (payload) => applyMemory(payload.mem));
 
 // Logout button — wire up click handler once.
 var logoutBtn = document.getElementById("logoutBtn");
+var settingsBtn = document.getElementById("settingsBtn");
 if (logoutBtn) {
 	logoutBtn.addEventListener("click", () => {
 		fetch("/api/auth/logout", { method: "POST" }).finally(() => {
 			location.href = "/";
 		});
+	});
+}
+if (settingsBtn) {
+	settingsBtn.addEventListener("click", () => {
+		navigate("/settings/identity");
 	});
 }
 

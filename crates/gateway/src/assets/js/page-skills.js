@@ -839,14 +839,18 @@ function SkillsPage() {
 }
 
 // ── Router integration ───────────────────────────────────────
-registerPage(
-	"/skills",
-	function initSkills(container) {
-		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-		render(html`<${SkillsPage} />`, container);
-	},
-	function teardownSkills() {
-		var container = S.$("pageContent");
-		if (container) render(null, container);
-	},
-);
+
+var _skillsContainer = null;
+
+export function initSkills(container) {
+	_skillsContainer = container;
+	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	render(html`<${SkillsPage} />`, container);
+}
+
+export function teardownSkills() {
+	if (_skillsContainer) render(null, _skillsContainer);
+	_skillsContainer = null;
+}
+
+registerPage("/skills", initSkills, teardownSkills);

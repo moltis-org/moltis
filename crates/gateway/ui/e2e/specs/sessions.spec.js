@@ -27,7 +27,9 @@ test.describe("Session management", () => {
 		// URL should change to a new session (not main)
 		await expect(page).not.toHaveURL(/\/chats\/main$/);
 		await expect(page).toHaveURL(/\/chats\//);
-		await expect(page.locator(`#sessionList .session-item[data-session-key="${firstSessionKey}"]`)).toHaveClass(/active/);
+		await expect(page.locator(`#sessionList .session-item[data-session-key="${firstSessionKey}"]`)).toHaveClass(
+			/active/,
+		);
 		await expect(sessionItems).toHaveCount(initialCount + 1);
 		await expect(page.locator("#chatInput")).toBeFocused();
 
@@ -120,5 +122,73 @@ test.describe("Session management", () => {
 		const panel = page.locator("#sessionsPanel");
 		// On settings pages, the sessions panel should be hidden
 		await expect(panel).toBeHidden();
+	});
+
+	test("deleting unmodified fork skips confirmation dialog", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Create a session so we're not on "main" (Delete button is hidden for main)
+		await createSession(page);
+		const sessionUrl = page.url();
+
+		// Simulate an unmodified fork: set forkPoint = messageCount = 5
+		// so the session looks like a fork with messages but no new ones added.
+		await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store not exposed");
+			const session = store.activeSession.value;
+			if (!session) throw new Error("no active session");
+			session.forkPoint = 5;
+			session.messageCount = 5;
+			// Bump dataVersion to trigger re-render
+			session.dataVersion.value++;
+		});
+
+		// Click the Delete button — should NOT show a confirmation dialog
+		const deleteBtn = page.locator('button[title="Delete session"]');
+		await expect(deleteBtn).toBeVisible();
+		await deleteBtn.click();
+
+		// The session should be deleted immediately (no dialog appeared)
+		// so we should navigate away from the current session URL
+		await page.waitForURL((url) => url.href !== sessionUrl, { timeout: 5_000 });
+		await expectPageContentMounted(page);
+
+		// The confirmation dialog should NOT be visible
+		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("deleting modified fork still shows confirmation dialog", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await createSession(page);
+
+		// Simulate a modified fork: messageCount > forkPoint
+		await page.evaluate(() => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store not exposed");
+			const session = store.activeSession.value;
+			if (!session) throw new Error("no active session");
+			session.forkPoint = 3;
+			session.messageCount = 5;
+			session.dataVersion.value++;
+		});
+
+		const deleteBtn = page.locator('button[title="Delete session"]');
+		await expect(deleteBtn).toBeVisible();
+		await deleteBtn.click();
+
+		// The confirmation dialog SHOULD appear
+		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+
+		// Dismiss the dialog by clicking Cancel
+		await page.locator(".provider-modal-backdrop .provider-btn-secondary").click();
+		await expect(page.locator(".provider-modal-backdrop")).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
 	});
 });

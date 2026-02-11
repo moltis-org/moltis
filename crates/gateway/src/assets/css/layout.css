@@ -57,6 +57,47 @@
   background: var(--bg-hover);
 }
 
+/* ── Header actions ── */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.header-link-btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.header-link-btn.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-subtle);
+}
+
+.header-link-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Model Dropdown ── */
 
 .model-combo { position: relative; }

@@ -700,6 +700,33 @@
   border-bottom: 1px solid var(--border);
 }
 
+.settings-back-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.settings-back-slot:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.settings-back-slot .icon {
+  width: 14px;
+  height: 14px;
+}
+
 .settings-sidebar-nav {
   flex: 1;
   overflow-y: auto;

@@ -11,11 +11,14 @@ import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 // Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
+import { initCrons, teardownCrons } from "./page-crons.js";
 import { initHooks, teardownHooks } from "./page-hooks.js";
 import { initImages, teardownImages } from "./page-images.js";
 import { initLogs, teardownLogs } from "./page-logs.js";
 import { initMcp, teardownMcp } from "./page-mcp.js";
+import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
+import { initSkills, teardownSkills } from "./page-skills.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
@@ -75,6 +78,12 @@ var sections = [
 		label: "Notifications",
 		icon: html`<span class="icon icon-bell"></span>`,
 	},
+	{
+		id: "crons",
+		label: "Crons",
+		icon: html`<span class="icon icon-cron"></span>`,
+		page: true,
+	},
 	{ group: "Security" },
 	{
 		id: "security",
@@ -116,11 +125,23 @@ var sections = [
 		icon: html`<span class="icon icon-wrench"></span>`,
 		page: true,
 	},
+	{
+		id: "skills",
+		label: "Skills",
+		icon: html`<span class="icon icon-sparkles"></span>`,
+		page: true,
+	},
 	{ group: "Systems" },
 	{
 		id: "sandboxes",
 		label: "Sandboxes",
 		icon: html`<span class="icon icon-cube"></span>`,
+		page: true,
+	},
+	{
+		id: "monitoring",
+		label: "Monitoring",
+		icon: html`<span class="icon icon-chart-bar"></span>`,
 		page: true,
 	},
 	{
@@ -148,6 +169,18 @@ function getSectionItems() {
 
 function SettingsSidebar() {
 	return html`<div class="settings-sidebar">
+			<div class="settings-sidebar-header">
+				<button
+					class="settings-back-slot"
+					onClick=${() => {
+						navigate("/chats");
+					}}
+					title="Back to chat sessions"
+			>
+				<span class="icon icon-chat"></span>
+				Back to Chats
+			</button>
+		</div>
 		<div class="settings-sidebar-nav">
 			${getVisibleSections().map((s) =>
 				s.group
@@ -494,11 +527,11 @@ function EnvironmentSection() {
 										<time datetime=${v.updated_at}>${v.updated_at}</time>
 									</div>
 								</div>
-								<div style="display:flex;gap:4px;">
-									<button class="provider-btn" onClick=${() => onStartUpdate(v.id)}>Update</button>
-									<button class="provider-btn provider-btn-danger"
-										onClick=${() => onDelete(v.id)}>Delete</button>
-								</div>`
+									<div style="display:flex;gap:4px;">
+										<button class="provider-btn provider-btn-sm" onClick=${() => onStartUpdate(v.id)}>Update</button>
+										<button class="provider-btn provider-btn-sm provider-btn-danger"
+											onClick=${() => onDelete(v.id)}>Delete</button>
+									</div>`
 						}
 					</div>`,
 					)}
@@ -3044,11 +3077,20 @@ function NotificationsSection() {
 // ── Page-section init/teardown map ──────────────────────────
 
 var pageSectionHandlers = {
+	crons: {
+		init: (container) => initCrons(container, null, { syncRoute: false }),
+		teardown: teardownCrons,
+	},
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },
 	hooks: { init: initHooks, teardown: teardownHooks },
+	skills: { init: initSkills, teardown: teardownSkills },
 	sandboxes: { init: initImages, teardown: teardownImages },
+	monitoring: {
+		init: (container) => initMonitoring(container, null, { syncPath: false }),
+		teardown: teardownMonitoring,
+	},
 	logs: { init: initLogs, teardown: teardownLogs },
 };
 

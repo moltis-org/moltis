@@ -16,6 +16,9 @@ var loading = signal(true);
 var error = signal(null);
 var isLive = signal(false);
 var unsubscribe = null;
+var _monitoringContainer = null;
+var monitoringPathBase = "/monitoring";
+var monitoringSyncPath = true;
 
 // Time range options (in seconds)
 var TIME_RANGES = {
@@ -610,9 +613,11 @@ function MonitoringPage({ initialTab }) {
 	// Update URL when tab changes
 	function handleTabChange(tab) {
 		setActiveTab(tab);
-		var newPath = tab === "charts" ? "/monitoring/charts" : "/monitoring";
-		if (window.location.pathname !== newPath) {
-			history.pushState(null, "", newPath);
+		if (monitoringSyncPath) {
+			var newPath = tab === "charts" ? `${monitoringPathBase}/charts` : monitoringPathBase;
+			if (window.location.pathname !== newPath) {
+				history.pushState(null, "", newPath);
+			}
 		}
 	}
 
@@ -708,13 +713,16 @@ function MonitoringPage({ initialTab }) {
 	`;
 }
 
-function init(container, param) {
+export function initMonitoring(container, param, options) {
 	// param is "charts" for /monitoring/charts, null for /monitoring
+	_monitoringContainer = container;
+	monitoringPathBase = options?.pathBase || "/monitoring";
+	monitoringSyncPath = options?.syncPath !== false;
 	var initialTab = param === "charts" ? "charts" : "overview";
 	render(html`<${MonitoringPage} initialTab=${initialTab} />`, container);
 }
 
-function teardown() {
+export function teardownMonitoring() {
 	if (unsubscribe) {
 		unsubscribe();
 		unsubscribe = null;
@@ -724,7 +732,11 @@ function teardown() {
 	loading.value = true;
 	error.value = null;
 	isLive.value = false;
+	monitoringPathBase = "/monitoring";
+	monitoringSyncPath = true;
+	if (_monitoringContainer) render(null, _monitoringContainer);
+	_monitoringContainer = null;
 }
 
 // Register as prefix route: /monitoring and /monitoring/charts
-registerPrefix("/monitoring", init, teardown);
+registerPrefix("/monitoring", initMonitoring, teardownMonitoring);

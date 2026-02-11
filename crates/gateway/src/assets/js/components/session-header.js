@@ -98,7 +98,8 @@ export function SessionHeader() {
 				fetchSessions();
 			});
 		};
-		if (msgCount > 0) {
+		var isUnmodifiedFork = session && session.forkPoint != null && msgCount <= session.forkPoint;
+		if (msgCount > 0 && !isUnmodifiedFork) {
 			confirmDialog("Delete this session?").then((yes) => {
 				if (yes) doDelete();
 			});

@@ -21,31 +21,27 @@ const routeCases = [
 	{
 		path: "/crons/jobs",
 		expectedUrl: /\/crons\/jobs$/,
-		activeNav: "/crons",
 		heading: "Cron Jobs",
 	},
 	{
 		path: "/monitoring",
 		expectedUrl: /\/monitoring$/,
-		activeNav: "/monitoring",
 		heading: "Monitoring",
 	},
 	{
 		path: "/skills",
 		expectedUrl: /\/skills$/,
-		activeNav: "/skills",
 		heading: "Skills",
 	},
 	{
 		path: "/projects",
 		expectedUrl: /\/projects$/,
-		activeNav: null,
 		heading: "Repositories",
 	},
 	{
 		path: "/settings",
 		expectedUrl: /\/settings\/identity$/,
-		activeNav: "/settings",
+		settingsActive: true,
 		heading: "Identity",
 	},
 ];
@@ -58,8 +54,8 @@ for (const routeCase of routeCases) {
 
 		await expect(page).toHaveURL(routeCase.expectedUrl);
 		await expectPageContentMounted(page);
-		if (routeCase.activeNav) {
-			await expect(page.locator(`a.nav-link[href="${routeCase.activeNav}"]`)).toHaveClass(/active/);
+		if (routeCase.settingsActive) {
+			await expect(page.locator("#settingsBtn")).toHaveClass(/active/);
 		}
 		await expect(
 			page.getByRole("heading", {

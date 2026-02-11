@@ -91,9 +91,6 @@
 
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
-  <button id="burgerBtn" class="burger-btn" title="Navigation">
-    <span class="icon icon-lg icon-burger"></span>
-  </button>
   <a href="/chats" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
   <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;if(i.name)document.title=i.name}()</script>
   <span class="status-dot" id="statusDot"></span>
@@ -101,6 +98,23 @@
   <div class="flex-1"></div>
 
   <span id="memoryInfo" class="text-xs text-[var(--muted)]" title="Process memory · System free memory"></span>
+
+  <div class="header-actions">
+    <button id="settingsBtn" class="header-link-btn" title="Settings">
+      <span class="icon icon-settings"></span>
+      <span class="header-link-label">Settings</span>
+    </button>
+    <a
+      href="https://github.com/moltis-org/moltis/issues/new"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="header-link-btn"
+      title="Report an issue"
+    >
+      <span class="icon icon-link"></span>
+      <span class="header-link-label">Report issue</span>
+    </a>
+  </div>
 
   <!-- Theme toggle -->
   <div class="theme-toggle" id="themeToggle">
@@ -151,44 +165,10 @@
 </div>
 
 <!-- Overlays for mobile panels -->
-<div id="navOverlay" class="nav-overlay"></div>
 <div id="sessionsOverlay" class="sessions-overlay"></div>
 
 <!-- Main layout -->
 <div class="flex flex-1 min-h-0 overflow-hidden">
-  <!-- Navigation panel -->
-  <nav id="navPanel" class="nav-panel">
-    <div class="flex-1 flex flex-col">
-      <a href="/chats" data-nav class="nav-link">
-        <span class="icon icon-chat"></span>
-        Chats
-      </a>
-      <a href="/crons" data-nav class="nav-link">
-        <span class="icon icon-cron"></span>
-        Crons
-        <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountCrons"></span>
-      </a>
-      <a href="/monitoring" data-nav class="nav-link">
-        <span class="icon icon-chart-bar"></span>
-        Monitoring
-      </a>
-      <a href="/skills" data-nav class="nav-link">
-        <span class="icon icon-sparkles"></span>
-        Skills
-        <span class="nav-count ml-auto text-[0.85rem] leading-none px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]" id="navCountSkills"></span>
-      </a>
-    </div>
-    <div class="border-t border-[var(--border)] border-b">
-      <a href="/settings" data-nav class="nav-link">
-        <span class="icon icon-settings"></span>
-        Settings
-      </a>
-    </div>
-    <div class="py-2 text-center">
-      <a href="https://github.com/moltis-org/moltis/issues/new" target="_blank" rel="noopener noreferrer" class="text-[0.7rem] text-[var(--muted)] no-underline hover:underline">Report an issue</a>
-    </div>
-  </nav>
-
   <!-- Sessions sidebar -->
   <div class="w-[240px] border-r border-[var(--border)] flex flex-col bg-[var(--surface)] shrink-0 hidden" id="sessionsPanel">
     <div class="px-3 py-2.5 border-b border-[var(--border)] flex items-center justify-between">
