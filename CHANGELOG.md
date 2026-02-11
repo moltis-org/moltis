@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-02-10
+
+### Fixed
+
+- **Release clippy**: Aligned release workflow clippy command with nightly
+  flags (`-Z unstable-options`, `--timings`).
+- **Test lint attributes**: Fixed useless outer `#[allow]` on test module
+  `use` statement; replaced `.unwrap()` with `.expect()` in auth route tests.
+
 ## [0.6.0] - 2026-02-10
 
 ### Added
