@@ -38,10 +38,11 @@ expect_used = "deny"
 unwrap_used = "deny"
 
 [workspace.package]
-edition    = "2024"
-license    = "MIT"
-repository = "https://github.com/moltis-org/moltis"
-version    = "0.8.3"
+edition      = "2024"
+license      = "MIT"
+repository   = "https://github.com/moltis-org/moltis"
+rust-version = "1.91"
+version      = "0.8.3"
 
 [workspace.dependencies]
 # Async runtime

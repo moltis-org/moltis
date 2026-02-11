@@ -93,7 +93,7 @@ See [Docker Deployment](docker.md) for full instructions on running Moltis in a 
 
 ### Prerequisites
 
-- Rust 1.75 or later
+- Rust 1.91 or later
 - A C compiler (for some dependencies)
 
 ### Clone and Build
