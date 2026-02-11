@@ -3,7 +3,7 @@
     <rect width="512" height="512" fill="#f97316"/>
 
     <!-- Crab icon scaled and centered (80% safe area) -->
-    <g transform="translate(96, 126) scale(2)">
+    <g transform="translate(16, 13) scale(3)">
         <defs>
             <linearGradient id="shell" x1="40" y1="40" x2="120" y2="110" gradientUnits="userSpaceOnUse">
                 <stop offset="0%" stop-color="#f97316"/>
@@ -18,31 +18,37 @@
                 <stop offset="100%" stop-color="#fdba74"/>
             </radialGradient>
         </defs>
-        <path d="M44 55 Q30 38 18 26" stroke="url(#claw)" stroke-width="8" stroke-linecap="round" fill="none"/>
-        <path d="M18 26 Q10 14 4 8 Q0 4 2 0 Q6 -2 10 2 Q14 6 16 14 Q17 18 18 26" fill="url(#claw)"/>
-        <path d="M18 26 Q8 26 2 30 Q-2 33 0 36 Q3 39 8 36 Q13 33 18 26" fill="url(#claw)"/>
-        <path d="M116 55 Q130 38 142 26" stroke="url(#claw)" stroke-width="8" stroke-linecap="round" fill="none"/>
-        <path d="M142 26 Q150 14 156 8 Q160 4 158 0 Q154 -2 150 2 Q146 6 144 14 Q143 18 142 26" fill="url(#claw)"/>
-        <path d="M142 26 Q152 26 158 30 Q162 33 160 36 Q157 39 152 36 Q147 33 142 26" fill="url(#claw)"/>
-        <path d="M50 82 Q32 90 18 100" stroke="#ea580c" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.8"/>
-        <path d="M46 90 Q30 102 16 114" stroke="#ea580c" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.7"/>
-        <path d="M48 98 Q38 112 30 124" stroke="#ea580c" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.6"/>
-        <path d="M110 82 Q128 90 142 100" stroke="#ea580c" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.8"/>
-        <path d="M114 90 Q130 102 144 114" stroke="#ea580c" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.7"/>
-        <path d="M112 98 Q122 112 130 124" stroke="#ea580c" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.6"/>
+        <!-- Stub legs (left side) -->
+        <line x1="44" y1="88" x2="32" y2="98" stroke="#ea580c" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+        <line x1="42" y1="95" x2="28" y2="110" stroke="#ea580c" stroke-width="3.5" stroke-linecap="round" opacity="0.6"/>
+        <line x1="44" y1="101" x2="34" y2="122" stroke="#ea580c" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+        <!-- Stub legs (right side) -->
+        <line x1="116" y1="88" x2="128" y2="98" stroke="#ea580c" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+        <line x1="118" y1="95" x2="132" y2="110" stroke="#ea580c" stroke-width="3.5" stroke-linecap="round" opacity="0.6"/>
+        <line x1="116" y1="101" x2="126" y2="122" stroke="#ea580c" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+        <!-- Small stub claws -->
+        <path d="M42 64 Q34 58 30 54 Q28 52 30 50 Q32 49 34 51 Q36 54 38 56" fill="url(#claw)" stroke="url(#claw)" stroke-width="2" stroke-linecap="round"/>
+        <path d="M118 64 Q126 58 130 54 Q132 52 130 50 Q128 49 126 51 Q124 54 122 56" fill="url(#claw)" stroke="url(#claw)" stroke-width="2" stroke-linecap="round"/>
+        <!-- Shell body -->
         <ellipse cx="80" cy="76" rx="40" ry="32" fill="url(#shell)"/>
+        <!-- Belly -->
         <ellipse cx="80" cy="82" rx="24" ry="18" fill="url(#belly)" opacity="0.4"/>
+        <!-- Shell detail lines -->
         <path d="M80 44 L80 108" stroke="#c2410c" stroke-width="0.8" opacity="0.25"/>
         <path d="M52 52 Q80 68 108 52" stroke="#c2410c" stroke-width="0.8" opacity="0.2" fill="none"/>
         <path d="M44 70 Q80 88 116 70" stroke="#c2410c" stroke-width="0.8" opacity="0.2" fill="none"/>
-        <ellipse cx="64" cy="52" rx="4" ry="6" fill="#f97316"/>
-        <ellipse cx="96" cy="52" rx="4" ry="6" fill="#f97316"/>
-        <ellipse cx="64" cy="56" rx="9" ry="10" fill="white"/>
-        <ellipse cx="96" cy="56" rx="9" ry="10" fill="white"/>
-        <ellipse cx="65" cy="56" rx="5" ry="6" fill="#1c1917"/>
-        <ellipse cx="97" cy="56" rx="5" ry="6" fill="#1c1917"/>
-        <ellipse cx="67" cy="53" rx="2" ry="2.5" fill="white" opacity="0.9"/>
-        <ellipse cx="99" cy="53" rx="2" ry="2.5" fill="white" opacity="0.9"/>
+        <!-- Eye stalks (taller) -->
+        <ellipse cx="64" cy="48" rx="5" ry="10" fill="#f97316"/>
+        <ellipse cx="96" cy="48" rx="5" ry="10" fill="#f97316"/>
+        <!-- Eyes -->
+        <ellipse cx="64" cy="54" rx="9" ry="10" fill="white"/>
+        <ellipse cx="96" cy="54" rx="9" ry="10" fill="white"/>
+        <ellipse cx="65" cy="54" rx="5" ry="6" fill="#1c1917"/>
+        <ellipse cx="97" cy="54" rx="5" ry="6" fill="#1c1917"/>
+        <!-- Eye highlights -->
+        <ellipse cx="67" cy="51" rx="2" ry="2.5" fill="white" opacity="0.9"/>
+        <ellipse cx="99" cy="51" rx="2" ry="2.5" fill="white" opacity="0.9"/>
+        <!-- Smile -->
         <path d="M68 80 Q80 90 92 80" stroke="#9a3412" stroke-width="2.5" stroke-linecap="round" fill="none"/>
     </g>
 </svg>
