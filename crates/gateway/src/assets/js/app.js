@@ -123,6 +123,42 @@ if (settingsBtn) {
 	});
 }
 
+function updateAuthChrome(auth) {
+	if (logoutBtn) {
+		var showLogout = !!(auth && auth.authenticated && !auth.auth_disabled && (auth.has_password || auth.has_passkeys));
+		logoutBtn.style.display = showLogout ? "" : "none";
+	}
+
+	var banner = document.getElementById("authDisabledBanner");
+	if (banner) {
+		var showAuthDisabled = !!(auth && auth.auth_disabled && !auth.localhost_only);
+		banner.style.display = showAuthDisabled ? "" : "none";
+	}
+}
+
+function refreshAuthChrome() {
+	return fetch("/api/auth/status")
+		.then((r) => (r.ok ? r.json() : null))
+		.then((auth) => {
+			updateAuthChrome(auth);
+			return auth;
+		})
+		.catch(() => null);
+}
+
+window.addEventListener("moltis:auth-status-changed", () => {
+	refreshAuthChrome().then((auth) => {
+		if (!auth) return;
+		if (auth.setup_required) {
+			window.location.assign("/onboarding");
+			return;
+		}
+		if (!auth.authenticated) {
+			window.location.assign("/login");
+		}
+	});
+});
+
 // Seed sandbox info from gon so the settings page can render immediately
 // without waiting for the auth-protected /api/bootstrap fetch.
 try {
@@ -151,25 +187,13 @@ fetch("/api/auth/status")
 			window.location.assign("/login");
 			return;
 		}
-		// Show logout button when user authenticated via real credentials
-		// (not bypassed via auth_disabled or localhost-no-password).
-		if (!auth.auth_disabled && (auth.has_password || auth.has_passkeys) && logoutBtn) {
-			logoutBtn.style.display = "";
-		}
-		if (auth.auth_disabled && !auth.localhost_only) {
-			showAuthDisabledBanner();
-		}
+		updateAuthChrome(auth);
 		startApp();
 	})
 	.catch(() => {
 		// If auth check fails, proceed anyway (backward compat).
 		startApp();
 	});
-
-function showAuthDisabledBanner() {
-	var el = document.getElementById("authDisabledBanner");
-	if (el) el.style.display = "";
-}
 
 function formatShareTitle(identity) {
 	var emoji = identity?.emoji || "";
