@@ -4006,6 +4006,7 @@ struct LoginHtmlTemplate<'a> {
     build_ts: &'a str,
     asset_prefix: &'a str,
     nonce: &'a str,
+    page_title: &'a str,
     gon_json: &'a str,
 }
 
@@ -4016,6 +4017,7 @@ struct OnboardingHtmlTemplate<'a> {
     build_ts: &'a str,
     asset_prefix: &'a str,
     nonce: &'a str,
+    page_title: &'a str,
 }
 
 #[cfg(feature = "web-ui")]
@@ -4119,11 +4121,13 @@ async fn render_spa_template(
         },
         SpaTemplate::Login => {
             let gon = build_gon_data(gateway).await;
+            let share_meta = build_share_meta(&gon.identity);
             let gon_json = script_safe_json(&gon);
             let template = LoginHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
                 nonce: &nonce,
+                page_title: &share_meta.site_name,
                 gon_json: &gon_json,
             };
             match template.render() {
@@ -4135,10 +4139,21 @@ async fn render_spa_template(
             }
         },
         SpaTemplate::Onboarding => {
+            let identity = gateway
+                .services
+                .onboarding
+                .identity_get()
+                .await
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let share_meta = build_share_meta(&identity);
+            let page_title = format!("{} onboarding", share_meta.site_name);
             let template = OnboardingHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
                 nonce: &nonce,
+                page_title: &page_title,
             };
             match template.render() {
                 Ok(html) => html,
@@ -5674,11 +5689,13 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-123",
+            page_title: "sparky onboarding",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render onboarding template: {e}"),
         };
+        assert!(html.contains("<title>sparky onboarding</title>"));
         assert!(html.contains("/assets/v/test/js/onboarding-app.js"));
         assert!(!html.contains("/assets/v/test/js/app.js"));
         assert!(!html.contains("/manifest.json"));
@@ -5763,12 +5780,14 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-abc",
+            page_title: "sparky",
             gon_json: "{\"identity\":{\"name\":\"moltis\"}}",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render login template: {e}"),
         };
+        assert!(html.contains("<title>sparky</title>"));
         assert!(html.contains("<script nonce=\"nonce-abc\">window.__MOLTIS__={\"identity\":{\"name\":\"moltis\"}};</script>"));
         assert!(html.contains(
             "<script nonce=\"nonce-abc\" type=\"module\" src=\"/assets/v/test/js/login-app.js\"></script>"
@@ -6076,6 +6095,7 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce,
+            page_title: "moltis onboarding",
         };
         let onboarding_html = match onboarding_template.render() {
             Ok(html) => html,
