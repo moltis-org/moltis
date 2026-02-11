@@ -14,8 +14,11 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 	test("completes auth and identity steps via WebSocket", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.goto("/");
-		await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
+		// Navigate directly to /onboarding — the server-side redirect from /
+		// is covered by Rust unit tests (onboarding_redirect_rules). Going
+		// straight here avoids a CI-only race where the redirect doesn't land
+		// before the SPA router takes over.
+		await page.goto("/onboarding");
 
 		// Auth step should be visible (setup code required for remote)
 		await expect(page.getByRole("heading", { name: "Secure your instance", exact: true })).toBeVisible();

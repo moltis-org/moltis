@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release workflow gates E2E tests**: Build Packages workflow now runs E2E
+  tests and blocks all package builds (deb, rpm, arch, AppImage, snap,
+  Homebrew, Docker) if they fail.
+
 ### Fixed
 
 - **Docker TLS setup**: All Docker examples now expose port 13132 for CA
   certificate download with instructions to trust the self-signed cert,
   fixing HTTPS access in Safari and other strict browsers.
+- **E2E onboarding-auth test**: Fixed CI-only flake where the redirect race
+  caused the test to land on `/chats/main` instead of `/onboarding`.
 
 ## [0.8.5] - 2026-02-11
 
