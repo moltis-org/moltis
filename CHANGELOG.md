@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docker TLS setup**: All Docker examples now expose port 13132 for CA
   certificate download with instructions to trust the self-signed cert,
   fixing HTTPS access in Safari and other strict browsers.
-- **E2E onboarding-auth test**: Fixed CI-only flake where the redirect race
-  caused the test to land on `/chats/main` instead of `/onboarding`.
+- **E2E onboarding-auth test**: The `auth` Playwright project's `testMatch`
+  regex `/auth\.spec/` also matched `onboarding-auth.spec.js`, causing it to
+  run against the default gateway (wrong server) instead of the onboarding-auth
+  gateway. Tightened regex to `/\/auth\.spec/`.
 
 ## [0.8.5] - 2026-02-11
 

@@ -61,7 +61,7 @@ module.exports = defineConfig({
 		},
 		{
 			name: "auth",
-			testMatch: /auth\.spec/,
+			testMatch: /\/auth\.spec/,
 			dependencies: ["default"],
 		},
 		{

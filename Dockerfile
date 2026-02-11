@@ -32,17 +32,21 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies:
 # - ca-certificates: for HTTPS connections to LLM providers
+# - sudo: allows moltis user to install packages at runtime (passwordless)
 # - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         libgomp1 \
+        sudo \
         docker.io && \
     rm -rf /var/lib/apt/lists/*
 
-# Create non-root user and add to docker group for socket access
+# Create non-root user and add to docker group for socket access.
+# Grant passwordless sudo so moltis can install host packages at startup.
 RUN useradd --create-home --user-group moltis && \
-    usermod -aG docker moltis
+    usermod -aG docker moltis && \
+    echo "moltis ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/moltis
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/moltis /usr/local/bin/moltis
