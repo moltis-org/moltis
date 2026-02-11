@@ -209,6 +209,28 @@ fn load_rustls_config(cert_path: &Path, key_path: &Path) -> Result<ServerConfig>
 struct HttpRedirectState {
     https_port: u16,
     ca_pem: Arc<Vec<u8>>,
+    localhost_mode: bool,
+    bind_host: String,
+}
+
+fn is_localhost_name(name: &str) -> bool {
+    matches!(name, "localhost" | "127.0.0.1" | "::1") || name.ends_with(".localhost")
+}
+
+fn host_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+    use axum::http::uri::Authority;
+
+    let raw = headers.get(axum::http::header::HOST)?.to_str().ok()?;
+    let authority: Authority = raw.parse().ok()?;
+    Some(authority.host().to_string())
+}
+
+fn format_url_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    }
 }
 
 /// Start a plain-HTTP server that serves the CA cert and redirects to HTTPS.
@@ -219,9 +241,12 @@ pub async fn start_http_redirect_server(
     ca_cert_path: &Path,
 ) -> Result<()> {
     let ca_pem = std::fs::read(ca_cert_path).context("read CA cert")?;
+    let localhost_mode = is_localhost_name(bind);
     let state = HttpRedirectState {
         https_port,
         ca_pem: Arc::new(ca_pem),
+        localhost_mode,
+        bind_host: bind.to_string(),
     };
 
     let app = Router::new()
@@ -231,9 +256,14 @@ pub async fn start_http_redirect_server(
 
     let addr: SocketAddr = format!("{bind}:{http_port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let display_host = if localhost_mode {
+        "localhost"
+    } else {
+        bind
+    };
     info!(
         "HTTP redirect server listening http://{}:{http_port}/certs/ca.pem",
-        LOCALHOST_DOMAIN
+        display_host
     );
     axum::serve(listener, app).await?;
     Ok(())
@@ -254,10 +284,21 @@ async fn serve_ca_cert(State(state): State<HttpRedirectState>) -> impl IntoRespo
 
 async fn redirect_to_https(
     State(state): State<HttpRedirectState>,
+    headers: axum::http::HeaderMap,
     uri: axum::http::Uri,
 ) -> impl IntoResponse {
-    let path = uri.path();
-    let target = format!("https://{}:{}{}", LOCALHOST_DOMAIN, state.https_port, path);
+    let host = if state.localhost_mode {
+        "localhost".to_string()
+    } else {
+        host_from_headers(&headers).unwrap_or_else(|| state.bind_host.clone())
+    };
+    let path_and_query = uri.path_and_query().map_or("/", |pq| pq.as_str());
+    let target = format!(
+        "https://{}:{}{}",
+        format_url_host(&host),
+        state.https_port,
+        path_and_query
+    );
     axum::response::Redirect::temporary(&target)
 }
 
@@ -266,7 +307,7 @@ async fn redirect_to_https(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, axum::response::IntoResponse};
 
     #[test]
     fn test_generate_all_produces_valid_pems() {
@@ -312,5 +353,74 @@ mod tests {
     #[test]
     fn test_is_expired_missing_file() {
         assert!(is_expired(Path::new("/nonexistent/file.pem"), 30));
+    }
+
+    #[test]
+    fn host_from_headers_strips_port() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "example.com:8080".parse().unwrap(),
+        );
+        assert_eq!(host_from_headers(&headers).as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn host_from_headers_extracts_ipv6() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "[::1]:8080".parse().unwrap());
+        assert_eq!(host_from_headers(&headers).as_deref(), Some("[::1]"));
+    }
+
+    #[tokio::test]
+    async fn redirect_uses_localhost_for_loopback_mode() {
+        let state = HttpRedirectState {
+            https_port: 3443,
+            ca_pem: Arc::new(Vec::new()),
+            localhost_mode: true,
+            bind_host: "127.0.0.1".to_string(),
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "moltis.localhost:18080".parse().unwrap(),
+        );
+        let uri: axum::http::Uri = "/foo?bar=baz".parse().unwrap();
+        let response = redirect_to_https(State(state), headers, uri)
+            .await
+            .into_response();
+
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert_eq!(location, "https://localhost:3443/foo?bar=baz");
+    }
+
+    #[tokio::test]
+    async fn redirect_uses_request_host_for_non_loopback_mode() {
+        let state = HttpRedirectState {
+            https_port: 3443,
+            ca_pem: Arc::new(Vec::new()),
+            localhost_mode: false,
+            bind_host: "0.0.0.0".to_string(),
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "gateway.example.com:8080".parse().unwrap(),
+        );
+        let uri: axum::http::Uri = "/foo".parse().unwrap();
+        let response = redirect_to_https(State(state), headers, uri)
+            .await
+            .into_response();
+
+        let location = response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert_eq!(location, "https://gateway.example.com:3443/foo");
     }
 }

@@ -1120,6 +1120,12 @@ pub async fn start_gateway(
     // Build extra allowed origins so passkeys work when accessed via mDNS
     // hostname (e.g. http://m4max.local:18080) in addition to localhost.
     let mut extra_origins = Vec::new();
+    if rp_id == "localhost"
+        && let Ok(url) =
+            webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://moltis.localhost:{port}"))
+    {
+        extra_origins.push(url);
+    }
     if let Ok(hn) = hostname::get() {
         let hn_str = hn.to_string_lossy();
         if hn_str != rp_id && hn_str != "localhost" {
@@ -2566,10 +2572,10 @@ pub async fn start_gateway(
     } else {
         addr
     };
-    // Use moltis.localhost for display URLs when bound to loopback with TLS.
+    // Use plain localhost for display URLs when bound to loopback with TLS.
     #[cfg(feature = "tls")]
     let display_host = if is_localhost && tls_active {
-        format!("{}:{}", crate::tls::LOCALHOST_DOMAIN, port)
+        format!("localhost:{port}")
     } else {
         display_ip.to_string()
     };
@@ -2645,7 +2651,7 @@ pub async fn start_gateway(
         if let Some(ref ca) = ca_cert_path {
             let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             let ca_host = if is_localhost {
-                crate::tls::LOCALHOST_DOMAIN
+                "localhost"
             } else {
                 bind
             };
