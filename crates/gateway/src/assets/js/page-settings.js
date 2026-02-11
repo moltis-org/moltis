@@ -39,6 +39,15 @@ function rerender() {
 	if (containerRef) render(html`<${SettingsPage} />`, containerRef);
 }
 
+function isSafariBrowser() {
+	if (typeof navigator === "undefined") return false;
+	var ua = navigator.userAgent || "";
+	var vendor = navigator.vendor || "";
+	if (!ua.includes("Safari/")) return false;
+	if (/(Chrome|CriOS|Chromium|Edg|OPR|FxiOS|Firefox|SamsungBrowser)/.test(ua)) return false;
+	return /Apple/i.test(vendor) || ua.includes("Safari/");
+}
+
 function fetchIdentity() {
 	if (!mounted) return;
 	sendRpc("agent.identity.get", {}).then((res) => {
@@ -230,6 +239,8 @@ function IdentitySection() {
 	var [soul, setSoul] = useState(id?.soul || "");
 	var [saving, setSaving] = useState(false);
 	var [emojiSaving, setEmojiSaving] = useState(false);
+	var [nameSaving, setNameSaving] = useState(false);
+	var [userNameSaving, setUserNameSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
 	var [showFaviconReloadHint, setShowFaviconReloadHint] = useState(false);
 	var [error, setError] = useState(null);
@@ -288,10 +299,10 @@ function IdentitySection() {
 			setSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
+				gon.set("identity", res.payload);
 				refreshGon();
-				if ((emoji.trim() || "") !== (id?.emoji || "").trim()) {
-					setShowFaviconReloadHint(true);
-				}
+				var emojiChanged = (emoji.trim() || "") !== (id?.emoji || "").trim();
+				setShowFaviconReloadHint(emojiChanged && isSafariBrowser());
 				flashSaved();
 			} else {
 				setError(res?.error?.message || "Failed to save");
@@ -310,16 +321,66 @@ function IdentitySection() {
 			if (res?.ok) {
 				identity.value = res.payload;
 				setEmoji(res.payload?.emoji || "");
+				gon.set("identity", res.payload);
 				refreshGon();
-				if ((nextEmoji.trim() || "") !== (id?.emoji || "").trim()) {
-					setShowFaviconReloadHint(true);
-				}
+				var emojiChanged = (nextEmoji.trim() || "") !== (id?.emoji || "").trim();
+				setShowFaviconReloadHint(emojiChanged && isSafariBrowser());
 				flashSaved();
 			} else {
 				setError(res?.error?.message || "Failed to save emoji");
 			}
 			rerender();
 		});
+	}
+
+	function autoSaveNameField(field, value) {
+		if (saving || emojiSaving || nameSaving || userNameSaving) return;
+		var trimmed = value.trim();
+		var currentValue = (identity.value?.[field] || "").trim();
+		if (trimmed === currentValue) return;
+
+		if (!trimmed) {
+			setError(field === "name" ? "Agent name is required." : "Your name is required.");
+			return;
+		}
+
+		setError(null);
+		setSaved(false);
+		if (field === "name") {
+			setNameSaving(true);
+		} else {
+			setUserNameSaving(true);
+		}
+
+		var payload = {};
+		payload[field] = trimmed;
+		sendRpc("agent.identity.update", payload).then((res) => {
+			if (field === "name") {
+				setNameSaving(false);
+			} else {
+				setUserNameSaving(false);
+			}
+
+			if (res?.ok) {
+				identity.value = res.payload;
+				gon.set("identity", res.payload);
+				refreshGon();
+				setName(res.payload?.name || "");
+				setUserName(res.payload?.user_name || "");
+				flashSaved();
+			} else {
+				setError(res?.error?.message || "Failed to save");
+			}
+			rerender();
+		});
+	}
+
+	function onNameBlur() {
+		autoSaveNameField("name", name);
+	}
+
+	function onUserNameBlur() {
+		autoSaveNameField("user_name", userName);
 	}
 
 	function onResetSoul() {
@@ -346,12 +407,12 @@ function IdentitySection() {
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Agent</h3>
 				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Saved to <code>IDENTITY.md</code> in your workspace root.</p>
 				<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;">
-					<div>
-						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Name *</div>
-						<input type="text" class="provider-key-input" style="width:100%;"
-							value=${name} onInput=${(e) => setName(e.target.value)}
-							placeholder="e.g. Rex" />
-					</div>
+						<div>
+							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Name *</div>
+							<input type="text" class="provider-key-input" style="width:100%;"
+								value=${name} onInput=${(e) => setName(e.target.value)} onBlur=${onNameBlur}
+								placeholder="e.g. Rex" />
+						</div>
 						<div>
 							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Emoji</div>
 							<${EmojiPicker} value=${emoji} onChange=${setEmoji} onSelect=${onEmojiSelect} />
@@ -382,13 +443,13 @@ function IdentitySection() {
 			<div>
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">User</h3>
 				<p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">Saved to <code>USER.md</code> in your workspace root.</p>
-				<div>
-					<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Your name *</div>
-					<input type="text" class="provider-key-input" style="width:100%;max-width:280px;"
-						value=${userName} onInput=${(e) => setUserName(e.target.value)}
-						placeholder="e.g. Alice" />
+					<div>
+						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Your name *</div>
+						<input type="text" class="provider-key-input" style="width:100%;max-width:280px;"
+							value=${userName} onInput=${(e) => setUserName(e.target.value)} onBlur=${onUserNameBlur}
+							placeholder="e.g. Alice" />
+					</div>
 				</div>
-			</div>
 
 			<!-- Soul section -->
 			<div>
@@ -410,10 +471,10 @@ function IdentitySection() {
 				}
 			</div>
 
-				<div style="display:flex;align-items:center;gap:8px;">
-					<button type="submit" class="provider-btn" disabled=${saving || emojiSaving}>
-						${saving || emojiSaving ? "Saving\u2026" : "Save"}
-					</button>
+					<div style="display:flex;align-items:center;gap:8px;">
+						<button type="submit" class="provider-btn" disabled=${saving || emojiSaving || nameSaving || userNameSaving}>
+							${saving || emojiSaving || nameSaving || userNameSaving ? "Saving\u2026" : "Save"}
+						</button>
 				${saved ? html`<span class="text-xs" style="color:var(--accent);">Saved</span>` : null}
 				${error ? html`<span class="text-xs" style="color:var(--error);">${error}</span>` : null}
 			</div>

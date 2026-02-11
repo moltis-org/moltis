@@ -3,7 +3,7 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import prettyBytes from "pretty-bytes";
-import { formatPageTitle } from "./branding.js";
+import { applyIdentityFavicon, formatPageTitle } from "./branding.js";
 import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
@@ -252,6 +252,7 @@ function applyIdentity(identity) {
 	var nameEl = document.getElementById("titleName");
 	if (emojiEl) emojiEl.textContent = identity?.emoji ? `${identity.emoji} ` : "";
 	if (nameEl) nameEl.textContent = identity?.name || "moltis";
+	applyIdentityFavicon(identity);
 	var branch = gon.get("git_branch");
 
 	// Keep page title in sync with identity and branch.
