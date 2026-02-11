@@ -189,6 +189,11 @@ release-preflight:
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
+# Commit all changes, push branch, create/update PR, and run local validation.
+# All args are optional; defaults are auto-generated from branch + changed files.
+ship commit_message='' pr_title='' pr_body='':
+    ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
+
 # Run all tests
 test:
     cargo test --all-features

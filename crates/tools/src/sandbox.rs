@@ -1741,10 +1741,14 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(
-            args,
-            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
-        );
+        assert_eq!(args, vec![
+            "--memory",
+            "256M",
+            "--cpus",
+            "0.5",
+            "--pids-limit",
+            "50"
+        ]);
     }
 
     #[test]
