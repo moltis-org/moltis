@@ -1,11 +1,11 @@
----
-description: "Git workflow standards: proper commit messages, pre-commit checks, and git worktree usage for independent feature work"
+description: "Moltis engineering guide for Claude/Codex agents: Rust architecture, testing, security, and release workflows"
 alwaysApply: true
 ---
 
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) and agents when
+working with code in this repository.
 
 ## General
 
