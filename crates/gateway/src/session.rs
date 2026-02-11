@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use {async_trait::async_trait, serde_json::Value, tracing::warn};
+use {
+    async_trait::async_trait,
+    serde_json::Value,
+    tracing::{info, warn},
+};
 
 use {
     moltis_common::hooks::HookRegistry,
@@ -111,6 +115,7 @@ pub struct LiveSessionService {
     project_store: Option<Arc<dyn ProjectStore>>,
     hook_registry: Option<Arc<HookRegistry>>,
     state_store: Option<Arc<SessionStateStore>>,
+    browser_service: Option<Arc<dyn crate::services::BrowserService>>,
 }
 
 impl LiveSessionService {
@@ -122,6 +127,7 @@ impl LiveSessionService {
             project_store: None,
             hook_registry: None,
             state_store: None,
+            browser_service: None,
         }
     }
 
@@ -142,6 +148,14 @@ impl LiveSessionService {
 
     pub fn with_state_store(mut self, store: Arc<SessionStateStore>) -> Self {
         self.state_store = Some(store);
+        self
+    }
+
+    pub fn with_browser_service(
+        mut self,
+        browser: Arc<dyn crate::services::BrowserService>,
+    ) -> Self {
+        self.browser_service = Some(browser);
         self
     }
 }
@@ -652,6 +666,12 @@ impl SessionService for LiveSessionService {
                 continue;
             }
             deleted += 1;
+        }
+
+        // Close all browser containers since all user sessions are being cleared.
+        if let Some(ref browser) = self.browser_service {
+            info!("closing all browser sessions after clear_all");
+            browser.close_all().await;
         }
 
         Ok(serde_json::json!({ "deleted": deleted }))

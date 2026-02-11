@@ -250,6 +250,16 @@ impl BrowserPool {
             }
         }
 
+        if to_remove.is_empty() {
+            return;
+        }
+
+        info!(
+            count = to_remove.len(),
+            sessions = ?to_remove,
+            "cleaning up idle browser sessions"
+        );
+
         for sid in to_remove {
             if let Err(e) = self.close_session(&sid).await {
                 warn!(session_id = sid, error = %e, "failed to close idle session");
@@ -460,6 +470,19 @@ impl BrowserPool {
             sandboxed: false,
             container: None,
         })
+    }
+}
+
+impl Drop for BrowserPool {
+    fn drop(&mut self) {
+        let instances = self.instances.get_mut();
+        let count = instances.len();
+        if count > 0 {
+            info!(
+                count,
+                "browser pool dropping, stopping remaining containers"
+            );
+        }
     }
 }
 

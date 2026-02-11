@@ -221,6 +221,30 @@ whichever is already imported in the crate you're editing, but default to
 
 ### General style
 
+- **Prefer guard clauses (early returns)** over nested `if` blocks. Check
+  for edge cases at the top of a function or block and `return` immediately,
+  then continue with the main logic at the top indentation level. This
+  reduces nesting and makes the happy path easier to follow.
+
+  ```rust
+  // Good — guard clause, flat structure
+  if items.is_empty() {
+      return;
+  }
+  info!(count = items.len(), "processing items");
+  for item in items { /* ... */ }
+
+  // Bad — unnecessary nesting
+  if !items.is_empty() {
+      info!(count = items.len(), "processing items");
+      for item in items { /* ... */ }
+  }
+  ```
+
+  Apply this to all control flow: `return`, `return Ok(...)`, `continue`,
+  `break`. When a function has multiple preconditions, stack the guards at
+  the top so the reader hits the happy path quickly.
+
 - Prefer iterators and combinators (`.map()`, `.filter()`, `.collect()`)
   over manual loops when they express intent more clearly.
 - Use `Cow<'_, str>` when a function may or may not need to allocate.

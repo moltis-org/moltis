@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hook event validation**: `moltis config check` now warns on unknown hook
   event names in the config file.
 
+### Fixed
+
+- **Browser container lifecycle**: Browser containers (browserless/chrome)
+  now have proper lifecycle management — periodic cleanup removes idle
+  instances every 30 seconds, graceful shutdown stops all containers on
+  Ctrl+C, and `sessions.clear_all` immediately closes all browser sessions.
+  A `Drop` safety net ensures containers are stopped even on unexpected exits.
+
 ### Changed
 
 - **Hooks documentation**: Rewritten `docs/src/hooks.md` with complete event

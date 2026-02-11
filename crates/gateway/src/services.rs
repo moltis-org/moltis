@@ -1546,6 +1546,12 @@ fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
 #[async_trait]
 pub trait BrowserService: Send + Sync {
     async fn request(&self, params: Value) -> ServiceResult;
+    /// Clean up idle browser instances (called periodically).
+    async fn cleanup_idle(&self) {}
+    /// Shut down all browser instances (called on gateway exit).
+    async fn shutdown(&self) {}
+    /// Close all browser sessions (called on sessions.clear_all).
+    async fn close_all(&self) {}
 }
 
 pub struct NoopBrowserService;
@@ -1589,6 +1595,18 @@ impl BrowserService for RealBrowserService {
         let response = self.manager.handle_request(request).await;
 
         serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))
+    }
+
+    async fn cleanup_idle(&self) {
+        self.manager.cleanup_idle().await;
+    }
+
+    async fn shutdown(&self) {
+        self.manager.shutdown().await;
+    }
+
+    async fn close_all(&self) {
+        self.manager.shutdown().await;
     }
 }
 

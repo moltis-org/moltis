@@ -746,6 +746,13 @@ impl BrowserManager {
         Ok(())
     }
 
+    /// Close a specific browser session by ID.
+    pub async fn close_session(&self, session_id: &str) {
+        if let Err(e) = self.pool.close_session(session_id).await {
+            warn!(session_id, error = %e, "failed to close browser session");
+        }
+    }
+
     /// Clean up idle browser instances.
     pub async fn cleanup_idle(&self) {
         self.pool.cleanup_idle().await;
