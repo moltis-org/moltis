@@ -22,3 +22,7 @@ spec:
           value: /data
         - key: MOLTIS_DEPLOY_PLATFORM
           value: digitalocean
+        - key: MOLTIS_WEBAUTHN_RP_ID
+          value: ${APP_DOMAIN}
+        - key: MOLTIS_WEBAUTHN_ORIGIN
+          value: ${APP_URL}

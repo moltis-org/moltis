@@ -6,6 +6,9 @@ use secrecy::ExposeSecret;
 use std::path::PathBuf;
 
 #[cfg(feature = "web-ui")]
+use askama::Template;
+
+#[cfg(feature = "web-ui")]
 use axum::response::{Html, Redirect};
 use {
     axum::{
@@ -1108,15 +1111,29 @@ pub async fn start_gateway(
     );
 
     // Initialize WebAuthn state for passkey support.
-    // RP ID defaults to "localhost"; override with MOLTIS_WEBAUTHN_RP_ID.
-    let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".into());
+    // RP ID: explicit env > PaaS env (DO, Render, Railway) > "localhost"
+    let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
+        .or_else(|_| std::env::var("APP_DOMAIN"))
+        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
+        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
+        .unwrap_or_else(|_| "localhost".into());
     let default_scheme = if config.tls.enabled {
         "https"
     } else {
         "http"
     };
+    // Origin: explicit env > PaaS env (DO, Render) > scheme://rp_id(:port)
+    // PaaS platforms proxy on standard ports, so skip the port when rp_id isn't localhost.
     let rp_origin_str = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
-        .unwrap_or_else(|_| format!("{default_scheme}://{rp_id}:{port}"));
+        .or_else(|_| std::env::var("APP_URL"))
+        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
+        .unwrap_or_else(|_| {
+            if rp_id == "localhost" {
+                format!("{default_scheme}://{rp_id}:{port}")
+            } else {
+                format!("{default_scheme}://{rp_id}")
+            }
+        });
     // Build extra allowed origins so passkeys work when accessed via mDNS
     // hostname (e.g. http://m4max.local:18080) in addition to localhost.
     let mut extra_origins = Vec::new();
@@ -3904,15 +3921,70 @@ async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 #[cfg(feature = "web-ui")]
+const SHARE_IMAGE_URL: &str = "https://www.moltis.org/og-social.jpg?v=4";
+
+#[cfg(feature = "web-ui")]
+struct ShareMeta {
+    title: String,
+    description: String,
+    site_name: String,
+    image_alt: String,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(askama::Template)]
+#[template(path = "index.html", escape = "html")]
+struct IndexHtmlTemplate<'a> {
+    build_ts: &'a str,
+    share_title: &'a str,
+    share_description: &'a str,
+    share_site_name: &'a str,
+    share_image_url: &'a str,
+    share_image_alt: &'a str,
+}
+
+#[cfg(feature = "web-ui")]
+fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
+    let agent_name = identity.name.trim();
+    let agent_name = if agent_name.is_empty() {
+        "moltis"
+    } else {
+        agent_name
+    };
+    let user_name = identity
+        .user_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+
+    let title = match user_name {
+        Some(user_name) => format!("{agent_name}: {user_name} AI assistant"),
+        None => format!("{agent_name}: AI assistant"),
+    };
+    let description = match user_name {
+        Some(user_name) => format!(
+            "{agent_name} is {user_name}'s personal AI assistant. Multi-provider models, tools, memory, sandboxed execution, and channel access in one Rust binary."
+        ),
+        None => format!(
+            "{agent_name} is a personal AI assistant. Multi-provider models, tools, memory, sandboxed execution, and channel access in one Rust binary."
+        ),
+    };
+    let image_alt = format!("{agent_name} - personal AI assistant");
+
+    ShareMeta {
+        title,
+        description,
+        site_name: agent_name.to_owned(),
+        image_alt,
+    }
+}
+
+#[cfg(feature = "web-ui")]
 async fn render_spa_template(
     gateway: &GatewayState,
     template_name: &str,
 ) -> axum::response::Response {
-    let raw = read_asset(template_name)
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_default();
-
-    let mut body = if is_dev_assets() {
+    let (build_ts, versioned) = if is_dev_assets() {
         // Dev: bust browser cache by routing through the versioned path with a
         // timestamp that changes every request.  Safari aggressively caches even
         // with no-cache headers, so a changing URL is the only reliable fix.
@@ -3920,23 +3992,51 @@ async fn render_spa_template(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let versioned = format!("/assets/v/{ts}/");
-        raw.replace("__BUILD_TS__", "dev")
-            .replace("/assets/", &versioned)
+        ("dev".to_owned(), format!("/assets/v/{ts}/"))
     } else {
         // Production: inject content-hash versioned URLs for immutable caching
         static HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(asset_content_hash);
-        let versioned = format!("/assets/v/{}/", *HASH);
-        raw.replace("__BUILD_TS__", &HASH)
-            .replace("/assets/", &versioned)
+        (HASH.to_string(), format!("/assets/v/{}/", *HASH))
     };
+    let mut precomputed_gon: Option<GonData> = None;
+
+    let mut body = if template_name == "index.html" {
+        let gon = build_gon_data(gateway).await;
+        let share_meta = build_share_meta(&gon.identity);
+        let template = IndexHtmlTemplate {
+            build_ts: &build_ts,
+            share_title: &share_meta.title,
+            share_description: &share_meta.description,
+            share_site_name: &share_meta.site_name,
+            share_image_url: SHARE_IMAGE_URL,
+            share_image_alt: &share_meta.image_alt,
+        };
+        precomputed_gon = Some(gon);
+        match template.render() {
+            Ok(html) => html,
+            Err(e) => {
+                warn!(error = %e, "failed to render index template");
+                String::new()
+            },
+        }
+    } else {
+        read_asset(template_name)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default()
+            .replace("__BUILD_TS__", &build_ts)
+    };
+    body = body.replace("/assets/", &versioned);
 
     // Generate a per-request nonce for CSP script-src.
     let nonce = uuid::Uuid::new_v4().to_string();
 
     if template_name != "onboarding.html" {
         // Build server-side data blob (gon pattern) injected into <head>.
-        let gon = build_gon_data(gateway).await;
+        let gon = match precomputed_gon {
+            Some(gon) => gon,
+            None => build_gon_data(gateway).await,
+        };
+
         let gon_script = format!(
             "<script nonce=\"{nonce}\">window.__MOLTIS__={};</script>",
             serde_json::to_string(&gon).unwrap_or_else(|_| "{}".into()),
@@ -5484,6 +5584,69 @@ mod tests {
         assert!(html.contains("/assets/js/onboarding-app.js"));
         assert!(!html.contains("/assets/js/app.js"));
         assert!(!html.contains("/manifest.json"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn share_meta_uses_agent_and_user_name() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "sparky".to_owned(),
+            user_name: Some("penso".to_owned()),
+            ..Default::default()
+        };
+
+        let meta = build_share_meta(&identity);
+        assert_eq!(meta.title, "sparky: penso AI assistant");
+        assert!(
+            meta.description
+                .contains("sparky is penso's personal AI assistant.")
+        );
+        assert_eq!(meta.site_name, "sparky");
+        assert_eq!(meta.image_alt, "sparky - personal AI assistant");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn share_meta_falls_back_when_user_name_missing() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "moltis".to_owned(),
+            user_name: Some("   ".to_owned()),
+            ..Default::default()
+        };
+
+        let meta = build_share_meta(&identity);
+        assert_eq!(meta.title, "moltis: AI assistant");
+        assert!(
+            meta.description
+                .starts_with("moltis is a personal AI assistant.")
+        );
+        assert_eq!(meta.site_name, "moltis");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn askama_template_escapes_share_meta_values() {
+        let template = IndexHtmlTemplate {
+            build_ts: "dev",
+            share_title: "A&B <tag>",
+            share_description: "desc <b>safe</b>",
+            share_site_name: "moltis",
+            share_image_url: SHARE_IMAGE_URL,
+            share_image_alt: "preview <image>",
+        };
+        let html = match template.render() {
+            Ok(html) => html,
+            Err(e) => panic!("failed to render askama template: {e}"),
+        };
+        assert!(html.contains("A&amp;B") || html.contains("A&#38;B"));
+        assert!(!html.contains("A&B <tag>"));
+        assert!(
+            html.contains("desc &#60;b&#62;safe&#60;/b&#62;")
+                || html.contains("desc &lt;b&gt;safe&lt;/b&gt;")
+        );
+        assert!(!html.contains("desc <b>safe</b>"));
+        assert!(html.contains("preview &#60;image&#62;") || html.contains("preview &lt;image&gt;"));
+        assert!(!html.contains("preview <image>"));
     }
 
     #[test]
