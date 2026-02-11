@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-02-11
+
+### Added
+
+- **CLI `--version` flag**: `moltis --version` now prints the version.
+- **Askama HTML rendering**: SPA index and social metadata templates use
+  Askama instead of string replacement.
+
 ### Fixed
 
 - **WebSocket reconnect after remote onboarding auth**: Connection now
@@ -19,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connections behind the platform's reverse proxy.
 - **WebAuthn origin scheme on PaaS**: Non-localhost RP IDs now default to
   `https://` origin since PaaS platforms terminate TLS at the proxy.
+
+### Security
+
+- **Compaction prompt injection hardening**: Session compaction now passes
+  typed `ChatMessage` objects to the summarizer LLM instead of concatenated
+  `{role}: {content}` text, preventing role-spoofing prompt injection where
+  user content could mimic role prefixes (similar to GHSA-g8p2-7wf7-98mq).
 
 ## [0.8.4] - 2026-02-11
 
