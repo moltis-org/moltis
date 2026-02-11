@@ -137,6 +137,7 @@ in a container, you need to give it access to the host's container runtime.
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -146,6 +147,7 @@ docker run -d \
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
@@ -155,13 +157,19 @@ podman run -d \
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-Open `http://localhost:13131` in your browser and complete the setup.
+Open `https://localhost:13131` in your browser and complete the setup.
+
+Moltis generates a self-signed TLS certificate on first run. To trust it and
+remove browser warnings, download the CA certificate from
+`http://localhost:13132/certs/ca.pem` and add it to your system trust store
+(Keychain on macOS, `update-ca-certificates` on Linux).
 
 **Important notes:**
 

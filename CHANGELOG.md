@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker TLS setup**: All Docker examples now expose port 13132 for CA
+  certificate download with instructions to trust the self-signed cert,
+  fixing HTTPS access in Safari and other strict browsers.
+
 ## [0.8.5] - 2026-02-11
 
 ### Added

@@ -57,9 +57,10 @@ VOLUME ["/home/moltis/.config/moltis", "/home/moltis/.moltis", "/var/run/docker.
 USER moltis
 WORKDIR /home/moltis
 
-# Expose gateway port (HTTPS) and HTTP redirect/CA-download port (gateway port + 1)
+# Expose gateway port (HTTPS) and HTTP port for CA certificate download (gateway port + 1)
 EXPOSE 13131 13132
 
-# Run the gateway on the specified port
+# Bind 0.0.0.0 so Docker port forwarding works (localhost only binds to
+# the container's loopback, making the port unreachable from the host).
 ENTRYPOINT ["moltis"]
-CMD ["--port", "13131"]
+CMD ["--bind", "0.0.0.0", "--port", "13131"]

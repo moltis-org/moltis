@@ -10,13 +10,36 @@ Registry on every release.
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/moltis-org/moltis:latest
 ```
 
-Open http://localhost:13131 in your browser and configure your LLM provider to start chatting.
+Open https://localhost:13131 in your browser and configure your LLM provider to start chatting.
+
+### Trusting the TLS certificate
+
+Moltis generates a self-signed CA on first run. Browsers will show a security
+warning until you trust this CA. Port 13132 serves the certificate over plain
+HTTP so you can download it:
+
+```bash
+# Download the CA certificate
+curl -o moltis-ca.pem http://localhost:13132/certs/ca.pem
+
+# macOS — add to system Keychain and trust it
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain moltis-ca.pem
+
+# Linux (Debian/Ubuntu)
+sudo cp moltis-ca.pem /usr/local/share/ca-certificates/moltis-ca.crt
+sudo update-ca-certificates
+```
+
+After trusting the CA, restart your browser. The warning will not appear again
+(the CA persists in the mounted config volume).
 
 ```admonish note
 When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:
@@ -42,6 +65,7 @@ for easier access to configuration files:
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v ./config:/home/moltis/.config/moltis \
   -v ./data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -89,6 +113,7 @@ services:
     restart: unless-stopped
     ports:
       - "13131:13131"
+      - "13132:13132"
     volumes:
       - ./config:/home/moltis/.config/moltis
       - ./data:/home/moltis/.moltis
@@ -112,6 +137,7 @@ socket instead of the Docker socket:
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
@@ -121,6 +147,7 @@ podman run -d \
 podman run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
@@ -150,6 +177,7 @@ Example:
 docker run -d \
   --name moltis \
   -p 13131:13131 \
+  -p 13132:13132 \
   -e MOLTIS_CONFIG_DIR=/config \
   -e MOLTIS_DATA_DIR=/data \
   -v ./config:/config \

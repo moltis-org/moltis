@@ -2,7 +2,7 @@
 #
 # Usage:
 #   docker compose up -d
-#   open http://localhost:13131
+#   open https://localhost:13131
 #
 # On first launch, a setup code is printed to the logs:
 #   docker compose logs moltis
@@ -20,6 +20,7 @@ services:
     restart: unless-stopped
     ports:
       - "13131:13131"
+      - "13132:13132"
     volumes:
       # Configuration files (editable from host)
       - ./config:/home/moltis/.config/moltis
