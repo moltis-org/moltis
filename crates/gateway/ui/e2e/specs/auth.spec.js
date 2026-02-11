@@ -469,15 +469,34 @@ test.describe("Login page", () => {
 			return {
 				title: name,
 				hasEmoji: !!emoji,
-				firstIconHref: document.querySelector('link[rel="icon"]')?.href || "",
 			};
 		});
 		await expect.poll(() => page.title()).toBe(expected.title);
 		await expect(page.locator(".auth-title")).toContainText(expected.title);
 		if (expected.hasEmoji) {
-			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeTruthy();
+			await expect
+				.poll(
+					() =>
+						page.evaluate(() =>
+							Array.from(document.querySelectorAll('link[rel="icon"]')).some((link) =>
+								(link.href || "").startsWith("data:image/svg+xml,"),
+							),
+						),
+					{ timeout: 5_000 },
+				)
+				.toBe(true);
 		} else {
-			expect(expected.firstIconHref).toContain("/assets/");
+			await expect
+				.poll(
+					() =>
+						page.evaluate(() =>
+							Array.from(document.querySelectorAll('link[rel="icon"]')).some((link) =>
+								(link.href || "").includes("/assets/"),
+							),
+						),
+					{ timeout: 5_000 },
+				)
+				.toBe(true);
 		}
 
 		expect(pageErrors).toEqual([]);

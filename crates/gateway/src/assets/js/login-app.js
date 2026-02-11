@@ -1,7 +1,7 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { formatLoginTitle } from "./branding.js";
+import { applyIdentityFavicon, formatLoginTitle } from "./branding.js";
 import { initTheme } from "./theme.js";
 
 initTheme();
@@ -12,6 +12,7 @@ var identity = gon.identity || null;
 
 // Set page branding from identity.
 document.title = formatLoginTitle(identity);
+applyIdentityFavicon(identity);
 
 async function parseLoginFailure(response) {
 	if (response.status === 429) {

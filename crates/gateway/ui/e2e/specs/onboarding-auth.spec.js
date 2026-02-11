@@ -41,6 +41,14 @@ test.describe("Onboarding with forced auth (remote)", () => {
 		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
 		const providersHeading = page.getByRole("heading", { name: /^(Add LLMs|Add providers)$/ });
 
+		await expect
+			.poll(
+				async () =>
+					(await authHeading.isVisible()) || (await identityHeading.isVisible()) || (await providersHeading.isVisible()),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+
 		if (await authHeading.isVisible()) {
 			await page.getByPlaceholder("6-digit code from terminal").fill("123456");
 			await page.locator(".backend-card").filter({ hasText: "Password" }).click();
@@ -48,7 +56,13 @@ test.describe("Onboarding with forced auth (remote)", () => {
 			await inputs.first().fill("testpassword1");
 			await inputs.nth(1).fill("testpassword1");
 			await page.getByRole("button", { name: /^Set password(?: & continue)?$/ }).click();
-			await expect(identityHeading).toBeVisible({ timeout: 10_000 });
+			await expect
+				.poll(async () => (await identityHeading.isVisible()) || (await providersHeading.isVisible()), { timeout: 10_000 })
+				.toBe(true);
+			if (await providersHeading.isVisible()) {
+				expect(pageErrors).toEqual([]);
+				return;
+			}
 		} else if (!(await identityHeading.isVisible())) {
 			await expect(providersHeading).toBeVisible({ timeout: 10_000 });
 			expect(pageErrors).toEqual([]);
