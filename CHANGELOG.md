@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **WebSocket reconnect after remote onboarding auth**: Connection now
+  reconnects immediately after auth setup instead of waiting for the backoff
+  timer, fixing "WebSocket not connected" errors during identity save.
+- **Passkeys on Fly.io**: Auto-detect WebAuthn RP ID from `FLY_APP_NAME`
+  environment variable (constructs `{app}.fly.dev`).
+- **PaaS proxy detection**: Added explicit `MOLTIS_BEHIND_PROXY=true` to
+  `render.yaml` and `fly.toml` so auth middleware reliably detects remote
+  connections behind the platform's reverse proxy.
+- **WebAuthn origin scheme on PaaS**: Non-localhost RP IDs now default to
+  `https://` origin since PaaS platforms terminate TLS at the proxy.
+
 ## [0.8.4] - 2026-02-11
 
 ### Changed

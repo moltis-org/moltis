@@ -13,6 +13,8 @@ services:
         value: /tmp/moltis/config
       - key: MOLTIS_DATA_DIR
         value: /tmp/moltis
+      - key: MOLTIS_BEHIND_PROXY
+        value: "true"
       - key: MOLTIS_DEPLOY_PLATFORM
         value: render
     dockerCommand: moltis --bind 0.0.0.0 --port 10000 --no-tls

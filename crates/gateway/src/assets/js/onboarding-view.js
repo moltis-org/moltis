@@ -15,6 +15,7 @@ import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
+import { forceReconnect } from "./ws-connect.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
@@ -136,6 +137,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
+					forceReconnect();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -203,6 +205,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((r) => {
 				if (r.ok) {
+					forceReconnect();
 					setSaving(false);
 					setPasskeyDone(true);
 				} else {
@@ -241,6 +244,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
+					forceReconnect();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -302,7 +306,10 @@ function AuthStep({ onNext, skippable }) {
 					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
 						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
 					</button>
-					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip</button>
+					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${() => {
+						forceReconnect();
+						onNext();
+					}}>Skip</button>
 				</div>
 			</form>
 		</div>`;

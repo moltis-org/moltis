@@ -2,6 +2,7 @@
 image = 'ghcr.io/moltis-org/moltis:latest'
 
 [env]
+MOLTIS_BEHIND_PROXY    = 'true'
 MOLTIS_CONFIG_DIR      = '/data/config'
 MOLTIS_DATA_DIR        = '/data'
 MOLTIS_DEPLOY_PLATFORM = 'flyio'

@@ -3,6 +3,7 @@ import { nextId } from "./helpers.js";
 import * as S from "./state.js";
 
 var reconnectTimer = null;
+var lastOpts = null;
 
 /**
  * Open a WebSocket, perform the protocol handshake, route RPC responses to
@@ -16,6 +17,7 @@ var reconnectTimer = null;
  * @param {{ factor?: number, max?: number }} [opts.backoff] — default {1.5, 5000}
  */
 export function connectWs(opts) {
+	lastOpts = opts;
 	var backoff = Object.assign({ factor: 1.5, max: 5000 }, opts.backoff);
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
 	var ws = new WebSocket(`${proto}//${location.host}/ws`);
@@ -97,9 +99,10 @@ function scheduleReconnect(reconnect, backoff) {
 
 /** Force an immediate reconnect (e.g. on tab visibility change). */
 export function forceReconnect(opts) {
-	if (S.connected) return;
+	var resolved = opts || lastOpts;
+	if (!resolved || S.connected) return;
 	clearTimeout(reconnectTimer);
 	reconnectTimer = null;
 	S.setReconnectDelay(1000);
-	connectWs(opts);
+	connectWs(resolved);
 }

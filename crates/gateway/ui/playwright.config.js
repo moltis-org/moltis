@@ -34,6 +34,9 @@ const baseURL = process.env.MOLTIS_E2E_BASE_URL || `http://127.0.0.1:${port}`;
 const onboardingPort = resolvePort("MOLTIS_E2E_ONBOARDING_PORT", usedPorts);
 const onboardingBaseURL = process.env.MOLTIS_E2E_ONBOARDING_BASE_URL || `http://127.0.0.1:${onboardingPort}`;
 
+const onboardingAuthPort = resolvePort("MOLTIS_E2E_ONBOARDING_AUTH_PORT", usedPorts);
+const onboardingAuthBaseURL = `http://127.0.0.1:${onboardingAuthPort}`;
+
 module.exports = defineConfig({
 	testDir: "./e2e/specs",
 	timeout: 45_000,
@@ -54,7 +57,7 @@ module.exports = defineConfig({
 	projects: [
 		{
 			name: "default",
-			testIgnore: [/auth\.spec/, /onboarding\.spec/],
+			testIgnore: [/auth\.spec/, /onboarding\.spec/, /onboarding-auth\.spec/],
 		},
 		{
 			name: "auth",
@@ -66,6 +69,13 @@ module.exports = defineConfig({
 			testMatch: /onboarding\.spec/,
 			use: {
 				baseURL: onboardingBaseURL,
+			},
+		},
+		{
+			name: "onboarding-auth",
+			testMatch: /onboarding-auth\.spec/,
+			use: {
+				baseURL: onboardingAuthBaseURL,
 			},
 		},
 	],
@@ -90,6 +100,17 @@ module.exports = defineConfig({
 			env: {
 				...process.env,
 				MOLTIS_E2E_ONBOARDING_PORT: onboardingPort,
+			},
+		},
+		{
+			command: "./e2e/start-gateway-onboarding-auth.sh",
+			cwd: __dirname,
+			url: `${onboardingAuthBaseURL}/health`,
+			reuseExistingServer: !process.env.CI,
+			timeout: 300_000,
+			env: {
+				...process.env,
+				MOLTIS_E2E_ONBOARDING_AUTH_PORT: onboardingAuthPort,
 			},
 		},
 	],

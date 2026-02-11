@@ -1111,10 +1111,13 @@ pub async fn start_gateway(
     );
 
     // Initialize WebAuthn state for passkey support.
-    // RP ID: explicit env > PaaS env (DO, Render, Railway) > "localhost"
+    // RP ID: explicit env > PaaS env (DO, Render, Fly, Railway) > "localhost"
     let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
         .or_else(|_| std::env::var("APP_DOMAIN"))
         .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
+        .or_else(|_| {
+            std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev"))
+        })
         .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
         .unwrap_or_else(|_| "localhost".into());
     let default_scheme = if config.tls.enabled {
@@ -1122,7 +1125,7 @@ pub async fn start_gateway(
     } else {
         "http"
     };
-    // Origin: explicit env > PaaS env (DO, Render) > scheme://rp_id(:port)
+    // Origin: explicit env > PaaS env (DO, Render, Fly) > scheme://rp_id(:port)
     // PaaS platforms proxy on standard ports, so skip the port when rp_id isn't localhost.
     let rp_origin_str = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
         .or_else(|_| std::env::var("APP_URL"))
@@ -1131,7 +1134,9 @@ pub async fn start_gateway(
             if rp_id == "localhost" {
                 format!("{default_scheme}://{rp_id}:{port}")
             } else {
-                format!("{default_scheme}://{rp_id}")
+                // PaaS platforms terminate TLS at the proxy, so the browser always
+                // sees https even though the app runs with --no-tls.
+                format!("https://{rp_id}")
             }
         });
     // Build extra allowed origins so passkeys work when accessed via mDNS
@@ -2194,7 +2199,8 @@ pub async fn start_gateway(
     // Generate a one-time setup code if setup is pending and auth is not disabled.
     let setup_code_display =
         if !credential_store.is_setup_complete() && !credential_store.is_auth_disabled() {
-            let code = crate::auth_routes::generate_setup_code();
+            let code = std::env::var("MOLTIS_E2E_SETUP_CODE")
+                .unwrap_or_else(|_| crate::auth_routes::generate_setup_code());
             state.inner.write().await.setup_code = Some(secrecy::Secret::new(code.clone()));
             Some(code)
         } else {
