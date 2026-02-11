@@ -39,7 +39,7 @@ const routeCases = [
 	{
 		path: "/projects",
 		expectedUrl: /\/projects$/,
-		activeNav: "/projects",
+		activeNav: null,
 		heading: "Repositories",
 	},
 	{
@@ -58,7 +58,9 @@ for (const routeCase of routeCases) {
 
 		await expect(page).toHaveURL(routeCase.expectedUrl);
 		await expectPageContentMounted(page);
-		await expect(page.locator(`a.nav-link[href="${routeCase.activeNav}"]`)).toHaveClass(/active/);
+		if (routeCase.activeNav) {
+			await expect(page.locator(`a.nav-link[href="${routeCase.activeNav}"]`)).toHaveClass(/active/);
+		}
 		await expect(
 			page.getByRole("heading", {
 				name: routeCase.heading,

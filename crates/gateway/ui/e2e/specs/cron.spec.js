@@ -18,6 +18,15 @@ test.describe("Cron jobs page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("heartbeat inactive state disables run now with info notice", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/crons/heartbeat");
+
+		await expect(page.getByRole("button", { name: "Run Now", exact: true })).toBeDisabled();
+		await expect(page.getByText(/Heartbeat inactive:/)).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("create job button present", async ({ page }) => {
 		await navigateAndWait(page, "/crons/jobs");
 

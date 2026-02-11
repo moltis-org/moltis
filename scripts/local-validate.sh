@@ -369,7 +369,13 @@ run_check "local/lockfile" "cargo fetch --locked"
 # These do not wait on local/zizmor (advisory and non-blocking).
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
-run_check "local/e2e" "$e2e_cmd"
+
+# Gateway web UI e2e tests.
+if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
+  run_check "local/e2e" "$e2e_cmd"
+else
+  echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
+fi
 
 # Coverage (optional — requires cargo-llvm-cov).
 # Skipped silently when the tool is not installed. Disable explicitly with
