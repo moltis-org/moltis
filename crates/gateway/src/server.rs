@@ -1115,9 +1115,7 @@ pub async fn start_gateway(
     let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
         .or_else(|_| std::env::var("APP_DOMAIN"))
         .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| {
-            std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev"))
-        })
+        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
         .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
         .unwrap_or_else(|_| "localhost".into());
     let default_scheme = if config.tls.enabled {

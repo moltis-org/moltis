@@ -2667,23 +2667,17 @@ impl ChatService for LiveChatService {
             }
         }
 
-        // Build a summary prompt from the conversation.
-        let mut conversation_text = String::new();
-        for msg in &history {
-            let role = msg
-                .get("role")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            conversation_text.push_str(&format!("{role}: {content}\n\n"));
-        }
-
-        let summary_messages = vec![
-            ChatMessage::system(
-                "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
-            ),
-            ChatMessage::user(&conversation_text),
-        ];
+        // Build a summary prompt from the conversation using structured messages.
+        // We pass the typed ChatMessage objects directly so role boundaries are
+        // maintained via the API's message structure, preventing prompt injection
+        // where user content could mimic role prefixes in concatenated text.
+        let mut summary_messages = vec![ChatMessage::system(
+            "You are a conversation summarizer. The messages that follow are a conversation you must summarize. Preserve all key facts, decisions, and context. After the conversation, you will receive a final instruction.",
+        )];
+        summary_messages.extend(values_to_chat_messages(&history));
+        summary_messages.push(ChatMessage::user(
+            "Summarize the conversation above into a concise form. Output only the summary, no preamble.",
+        ));
 
         // Use the session's model if available, otherwise fall back to the model
         // from the last assistant message, then to the first registered provider.
@@ -4002,22 +3996,16 @@ async fn compact_session(
         return Err("nothing to compact".into());
     }
 
-    let mut conversation_text = String::new();
-    for msg in &history {
-        let role = msg
-            .get("role")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        conversation_text.push_str(&format!("{role}: {content}\n\n"));
-    }
-
-    let summary_messages = vec![
-        ChatMessage::system(
-            "You are a conversation summarizer. Summarize the following conversation into a concise form that preserves all key facts, decisions, and context. Output only the summary, no preamble.",
-        ),
-        ChatMessage::user(&conversation_text),
-    ];
+    // Use structured ChatMessage objects so role boundaries are maintained via
+    // the API's message structure, preventing prompt injection where user content
+    // could mimic role prefixes in concatenated text.
+    let mut summary_messages = vec![ChatMessage::system(
+        "You are a conversation summarizer. The messages that follow are a conversation you must summarize. Preserve all key facts, decisions, and context. After the conversation, you will receive a final instruction.",
+    )];
+    summary_messages.extend(values_to_chat_messages(&history));
+    summary_messages.push(ChatMessage::user(
+        "Summarize the conversation above into a concise form. Output only the summary, no preamble.",
+    ));
 
     let mut stream = provider.stream(summary_messages);
     let mut summary = String::new();
