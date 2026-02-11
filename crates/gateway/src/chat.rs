@@ -12,7 +12,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::Value,
     tokio::{
-        sync::{OnceCell, OwnedSemaphorePermit, RwLock, Semaphore},
+        sync::{OnceCell, OwnedSemaphorePermit, RwLock, Semaphore, mpsc},
         task::AbortHandle,
     },
     tokio_stream::StreamExt,
@@ -3385,6 +3385,19 @@ async fn clear_unsupported_model(
     }
 }
 
+fn ordered_runner_event_callback() -> (
+    Box<dyn Fn(RunnerEvent) + Send + Sync>,
+    mpsc::UnboundedReceiver<RunnerEvent>,
+) {
+    let (tx, rx) = mpsc::unbounded_channel::<RunnerEvent>();
+    let callback: Box<dyn Fn(RunnerEvent) + Send + Sync> = Box::new(move |event| {
+        if tx.send(event).is_err() {
+            debug!("runner event dropped because event processor is closed");
+        }
+    });
+    (callback, rx)
+}
+
 async fn run_with_tools(
     state: &Arc<GatewayState>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -3463,23 +3476,22 @@ async fn run_with_tools(
         false
     };
 
-    // Broadcast tool events to the UI as they happen.
+    // Broadcast tool events to the UI in the order emitted by the runner.
     let state_for_events = Arc::clone(state);
     let run_id_for_events = run_id.to_string();
     let session_key_for_events = session_key.to_string();
     let session_store_for_events = session_store.map(Arc::clone);
-    // Track tool call arguments from ToolCallStart so we can persist them with ToolCallEnd.
-    let tool_args_map: Arc<std::sync::Mutex<HashMap<String, Value>>> =
-        Arc::new(std::sync::Mutex::new(HashMap::new()));
-    let on_event: Box<dyn Fn(RunnerEvent) + Send + Sync> = Box::new(move |event| {
-        let state = Arc::clone(&state_for_events);
-        let run_id = run_id_for_events.clone();
-        let sk = session_key_for_events.clone();
-        let store = session_store_for_events.clone();
-        let args_map = Arc::clone(&tool_args_map);
-        let seq = client_seq;
-        tokio::spawn(async move {
-            let payload = match &event {
+    let (on_event, mut event_rx) = ordered_runner_event_callback();
+    let event_forwarder = tokio::spawn(async move {
+        // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
+        let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        while let Some(event) = event_rx.recv().await {
+            let state = Arc::clone(&state_for_events);
+            let run_id = run_id_for_events.clone();
+            let sk = session_key_for_events.clone();
+            let store = session_store_for_events.clone();
+            let seq = client_seq;
+            let payload = match event {
                 RunnerEvent::Thinking => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
@@ -3497,10 +3509,7 @@ async fn run_with_tools(
                     name,
                     arguments,
                 } => {
-                    // Track arguments for persistence in ToolCallEnd.
-                    if let Ok(mut map) = args_map.lock() {
-                        map.insert(id.clone(), arguments.clone());
-                    }
+                    tool_args_map.insert(id.clone(), arguments.clone());
 
                     // Send tool status to channels (Telegram, etc.)
                     let state_clone = Arc::clone(&state);
@@ -3517,6 +3526,7 @@ async fn run_with_tools(
                         .await;
                     });
 
+                    let is_browser = name == "browser";
                     let mut payload = serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -3526,8 +3536,7 @@ async fn run_with_tools(
                         "arguments": arguments,
                         "seq": seq,
                     });
-                    // Add execution mode for browser tool (follows session sandbox mode)
-                    if name == "browser" {
+                    if is_browser {
                         payload["executionMode"] = serde_json::json!(if session_is_sandboxed {
                             "sandbox"
                         } else {
@@ -3552,7 +3561,7 @@ async fn run_with_tools(
                         "success": success,
                         "seq": seq,
                     });
-                    if let Some(err) = error {
+                    if let Some(ref err) = error {
                         payload["error"] = serde_json::json!(parse_chat_error(err, None));
                     }
                     // Check for screenshot to send to channel (Telegram, etc.)
@@ -3575,7 +3584,7 @@ async fn run_with_tools(
                         None
                     };
 
-                    if let Some(res) = result {
+                    if let Some(ref res) = result {
                         // Cap output sent to the UI to avoid huge WS frames.
                         let mut capped = res.clone();
                         for field in &["stdout", "stderr"] {
@@ -3593,7 +3602,7 @@ async fn run_with_tools(
                         payload["result"] = capped;
                     }
 
-                    // Send native location pin to channels before the screenshot
+                    // Send native location pin to channels before the screenshot.
                     if let Some((lat, lon, label)) = location_to_send {
                         let state_clone = Arc::clone(&state);
                         let sk_clone = sk.clone();
@@ -3609,7 +3618,7 @@ async fn run_with_tools(
                         });
                     }
 
-                    // Send screenshot to channel targets (Telegram) if present
+                    // Send screenshot to channel targets (Telegram) if present.
                     if let Some(screenshot_data) = screenshot_to_send {
                         let state_clone = Arc::clone(&state);
                         let sk_clone = sk.clone();
@@ -3621,7 +3630,7 @@ async fn run_with_tools(
 
                     // Persist tool result to the session JSONL file.
                     if let Some(ref store) = store {
-                        let tracked_args = args_map.lock().ok().and_then(|mut m| m.remove(id));
+                        let tracked_args = tool_args_map.remove(&id);
                         // Save screenshot to media dir (if present) and replace
                         // with a lightweight path reference. Strip screenshot_scale
                         // (only needed for live rendering). Cap stdout/stderr at
@@ -3688,9 +3697,9 @@ async fn run_with_tools(
                             id,
                             name,
                             tracked_args,
-                            *success,
+                            success,
                             persisted_result,
-                            error.clone(),
+                            error,
                         );
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();
@@ -3761,7 +3770,7 @@ async fn run_with_tools(
                 }),
             };
             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
-        });
+        }
     });
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
@@ -3884,6 +3893,13 @@ async fn run_with_tools(
         },
         other => other,
     };
+
+    // Ensure all runner events (including deltas) are broadcast in order before
+    // emitting terminal final/error frames.
+    drop(on_event);
+    if let Err(e) = event_forwarder.await {
+        warn!(run_id, error = %e, "runner event forwarder task failed");
+    }
 
     match result {
         Ok(result) => {
@@ -5025,6 +5041,32 @@ mod tests {
             "delivery should wait for outbound send completion"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ordered_runner_event_callback_stays_in_order_with_variable_processing_latency() {
+        let (on_event, mut rx) = ordered_runner_event_callback();
+        let seen = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+        let seen_for_worker = Arc::clone(&seen);
+
+        let worker = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let RunnerEvent::TextDelta(text) = event {
+                    if text == "slow" {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    seen_for_worker.lock().await.push(text);
+                }
+            }
+        });
+
+        on_event(RunnerEvent::TextDelta("slow".to_string()));
+        on_event(RunnerEvent::TextDelta("fast".to_string()));
+        drop(on_event);
+
+        worker.await.unwrap();
+        let observed = seen.lock().await.clone();
+        assert_eq!(observed, vec!["slow".to_string(), "fast".to_string()]);
     }
 
     /// Build a bare session_locks map for testing the semaphore logic
