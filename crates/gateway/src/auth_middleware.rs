@@ -113,7 +113,15 @@ pub async fn auth_gate(
             next.run(request).await
         },
         AuthResult::SetupRequired => {
-            if path.starts_with("/api/") || path == "/ws" {
+            if path == "/onboarding" {
+                // Allow the onboarding page through during setup — it is only
+                // public while setup is incomplete. Once credentials are
+                // configured, normal auth applies and prevents access.
+                request.extensions_mut().insert(AuthIdentity {
+                    method: AuthMethod::Loopback,
+                });
+                next.run(request).await
+            } else if path.starts_with("/api/") || path == "/ws" {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": "setup required"})),
