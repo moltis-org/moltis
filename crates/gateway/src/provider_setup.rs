@@ -524,7 +524,7 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return false;
     };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+    let Ok(json) = serde_json::from_str::<Value>(&raw) else {
         return false;
     };
     json.get("tokens")
@@ -535,7 +535,7 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
 
 /// Parse Codex CLI `auth.json` content into `OAuthTokens`.
 fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
-    let json: serde_json::Value = serde_json::from_str(data).ok()?;
+    let json: Value = serde_json::from_str(data).ok()?;
     let tokens = json.get("tokens")?;
     let access_token = tokens.get("access_token")?.as_str()?.to_string();
     if access_token.trim().is_empty() {
@@ -1426,7 +1426,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         match result {
             Ok(Ok(_)) => {
                 // Build model list for the frontend.
-                let model_list: Vec<serde_json::Value> = models
+                let model_list: Vec<Value> = models
                     .iter()
                     .map(|m| {
                         let supports_tools =

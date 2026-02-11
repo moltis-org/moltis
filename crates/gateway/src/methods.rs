@@ -4133,7 +4133,7 @@ impl MethodRegistry {
                                 .command
                                 .clone()
                                 .unwrap_or_else(|| "qmd".into()),
-                            collections: std::collections::HashMap::new(),
+                            collections: HashMap::new(),
                             max_results: config.memory.qmd.max_results.unwrap_or(10),
                             timeout_ms: config.memory.qmd.timeout_ms.unwrap_or(30_000),
                             work_dir: moltis_config::data_dir(),
@@ -5145,7 +5145,7 @@ async fn fetch_elevenlabs_catalog(config: &moltis_config::MoltisConfig) -> serde
     };
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(8))
+        .timeout(Duration::from_secs(8))
         .build();
     let Ok(client) = client else {
         return serde_json::json!({ "voices": [], "models": fallback_models });
@@ -5332,7 +5332,7 @@ async fn check_binary_available(name: &str) -> Option<String> {
 async fn check_coqui_server(endpoint: &str) -> bool {
     // Try to connect to the server's health endpoint
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(Duration::from_secs(2))
         .build()
         .unwrap_or_default();
 
@@ -5346,7 +5346,7 @@ async fn check_coqui_server(endpoint: &str) -> bool {
 /// Check if vLLM server is running (for Voxtral local).
 async fn check_vllm_server(endpoint: &str) -> bool {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(Duration::from_secs(2))
         .build()
         .unwrap_or_default();
 

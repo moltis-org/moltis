@@ -876,7 +876,7 @@ mod tests {
 
     #[async_trait]
     impl crate::services::BrowserService for MockBrowserService {
-        async fn request(&self, _p: serde_json::Value) -> crate::services::ServiceResult {
+        async fn request(&self, _p: Value) -> ServiceResult {
             Err("mock".into())
         }
 
@@ -887,20 +887,16 @@ mod tests {
 
     async fn sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        moltis_sessions::metadata::SqliteSessionMetadata::init(&pool)
-            .await
-            .unwrap();
+        SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
     }
 
     #[tokio::test]
     async fn with_browser_service_builder() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -912,11 +908,9 @@ mod tests {
     #[tokio::test]
     async fn clear_all_calls_browser_close_all() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -930,11 +924,9 @@ mod tests {
     #[tokio::test]
     async fn clear_all_without_browser_service() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         // No browser_service wired.
         let svc = LiveSessionService::new(store, metadata);

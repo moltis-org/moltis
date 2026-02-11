@@ -31,7 +31,8 @@ members = [
 resolver = "2"
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+unsafe_code           = "deny"
+unused_qualifications = "deny"
 
 [workspace.lints.clippy]
 expect_used = "deny"

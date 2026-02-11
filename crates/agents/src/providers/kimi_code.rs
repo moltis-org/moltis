@@ -723,7 +723,7 @@ mod tests {
             "/chat/completions",
             post(|| async {
                 (
-                    axum::http::StatusCode::BAD_REQUEST,
+                    http::StatusCode::BAD_REQUEST,
                     "bad request: missing something",
                 )
             }),

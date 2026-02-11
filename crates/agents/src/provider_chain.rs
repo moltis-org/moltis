@@ -655,13 +655,13 @@ mod tests {
 
     /// A mock provider that records whether stream_with_tools received tools.
     struct ToolTrackingProvider {
-        received_tools: std::sync::Mutex<Option<Vec<serde_json::Value>>>,
+        received_tools: Mutex<Option<Vec<serde_json::Value>>>,
     }
 
     impl ToolTrackingProvider {
         fn new() -> Self {
             Self {
-                received_tools: std::sync::Mutex::new(None),
+                received_tools: Mutex::new(None),
             }
         }
 

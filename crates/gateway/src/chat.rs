@@ -171,7 +171,7 @@ struct ChatErrorBroadcast {
     run_id: String,
     session_key: String,
     state: &'static str,
-    error: serde_json::Value,
+    error: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
 }
@@ -458,11 +458,8 @@ async fn run_single_probe(
     }
 
     let probe = [ChatMessage::user("ping")];
-    let completion = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        provider.complete(&probe, &[]),
-    )
-    .await;
+    let completion =
+        tokio::time::timeout(Duration::from_secs(20), provider.complete(&probe, &[])).await;
 
     match completion {
         Ok(Ok(_)) => {
@@ -476,8 +473,7 @@ async fn run_single_probe(
         },
         Ok(Err(err)) => {
             let error_text = err.to_string();
-            let error_obj =
-                crate::chat_error::parse_chat_error(&error_text, Some(provider_name.as_str()));
+            let error_obj = parse_chat_error(&error_text, Some(provider_name.as_str()));
             if is_probe_rate_limited_error(&error_obj, &error_text) {
                 let backoff = rate_limiter.mark_rate_limited(&provider_name).await;
                 let detail = error_obj
@@ -1478,11 +1474,8 @@ impl ModelService for LiveModelService {
         };
 
         let probe = [ChatMessage::user("ping")];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            provider.complete(&probe, &[]),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(Duration::from_secs(20), provider.complete(&probe, &[])).await;
 
         match result {
             Ok(Ok(_)) => Ok(serde_json::json!({
@@ -1491,8 +1484,7 @@ impl ModelService for LiveModelService {
             })),
             Ok(Err(err)) => {
                 let error_text = err.to_string();
-                let error_obj =
-                    crate::chat_error::parse_chat_error(&error_text, Some(provider.name()));
+                let error_obj = parse_chat_error(&error_text, Some(provider.name()));
                 let detail = error_obj
                     .get("detail")
                     .and_then(|v| v.as_str())
@@ -1617,7 +1609,7 @@ impl LiveChatService {
     async fn resolve_provider(
         &self,
         session_key: &str,
-        history: &[serde_json::Value],
+        history: &[Value],
     ) -> Result<Arc<dyn moltis_agents::model::LlmProvider>, String> {
         let reg = self.providers.read().await;
         let session_model = self
@@ -2278,11 +2270,7 @@ impl ChatService for LiveChatService {
             };
 
             let assistant_text = if agent_timeout_secs > 0 {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(agent_timeout_secs),
-                    agent_fut,
-                )
-                .await
+                match tokio::time::timeout(Duration::from_secs(agent_timeout_secs), agent_fut).await
                 {
                     Ok(result) => result,
                     Err(_) => {
@@ -2994,7 +2982,7 @@ impl ChatService for LiveChatService {
             .and_then(|e| e.mcp_disabled)
             .unwrap_or(false);
         let config = moltis_config::discover_and_load();
-        let tools: Vec<serde_json::Value> = if supports_tools {
+        let tools: Vec<Value> = if supports_tools {
             let registry_guard = self.tool_registry.read().await;
             let effective_registry =
                 apply_runtime_tool_filters(&registry_guard, &config, &[], mcp_disabled);
@@ -3076,7 +3064,7 @@ impl ChatService for LiveChatService {
         };
 
         // Discover enabled skills/plugins (only if provider supports tools)
-        let skills_list: Vec<serde_json::Value> = if supports_tools {
+        let skills_list: Vec<Value> = if supports_tools {
             let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
             let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
             match discoverer.discover().await {
@@ -3428,7 +3416,7 @@ async fn mark_unsupported_model(
     model_store: &Arc<RwLock<DisabledModelsStore>>,
     model_id: &str,
     provider_name: &str,
-    error_obj: &serde_json::Value,
+    error_obj: &Value,
 ) {
     if error_obj.get("type").and_then(|v| v.as_str()) != Some("unsupported_model") {
         return;
@@ -3532,7 +3520,7 @@ async fn run_with_tools(
     tool_registry: &Arc<RwLock<ToolRegistry>>,
     user_content: &UserContent,
     provider_name: &str,
-    history_raw: &[serde_json::Value],
+    history_raw: &[Value],
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
@@ -3721,7 +3709,7 @@ async fn run_with_tools(
                                     &s[..10_000],
                                     s.len()
                                 );
-                                capped[*field] = serde_json::Value::String(truncated);
+                                capped[*field] = Value::String(truncated);
                             }
                         }
                         payload["result"] = capped;
@@ -3789,9 +3777,8 @@ async fn run_with_tools(
                                     }
                                 });
                                 let sanitized = SessionStore::key_to_filename(&sk_media);
-                                r["screenshot"] = serde_json::Value::String(format!(
-                                    "media/{sanitized}/{tool_call_id}.png"
-                                ));
+                                r["screenshot"] =
+                                    Value::String(format!("media/{sanitized}/{tool_call_id}.png"));
                             }
                             // If screenshot is still a data URI (decode failed), strip it.
                             let strip_screenshot = r
@@ -3813,7 +3800,7 @@ async fn run_with_tools(
                                         &s[..10_000],
                                         s.len()
                                     );
-                                    r[*field] = serde_json::Value::String(truncated);
+                                    r[*field] = Value::String(truncated);
                                 }
                             }
                             r
@@ -4198,7 +4185,7 @@ async fn run_streaming(
     model_id: &str,
     user_content: &UserContent,
     provider_name: &str,
-    history_raw: &[serde_json::Value],
+    history_raw: &[Value],
     session_key: &str,
     desired_reply_medium: ReplyMedium,
     project_context: Option<&str>,
@@ -4788,7 +4775,7 @@ async fn send_tool_status_to_channels(
     state: &Arc<GatewayState>,
     session_key: &str,
     tool_name: &str,
-    arguments: &serde_json::Value,
+    arguments: &Value,
 ) {
     let targets = state.peek_channel_replies(session_key).await;
     if targets.is_empty() {
@@ -4801,7 +4788,7 @@ async fn send_tool_status_to_channels(
 }
 
 /// Format a human-readable tool execution message.
-fn format_tool_status_message(tool_name: &str, arguments: &serde_json::Value) -> String {
+fn format_tool_status_message(tool_name: &str, arguments: &Value) -> String {
     match tool_name {
         "browser" => {
             let action = arguments
@@ -5064,8 +5051,8 @@ mod tests {
         async fn complete(
             &self,
             _messages: &[ChatMessage],
-            _tools: &[serde_json::Value],
-        ) -> anyhow::Result<moltis_agents::model::CompletionResponse> {
+            _tools: &[Value],
+        ) -> Result<moltis_agents::model::CompletionResponse> {
             anyhow::bail!("not implemented for test")
         }
 
@@ -5087,11 +5074,11 @@ mod tests {
             "test"
         }
 
-        fn parameters_schema(&self) -> serde_json::Value {
+        fn parameters_schema(&self) -> Value {
             serde_json::json!({})
         }
 
-        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        async fn execute(&self, _params: Value) -> Result<Value> {
             Ok(serde_json::json!({}))
         }
     }
@@ -5140,7 +5127,7 @@ mod tests {
             chat_id: "123".to_string(),
             message_id: None,
         }];
-        let state = crate::state::GatewayState::new(
+        let state = GatewayState::new(
             crate::auth::ResolvedAuth {
                 mode: crate::auth::AuthMode::Token,
                 token: None,
@@ -5599,7 +5586,7 @@ mod tests {
             homepage: None,
             dockerfile: None,
             requires: Default::default(),
-            path: std::path::PathBuf::new(),
+            path: PathBuf::new(),
             source: None,
         }];
 
@@ -5632,7 +5619,7 @@ mod tests {
             homepage: None,
             dockerfile: None,
             requires: Default::default(),
-            path: std::path::PathBuf::new(),
+            path: PathBuf::new(),
             source: None,
         }];
 

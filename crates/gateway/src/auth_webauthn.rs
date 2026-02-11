@@ -34,11 +34,7 @@ impl WebAuthnState {
     /// `rp_origin` is the full origin URL (e.g. "https://localhost:18080").
     /// `extra_origins` are additional origins accepted during verification (e.g.
     /// `http://m4max.local:18080` when accessing via mDNS hostname).
-    pub fn new(
-        rp_id: &str,
-        rp_origin: &webauthn_rs::prelude::Url,
-        extra_origins: &[webauthn_rs::prelude::Url],
-    ) -> anyhow::Result<Self> {
+    pub fn new(rp_id: &str, rp_origin: &Url, extra_origins: &[Url]) -> anyhow::Result<Self> {
         let mut builder = WebauthnBuilder::new(rp_id, rp_origin)
             .map_err(|e| anyhow::anyhow!("webauthn builder error: {e}"))?;
         for origin in extra_origins {
@@ -82,7 +78,7 @@ impl WebAuthnState {
             .start_passkey_registration(user_id, "owner", "Owner", exclude_opt)
             .map_err(|e| anyhow::anyhow!("start_passkey_registration: {e}"))?;
 
-        let challenge_id = uuid::Uuid::new_v4().to_string();
+        let challenge_id = Uuid::new_v4().to_string();
         self.pending_registrations
             .insert(challenge_id.clone(), PendingRegistration {
                 state: reg_state,
@@ -131,7 +127,7 @@ impl WebAuthnState {
             .start_passkey_authentication(credentials)
             .map_err(|e| anyhow::anyhow!("start_passkey_authentication: {e}"))?;
 
-        let challenge_id = uuid::Uuid::new_v4().to_string();
+        let challenge_id = Uuid::new_v4().to_string();
         self.pending_authentications
             .insert(challenge_id.clone(), PendingAuthentication {
                 state: auth_state,

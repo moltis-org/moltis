@@ -831,8 +831,8 @@ pub async fn start_gateway(
     port: u16,
     no_tls: bool,
     log_buffer: Option<crate::logs::LogBuffer>,
-    config_dir: Option<std::path::PathBuf>,
-    data_dir: Option<std::path::PathBuf>,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
 ) -> anyhow::Result<()> {
     // Apply directory overrides before loading config.
@@ -1067,8 +1067,7 @@ pub async fn start_gateway(
         )
     });
 
-    let config_dir =
-        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    let config_dir = moltis_config::config_dir().unwrap_or_else(|| PathBuf::from(".moltis"));
     std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
         panic!(
             "failed to create config directory {}: {e}",
@@ -1203,16 +1202,14 @@ pub async fn start_gateway(
     );
 
     // Migrate from projects.toml if it exists.
-    let config_dir =
-        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    let config_dir = moltis_config::config_dir().unwrap_or_else(|| PathBuf::from(".moltis"));
     let projects_toml_path = config_dir.join("projects.toml");
     if projects_toml_path.exists() {
         info!("migrating projects.toml to SQLite");
         let old_store = moltis_projects::TomlProjectStore::new(projects_toml_path.clone());
         let sqlite_store = moltis_projects::SqliteProjectStore::new(db_pool.clone());
         if let Ok(projects) =
-            <moltis_projects::TomlProjectStore as moltis_projects::ProjectStore>::list(&old_store)
-                .await
+            <moltis_projects::TomlProjectStore as ProjectStore>::list(&old_store).await
         {
             for p in projects {
                 if let Err(e) = sqlite_store.upsert(p).await {
@@ -1251,7 +1248,7 @@ pub async fn start_gateway(
     }
 
     // Wire stores.
-    let project_store: Arc<dyn moltis_projects::ProjectStore> =
+    let project_store: Arc<dyn ProjectStore> =
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
     let session_metadata = Arc::new(SqliteSessionMetadata::new(db_pool.clone()));
@@ -1412,15 +1409,10 @@ pub async fn start_gateway(
             // Spawn async broadcast in a background task since we're in a sync callback.
             let state = Arc::clone(state);
             tokio::spawn(async move {
-                crate::broadcast::broadcast(
-                    &state,
-                    event,
-                    payload,
-                    crate::broadcast::BroadcastOpts {
-                        drop_if_slow: true,
-                        ..Default::default()
-                    },
-                )
+                broadcast(&state, event, payload, BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                })
                 .await;
             });
         });
@@ -1471,11 +1463,11 @@ pub async fn start_gateway(
             tokio::spawn(async move {
                 // Broadcast build start event.
                 if let Some(state) = deferred_for_build.get() {
-                    crate::broadcast::broadcast(
+                    broadcast(
                         state,
                         "sandbox.image.build",
                         serde_json::json!({ "phase": "start", "packages": packages }),
-                        crate::broadcast::BroadcastOpts {
+                        BroadcastOpts {
                             drop_if_slow: true,
                             ..Default::default()
                         },
@@ -1493,7 +1485,7 @@ pub async fn start_gateway(
                         router.set_global_image(Some(result.tag.clone())).await;
 
                         if let Some(state) = deferred_for_build.get() {
-                            crate::broadcast::broadcast(
+                            broadcast(
                                 state,
                                 "sandbox.image.build",
                                 serde_json::json!({
@@ -1501,7 +1493,7 @@ pub async fn start_gateway(
                                     "tag": result.tag,
                                     "built": result.built,
                                 }),
-                                crate::broadcast::BroadcastOpts {
+                                BroadcastOpts {
                                     drop_if_slow: true,
                                     ..Default::default()
                                 },
@@ -1517,14 +1509,14 @@ pub async fn start_gateway(
                     Err(e) => {
                         tracing::warn!("sandbox image pre-build failed: {e}");
                         if let Some(state) = deferred_for_build.get() {
-                            crate::broadcast::broadcast(
+                            broadcast(
                                 state,
                                 "sandbox.image.build",
                                 serde_json::json!({
                                     "phase": "error",
                                     "error": e.to_string(),
                                 }),
-                                crate::broadcast::BroadcastOpts {
+                                BroadcastOpts {
                                     drop_if_slow: true,
                                     ..Default::default()
                                 },
@@ -1630,14 +1622,14 @@ pub async fn start_gateway(
         tokio::spawn(async move {
             // Broadcast pull start event.
             if let Some(state) = deferred_for_browser.get() {
-                crate::broadcast::broadcast(
+                broadcast(
                     state,
                     "browser.image.pull",
                     serde_json::json!({
                         "phase": "start",
                         "image": sandbox_image,
                     }),
-                    crate::broadcast::BroadcastOpts {
+                    BroadcastOpts {
                         drop_if_slow: true,
                         ..Default::default()
                     },
@@ -1649,14 +1641,14 @@ pub async fn start_gateway(
                 Ok(()) => {
                     info!(image = %sandbox_image, "browser container image ready");
                     if let Some(state) = deferred_for_browser.get() {
-                        crate::broadcast::broadcast(
+                        broadcast(
                             state,
                             "browser.image.pull",
                             serde_json::json!({
                                 "phase": "done",
                                 "image": sandbox_image,
                             }),
-                            crate::broadcast::BroadcastOpts {
+                            BroadcastOpts {
                                 drop_if_slow: true,
                                 ..Default::default()
                             },
@@ -1667,7 +1659,7 @@ pub async fn start_gateway(
                 Err(e) => {
                     tracing::warn!(image = %sandbox_image, error = %e, "browser container image pull failed");
                     if let Some(state) = deferred_for_browser.get() {
-                        crate::broadcast::broadcast(
+                        broadcast(
                             state,
                             "browser.image.pull",
                             serde_json::json!({
@@ -1675,7 +1667,7 @@ pub async fn start_gateway(
                                 "image": sandbox_image,
                                 "error": e.to_string(),
                             }),
-                            crate::broadcast::BroadcastOpts {
+                            BroadcastOpts {
                                 drop_if_slow: true,
                                 ..Default::default()
                             },
@@ -1720,7 +1712,7 @@ pub async fn start_gateway(
 
         // Start channels from config file (these take precedence).
         let tg_accounts = &config.channels.telegram;
-        let mut started: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut started: HashSet<String> = HashSet::new();
         for (account_id, account_config) in tg_accounts {
             if let Err(e) = tg_plugin
                 .start_account(account_id, account_config.clone())
@@ -2435,8 +2427,7 @@ pub async fn start_gateway(
     #[cfg(feature = "file-watcher")]
     {
         let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
-        let watch_dirs: Vec<std::path::PathBuf> =
-            search_paths.into_iter().map(|(p, _)| p).collect();
+        let watch_dirs: Vec<PathBuf> = search_paths.into_iter().map(|(p, _)| p).collect();
         if let Ok((_watcher, mut rx)) = moltis_skills::watcher::SkillWatcher::start(watch_dirs) {
             let watcher_state = Arc::clone(&state);
             tokio::spawn(async move {
@@ -2590,7 +2581,7 @@ pub async fn start_gateway(
     // machine's outbound IP so the printed URL is clickable.
     let display_ip = if addr.ip().is_unspecified() {
         resolve_outbound_ip(addr.ip().is_ipv6())
-            .map(|ip| std::net::SocketAddr::new(ip, port))
+            .map(|ip| SocketAddr::new(ip, port))
             .unwrap_or(addr)
     } else {
         addr
@@ -2982,11 +2973,11 @@ pub async fn start_gateway(
                     // Broadcast metrics update to all connected clients.
                     let payload = crate::state::MetricsUpdatePayload { snapshot, point };
                     if let Ok(payload_json) = serde_json::to_value(&payload) {
-                        crate::broadcast::broadcast(
+                        broadcast(
                             &metrics_state,
                             "metrics.update",
                             payload_json,
-                            crate::broadcast::BroadcastOpts {
+                            BroadcastOpts {
                                 drop_if_slow: true,
                                 ..Default::default()
                             },
@@ -3060,15 +3051,10 @@ pub async fn start_gateway(
                                 }),
                             ),
                         };
-                        crate::broadcast::broadcast(
-                            &event_state,
-                            event_name,
-                            payload,
-                            crate::broadcast::BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            },
-                        )
+                        broadcast(&event_state, event_name, payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
                         .await;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -3087,15 +3073,10 @@ pub async fn start_gateway(
                 match rx.recv().await {
                     Ok(entry) => {
                         if let Ok(payload) = serde_json::to_value(&entry) {
-                            crate::broadcast::broadcast(
-                                &log_state,
-                                "logs.entry",
-                                payload,
-                                crate::broadcast::BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
+                            broadcast(&log_state, "logs.entry", payload, BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            })
                             .await;
                         }
                     },
@@ -3291,7 +3272,7 @@ async fn ws_upgrade_handler(
         if !is_same_origin(origin, host) {
             tracing::warn!(origin, host, remote = %addr, "rejected cross-origin WebSocket upgrade");
             return (
-                axum::http::StatusCode::FORBIDDEN,
+                StatusCode::FORBIDDEN,
                 "cross-origin WebSocket connections are not allowed",
             )
                 .into_response();
@@ -3328,10 +3309,7 @@ async fn ws_upgrade_handler(
 }
 
 /// Extract the client IP from proxy headers, falling back to the direct connection address.
-fn extract_ws_client_ip(
-    headers: &axum::http::HeaderMap,
-    conn_addr: std::net::SocketAddr,
-) -> Option<String> {
+fn extract_ws_client_ip(headers: &axum::http::HeaderMap, conn_addr: SocketAddr) -> Option<String> {
     // X-Forwarded-For (may contain multiple IPs — take the leftmost/client IP)
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
         && let Some(first_ip) = xff.split(',').next()
@@ -3435,7 +3413,7 @@ fn is_loopback_host(host: &str) -> bool {
 /// - The TCP source IP is loopback
 pub(crate) fn is_local_connection(
     headers: &axum::http::HeaderMap,
-    remote_addr: std::net::SocketAddr,
+    remote_addr: SocketAddr,
     behind_proxy: bool,
 ) -> bool {
     // Hard override: env var says we're behind a proxy.
@@ -3463,7 +3441,7 @@ pub(crate) fn is_local_connection(
 
 async fn websocket_header_authenticated(
     headers: &axum::http::HeaderMap,
-    credential_store: Option<&Arc<crate::auth::CredentialStore>>,
+    credential_store: Option<&Arc<auth::CredentialStore>>,
     is_local: bool,
 ) -> bool {
     let Some(store) = credential_store else {
@@ -3795,7 +3773,7 @@ async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         .ok()
         .and_then(|v| {
             v.as_array().map(|arr| {
-                let mut names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+                let mut names: HashSet<&str> = HashSet::new();
                 for m in arr {
                     if let Some(p) = m.get("provider").and_then(|p| p.as_str()) {
                         names.insert(p);
@@ -4333,10 +4311,10 @@ async fn api_bootstrap_handler(State(state): State<AppState>) -> impl IntoRespon
 async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse {
     let servers = state.gateway.services.mcp.list().await;
     match servers {
-        Ok(val) => axum::Json(val).into_response(),
+        Ok(val) => Json(val).into_response(),
         Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": e })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
     }
@@ -4346,16 +4324,14 @@ async fn api_mcp_handler(State(state): State<AppState>) -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 async fn api_hooks_handler(State(state): State<AppState>) -> impl IntoResponse {
     let hooks = state.gateway.inner.read().await;
-    axum::Json(serde_json::json!({ "hooks": hooks.discovered_hooks }))
+    Json(serde_json::json!({ "hooks": hooks.discovered_hooks }))
 }
 
 /// Lightweight skills overview: repo summaries + enabled skills only.
 /// Full skill lists are loaded on-demand via /api/skills/search.
 /// Returns enabled skills from the skills manifest and skill repos.
 #[cfg(feature = "web-ui")]
-fn enabled_from_manifest(
-    path_result: anyhow::Result<std::path::PathBuf>,
-) -> Vec<serde_json::Value> {
+fn enabled_from_manifest(path_result: anyhow::Result<PathBuf>) -> Vec<serde_json::Value> {
     let Ok(path) = path_result else {
         return Vec::new();
     };
@@ -4746,29 +4722,28 @@ static ASSETS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR
 /// Set via `MOLTIS_ASSETS_DIR` env var, or auto-detected from the crate source
 /// tree when running via `cargo run`.
 #[cfg(feature = "web-ui")]
-static FS_ASSETS_DIR: std::sync::LazyLock<Option<std::path::PathBuf>> =
-    std::sync::LazyLock::new(|| {
-        use std::path::PathBuf;
+static FS_ASSETS_DIR: std::sync::LazyLock<Option<PathBuf>> = std::sync::LazyLock::new(|| {
+    use std::path::PathBuf;
 
-        // Explicit env var takes precedence
-        if let Ok(dir) = std::env::var("MOLTIS_ASSETS_DIR") {
-            let p = PathBuf::from(dir);
-            if p.is_dir() {
-                info!("Serving assets from filesystem: {}", p.display());
-                return Some(p);
-            }
+    // Explicit env var takes precedence
+    if let Ok(dir) = std::env::var("MOLTIS_ASSETS_DIR") {
+        let p = PathBuf::from(dir);
+        if p.is_dir() {
+            info!("Serving assets from filesystem: {}", p.display());
+            return Some(p);
         }
+    }
 
-        // Auto-detect: works when running from the repo via `cargo run`
-        let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
-        if cargo_dir.is_dir() {
-            info!("Serving assets from filesystem: {}", cargo_dir.display());
-            return Some(cargo_dir);
-        }
+    // Auto-detect: works when running from the repo via `cargo run`
+    let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+    if cargo_dir.is_dir() {
+        info!("Serving assets from filesystem: {}", cargo_dir.display());
+        return Some(cargo_dir);
+    }
 
-        info!("Serving assets from embedded binary");
-        None
-    });
+    info!("Serving assets from embedded binary");
+    None
+});
 
 /// Whether we're serving from the filesystem (dev mode) or embedded (release).
 #[cfg(feature = "web-ui")]
@@ -4988,7 +4963,7 @@ fn seed_default_workspace_markdown_files() {
     seed_file_if_missing(data_dir.join("HEARTBEAT.md"), DEFAULT_HEARTBEAT_MD);
 }
 
-fn seed_file_if_missing(path: std::path::PathBuf, content: &str) {
+fn seed_file_if_missing(path: PathBuf, content: &str) {
     if path.exists() {
         return;
     }
@@ -5282,7 +5257,7 @@ Cost guard:
 /// (with `enabled: false`) but are not registered in the registry.
 pub(crate) async fn discover_and_build_hooks(
     disabled: &HashSet<String>,
-    session_store: Option<&Arc<moltis_sessions::store::SessionStore>>,
+    session_store: Option<&Arc<SessionStore>>,
 ) -> (
     Option<Arc<moltis_common::hooks::HookRegistry>>,
     Vec<crate::state::DiscoveredHookInfo>,
@@ -5460,7 +5435,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sessions_dir = tmp.path().join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
-        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+        let session_store = Arc::new(SessionStore::new(sessions_dir));
 
         let (registry, info) =
             discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
@@ -5490,7 +5465,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sessions_dir = tmp.path().join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
-        let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+        let session_store = Arc::new(SessionStore::new(sessions_dir));
 
         session_store
             .append(
@@ -5539,7 +5514,7 @@ mod tests {
     async fn websocket_header_auth_accepts_valid_session_cookie() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let store = Arc::new(
-            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+            auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
                 .await
                 .unwrap(),
         );
@@ -5557,7 +5532,7 @@ mod tests {
     async fn websocket_header_auth_accepts_valid_bearer_api_key() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let store = Arc::new(
-            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+            auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
                 .await
                 .unwrap(),
         );
@@ -5578,7 +5553,7 @@ mod tests {
     async fn websocket_header_auth_rejects_missing_credentials_when_setup_complete() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let store = Arc::new(
-            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+            auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
                 .await
                 .unwrap(),
         );
@@ -5599,7 +5574,7 @@ mod tests {
     async fn websocket_header_auth_rejects_local_when_password_set() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let store = Arc::new(
-            crate::auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
+            auth::CredentialStore::with_config(pool, &moltis_config::AuthConfig::default())
                 .await
                 .unwrap(),
         );
@@ -5934,11 +5909,11 @@ mod tests {
 
     #[test]
     fn display_host_uses_real_ip_for_unspecified_bind() {
-        let addr: std::net::SocketAddr = "0.0.0.0:9999".parse().unwrap();
+        let addr: SocketAddr = "0.0.0.0:9999".parse().unwrap();
         assert!(addr.ip().is_unspecified());
 
         if let Some(ip) = resolve_outbound_ip(false) {
-            let display = std::net::SocketAddr::new(ip, addr.port());
+            let display = SocketAddr::new(ip, addr.port());
             assert!(!display.ip().is_unspecified());
             assert_eq!(display.port(), 9999);
         }
