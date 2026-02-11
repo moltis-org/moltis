@@ -10,7 +10,7 @@ var gon = window.__MOLTIS__ || {};
 var identity = gon.identity || null;
 
 // Set page title from identity.
-if (identity?.name) document.title = identity.name;
+document.title = (identity?.emoji ? `${identity.emoji} ` : "") + (identity?.name || "moltis");
 
 async function parseLoginFailure(response) {
 	if (response.status === 429) {

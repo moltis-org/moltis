@@ -109,13 +109,17 @@ test.describe("Authentication", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("page title uses configured identity name", async ({ page }) => {
+	test("page title uses configured identity emoji and name", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await page.waitForLoadState("networkidle");
 
-		const expectedName = await page.evaluate(() => window.__MOLTIS__?.identity?.name || "moltis");
-		await expect.poll(() => page.title()).toContain(expectedName);
+		const expectedTitlePrefix = await page.evaluate(() => {
+			var id = window.__MOLTIS__?.identity;
+			var name = id?.name || "moltis";
+			return (id?.emoji ? `${id.emoji} ` : "") + name;
+		});
+		await expect.poll(() => page.title()).toContain(expectedTitlePrefix);
 		expect(pageErrors).toEqual([]);
 	});
 });
@@ -190,15 +194,20 @@ test.describe("Login page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("login page title uses identity name from gon data", async ({ page }) => {
+	test("login page title uses identity emoji and name from gon data", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockAuthStatus(page);
 
 		await page.goto("/login");
 		await expect(page.locator(".auth-card")).toBeVisible();
 
-		const expectedName = await page.evaluate(() => window.__MOLTIS__?.identity?.name || "moltis");
-		await expect(page.locator(".auth-title")).toContainText(expectedName);
+		const expectedTitle = await page.evaluate(() => {
+			var id = window.__MOLTIS__?.identity;
+			var name = id?.name || "moltis";
+			return (id?.emoji ? `${id.emoji} ` : "") + name;
+		});
+		await expect.poll(() => page.title()).toContain(expectedTitle);
+		await expect(page.locator(".auth-title")).toContainText(expectedTitle);
 
 		expect(pageErrors).toEqual([]);
 	});
