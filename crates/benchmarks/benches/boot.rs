@@ -101,7 +101,7 @@ fn session_store_list_empty(bencher: divan::Bencher) {
     bencher.bench_local(|| divan::black_box(store.list_keys()));
 }
 
-#[divan::bench(args = [1, 10, 100])]
+#[divan::bench(args = [10, 100, 1000])]
 fn session_store_list(bencher: divan::Bencher, n: usize) {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..n {
