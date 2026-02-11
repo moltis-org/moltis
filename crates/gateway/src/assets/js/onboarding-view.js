@@ -19,8 +19,8 @@ import { forceReconnect } from "./ws-connect.js";
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "Provider", "Channel", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "Provider", "Voice", "Channel", "Summary"];
+var BASE_STEP_LABELS = ["Security", "Identity", "LLM", "Channel", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "Identity", "LLM", "Voice", "Channel", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -1173,18 +1173,18 @@ function ProviderStep({ onNext, onBack }) {
 	// ── Render ────────────────────────────────────────────────
 
 	if (loading) {
-		return html`<div class="text-sm text-[var(--muted)]">Loading providers\u2026</div>`;
+		return html`<div class="text-sm text-[var(--muted)]">Loading LLMs\u2026</div>`;
 	}
 
 	var configuredProviders = providers.filter((p) => p.configured);
 
 	return html`<div class="flex flex-col gap-4">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add providers</h2>
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">Add LLMs</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">Configure one or more LLM providers to power your agent. You can add more later in Settings.</p>
 		${
 			configuredProviders.length > 0
 				? html`<div class="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2">
-				<div class="text-xs text-[var(--muted)]">Detected providers</div>
+				<div class="text-xs text-[var(--muted)]">Detected LLM providers</div>
 				<div class="flex flex-wrap gap-2">
 					${configuredProviders.map((p) => html`<span key=${p.name} class="provider-item-badge configured">${p.displayName}</span>`)}
 				</div>
@@ -2025,10 +2025,10 @@ function SummaryStep({ onBack, onFinish }) {
 				}
 			<//>
 
-			<!-- Providers -->
+			<!-- LLMs -->
 			<${SummaryRow}
 				icon=${configuredProviders.length > 0 ? html`<${CheckIcon} />` : html`<${ErrorIcon} />`}
-				label="Providers">
+				label="LLMs">
 				${
 					configuredProviders.length > 0
 						? html`<div class="flex flex-col gap-1">
@@ -2037,7 +2037,7 @@ function SummaryStep({ onBack, onFinish }) {
 						</div>
 						${activeModel ? html`<div>Active model: <span class="font-mono font-medium text-[var(--text)]">${activeModel}</span></div>` : null}
 					</div>`
-						: html`<span class="text-[var(--error)]">No providers configured</span>`
+						: html`<span class="text-[var(--error)]">No LLM providers configured</span>`
 				}
 			<//>
 

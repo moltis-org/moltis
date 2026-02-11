@@ -473,7 +473,7 @@ endpoint = "http://localhost:8000"</code>
         <span class="ctx-value" data-model-name></span>
       </div>
       <div class="ctx-row">
-        <span class="ctx-label">Provider</span>
+        <span class="ctx-label">LLM</span>
         <span class="ctx-value" data-provider></span>
       </div>
       <div class="ctx-disabled" style="margin-top:8px">
@@ -497,7 +497,7 @@ endpoint = "http://localhost:8000"</code>
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
           <span class="icon icon-chat-bubble"></span>
         </span>
-        <span>Chat with multiple AI providers and models</span>
+        <span>Chat with multiple LLM providers and models</span>
       </li>
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
@@ -532,11 +532,11 @@ endpoint = "http://localhost:8000"</code>
 
 <template id="tpl-no-providers-card">
   <div id="noProvidersCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
-    <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLM Providers Connected</h2>
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLMs Connected</h2>
     <p class="text-sm text-[var(--muted)] mb-6">
-      You have not connected any LLM providers yet. Add a provider to start chatting.
+      You have not connected any LLM providers yet. Add one to start chatting.
     </p>
-    <a href="{{ routes.providers }}" class="provider-btn">Go to Providers</a>
+    <a href="{{ routes.providers }}" class="provider-btn">Go to LLMs</a>
   </div>
 </template>
 
