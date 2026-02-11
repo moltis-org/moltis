@@ -109,7 +109,7 @@
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
   <a href="{{ routes.chats }}" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
-  <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name)||"moltis";var u=(i&&i.user_name&&String(i.user_name).trim())||"";if(u)a=a+": "+u+" AI assistant";document.title=a}()</script>
+  <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=i.emoji?i.emoji+" ":"";a+=(i&&i.name)||"moltis";var u=(i&&i.user_name&&String(i.user_name).trim())||"";if(u)a=a+": "+u+" AI assistant";document.title=a}()</script>
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
   <div class="flex-1"></div>
