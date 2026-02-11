@@ -207,6 +207,13 @@ fn normalize_provider_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
+    matches!(
+        normalize_provider_key(provider_name).as_str(),
+        "local-llm" | "ollama"
+    )
+}
+
 /// Returns `true` if the model matches the allowlist patterns.
 /// An empty pattern list means all models are allowed.
 /// Matching is case-insensitive substring against the full model ID, raw model
@@ -218,12 +225,26 @@ pub(crate) fn model_matches_allowlist(
     if patterns.is_empty() {
         return true;
     }
+    if is_allowlist_exempt_provider(&model.provider) {
+        return true;
+    }
     let full = normalize_model_key(&model.id);
     let raw = normalize_model_key(raw_model_id(&model.id));
     let display = normalize_model_key(&model.display_name);
     patterns.iter().any(|p| {
         full.contains(p.as_str()) || raw.contains(p.as_str()) || display.contains(p.as_str())
     })
+}
+
+pub(crate) fn model_matches_allowlist_with_provider(
+    model: &moltis_agents::providers::ModelInfo,
+    provider_name: Option<&str>,
+    patterns: &[String],
+) -> bool {
+    if provider_name.is_some_and(is_allowlist_exempt_provider) {
+        return true;
+    }
+    model_matches_allowlist(model, patterns)
 }
 
 fn provider_filter_from_params(params: &Value) -> Option<String> {
@@ -995,7 +1016,14 @@ impl ModelService for LiveModelService {
                 .iter()
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none())
-                .filter(|m| model_matches_allowlist(m, &self.allowed_models)),
+                .filter(|m| {
+                    let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
+                    model_matches_allowlist_with_provider(
+                        m,
+                        provider_name.as_deref(),
+                        &self.allowed_models,
+                    )
+                }),
         );
         let models: Vec<_> = prioritized
             .iter()
@@ -1020,11 +1048,10 @@ impl ModelService for LiveModelService {
     async fn list_all(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(
-            reg.list_models()
-                .iter()
-                .filter(|m| model_matches_allowlist(m, &self.allowed_models)),
-        );
+        let prioritized = self.prioritize_models(reg.list_models().iter().filter(|m| {
+            let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
+            model_matches_allowlist_with_provider(m, provider_name.as_deref(), &self.allowed_models)
+        }));
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -5704,6 +5731,40 @@ mod tests {
         assert!(model_matches_allowlist(&m, &patterns));
     }
 
+    #[test]
+    fn allowed_models_does_not_filter_local_llm_or_ollama() {
+        let local = moltis_agents::providers::ModelInfo {
+            id: "local-llm::qwen2.5-coder-7b-q4_k_m".into(),
+            provider: "local-llm".into(),
+            display_name: "Qwen2.5 Coder 7B".into(),
+        };
+        let ollama = moltis_agents::providers::ModelInfo {
+            id: "ollama::llama3.1:8b".into(),
+            provider: "ollama".into(),
+            display_name: "Llama 3.1 8B".into(),
+        };
+        let patterns = vec![normalize_model_key("opus")];
+
+        assert!(model_matches_allowlist(&local, &patterns));
+        assert!(model_matches_allowlist(&ollama, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_does_not_filter_ollama_when_provider_is_aliased() {
+        let aliased = moltis_agents::providers::ModelInfo {
+            id: "local-ai::llama3.1:8b".into(),
+            provider: "local-ai".into(),
+            display_name: "Llama 3.1 8B".into(),
+        };
+        let patterns = vec![normalize_model_key("opus")];
+
+        assert!(model_matches_allowlist_with_provider(
+            &aliased,
+            Some("ollama"),
+            &patterns
+        ));
+    }
+
     #[tokio::test]
     async fn allowed_models_filters_list_and_list_all() {
         let mut registry = ProviderRegistry::from_env_with_config(
@@ -5760,6 +5821,51 @@ mod tests {
         let arr = result.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+    }
+
+    #[tokio::test]
+    async fn allowed_models_keeps_ollama_when_provider_is_aliased() {
+        let mut registry = ProviderRegistry::from_env_with_config(
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai-codex::gpt-5.2".to_string(),
+                provider: "openai-codex".to_string(),
+                display_name: "GPT 5.2".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "openai-codex".to_string(),
+                id: "openai-codex::gpt-5.2".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "local-ai::llama3.1:8b".to_string(),
+                provider: "local-ai".to_string(),
+                display_name: "Llama 3.1 8B".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "ollama".to_string(),
+                id: "local-ai::llama3.1:8b".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
+                "opus".into(),
+            ]);
+
+        let result = service.list().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+
+        let result = service.list_all().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
     }
 
     #[test]

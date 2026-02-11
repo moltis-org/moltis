@@ -1389,7 +1389,14 @@ impl ProviderSetupService for LiveProviderSetupService {
             .filter(|m| {
                 normalize_provider_name(&m.provider) == normalize_provider_name(provider_name)
             })
-            .filter(|m| crate::chat::model_matches_allowlist(m, &self.allowed_models))
+            .filter(|m| {
+                let runtime_provider_name = temp_registry.get(&m.id).map(|p| p.name().to_string());
+                crate::chat::model_matches_allowlist_with_provider(
+                    m,
+                    runtime_provider_name.as_deref(),
+                    &self.allowed_models,
+                )
+            })
             .cloned()
             .collect();
 
