@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision matrix, credential types, API key scopes, session endpoints,
   and WebSocket auth documentation.
 
+### Fixed
+
+- **Browser container lifecycle**: Browser containers (browserless/chrome)
+  now have proper lifecycle management — periodic cleanup removes idle
+  instances every 30 seconds, graceful shutdown stops all containers on
+  Ctrl+C, and `sessions.clear_all` immediately closes all browser sessions.
+  A `Drop` safety net ensures containers are stopped even on unexpected exits.
+
 ### Changed
 
 - **Unified auth gate**: All auth decision logic is now in a single

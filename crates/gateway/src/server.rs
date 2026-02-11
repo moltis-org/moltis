@@ -1699,13 +1699,14 @@ pub async fn start_gateway(
     let (hook_registry, discovered_hooks_info) =
         discover_and_build_hooks(&persisted_disabled, Some(&session_store)).await;
 
-    // Wire live session service with sandbox router, project store, and hooks.
+    // Wire live session service with sandbox router, project store, hooks, and browser.
     {
         let mut session_svc =
             LiveSessionService::new(Arc::clone(&session_store), Arc::clone(&session_metadata))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_project_store(Arc::clone(&project_store))
-                .with_state_store(Arc::clone(&session_state_store));
+                .with_state_store(Arc::clone(&session_state_store))
+                .with_browser_service(Arc::clone(&services.browser));
         if let Some(ref hooks) = hook_registry {
             session_svc = session_svc.with_hooks(Arc::clone(hooks));
         }
@@ -2070,6 +2071,9 @@ pub async fn start_gateway(
     let behind_proxy = std::env::var("MOLTIS_BEHIND_PROXY")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+
+    // Keep a reference to the browser service for periodic cleanup and shutdown.
+    let browser_for_lifecycle = Arc::clone(&services.browser);
 
     let state = GatewayState::with_options(
         resolved_auth,
@@ -2644,6 +2648,30 @@ pub async fn start_gateway(
                 warn!("failed to reset tailscale on exit: {e}");
             }
             std::process::exit(0);
+        });
+    }
+
+    // Spawn periodic browser cleanup task (every 30s, removes idle instances).
+    {
+        let browser_for_cleanup = Arc::clone(&browser_for_lifecycle);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.tick().await; // skip immediate first tick
+            loop {
+                interval.tick().await;
+                browser_for_cleanup.cleanup_idle().await;
+            }
+        });
+    }
+
+    // Spawn browser shutdown handler (stop all containers on ctrl-c).
+    {
+        let browser_for_shutdown = Arc::clone(&browser_for_lifecycle);
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                info!("shutting down browser pool");
+                browser_for_shutdown.shutdown().await;
+            }
         });
     }
 

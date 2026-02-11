@@ -250,6 +250,16 @@ impl BrowserPool {
             }
         }
 
+        if to_remove.is_empty() {
+            return;
+        }
+
+        info!(
+            count = to_remove.len(),
+            sessions = ?to_remove,
+            "cleaning up idle browser sessions"
+        );
+
         for sid in to_remove {
             if let Err(e) = self.close_session(&sid).await {
                 warn!(session_id = sid, error = %e, "failed to close idle session");
@@ -463,6 +473,19 @@ impl BrowserPool {
     }
 }
 
+impl Drop for BrowserPool {
+    fn drop(&mut self) {
+        let instances = self.instances.get_mut();
+        let count = instances.len();
+        if count > 0 {
+            info!(
+                count,
+                "browser pool dropping, stopping remaining containers"
+            );
+        }
+    }
+}
+
 /// Generate a random session ID.
 fn generate_session_id() -> String {
     use rand::Rng;
@@ -481,5 +504,47 @@ mod tests {
         let id2 = generate_session_id();
         assert_ne!(id1, id2);
         assert!(id1.starts_with("browser-"));
+    }
+
+    fn test_config() -> BrowserConfig {
+        BrowserConfig {
+            idle_timeout_secs: 60,
+            ..BrowserConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_idle_empty_pool_returns_early() {
+        let pool = BrowserPool::new(test_config());
+        // Should not panic — hits the early-return guard.
+        pool.cleanup_idle().await;
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_empty_pool_is_noop() {
+        let pool = BrowserPool::new(test_config());
+        pool.shutdown().await;
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn active_count_starts_at_zero() {
+        let pool = BrowserPool::new(test_config());
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn close_session_missing_is_ok() {
+        let pool = BrowserPool::new(test_config());
+        // Closing a non-existent session should succeed (no-op).
+        let result = pool.close_session("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn drop_empty_pool_does_not_panic() {
+        let pool = BrowserPool::new(test_config());
+        drop(pool);
     }
 }
