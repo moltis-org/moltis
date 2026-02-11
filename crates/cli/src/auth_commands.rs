@@ -179,9 +179,17 @@ async fn reset_password() -> Result<()> {
     }
 
     moltis_gateway::auth::CredentialStore::reset_from_db_path(&db_path).await?;
-    println!("Authentication reset. Password, sessions, passkeys, and API keys removed.");
-    println!("The gateway will require a new setup on next start.");
+    for line in reset_password_success_lines() {
+        println!("{line}");
+    }
     Ok(())
+}
+
+fn reset_password_success_lines() -> [&'static str; 2] {
+    [
+        "Authentication reset. Password, sessions, passkeys, and API keys removed.",
+        "Authentication is now disabled. Open Settings > Security to set a password or passkey to re-enable it.",
+    ]
 }
 
 async fn create_api_key(label: &str, scopes_str: Option<String>) -> Result<()> {
@@ -234,4 +242,22 @@ async fn create_api_key(label: &str, scopes_str: Option<String>) -> Result<()> {
     println!();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reset_password_success_lines;
+
+    #[test]
+    fn reset_password_message_describes_disabled_auth_state() {
+        let lines = reset_password_success_lines();
+        assert_eq!(
+            lines[0],
+            "Authentication reset. Password, sessions, passkeys, and API keys removed."
+        );
+        assert_eq!(
+            lines[1],
+            "Authentication is now disabled. Open Settings > Security to set a password or passkey to re-enable it."
+        );
+    }
 }

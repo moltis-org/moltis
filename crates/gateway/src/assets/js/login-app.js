@@ -1,16 +1,17 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { formatLoginTitle } from "./branding.js";
 import { initTheme } from "./theme.js";
 
 initTheme();
 
-// Read identity from server-injected gon data (for emoji + name in title).
+// Read identity from server-injected gon data (name for title).
 var gon = window.__MOLTIS__ || {};
 var identity = gon.identity || null;
 
-// Set page title from identity.
-document.title = (identity?.emoji ? `${identity.emoji} ` : "") + (identity?.name || "moltis");
+// Set page branding from identity.
+document.title = formatLoginTitle(identity);
 
 async function parseLoginFailure(response) {
 	if (response.status === 429) {
@@ -229,7 +230,7 @@ function LoginApp() {
 		</div>`;
 	}
 
-	var title = (identity?.emoji ? `${identity.emoji} ` : "") + (identity?.name || "moltis");
+	var title = formatLoginTitle(identity);
 	var showPassword = hasPassword || !hasPasskeys;
 	var showPasskeys = hasPasskeys;
 	var showDivider = showPassword && showPasskeys;

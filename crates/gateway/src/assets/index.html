@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-title" content="moltis">
 <link rel="apple-touch-icon" href="{{ asset_prefix }}icons/apple-touch-icon.png">
 <script nonce="{{ nonce }}">!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
-<title>{{ share_title }}</title>
+<title>{{ share_site_name }}</title>
 <meta name="description" content="{{ share_description }}">
 <meta property="og:title" content="{{ share_title }}">
 <meta property="og:description" content="{{ share_description }}">
@@ -38,6 +38,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
 <meta name="build-ts" content="{{ build_ts }}">
 <script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
+<script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;var i=g&&g.identity;var e=i&&typeof i.emoji==="string"?i.emoji.trim():"";if(!e)return;var safe=e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");var svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="52">'+safe+"</text></svg>";var href="data:image/svg+xml,"+encodeURIComponent(svg);var links=Array.from(document.querySelectorAll('link[rel="icon"]'));if(links.length===0){var fallback=document.createElement("link");fallback.rel="icon";document.head.appendChild(fallback);links.push(fallback)}for(var n=0;n<links.length;n++){var link=links[n];link.type="image/svg+xml";link.removeAttribute("sizes");link.href=href}}()</script>
 <script nonce="{{ nonce }}" type="importmap">
 {
   "imports": {
@@ -109,7 +110,7 @@
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
   <a href="{{ routes.chats }}" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
-  <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=i.emoji?i.emoji+" ":"";a+=(i&&i.name)||"moltis";var u=(i&&i.user_name&&String(i.user_name).trim())||"";if(u)a=a+": "+u+" AI assistant";document.title=a}()</script>
+  <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name&&String(i.name).trim())||"moltis";document.title=a}()</script>
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
   <div class="flex-1"></div>
@@ -188,13 +189,6 @@
 <div class="flex flex-1 min-h-0 overflow-hidden">
   <!-- Sessions sidebar -->
   <div class="w-[240px] border-r border-[var(--border)] flex flex-col bg-[var(--surface)] shrink-0 hidden" id="sessionsPanel">
-    <div class="px-3 py-2.5 border-b border-[var(--border)] flex items-center justify-between">
-      <span class="text-sm text-[var(--muted)] font-medium">Sessions</span>
-      <div class="flex items-center gap-1">
-        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
-        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
-      </div>
-    </div>
     <!-- Project selector -->
     <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] hidden">
       <div id="projectFilterCombo" class="model-combo">
@@ -209,8 +203,12 @@
       </div>
     </div>
     <div class="px-3 py-2 border-b border-[var(--border)] relative">
-      <input id="sessionSearch" type="text" placeholder="Search sessions…"
-             class="w-full text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
+      <div class="flex items-center gap-1">
+        <input id="sessionSearch" type="text" placeholder="Search sessions…"
+               class="flex-1 min-w-0 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
+        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
+        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
+      </div>
       <div id="searchResults" class="hidden"></div>
     </div>
     <div class="flex-1 overflow-y-auto" id="sessionList"></div>

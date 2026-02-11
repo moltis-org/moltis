@@ -183,9 +183,12 @@ impl DedupeCache {
         {
             self.entries.remove(&oldest_key);
         }
-        self.entries.insert(key.to_string(), DedupeEntry {
-            inserted_at: Instant::now(),
-        });
+        self.entries.insert(
+            key.to_string(),
+            DedupeEntry {
+                inserted_at: Instant::now(),
+            },
+        );
         false
     }
 

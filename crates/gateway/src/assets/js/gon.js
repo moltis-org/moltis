@@ -26,7 +26,13 @@ export function onChange(key, fn) {
 }
 
 export function refresh() {
-	return fetch("/api/gon")
+	return fetch(`/api/gon?_=${Date.now()}`, {
+		cache: "no-store",
+		headers: {
+			"Cache-Control": "no-cache",
+			Pragma: "no-cache",
+		},
+	})
 		.then((r) => (r.ok ? r.json() : null))
 		.then((data) => {
 			if (!data) return;
