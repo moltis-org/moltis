@@ -18,7 +18,7 @@ use {
 };
 
 #[derive(Parser)]
-#[command(name = "moltis", about = "Moltis — personal AI gateway")]
+#[command(name = "moltis", about = "Moltis — personal AI gateway", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
