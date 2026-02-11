@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sessions sidebar layout**: Removed the top `Sessions` title row and moved
   the new-session `+` action next to the session search field for a more
   compact list header.
+- **Identity autosave UX**: Name fields in Settings > Identity now autosave on
+  input blur, matching the quick-save behavior used for emoji selection.
+- **Favicon behavior by browser**: Identity emoji changes now update favicon
+  live; Safari-specific reload guidance is shown only when Safari is detected.
+- **Page title format**: Browser title now uses the configured assistant name
+  only, without appending `AI assistant` suffix text.
 
 ## [0.8.7] - 2026-02-11
 
