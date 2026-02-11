@@ -969,6 +969,7 @@ pub async fn start_gateway(
         Arc::clone(&registry),
         config.providers.clone(),
         deploy_platform.clone(),
+        config.chat.allowed_models.clone(),
     ));
 
     // Wire live local-llm service when the feature is enabled.
@@ -1004,6 +1005,7 @@ pub async fn start_gateway(
             Arc::clone(&registry),
             Arc::clone(&model_store),
             config.chat.priority_models.clone(),
+            config.chat.allowed_models.clone(),
         ));
         services = services.with_model(Arc::clone(&svc) as Arc<dyn crate::services::ModelService>);
         Some(svc)
