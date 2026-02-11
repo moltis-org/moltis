@@ -212,7 +212,14 @@ test.describe("Authentication", () => {
 		await expectPageContentMounted(page);
 		await expect(page).toHaveURL(/\/settings\/security$/);
 		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
-		await expect(page.getByText("Authentication has been removed.", { exact: false })).toBeVisible();
+		await expect(
+			page.getByText(
+				"Localhost-only access is safe, but localhost bypass is active.",
+				{ exact: false },
+			),
+		).toBeVisible();
+		await expect(page.getByText("Sign out has no effect.", { exact: false })).toBeVisible();
+		await expect(page.locator(".alert-info-text")).toHaveCount(0);
 		await expect(page.getByRole("heading", { name: "Set Password" })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Passkeys" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Set up authentication" })).toHaveCount(0);

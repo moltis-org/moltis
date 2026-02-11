@@ -946,14 +946,15 @@ function SecuritySection() {
 				? html`<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--error);background:color-mix(in srgb, var(--error) 5%, transparent);">
 					<strong style="color:var(--error);">Authentication is disabled</strong>
 					<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
-						Authentication has been removed. Localhost-only access is safe, set a password or passkey below to re-enable authentication.
+						Localhost-only access is safe, but localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has no effect.
+						Add credentials below to require login on localhost and before exposing Moltis to your network.
 					</p>
 				</div>`
 				: null
 		}
 
 		${
-			localhostOnly && !hasPassword && !hasPasskeys
+			localhostOnly && !hasPassword && !hasPasskeys && !authDisabled
 				? html`<div class="alert-info-text max-w-form">
 					<span class="alert-label-info">Note: </span>
 					Localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has no effect.
