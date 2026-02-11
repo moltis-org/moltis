@@ -3788,7 +3788,6 @@ async fn render_spa_template(
     gateway: &GatewayState,
     template_name: &str,
 ) -> axum::response::Response {
-
     let raw = read_asset(template_name)
         .and_then(|b| String::from_utf8(b).ok())
         .unwrap_or_default();
