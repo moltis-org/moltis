@@ -452,7 +452,7 @@ fn load_access_token_and_account_id() -> anyhow::Result<(String, String)> {
         .load("openai-codex")
         .or_else(load_codex_cli_tokens)
         .ok_or_else(|| {
-            warn!("openai-codex tokens not found in token store or codex CLI auth");
+            debug!("openai-codex tokens not found in token store or codex CLI auth");
             anyhow::anyhow!("openai-codex tokens not found")
         })?;
 

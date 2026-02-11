@@ -32,11 +32,13 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies:
 # - ca-certificates: for HTTPS connections to LLM providers
+# - chromium: headless browser for the browser tool (web search/fetch)
 # - sudo: allows moltis user to install packages at runtime (passwordless)
 # - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        chromium \
         libgomp1 \
         sudo \
         docker.io && \
