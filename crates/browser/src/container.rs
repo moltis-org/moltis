@@ -593,7 +593,10 @@ fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usiz
 /// Browser containers are named with an instance-specific prefix so startup can
 /// clean up orphaned instances before creating new ones.
 pub fn cleanup_stale_browser_containers(container_prefix: &str) -> Result<usize> {
+    #[cfg(target_os = "macos")]
     let mut removed = cleanup_stale_docker_browser_containers(container_prefix)?;
+    #[cfg(not(target_os = "macos"))]
+    let removed = cleanup_stale_docker_browser_containers(container_prefix)?;
     #[cfg(target_os = "macos")]
     {
         removed += cleanup_stale_apple_browser_containers(container_prefix)?;
