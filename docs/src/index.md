@@ -27,7 +27,7 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 
 ## Key Features
 
-- **30+ LLM Providers** — Anthropic, OpenAI, Google, Mistral, local models, and more
+- **Multiple LLM Providers** — OpenAI Codex, GitHub Copilot, Local LLM*
 - **Streaming-First** — Responses appear as tokens arrive, not after completion
 - **Sandboxed Execution** — Commands run in isolated containers (Docker or Apple Container)
 - **MCP Support** — Connect to Model Context Protocol servers for extended capabilities
@@ -36,6 +36,8 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 - **Long-Term Memory** — Embeddings-powered knowledge base with hybrid search
 - **Hook System** — Observe, modify, or block actions at any lifecycle point
 - **Compile-Time Safety** — Misconfigurations caught by `cargo check`, not runtime crashes
+
+*More providers are coming soon.*
 
 ## Quick Start
 
@@ -77,7 +79,7 @@ Authentication is only required when accessing Moltis from a non-localhost addre
         │        │                      │
         │   ┌────▼────────────────┐     │
         │   │  Provider Registry  │     │
-        │   │ Claude · GPT · Gemini │   │
+        │   │ Codex · Copilot · Local* │   │
         │   └─────────────────────┘     │
         └───────────────────────────────┘
                         │

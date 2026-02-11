@@ -66,24 +66,14 @@ When disabled:
 
 ### Supported Providers
 
-Moltis supports 5 TTS providers: 3 cloud-based and 2 local.
+Moltis supports multiple TTS providers across cloud and local backends.
 
-#### Cloud Providers
+| Category | Notes |
+|----------|-------|
+| Cloud TTS providers | Hosted neural voices with low-latency streaming |
+| Local TTS providers | Offline/on-device synthesis for privacy-sensitive workflows |
 
-| Provider | Model | Latency | Notes |
-|----------|-------|---------|-------|
-| ElevenLabs | `eleven_flash_v2_5` | ~75ms | Lowest latency, voice cloning |
-| ElevenLabs | `eleven_turbo_v2_5` | ~250ms | Higher quality |
-| OpenAI | `tts-1` | ~200ms | Real-time optimized |
-| OpenAI | `tts-1-hd` | ~400ms | Higher quality |
-| Google Cloud | Various | ~150ms | 380+ voices, 50+ languages |
-
-#### Local Providers
-
-| Provider | Binary/Server | Notes |
-|----------|---------------|-------|
-| Piper | `piper` binary | Fast neural TTS, many voices, runs offline |
-| Coqui TTS | TTS server | High-quality neural TTS with voice cloning |
+*More voice providers are coming soon.*
 
 ### Configuration
 
@@ -302,32 +292,21 @@ Change the active TTS provider.
 
 ### Supported Providers
 
-Moltis supports 8 STT providers: 5 cloud-based and 3 local.
+Moltis supports multiple STT providers across cloud and local backends.
 
-#### Cloud Providers
+| Category | Notes |
+|----------|-------|
+| Cloud STT providers | Managed transcription APIs with language/model options |
+| Local STT providers | Offline transcription through local binaries or services |
 
-| Provider | Model | Notes |
-|----------|-------|-------|
-| OpenAI Whisper | `whisper-1` | Best accuracy, handles accents, noise, technical terms |
-| Groq | `whisper-large-v3-turbo` | Ultra-fast Whisper inference on Groq hardware |
-| Deepgram | `nova-3` | Fast and accurate with smart formatting |
-| Google Cloud | Various | Supports 125+ languages |
-| Mistral AI | `voxtral-mini-latest` | Fast Voxtral transcription with 13 languages |
-
-#### Local Providers
-
-| Provider | Binary/Server | Notes |
-|----------|---------------|-------|
-| Voxtral (Local) | vLLM server | Run Voxtral locally via vLLM with OpenAI-compatible API |
-| whisper.cpp | `whisper-cli` | Local Whisper inference via C++ port |
-| sherpa-onnx | `sherpa-onnx-offline` | Local offline STT via ONNX runtime |
+*More voice providers are coming soon.*
 
 ### Configuration
 
 ```toml
 [voice.stt]
 enabled = true
-provider = "whisper"  # or "groq", "deepgram", "google", "mistral", "whisper-cli", "sherpa-onnx"
+provider = "whisper"  # set to any configured STT provider id
 providers = []        # Optional UI allowlist, empty = show all STT providers
 
 # Cloud providers - API key required

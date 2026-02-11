@@ -29,25 +29,27 @@ You'll see output like:
 
 ## 3. Configure a Provider
 
-You need an LLM API key to chat. The easiest options:
+You need an LLM provider configured to chat. Current options are:
 
-### Option A: Anthropic (Recommended)
+### Option A: OpenAI Codex (OAuth)
 
-1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
-2. In Moltis, go to **Settings** → **Providers**
-3. Click **Anthropic** → Enter your API key → **Save**
+1. In Moltis, go to **Settings** → **Providers**
+2. Click **OpenAI Codex** → **Connect**
+3. Complete the OAuth flow
 
-### Option B: OpenAI
+### Option B: GitHub Copilot (OAuth)
 
-1. Get an API key from [platform.openai.com](https://platform.openai.com)
-2. In Moltis, go to **Settings** → **Providers**
-3. Click **OpenAI** → Enter your API key → **Save**
+1. In Moltis, go to **Settings** → **Providers**
+2. Click **GitHub Copilot** → **Connect**
+3. Complete the GitHub OAuth flow
 
-### Option C: Local Model (Free)
+### Option C: Local LLM (Offline)
 
-1. Install [Ollama](https://ollama.ai): `curl -fsSL https://ollama.ai/install.sh | sh`
-2. Pull a model: `ollama pull llama3.2`
-3. In Moltis, configure Ollama in **Settings** → **Providers**
+1. In Moltis, go to **Settings** → **Providers**
+2. Click **Local LLM**
+3. Choose a model and save
+
+*More providers are coming soon.*
 
 ## 4. Chat!
 

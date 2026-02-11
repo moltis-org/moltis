@@ -20,7 +20,7 @@ host = "0.0.0.0"               # Listen address
 
 [agent]
 name = "Moltis"                 # Agent display name
-model = "claude-sonnet-4-20250514"  # Default model
+model = "gpt-5.2-codex"         # Default model
 timeout = 600                   # Agent run timeout (seconds)
 max_iterations = 25             # Max tool call iterations per run
 ```
@@ -31,26 +31,22 @@ Provider API keys are stored separately in `~/.config/moltis/provider_keys.json`
 
 ```toml
 [providers]
-default = "anthropic"           # Default provider
+default = "openai-codex"        # Default provider
 
-[providers.anthropic]
+[providers.openai-codex]
 enabled = true
-models = [
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    "claude-3-5-haiku-20241022",
-]
 
-[providers.openai]
+[providers.github-copilot]
 enabled = true
-models = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "o1-preview",
-]
+
+[providers.local]
+enabled = true
+model = "qwen2.5-coder-7b-q4_k_m"
 ```
 
 See [Providers](providers.md) for detailed provider configuration.
+
+*More providers are coming soon.*
 
 ## Sandbox Configuration
 
@@ -216,12 +212,12 @@ host = "0.0.0.0"
 
 [agent]
 name = "Atlas"
-model = "claude-sonnet-4-20250514"
+model = "gpt-5.2-codex"
 timeout = 600
 max_iterations = 25
 
 [providers]
-default = "anthropic"
+default = "openai-codex"
 
 [tools.exec.sandbox]
 enabled = true

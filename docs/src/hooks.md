@@ -81,7 +81,7 @@ Fires before each LLM API call. The payload includes the full message array, pro
 |-------|------|-------------|
 | `session_key` | string | Session identifier |
 | `provider` | string | Provider name (e.g. "openai", "anthropic") |
-| `model` | string | Model ID (e.g. "gpt-4o", "claude-sonnet-4-20250514") |
+| `model` | string | Model ID (e.g. "gpt-5.2-codex", "qwen2.5-coder-7b-q4_k_m") |
 | `messages` | array | Serialized message array (OpenAI format) |
 | `tool_count` | number | Number of tool schemas sent to the LLM |
 | `iteration` | number | 1-based loop iteration |

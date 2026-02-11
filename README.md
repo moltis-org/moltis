@@ -42,8 +42,8 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 ## Features
 
-- **Multi-provider LLM support** — OpenAI, Anthropic, GitHub Copilot, and more
-  through a trait-based provider architecture
+- **Multi-provider LLM support** — OpenAI Codex, GitHub Copilot, and Local
+  LLM through a trait-based provider architecture
 - **Streaming responses** — real-time token streaming for a responsive user
   experience, including when tools are enabled (tool calls stream argument
   deltas as they arrive)
@@ -72,10 +72,8 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 - **Web browsing** — web search (Brave, Perplexity) and URL fetching with
   readability extraction and SSRF protection
 - **Voice support** — Text-to-speech (TTS) and speech-to-text (STT) with
-  multiple providers. TTS: ElevenLabs, OpenAI, Google Cloud, Piper (local),
-  Coqui TTS (local). STT: OpenAI Whisper, Groq, Deepgram, Google Cloud,
-  Mistral Voxtral, ElevenLabs Scribe, whisper.cpp (local), sherpa-onnx (local).
-  Configure and manage providers from the Settings UI.
+  multiple cloud and local providers. Configure and manage voice providers
+  from the Settings UI.
 - **Scheduled tasks** — cron-based task execution
 - **OAuth flows** — built-in OAuth2 for provider authentication
 - **TLS support** — automatic self-signed certificate generation
@@ -233,8 +231,8 @@ cloud relay required.
         │        │                        │
         │  ┌─────▼─────────────────────┐  │
         │  │    Provider Registry      │  │
-        │  │  Anthropic · OpenAI ·     │  │
-        │  │  Mistral · Copilot · …    │  │
+        │  │  Multiple providers       │  │
+        │  │  (Codex · Copilot · Local)│  │
         │  └───────────────────────────┘  │
         ├─────────────────────────────────┤
         │  Sessions  │ Memory  │  Hooks   │
