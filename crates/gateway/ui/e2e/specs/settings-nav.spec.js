@@ -53,6 +53,8 @@ test.describe("Settings navigation", () => {
 	test("environment page has add form", async ({ page }) => {
 		await navigateAndWait(page, "/settings/environment");
 		await expect(page.getByRole("heading", { name: "Environment" })).toBeVisible();
+		await expect(page.getByPlaceholder("KEY_NAME")).toHaveAttribute("autocomplete", "off");
+		await expect(page.getByPlaceholder("Value")).toHaveAttribute("autocomplete", "new-password");
 	});
 
 	test("security page renders", async ({ page }) => {

@@ -475,7 +475,13 @@ function EnvironmentSection() {
 										onConfirmUpdate(v.key);
 									}}>
 									<code style="font-size:0.8rem;font-family:var(--font-mono);">${v.key}</code>
-									<input type="password" class="provider-key-input" value=${updateValue}
+									<input type="password" class="provider-key-input"
+										name="env_update_value"
+										autocomplete="new-password"
+										autocorrect="off"
+										autocapitalize="off"
+										spellcheck="false"
+										value=${updateValue}
 										onInput=${(e) => setUpdateValue(e.target.value)}
 										placeholder="New value" style="flex:1" autofocus />
 									<button type="submit" class="provider-btn">Save</button>
@@ -506,10 +512,22 @@ function EnvironmentSection() {
 				<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Add Variable</h3>
 				<form onSubmit=${onAdd}>
 					<div style="display:flex;gap:8px;flex-wrap:wrap;">
-						<input type="text" class="provider-key-input" value=${newKey}
+						<input type="text" class="provider-key-input"
+							name="env_key"
+							autocomplete="off"
+							autocorrect="off"
+							autocapitalize="off"
+							spellcheck="false"
+							value=${newKey}
 							onInput=${(e) => setNewKey(e.target.value)}
 							placeholder="KEY_NAME" style="flex:1;min-width:120px;font-family:var(--font-mono);font-size:.8rem;" />
-						<input type="password" class="provider-key-input" value=${newValue}
+						<input type="password" class="provider-key-input"
+							name="env_value"
+							autocomplete="new-password"
+							autocorrect="off"
+							autocapitalize="off"
+							spellcheck="false"
+							value=${newValue}
 							onInput=${(e) => setNewValue(e.target.value)}
 							placeholder="Value" style="flex:2;min-width:200px;" />
 						<button type="submit" class="provider-btn" disabled=${saving || !newKey.trim()}>
