@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.8] - 2026-02-11
+
+### Changed
+
+- **Sessions sidebar layout**: Removed the top `Sessions` title row and moved
+  the new-session `+` action next to the session search field for a more
+  compact list header.
+
 ## [0.8.7] - 2026-02-11
 
 ### Added

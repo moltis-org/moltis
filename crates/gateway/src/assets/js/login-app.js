@@ -1,18 +1,17 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { applyIdentityFavicon, formatLoginTitle } from "./branding.js";
+import { formatLoginTitle } from "./branding.js";
 import { initTheme } from "./theme.js";
 
 initTheme();
 
-// Read identity from server-injected gon data (name for title, emoji for favicon).
+// Read identity from server-injected gon data (name for title).
 var gon = window.__MOLTIS__ || {};
 var identity = gon.identity || null;
 
 // Set page branding from identity.
 document.title = formatLoginTitle(identity);
-applyIdentityFavicon(identity);
 
 async function parseLoginFailure(response) {
 	if (response.status === 429) {

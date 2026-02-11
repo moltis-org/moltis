@@ -231,6 +231,7 @@ function IdentitySection() {
 	var [saving, setSaving] = useState(false);
 	var [emojiSaving, setEmojiSaving] = useState(false);
 	var [saved, setSaved] = useState(false);
+	var [showFaviconReloadHint, setShowFaviconReloadHint] = useState(false);
 	var [error, setError] = useState(null);
 
 	// Sync state when identity loads asynchronously
@@ -288,6 +289,9 @@ function IdentitySection() {
 			if (res?.ok) {
 				identity.value = res.payload;
 				refreshGon();
+				if ((emoji.trim() || "") !== (id?.emoji || "").trim()) {
+					setShowFaviconReloadHint(true);
+				}
 				flashSaved();
 			} else {
 				setError(res?.error?.message || "Failed to save");
@@ -307,6 +311,9 @@ function IdentitySection() {
 				identity.value = res.payload;
 				setEmoji(res.payload?.emoji || "");
 				refreshGon();
+				if ((nextEmoji.trim() || "") !== (id?.emoji || "").trim()) {
+					setShowFaviconReloadHint(true);
+				}
 				flashSaved();
 			} else {
 				setError(res?.error?.message || "Failed to save emoji");
@@ -318,6 +325,10 @@ function IdentitySection() {
 	function onResetSoul() {
 		setSoul("");
 		rerender();
+	}
+
+	function onReloadForFavicon() {
+		window.location.reload();
 	}
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -351,14 +362,21 @@ function IdentitySection() {
 							value=${creature} onInput=${(e) => setCreature(e.target.value)}
 							placeholder="e.g. dog" />
 					</div>
-					<div>
-						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Vibe</div>
-						<input type="text" class="provider-key-input" style="width:100%;"
-							value=${vibe} onInput=${(e) => setVibe(e.target.value)}
-							placeholder="e.g. chill" />
+						<div>
+							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Vibe</div>
+							<input type="text" class="provider-key-input" style="width:100%;"
+								value=${vibe} onInput=${(e) => setVibe(e.target.value)}
+								placeholder="e.g. chill" />
+						</div>
 					</div>
+					${
+						showFaviconReloadHint
+							? html`<div class="mt-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)]">
+								favicon updates requires reload and may be cached for minutes, <button type="button" class="cursor-pointer bg-transparent p-0 text-xs text-[var(--text)] underline" onClick=${onReloadForFavicon}>requires reload</button>.
+							</div>`
+							: null
+					}
 				</div>
-			</div>
 
 			<!-- User section -->
 			<div>

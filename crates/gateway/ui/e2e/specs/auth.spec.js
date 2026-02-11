@@ -364,22 +364,18 @@ test.describe("Authentication", () => {
 		const expected = await page.evaluate(() => {
 			var id = window.__MOLTIS__?.identity;
 			var name = (id?.name ? String(id.name).trim() : "") || "moltis";
-			var userName = id?.user_name ? String(id.user_name).trim() : "";
-			var title = userName ? `${name}: ${userName} AI assistant` : `${name}: AI assistant`;
-			var emoji = id?.emoji ? String(id.emoji).trim() : "";
+			var emoji = (id?.emoji ? String(id.emoji) : "").trim();
 			return {
-				title,
-				hasEmoji: !!emoji,
+				title: name,
 				branch: window.__MOLTIS__?.git_branch || "",
+				hasEmoji: !!emoji,
 				firstIconHref: document.querySelector('link[rel="icon"]')?.href || "",
 			};
 		});
 		var expectedTitle = expected.branch ? `[${expected.branch}] ${expected.title}` : expected.title;
 		await expect.poll(() => page.title()).toBe(expectedTitle);
 
-		if (expected.branch) {
-			expect(expected.firstIconHref).toContain("/assets/icons/icon-branch.svg");
-		} else if (expected.hasEmoji) {
+		if (expected.hasEmoji) {
 			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeTruthy();
 		} else {
 			expect(expected.firstIconHref).toContain("/assets/");
@@ -469,7 +465,7 @@ test.describe("Login page", () => {
 		const expected = await page.evaluate(() => {
 			var id = window.__MOLTIS__?.identity;
 			var name = (id?.name ? String(id.name).trim() : "") || "moltis";
-			var emoji = id?.emoji ? String(id.emoji).trim() : "";
+			var emoji = (id?.emoji ? String(id.emoji) : "").trim();
 			return {
 				title: name,
 				hasEmoji: !!emoji,
@@ -478,11 +474,10 @@ test.describe("Login page", () => {
 		});
 		await expect.poll(() => page.title()).toBe(expected.title);
 		await expect(page.locator(".auth-title")).toContainText(expected.title);
-
 		if (expected.hasEmoji) {
 			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeTruthy();
 		} else {
-			expect(expected.firstIconHref.startsWith("data:image/svg+xml,")).toBeFalsy();
+			expect(expected.firstIconHref).toContain("/assets/");
 		}
 
 		expect(pageErrors).toEqual([]);

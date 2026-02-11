@@ -53,7 +53,7 @@ test.describe("Settings navigation", () => {
 		await expect(content).not.toBeEmpty();
 	});
 
-	test("selecting identity emoji autosaves and updates favicon without clicking Save", async ({ page }) => {
+	test("selecting identity emoji shows favicon reload notice", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/identity");
 
@@ -61,20 +61,42 @@ test.describe("Settings navigation", () => {
 		await expect(pickBtn).toBeVisible();
 		await pickBtn.click();
 
-		const selectedEmoji = "🦊";
+		const selectedEmoji = await page.evaluate(() => {
+			var current = (window.__MOLTIS__?.identity?.emoji || "").trim();
+			var options = ["🦊", "🐙", "🤖", "🐶"];
+			return options.find((emoji) => emoji !== current) || "🦊";
+		});
 		await page.getByRole("button", { name: selectedEmoji, exact: true }).click();
 		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+		await expect(
+			page.getByText("favicon updates requires reload and may be cached for minutes", { exact: false }),
+		).toBeVisible();
+		await expect(page.getByRole("button", { name: "requires reload", exact: true })).toBeVisible();
 
-		await expect
-			.poll(() => {
-				return page.evaluate((emoji) => {
-					var href = document.querySelector('link[rel="icon"]')?.href || "";
-					if (!href.startsWith("data:image/svg+xml,")) return false;
-					var decoded = decodeURIComponent(href.slice("data:image/svg+xml,".length));
-					return decoded.includes(emoji);
-				}, selectedEmoji);
-			})
-			.toBeTruthy();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("favicon reload notice button triggers a full page refresh", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+
+		const pickBtn = page.getByRole("button", { name: "Pick", exact: true });
+		await expect(pickBtn).toBeVisible();
+		await pickBtn.click();
+
+		const selectedEmoji = await page.evaluate(() => {
+			var current = (window.__MOLTIS__?.identity?.emoji || "").trim();
+			var options = ["🦊", "🐙", "🤖", "🐶"];
+			return options.find((emoji) => emoji !== current) || "🦊";
+		});
+		await page.getByRole("button", { name: selectedEmoji, exact: true }).click();
+		await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+		const reloadBtn = page.getByRole("button", { name: "requires reload", exact: true });
+		await expect(reloadBtn).toBeVisible();
+
+		await Promise.all([page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame()), reloadBtn.click()]);
+		await expectPageContentMounted(page);
+		await expect(page).toHaveURL(/\/settings\/identity$/);
 
 		expect(pageErrors).toEqual([]);
 	});
