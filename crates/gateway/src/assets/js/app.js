@@ -13,6 +13,7 @@ import { renderProjectSelect } from "./projects.js";
 import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage, sessionPath } from "./router.js";
+import { routes } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
@@ -118,7 +119,7 @@ if (logoutBtn) {
 }
 if (settingsBtn) {
 	settingsBtn.addEventListener("click", () => {
-		navigate("/settings/identity");
+		navigate(routes.identity);
 	});
 }
 
@@ -171,10 +172,12 @@ function showAuthDisabledBanner() {
 }
 
 function formatShareTitle(identity) {
+	var emoji = identity?.emoji || "";
 	var name = identity?.name || "moltis";
+	var prefix = emoji ? `${emoji} ${name}` : name;
 	var userName = identity?.user_name ? String(identity.user_name).trim() : "";
-	if (userName) return `${name}: ${userName} AI assistant`;
-	return `${name}: AI assistant`;
+	if (userName) return `${prefix}: ${userName} AI assistant`;
+	return `${prefix}: AI assistant`;
 }
 
 function showUpdateBanner(update) {

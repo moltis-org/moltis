@@ -605,6 +605,24 @@ pub fn save_config(config: &MoltisConfig) -> anyhow::Result<PathBuf> {
     save_config_to_path(&target_path, config)
 }
 
+/// Write raw TOML to the config file, preserving comments.
+///
+/// Validates the input by parsing it first. Acquires the config save lock
+/// so concurrent callers cannot race.  Returns the path written to.
+pub fn save_raw_config(toml_str: &str) -> anyhow::Result<PathBuf> {
+    let _: MoltisConfig =
+        toml::from_str(toml_str).map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+    let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = find_or_default_config_path();
+    guard.target_path = Some(path.clone());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, toml_str)?;
+    debug!(path = %path.display(), "saved raw config");
+    Ok(path)
+}
+
 fn save_config_to_path(path: &Path, config: &MoltisConfig) -> anyhow::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

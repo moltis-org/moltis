@@ -49,11 +49,11 @@ var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
 export function openProviderModal() {
 	var m = els();
 	m.modal.classList.remove("hidden");
-	m.title.textContent = "Add Provider";
+	m.title.textContent = "Add LLM";
 	m.body.textContent = "Loading...";
 	sendRpc("providers.available", {}).then((res) => {
 		if (!res?.ok) {
-			m.body.textContent = "Failed to load providers.";
+			m.body.textContent = "Failed to load LLM providers.";
 			return;
 		}
 		var providers = res.payload || [];

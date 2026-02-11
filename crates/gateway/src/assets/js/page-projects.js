@@ -7,6 +7,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "./helpers.js";
 import { fetchProjects } from "./projects.js";
 import { registerPage } from "./router.js";
+import { routes } from "./routes.js";
 import * as S from "./state.js";
 import { projects as projectsSig } from "./stores/project-store.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
@@ -318,7 +319,7 @@ function ProjectsPage() {
 }
 
 registerPage(
-	"/projects",
+	routes.projects,
 	function initProjects(container) {
 		container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
 		editingProject.value = null;

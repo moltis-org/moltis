@@ -14,6 +14,7 @@ import {
 } from "./media-drop.js";
 import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
+import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { bumpSessionCount, fetchSessions, setSessionReplying, switchSession } from "./sessions.js";
 import * as S from "./state.js";
@@ -940,7 +941,7 @@ function handleChatCopy(e) {
 }
 
 registerPrefix(
-	"/chats",
+	routes.chats,
 	function initChat(container, sessionKeyFromUrl) {
 		container.style.cssText = "position:relative";
 		// Safe: chatPageHTML is a static hardcoded template with no user input.

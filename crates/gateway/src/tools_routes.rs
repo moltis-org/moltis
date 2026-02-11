@@ -73,23 +73,31 @@ pub async fn config_get(State(state): State<crate::server::AppState>) -> impl In
         return resp.into_response();
     }
 
-    // Load the current config
-    let config = moltis_config::discover_and_load();
+    // Read raw file from disk to preserve comments.
+    // Fall back to the documented template if no config file exists yet.
+    let path = moltis_config::find_or_default_config_path();
+    let toml_str = if path.exists() {
+        match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("failed to read config: {e}") })),
+                )
+                    .into_response();
+            },
+        }
+    } else {
+        let config = moltis_config::discover_and_load();
+        moltis_config::template::default_config_template(config.server.port)
+    };
 
-    // Serialize the full config to TOML
-    match toml::to_string_pretty(&config) {
-        Ok(toml_str) => Json(serde_json::json!({
-            "toml": toml_str,
-            "valid": true,
-            "path": moltis_config::find_or_default_config_path().to_string_lossy(),
-        }))
-        .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("failed to serialize config: {e}") })),
-        )
-            .into_response(),
-    }
+    Json(serde_json::json!({
+        "toml": toml_str,
+        "valid": true,
+        "path": path.to_string_lossy(),
+    }))
+    .into_response()
 }
 
 /// Validate configuration TOML without saving.
@@ -170,24 +178,21 @@ pub async fn config_save(
             .into_response();
     };
 
-    // Parse the TOML
-    let config: moltis_config::MoltisConfig = match toml::from_str(toml_str) {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("invalid TOML: {e}"),
-                    "valid": false,
-                })),
-            )
-                .into_response();
-        },
-    };
+    // Validate by parsing, then write raw string to preserve comments.
+    if let Err(e) = toml::from_str::<moltis_config::MoltisConfig>(toml_str) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("invalid TOML: {e}"),
+                "valid": false,
+            })),
+        )
+            .into_response();
+    }
 
-    match moltis_config::save_config(&config) {
+    match moltis_config::save_raw_config(toml_str) {
         Ok(path) => {
-            tracing::info!(path = %path.display(), "saved config");
+            tracing::info!(path = %path.display(), "saved config (raw)");
             Json(serde_json::json!({
                 "ok": true,
                 "path": path.to_string_lossy(),

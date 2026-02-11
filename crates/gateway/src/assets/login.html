@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <script nonce="{{ nonce }}">!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
-<title>moltis</title>
+<title>{{ page_title }}</title>
 <meta name="build-ts" content="{{ build_ts }}">
 <script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
 <script nonce="{{ nonce }}" type="importmap">

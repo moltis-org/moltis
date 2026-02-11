@@ -297,11 +297,6 @@ jobs:
           BUILD_TARGET: ${{ matrix.target }}
         run: cargo build --release --target "$BUILD_TARGET"
 
-      - name: Strip binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: strip "target/$BUILD_TARGET/release/moltis"
-
       - name: Build .rpm package
         env:
           BUILD_TARGET: ${{ matrix.target }}

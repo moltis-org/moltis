@@ -1,4 +1,5 @@
 import { mountOnboarding, unmountOnboarding } from "./onboarding-view.js";
 import { registerPage } from "./router.js";
+import { routes } from "./routes.js";
 
-registerPage("/onboarding", mountOnboarding, unmountOnboarding);
+registerPage(routes.onboarding, mountOnboarding, unmountOnboarding);

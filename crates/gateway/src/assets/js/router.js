@@ -1,6 +1,7 @@
 // ── Router ──────────────────────────────────────────────────
 
 import { clearLogsAlert } from "./logs-alert.js";
+import { routes } from "./routes.js";
 import * as S from "./state.js";
 
 var pages = {};
@@ -76,7 +77,7 @@ function updateNavActiveState(path) {
 
 	var settingsBtn = document.getElementById("settingsBtn");
 	if (settingsBtn) {
-		var settingsActive = path === "/settings" || path.indexOf("/settings/") === 0;
+		var settingsActive = path === routes.settings || path.indexOf(`${routes.settings}/`) === 0;
 		settingsBtn.classList.toggle("active", settingsActive);
 	}
 }
@@ -96,14 +97,14 @@ export function mount(path) {
 	updateNavActiveState(path);
 
 	// Show sessions panel on chat pages
-	if (route.matchedPrefix === "/chats" || path === "/chats") {
+	if (route.matchedPrefix === routes.chats || path === routes.chats) {
 		sessionsPanel.classList.remove("hidden");
 	} else {
 		sessionsPanel.classList.add("hidden");
 	}
 
 	// Clear unseen logs alert when viewing the logs page
-	if (path === "/logs" || path === "/settings/logs") clearLogsAlert();
+	if (path === "/logs" || path === routes.logs) clearLogsAlert();
 
 	if (page) page.init(pageContent, route.param);
 }
@@ -135,6 +136,6 @@ var titleLink = document.getElementById("titleLink");
 if (titleLink) {
 	titleLink.addEventListener("click", (e) => {
 		e.preventDefault();
-		navigate("/chats");
+		navigate(routes.chats);
 	});
 }

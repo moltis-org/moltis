@@ -23,6 +23,7 @@ import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
 import { navigate, registerPrefix } from "./router.js";
+import { routes, settingsPath } from "./routes.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
@@ -173,7 +174,7 @@ function SettingsSidebar() {
 				<button
 					class="settings-back-slot"
 					onClick=${() => {
-						navigate("/chats");
+						navigate(routes.chats);
 					}}
 					title="Back to chat sessions"
 			>
@@ -191,7 +192,7 @@ function SettingsSidebar() {
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
 							onClick=${() => {
-								navigate(`/settings/${s.id}`);
+								navigate(settingsPath(s.id));
 							}}
 						>
 							${s.icon}
@@ -1408,7 +1409,7 @@ function ConfigSection() {
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:700px;margin:0;">
-			Edit the full moltis configuration. This includes server, tools, providers, auth, and all other settings.
+			Edit the full moltis configuration. This includes server, tools, LLM providers, auth, and all other settings.
 			Test your changes before saving. Changes require a restart to take effect.
 			<a href="https://moltis.dev/docs/configuration" target="_blank" rel="noopener"
 				style="color:var(--accent);text-decoration:underline;">View documentation \u2197</a>
@@ -3136,7 +3137,7 @@ function SettingsPage() {
 var DEFAULT_SECTION = "identity";
 
 registerPrefix(
-	"/settings",
+	routes.settings,
 	(container, param) => {
 		mounted = true;
 		containerRef = container;
@@ -3145,7 +3146,7 @@ registerPrefix(
 		var section = isValidSection ? param : DEFAULT_SECTION;
 		activeSection.value = section;
 		if (!isValidSection) {
-			history.replaceState(null, "", `/settings/${section}`);
+			history.replaceState(null, "", settingsPath(section));
 		}
 		render(html`<${SettingsPage} />`, container);
 		fetchIdentity();

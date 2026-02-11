@@ -264,7 +264,7 @@ function ProviderSection(props) {
 							<div class="min-w-0 flex-1">
 								<div class="flex items-center gap-2 min-w-0">
 									<div class="text-sm font-medium text-[var(--text-strong)] truncate">${model.displayName || model.id}</div>
-									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || "Model is not supported for this account/provider"}>Unsupported</span>` : null}
+									${model.unsupported ? html`<span class="provider-item-badge warning" title=${model.unsupportedReason || "Model is not supported for this account"}>Unsupported</span>` : null}
 									${model.supportsTools ? null : html`<span class="provider-item-badge warning">Chat only</span>`}
 									${model.disabled ? html`<span class="provider-item-badge muted">Disabled</span>` : null}
 								</div>
@@ -306,7 +306,7 @@ function ProvidersPage() {
 							if (connected.value) openProviderModal();
 						}}
 					>
-						Add Provider
+						Add LLM
 					</button>
 					<button
 						class="provider-btn provider-btn-secondary"
@@ -349,7 +349,7 @@ function ProvidersPage() {
 					loading.value && configuredModels.value.length === 0
 						? html`<div class="text-xs text-[var(--muted)]">Loading…</div>`
 						: configuredModels.value.length === 0
-							? html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No providers configured yet.</div>`
+							? html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No LLM providers configured yet.</div>`
 							: html`<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
 								${groupProviderRows(configuredModels.value, providerMetaSig.value).map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
 							</div>`

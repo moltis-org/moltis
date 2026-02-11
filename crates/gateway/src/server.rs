@@ -3549,6 +3549,42 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
 /// Injects a `<script>` tag with pre-fetched bootstrap data (channels,
 /// sessions, models, projects) so the UI can render synchronously without
 /// waiting for the WebSocket handshake — similar to the gon pattern in Rails.
+/// All SPA route paths, defined once in Rust and exposed to both
+/// askama templates (HTML `href` attributes) and JavaScript via gon.
+#[cfg(feature = "web-ui")]
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SpaRoutes {
+    chats: &'static str,
+    settings: &'static str,
+    providers: &'static str,
+    security: &'static str,
+    identity: &'static str,
+    config: &'static str,
+    logs: &'static str,
+    onboarding: &'static str,
+    projects: &'static str,
+    skills: &'static str,
+    crons: &'static str,
+    monitoring: &'static str,
+}
+
+#[cfg(feature = "web-ui")]
+static SPA_ROUTES: SpaRoutes = SpaRoutes {
+    chats: "/chats",
+    settings: "/settings",
+    providers: "/settings/providers",
+    security: "/settings/security",
+    identity: "/settings/identity",
+    config: "/settings/config",
+    logs: "/settings/logs",
+    onboarding: "/onboarding",
+    projects: "/projects",
+    skills: "/skills",
+    crons: "/crons",
+    monitoring: "/monitoring",
+};
+
 /// Server-side data injected into every page as `window.__MOLTIS__`
 /// (gon pattern — see CLAUDE.md § Server-Injected Data).
 ///
@@ -3579,6 +3615,9 @@ struct GonData {
     /// Sandbox runtime info so the UI can render sandbox status without
     /// waiting for the auth-protected `/api/bootstrap` endpoint.
     sandbox: SandboxGonInfo,
+    /// Central SPA route definitions so JS can read paths from gon
+    /// instead of hardcoding them.
+    routes: SpaRoutes,
 }
 
 /// Sandbox runtime snapshot included in gon data so the settings page
@@ -3733,6 +3772,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         deploy_platform: gw.deploy_platform.clone(),
         update: gw.inner.read().await.update.clone(),
         sandbox,
+        routes: SPA_ROUTES.clone(),
     }
 }
 
@@ -3958,6 +3998,7 @@ struct IndexHtmlTemplate<'a> {
     share_site_name: &'a str,
     share_image_url: &'a str,
     share_image_alt: &'a str,
+    routes: &'a SpaRoutes,
 }
 
 #[cfg(feature = "web-ui")]
@@ -3967,6 +4008,7 @@ struct LoginHtmlTemplate<'a> {
     build_ts: &'a str,
     asset_prefix: &'a str,
     nonce: &'a str,
+    page_title: &'a str,
     gon_json: &'a str,
 }
 
@@ -3977,6 +4019,7 @@ struct OnboardingHtmlTemplate<'a> {
     build_ts: &'a str,
     asset_prefix: &'a str,
     nonce: &'a str,
+    page_title: &'a str,
 }
 
 #[cfg(feature = "web-ui")]
@@ -3997,12 +4040,8 @@ fn script_safe_json<T: serde::Serialize>(value: &T) -> String {
 
 #[cfg(feature = "web-ui")]
 fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
-    let agent_name = identity.name.trim();
-    let agent_name = if agent_name.is_empty() {
-        "moltis"
-    } else {
-        agent_name
-    };
+    let agent_name = identity_name(identity);
+    let display_name = identity_display_name(identity);
     let user_name = identity
         .user_name
         .as_deref()
@@ -4010,8 +4049,8 @@ fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
         .filter(|name| !name.is_empty());
 
     let title = match user_name {
-        Some(user_name) => format!("{agent_name}: {user_name} AI assistant"),
-        None => format!("{agent_name}: AI assistant"),
+        Some(user_name) => format!("{display_name}: {user_name} AI assistant"),
+        None => format!("{display_name}: AI assistant"),
     };
     let description = match user_name {
         Some(user_name) => format!(
@@ -4028,6 +4067,30 @@ fn build_share_meta(identity: &moltis_config::ResolvedIdentity) -> ShareMeta {
         description,
         site_name: agent_name.to_owned(),
         image_alt,
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn identity_name(identity: &moltis_config::ResolvedIdentity) -> &str {
+    let name = identity.name.trim();
+    if name.is_empty() {
+        "moltis"
+    } else {
+        name
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn identity_display_name(identity: &moltis_config::ResolvedIdentity) -> String {
+    let name = identity_name(identity);
+    let emoji = identity
+        .emoji
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+    match emoji {
+        Some(emoji) => format!("{emoji} {name}"),
+        None => name.to_owned(),
     }
 }
 
@@ -4068,6 +4131,7 @@ async fn render_spa_template(
                 share_site_name: &share_meta.site_name,
                 share_image_url: SHARE_IMAGE_URL,
                 share_image_alt: &share_meta.image_alt,
+                routes: &SPA_ROUTES,
             };
             match template.render() {
                 Ok(html) => html,
@@ -4080,10 +4144,12 @@ async fn render_spa_template(
         SpaTemplate::Login => {
             let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
+            let page_title = identity_display_name(&gon.identity);
             let template = LoginHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
                 nonce: &nonce,
+                page_title: &page_title,
                 gon_json: &gon_json,
             };
             match template.render() {
@@ -4095,10 +4161,20 @@ async fn render_spa_template(
             }
         },
         SpaTemplate::Onboarding => {
+            let identity = gateway
+                .services
+                .onboarding
+                .identity_get()
+                .await
+                .ok()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let page_title = format!("{} onboarding", identity_display_name(&identity));
             let template = OnboardingHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
                 nonce: &nonce,
+                page_title: &page_title,
             };
             match template.render() {
                 Ok(html) => html,
@@ -5634,11 +5710,13 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-123",
+            page_title: "\u{1f525} sparky onboarding",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render onboarding template: {e}"),
         };
+        assert!(html.contains("<title>\u{1f525} sparky onboarding</title>"));
         assert!(html.contains("/assets/v/test/js/onboarding-app.js"));
         assert!(!html.contains("/assets/v/test/js/app.js"));
         assert!(!html.contains("/manifest.json"));
@@ -5688,6 +5766,21 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
+    fn share_meta_includes_emoji_in_title() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "sparky".to_owned(),
+            emoji: Some("\u{1f525}".to_owned()),
+            user_name: Some("penso".to_owned()),
+            ..Default::default()
+        };
+
+        let meta = build_share_meta(&identity);
+        assert_eq!(meta.title, "\u{1f525} sparky: penso AI assistant");
+        assert_eq!(meta.site_name, "sparky");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
     fn askama_template_escapes_share_meta_values() {
         let template = IndexHtmlTemplate {
             build_ts: "dev",
@@ -5699,6 +5792,7 @@ mod tests {
             share_site_name: "moltis",
             share_image_url: SHARE_IMAGE_URL,
             share_image_alt: "preview <image>",
+            routes: &SPA_ROUTES,
         };
         let html = match template.render() {
             Ok(html) => html,
@@ -5722,12 +5816,14 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-abc",
+            page_title: "\u{1f525} sparky",
             gon_json: "{\"identity\":{\"name\":\"moltis\"}}",
         };
         let html = match template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render login template: {e}"),
         };
+        assert!(html.contains("<title>\u{1f525} sparky</title>"));
         assert!(html.contains("<script nonce=\"nonce-abc\">window.__MOLTIS__={\"identity\":{\"name\":\"moltis\"}};</script>"));
         assert!(html.contains(
             "<script nonce=\"nonce-abc\" type=\"module\" src=\"/assets/v/test/js/login-app.js\"></script>"
@@ -6016,6 +6112,7 @@ mod tests {
             share_site_name: "moltis",
             share_image_url: SHARE_IMAGE_URL,
             share_image_alt: "preview",
+            routes: &SPA_ROUTES,
         };
         let index_html = match index_template.render() {
             Ok(html) => html,
@@ -6034,6 +6131,7 @@ mod tests {
             build_ts: "dev",
             asset_prefix: "/assets/v/test/",
             nonce,
+            page_title: "moltis onboarding",
         };
         let onboarding_html = match onboarding_template.render() {
             Ok(html) => html,

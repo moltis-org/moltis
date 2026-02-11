@@ -87,7 +87,20 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
     // Prevent the child from inheriting stdin.
     cmd.stdin(std::process::Stdio::null());
 
-    let child = cmd.spawn()?;
+    let child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            if let Some(ref dir) = opts.working_dir {
+                anyhow::anyhow!(
+                    "failed to start command: working directory '{}' does not exist",
+                    dir.display()
+                )
+            } else {
+                anyhow::anyhow!("failed to start command: shell 'sh' not found")
+            }
+        } else {
+            anyhow::anyhow!("failed to start command: {e}")
+        }
+    })?;
 
     let result = tokio::time::timeout(opts.timeout, child.wait_with_output()).await;
 
@@ -253,8 +266,21 @@ impl AgentTool for ExecTool {
             self.sandbox_id.is_some()
         };
 
-        // Resolve working directory.  When sandboxed the host CWD doesn't exist
-        // inside the container, so default to "/" instead.
+        // Check whether the backend is a real container runtime.  When the
+        // backend is "none" (no Docker/container runtime available), commands
+        // run directly on the host even when the session mode says "sandboxed".
+        // Using /home/sandbox as the working directory would fail with ENOENT
+        // on the host, so we must fall back to the host data directory.
+        let has_container_backend = if let Some(ref router) = self.sandbox_router {
+            router.backend_name() != "none"
+        } else {
+            self.sandbox.backend_name() != "none"
+        };
+
+        // Resolve working directory.  When sandboxed *with a real container
+        // backend* the host CWD doesn't exist inside the container, so default
+        // to "/home/sandbox".  When the backend is "none" (no container), fall
+        // back to the host data directory to avoid ENOENT.
         let explicit_working_dir = params
             .get("working_dir")
             .and_then(|v| v.as_str())
@@ -264,7 +290,7 @@ impl AgentTool for ExecTool {
 
         let using_default_working_dir = explicit_working_dir.is_none();
         let mut working_dir = explicit_working_dir.or_else(|| {
-            if is_sandboxed {
+            if is_sandboxed && has_container_backend {
                 Some(PathBuf::from("/home/sandbox"))
             } else {
                 Some(moltis_config::data_dir())
@@ -273,7 +299,7 @@ impl AgentTool for ExecTool {
 
         // Ensure default host working directory exists so command spawning does
         // not fail on fresh machines where ~/.moltis has not been created yet.
-        if !is_sandboxed
+        if !(is_sandboxed && has_container_backend)
             && using_default_working_dir
             && let Some(dir) = working_dir.as_ref()
             && let Err(e) = tokio::fs::create_dir_all(dir).await
@@ -789,5 +815,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["stdout"].as_str().unwrap().trim(), "routed");
+    }
+
+    /// Regression test: when SandboxMode=All (the default) but the backend is
+    /// NoSandbox (no container runtime), the exec tool must NOT use
+    /// /home/sandbox as the working directory.  It should fall back to the host
+    /// data directory and execute successfully.
+    #[tokio::test]
+    async fn test_exec_tool_no_container_backend_with_sandbox_mode_all() {
+        use crate::sandbox::{NoSandbox, SandboxConfig, SandboxRouter};
+
+        // Default config has mode=All, so is_sandboxed() returns true for
+        // every session.  But the backend is NoSandbox ("none") — no Docker.
+        let router = Arc::new(SandboxRouter::with_backend(
+            SandboxConfig::default(),
+            Arc::new(NoSandbox),
+        ));
+        // No explicit working_dir — the tool must NOT default to /home/sandbox.
+        let tool = ExecTool::default().with_sandbox_router(router);
+        let result = tool
+            .execute(serde_json::json!({ "command": "echo works" }))
+            .await
+            .unwrap();
+        assert_eq!(result["stdout"].as_str().unwrap().trim(), "works");
+        assert_eq!(result["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_exec_command_bad_working_dir_error_message() {
+        let opts = ExecOpts {
+            working_dir: Some(PathBuf::from("/nonexistent_dir_12345")),
+            ..Default::default()
+        };
+        let err = exec_command("echo hello", &opts).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("/nonexistent_dir_12345"),
+            "error should mention the bad directory, got: {msg}"
+        );
+        assert!(
+            msg.contains("working directory"),
+            "error should mention 'working directory', got: {msg}"
+        );
     }
 }

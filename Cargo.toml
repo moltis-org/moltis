@@ -172,3 +172,7 @@ moltis-skills     = { path = "crates/skills" }
 moltis-telegram   = { path = "crates/telegram" }
 moltis-tools      = { path = "crates/tools" }
 moltis-voice      = { path = "crates/voice" }
+
+[profile.release]
+lto   = "thin"
+strip = true
