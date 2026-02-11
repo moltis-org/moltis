@@ -17,6 +17,29 @@ test("app shell loads chat route instead of onboarding", async ({ page }) => {
 	expect(pageErrors).toEqual([]);
 });
 
+test("index page exposes OG and Twitter share metadata", async ({ page }) => {
+	const pageErrors = watchPageErrors(page);
+
+	await page.goto("/");
+	await expect(page).toHaveURL(/\/chats\/main$/);
+
+	await expect.poll(() => page.locator('meta[property="og:title"]').getAttribute("content")).toContain("AI assistant");
+	await expect.poll(() => page.locator('meta[property="og:description"]').getAttribute("content")).toContain(
+		"personal AI assistant",
+	);
+	await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+		"content",
+		"https://www.moltis.org/og-social.jpg?v=4",
+	);
+	await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
+	await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute(
+		"content",
+		"https://www.moltis.org/og-social.jpg?v=4",
+	);
+
+	expect(pageErrors).toEqual([]);
+});
+
 const routeCases = [
 	{
 		path: "/crons/jobs",

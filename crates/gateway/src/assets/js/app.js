@@ -170,6 +170,13 @@ function showAuthDisabledBanner() {
 	if (el) el.style.display = "";
 }
 
+function formatShareTitle(identity) {
+	var name = identity?.name || "moltis";
+	var userName = identity?.user_name ? String(identity.user_name).trim() : "";
+	if (userName) return `${name}: ${userName} AI assistant`;
+	return `${name}: AI assistant`;
+}
+
 function showUpdateBanner(update) {
 	var el = document.getElementById("updateBanner");
 	if (!el) return;
@@ -228,9 +235,8 @@ function showBranchBanner(branch) {
 			link.href = "/assets/icons/icon-branch.svg";
 		});
 
-		// Prefix page title with branch name
-		var name = document.getElementById("titleName")?.textContent || "moltis";
-		document.title = `[${branch}] ${name}`;
+		// Prefix page title with branch name.
+		document.title = `[${branch}] ${formatShareTitle(gon.get("identity"))}`;
 	} else {
 		el.style.display = "none";
 
@@ -252,13 +258,13 @@ function applyIdentity(identity) {
 	if (emojiEl) emojiEl.textContent = identity?.emoji ? `${identity.emoji} ` : "";
 	if (nameEl) nameEl.textContent = identity?.name || "moltis";
 
-	// Keep page title in sync with identity name and branch
-	var name = identity?.name || "moltis";
+	// Keep page title in sync with identity and branch.
+	var title = formatShareTitle(identity);
 	var branch = gon.get("git_branch");
 	if (branch) {
-		document.title = `[${branch}] ${name}`;
+		document.title = `[${branch}] ${title}`;
 	} else {
-		document.title = name;
+		document.title = title;
 	}
 }
 

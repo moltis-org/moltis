@@ -48,6 +48,7 @@ version      = "0.8.3"
 # Async runtime
 tokio = { features = ["full"], version = "1" }
 # HTTP/WS server
+askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization

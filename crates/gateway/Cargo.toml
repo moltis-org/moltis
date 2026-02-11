@@ -7,6 +7,7 @@ version.workspace    = true
 [dependencies]
 anyhow             = { workspace = true }
 argon2             = { workspace = true }
+askama             = { optional = true, workspace = true }
 async-trait        = { workspace = true }
 axum               = { workspace = true }
 axum-extra         = { features = ["cookie"], workspace = true }
@@ -108,7 +109,7 @@ tls = [
   "dep:tokio-rustls",
 ]
 voice = ["dep:moltis-voice"]
-web-ui = ["dep:include_dir"]
+web-ui = ["dep:askama", "dep:include_dir"]
 
 [dev-dependencies]
 reqwest           = { workspace = true }

@@ -17,10 +17,26 @@
 <meta name="apple-mobile-web-app-title" content="moltis">
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <script>!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
-<title>moltis</title>
+<title>{{ share_title }}</title>
+<meta name="description" content="{{ share_description }}">
+<meta property="og:title" content="{{ share_title }}">
+<meta property="og:description" content="{{ share_description }}">
+<meta property="og:site_name" content="{{ share_site_name }}">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="{{ share_image_url }}">
+<meta property="og:image:secure_url" content="{{ share_image_url }}">
+<meta property="og:image:width" content="2400">
+<meta property="og:image:height" content="1260">
+<meta property="og:image:alt" content="{{ share_image_alt }}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ share_image_url }}">
+<meta name="twitter:image:alt" content="{{ share_image_alt }}">
+<meta name="twitter:title" content="{{ share_title }}">
+<meta name="twitter:description" content="{{ share_description }}">
 <link rel="icon" type="image/png" sizes="96x96" href="/assets/icons/icon-96.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/icon-72.png">
-<meta name="build-ts" content="__BUILD_TS__">
+<meta name="build-ts" content="{{ build_ts }}">
 <script type="importmap">
 {
   "imports": {
@@ -92,7 +108,7 @@
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
   <a href="/chats" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
-  <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;if(i.name)document.title=i.name}()</script>
+  <script>!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name)||"moltis";var u=(i&&i.user_name&&String(i.user_name).trim())||"";if(u)a=a+": "+u+" AI assistant";document.title=a}()</script>
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
   <div class="flex-1"></div>
