@@ -505,4 +505,46 @@ mod tests {
         assert_ne!(id1, id2);
         assert!(id1.starts_with("browser-"));
     }
+
+    fn test_config() -> BrowserConfig {
+        BrowserConfig {
+            idle_timeout_secs: 60,
+            ..BrowserConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_idle_empty_pool_returns_early() {
+        let pool = BrowserPool::new(test_config());
+        // Should not panic — hits the early-return guard.
+        pool.cleanup_idle().await;
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_empty_pool_is_noop() {
+        let pool = BrowserPool::new(test_config());
+        pool.shutdown().await;
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn active_count_starts_at_zero() {
+        let pool = BrowserPool::new(test_config());
+        assert_eq!(pool.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn close_session_missing_is_ok() {
+        let pool = BrowserPool::new(test_config());
+        // Closing a non-existent session should succeed (no-op).
+        let result = pool.close_session("nonexistent").await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn drop_empty_pool_does_not_panic() {
+        let pool = BrowserPool::new(test_config());
+        drop(pool);
+    }
 }

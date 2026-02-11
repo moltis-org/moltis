@@ -892,4 +892,25 @@ mod tests {
         assert!(validate_url("not a url").is_err());
         assert!(validate_url("://missing.scheme").is_err());
     }
+
+    #[tokio::test]
+    async fn manager_close_session_nonexistent_is_noop() {
+        let manager = BrowserManager::default();
+        // Should not panic — logs a warning and returns.
+        manager.close_session("nonexistent").await;
+    }
+
+    #[tokio::test]
+    async fn manager_cleanup_idle_empty() {
+        let manager = BrowserManager::default();
+        manager.cleanup_idle().await;
+        assert_eq!(manager.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn manager_shutdown_empty() {
+        let manager = BrowserManager::default();
+        manager.shutdown().await;
+        assert_eq!(manager.active_count().await, 0);
+    }
 }

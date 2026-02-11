@@ -2164,7 +2164,7 @@ impl GatewayServices {
 
 #[cfg(test)]
 mod tests {
-    use super::risky_install_pattern;
+    use super::*;
 
     #[test]
     fn risky_install_pattern_detects_piped_shell() {
@@ -2177,5 +2177,21 @@ mod tests {
     #[test]
     fn risky_install_pattern_allows_plain_package_install() {
         assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
+    }
+
+    #[tokio::test]
+    async fn noop_browser_service_lifecycle_methods() {
+        let svc = NoopBrowserService;
+        // Default trait implementations — should not panic.
+        svc.cleanup_idle().await;
+        svc.shutdown().await;
+        svc.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn noop_browser_service_request_returns_error() {
+        let svc = NoopBrowserService;
+        let result = svc.request(serde_json::json!({})).await;
+        assert!(result.is_err());
     }
 }
