@@ -51,11 +51,32 @@ function loadHeartbeatStatus() {
 	});
 }
 
+function findHeartbeatJob() {
+	return cronJobs.value.find((j) => j.name === "__heartbeat__") || heartbeatStatus.value?.job || null;
+}
+
 function loadHeartbeatRuns() {
+	if (!findHeartbeatJob()) {
+		heartbeatRuns.value = heartbeatRuns.value || [];
+		return;
+	}
 	heartbeatRuns.value = null;
 	sendRpc("heartbeat.runs", { limit: 10 }).then((res) => {
 		heartbeatRuns.value = res?.ok ? res.payload || [] : [];
 	});
+}
+
+function heartbeatRunBlockedReason(cfg, promptSource, job) {
+	if (cfg.enabled === false) {
+		return "Heartbeat is disabled. Enable it to allow manual runs.";
+	}
+	if (promptSource === "default") {
+		return "Heartbeat is inactive because no prompt is configured. Add a custom prompt or write actionable content in HEARTBEAT.md.";
+	}
+	if (!job) {
+		return "Heartbeat has no active cron job yet. Save the heartbeat settings to recreate it.";
+	}
+	return null;
 }
 
 function loadStatus() {
@@ -213,9 +234,8 @@ function HeartbeatSection() {
 	var cfg = heartbeatConfig.value;
 	var saving = heartbeatSaving.value;
 	var promptSource = heartbeatStatus.value?.promptSource || "default";
-	// Get heartbeat job from cronJobs (loaded from gon) for immediate availability on page load.
-	// Falls back to heartbeatStatus for updates after RPC calls.
-	var job = cronJobs.value.find((j) => j.name === "__heartbeat__") || heartbeatStatus.value?.job;
+	var job = findHeartbeatJob();
+	var runBlockedReason = heartbeatRunBlockedReason(cfg, promptSource, job);
 
 	function onSave(e) {
 		e.preventDefault();
@@ -236,6 +256,7 @@ function HeartbeatSection() {
 	}
 
 	function onRunNow() {
+		if (runBlockedReason) return;
 		heartbeatRunning.value = true;
 		sendRpc("heartbeat.run", {}).then(() => {
 			heartbeatRunning.value = false;
@@ -261,6 +282,7 @@ function HeartbeatSection() {
 	}
 
 	var running = heartbeatRunning.value;
+	var runNowDisabled = running || !!runBlockedReason;
 	var promptSourceText =
 		promptSource === "config"
 			? "config custom prompt"
@@ -279,11 +301,22 @@ function HeartbeatSection() {
         </label>
         <span class="text-xs text-[var(--muted)]">Enable</span>
       </div>
-      <button class="provider-btn provider-btn-secondary" onClick=${onRunNow} disabled=${running}>
+      <button
+        class="provider-btn provider-btn-secondary"
+        onClick=${onRunNow}
+        disabled=${runNowDisabled}
+        title=${runBlockedReason}
+      >
         ${running ? "Running\u2026" : "Run Now"}
       </button>
 	</div>
 	<p class="text-sm text-[var(--muted)] mb-4">Periodic AI check-in that monitors your environment and reports status.</p>
+	${
+		runBlockedReason &&
+		html`<div class="alert-info-text max-w-form mb-4">
+      <span class="alert-label-info">Heartbeat inactive:</span> ${runBlockedReason}
+    </div>`
+	}
 
 	<${HeartbeatJobStatus} job=${job} />
 

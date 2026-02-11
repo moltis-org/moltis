@@ -7,7 +7,6 @@
 import * as gon from "./gon.js";
 
 var ids = {
-	projects: "navCountProjects",
 	skills: "navCountSkills",
 	crons: "navCountCrons",
 };
