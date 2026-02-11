@@ -158,12 +158,9 @@ impl OtpState {
         challenge.attempts += 1;
         if challenge.attempts >= MAX_ATTEMPTS {
             self.challenges.remove(peer_id);
-            self.lockouts.insert(
-                peer_id.to_string(),
-                Lockout {
-                    until: now + self.cooldown,
-                },
-            );
+            self.lockouts.insert(peer_id.to_string(), Lockout {
+                until: now + self.cooldown,
+            });
             return OtpVerifyResult::LockedOut;
         }
 

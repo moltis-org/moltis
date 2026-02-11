@@ -7,13 +7,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{
-    extract::{ConnectInfo, State},
-    http::{HeaderMap, Method, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Json, Response},
+use {
+    axum::{
+        extract::{ConnectInfo, State},
+        http::{HeaderMap, Method, StatusCode},
+        middleware::Next,
+        response::{IntoResponse, Json, Response},
+    },
+    dashmap::{DashMap, mapref::entry::Entry},
 };
-use dashmap::{DashMap, mapref::entry::Entry};
 
 use crate::server::AppState;
 
