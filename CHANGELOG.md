@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-02-11
+
+### Fixed
+
+- **Clippy validation parity**: Unified local validation, CI (main), and
+  release workflows to use the same clippy command and flags
+  (`--workspace --all-features --all-targets --timings -D warnings`), which
+  prevents release-only clippy failures from command drift.
+
 ## [0.8.0] - 2026-02-11
 
 ### Added
