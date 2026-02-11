@@ -138,26 +138,24 @@ EOF
   exit 1
 fi
 
-fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +nightly fmt --all -- --check}"
+nightly_toolchain="${LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN:-nightly-2025-11-30}"
+fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +${nightly_toolchain} fmt --all -- --check}"
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/gateway/src/assets/js/}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
-lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
+lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
-  if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
-    lint_cmd="cargo clippy --workspace -- -D warnings"
-  fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
     test_cmd="cargo test"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
     coverage_cmd="cargo llvm-cov --workspace --html"
   fi
-  echo "Detected macOS without nvcc; using non-CUDA local validation commands." >&2
-  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD if needed." >&2
+  echo "Detected macOS without nvcc; using non-CUDA local test/coverage defaults." >&2
+  echo "Override with LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
 fi
 
 ensure_zizmor() {

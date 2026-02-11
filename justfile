@@ -15,7 +15,7 @@ format-check:
 
 # Lint Rust code using clippy
 lint:
-    cargo clippy --bins --tests --benches --examples --all-features --all-targets -- -D warnings
+    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Build the project
 build:
@@ -187,7 +187,7 @@ ci: format-check lint build test
 # Run the same Rust preflight gates used before release packaging.
 release-preflight:
     cargo +{{nightly_toolchain}} fmt --all -- --check
-    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
+    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Run all tests
 test:

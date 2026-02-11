@@ -76,7 +76,7 @@ jobs:
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: clippy
-      - run: cargo clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
+      - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
   test:
     needs: [fmt, biome]

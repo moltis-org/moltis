@@ -139,7 +139,7 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy -Z unstable-options --workspace --all-features --timings -- -D warnings
+      - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
       - run: cargo test -Z unstable-options --all-features --timings
       - name: Upload cargo timing reports
         if: always()
@@ -240,7 +240,7 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - run: cargo clippy -Z unstable-options --all-features --all-targets --timings -- -D warnings
+      - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
       - name: Upload cargo timing reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
