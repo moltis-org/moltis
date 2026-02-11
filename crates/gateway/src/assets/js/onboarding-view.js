@@ -2078,7 +2078,7 @@ function SummaryStep({ onBack, onFinish }) {
 					data.mem
 						? html`Total: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.total)}</span>
 						Available: <span class="font-medium text-[var(--text)]">${formatMemBytes(data.mem.available)}</span>
-						${data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<div class="text-[var(--warn)] mt-1">Low memory detected. Consider cloud deployment for better performance.</div>` : null}`
+						${data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? html`<div class="text-[var(--warn)] mt-1">Low memory detected. Consider upgrading to an instance with more RAM.</div>` : null}`
 						: html`Memory info unavailable`
 				}
 			<//>
