@@ -243,8 +243,7 @@ impl CredentialStore {
 
     /// Add a password when none exists yet (e.g. after passkey-only setup).
     ///
-    /// Unlike [`set_initial_password`] this does **not** check or modify the
-    /// setup-complete flag — it only inserts the password row.
+    /// This marks setup complete so auth is enforced immediately.
     pub async fn add_password(&self, password: &str) -> anyhow::Result<()> {
         if self.has_password().await? {
             anyhow::bail!("password already set");
@@ -254,6 +253,7 @@ impl CredentialStore {
             .bind(&hash)
             .execute(&self.pool)
             .await?;
+        self.mark_setup_complete().await?;
         Ok(())
     }
 
@@ -533,6 +533,7 @@ impl CredentialStore {
         .bind(passkey_data)
         .execute(&self.pool)
         .await?;
+        self.mark_setup_complete().await?;
         Ok(result.last_insert_rowid())
     }
 
@@ -1042,6 +1043,39 @@ mod tests {
 
         store.remove_passkey(id).await.unwrap();
         assert!(!store.has_passkeys().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_add_password_marks_setup_complete_and_reenables_auth() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        store.reset_all().await.unwrap();
+        assert!(store.is_auth_disabled());
+        assert!(!store.is_setup_complete());
+
+        store.add_password("newpass123").await.unwrap();
+        assert!(store.has_password().await.unwrap());
+        assert!(store.is_setup_complete());
+        assert!(!store.is_auth_disabled());
+    }
+
+    #[tokio::test]
+    async fn test_store_passkey_marks_setup_complete_and_reenables_auth() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        store.reset_all().await.unwrap();
+        assert!(store.is_auth_disabled());
+        assert!(!store.is_setup_complete());
+
+        store
+            .store_passkey(b"cred-1", "My Passkey", b"data")
+            .await
+            .unwrap();
+        assert!(store.has_passkeys().await.unwrap());
+        assert!(store.is_setup_complete());
+        assert!(!store.is_auth_disabled());
     }
 
     #[tokio::test]
