@@ -270,6 +270,43 @@ dedicated [Authentication](authentication.md) page.
 | **2** | No credentials + direct local connection | Full access (dev convenience) |
 | **3** | No credentials + remote/proxied connection | Onboarding only (setup code required) |
 
+## HTTP Endpoint Throttling
+
+Moltis includes built-in per-IP endpoint throttling to reduce brute force
+attempts and traffic spikes, but only when auth is required for the current
+request.
+
+Throttling is bypassed when a request is already authenticated, when auth is
+explicitly disabled, or when setup is incomplete and local Tier-2 access is
+allowed.
+
+### Default Limits
+
+| Scope | Default |
+|------|---------|
+| `POST /api/auth/login` | 5 requests per 60 seconds |
+| Other `/api/auth/*` | 120 requests per 60 seconds |
+| Other `/api/*` | 180 requests per 60 seconds |
+| `/ws` upgrade | 30 requests per 60 seconds |
+
+### When Limits Are Hit
+
+- API endpoints return `429 Too Many Requests`
+- Responses include `Retry-After`
+- JSON responses include `retry_after_seconds`
+
+### Reverse Proxy Behavior
+
+When `MOLTIS_BEHIND_PROXY=true`, throttling is keyed by forwarded client IP
+headers (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`) instead of the
+direct socket address.
+
+### Production Guidance
+
+Built-in throttling is the first layer. For internet-facing deployments, add
+edge rate limits at your reverse proxy or WAF as a second layer (IP reputation,
+burst controls, geo rules, bot filtering).
+
 ## Reverse Proxy Deployments
 
 Running Moltis behind a reverse proxy (Caddy, nginx, Traefik, etc.)

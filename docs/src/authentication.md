@@ -151,6 +151,38 @@ are configured:
 | `/manifest.json` | PWA manifest |
 | `/sw.js` | Service worker |
 
+## Request Throttling
+
+Moltis applies built-in endpoint throttling per client IP only when auth is
+required for the current request.
+
+Requests bypass IP throttling when:
+
+- The request is already authenticated (session or API key)
+- Auth is not currently enforced (`auth_disabled = true`)
+- Setup is incomplete and the request is allowed by local Tier-2 access
+
+Default limits:
+
+| Scope | Default |
+|------|---------|
+| `POST /api/auth/login` | 5 requests per 60 seconds |
+| Other `/api/auth/*` | 120 requests per 60 seconds |
+| Other `/api/*` | 180 requests per 60 seconds |
+| `/ws` upgrade | 30 requests per 60 seconds |
+
+When a limit is exceeded:
+
+- API endpoints return `429 Too Many Requests`
+- Responses include `Retry-After` header
+- JSON API responses also include `retry_after_seconds`
+
+```admonish note
+When `MOLTIS_BEHIND_PROXY=true`, throttling is keyed by forwarded client IP
+headers (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`) instead of the
+direct socket address.
+```
+
 ## Setup Flow
 
 On first run (no credentials configured):

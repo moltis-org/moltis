@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use {async_trait::async_trait, serde_json::Value, tracing::warn};
+use {
+    async_trait::async_trait,
+    serde_json::Value,
+    tracing::{info, warn},
+};
 
 use {
     moltis_common::hooks::HookRegistry,
@@ -111,6 +115,7 @@ pub struct LiveSessionService {
     project_store: Option<Arc<dyn ProjectStore>>,
     hook_registry: Option<Arc<HookRegistry>>,
     state_store: Option<Arc<SessionStateStore>>,
+    browser_service: Option<Arc<dyn crate::services::BrowserService>>,
 }
 
 impl LiveSessionService {
@@ -122,6 +127,7 @@ impl LiveSessionService {
             project_store: None,
             hook_registry: None,
             state_store: None,
+            browser_service: None,
         }
     }
 
@@ -142,6 +148,14 @@ impl LiveSessionService {
 
     pub fn with_state_store(mut self, store: Arc<SessionStateStore>) -> Self {
         self.state_store = Some(store);
+        self
+    }
+
+    pub fn with_browser_service(
+        mut self,
+        browser: Arc<dyn crate::services::BrowserService>,
+    ) -> Self {
+        self.browser_service = Some(browser);
         self
     }
 }
@@ -654,6 +668,12 @@ impl SessionService for LiveSessionService {
             deleted += 1;
         }
 
+        // Close all browser containers since all user sessions are being cleared.
+        if let Some(ref browser) = self.browser_service {
+            info!("closing all browser sessions after clear_all");
+            browser.close_all().await;
+        }
+
         Ok(serde_json::json!({ "deleted": deleted }))
     }
 }
@@ -831,5 +851,95 @@ mod tests {
         let result = extract_preview(&history).expect("should produce preview");
         assert!(result.ends_with('…'));
         assert!(result.len() <= 204);
+    }
+
+    // --- Browser service integration tests ---
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Mock browser service that tracks lifecycle method calls.
+    struct MockBrowserService {
+        close_all_calls: AtomicU32,
+    }
+
+    impl MockBrowserService {
+        fn new() -> Self {
+            Self {
+                close_all_calls: AtomicU32::new(0),
+            }
+        }
+
+        fn close_all_count(&self) -> u32 {
+            self.close_all_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl crate::services::BrowserService for MockBrowserService {
+        async fn request(&self, _p: serde_json::Value) -> crate::services::ServiceResult {
+            Err("mock".into())
+        }
+
+        async fn close_all(&self) {
+            self.close_all_calls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    async fn sqlite_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        moltis_sessions::metadata::SqliteSessionMetadata::init(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn with_browser_service_builder() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+
+        let mock = Arc::new(MockBrowserService::new());
+        let svc = LiveSessionService::new(store, metadata)
+            .with_browser_service(Arc::clone(&mock) as Arc<dyn crate::services::BrowserService>);
+
+        assert!(svc.browser_service.is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_all_calls_browser_close_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+
+        let mock = Arc::new(MockBrowserService::new());
+        let svc = LiveSessionService::new(store, metadata)
+            .with_browser_service(Arc::clone(&mock) as Arc<dyn crate::services::BrowserService>);
+
+        let result = svc.clear_all().await;
+        assert!(result.is_ok());
+        assert_eq!(mock.close_all_count(), 1, "close_all should be called once");
+    }
+
+    #[tokio::test]
+    async fn clear_all_without_browser_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+
+        // No browser_service wired.
+        let svc = LiveSessionService::new(store, metadata);
+
+        let result = svc.clear_all().await;
+        assert!(result.is_ok());
     }
 }

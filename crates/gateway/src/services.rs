@@ -1546,6 +1546,12 @@ fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
 #[async_trait]
 pub trait BrowserService: Send + Sync {
     async fn request(&self, params: Value) -> ServiceResult;
+    /// Clean up idle browser instances (called periodically).
+    async fn cleanup_idle(&self) {}
+    /// Shut down all browser instances (called on gateway exit).
+    async fn shutdown(&self) {}
+    /// Close all browser sessions (called on sessions.clear_all).
+    async fn close_all(&self) {}
 }
 
 pub struct NoopBrowserService;
@@ -1589,6 +1595,18 @@ impl BrowserService for RealBrowserService {
         let response = self.manager.handle_request(request).await;
 
         serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))
+    }
+
+    async fn cleanup_idle(&self) {
+        self.manager.cleanup_idle().await;
+    }
+
+    async fn shutdown(&self) {
+        self.manager.shutdown().await;
+    }
+
+    async fn close_all(&self) {
+        self.manager.shutdown().await;
     }
 }
 
@@ -2146,7 +2164,7 @@ impl GatewayServices {
 
 #[cfg(test)]
 mod tests {
-    use super::risky_install_pattern;
+    use super::*;
 
     #[test]
     fn risky_install_pattern_detects_piped_shell() {
@@ -2159,5 +2177,21 @@ mod tests {
     #[test]
     fn risky_install_pattern_allows_plain_package_install() {
         assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
+    }
+
+    #[tokio::test]
+    async fn noop_browser_service_lifecycle_methods() {
+        let svc = NoopBrowserService;
+        // Default trait implementations — should not panic.
+        svc.cleanup_idle().await;
+        svc.shutdown().await;
+        svc.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn noop_browser_service_request_returns_error() {
+        let svc = NoopBrowserService;
+        let result = svc.request(serde_json::json!({})).await;
+        assert!(result.is_err());
     }
 }

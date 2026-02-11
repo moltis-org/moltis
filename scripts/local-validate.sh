@@ -143,7 +143,7 @@ biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo clippy --workspace --all-features -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
-e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && npm run e2e}"
+e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
@@ -190,31 +190,6 @@ ensure_zizmor() {
 if [[ -z "${LOCAL_VALIDATE_ZIZMOR_CMD:-}" ]]; then
   ensure_zizmor
 fi
-
-ensure_e2e_ready() {
-  if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" == "1" ]]; then
-    return 0
-  fi
-
-  if [[ ! -f "crates/gateway/ui/package.json" ]]; then
-    echo "UI package manifest not found at crates/gateway/ui/package.json." >&2
-    echo "Set LOCAL_VALIDATE_SKIP_E2E=1 to skip E2E validation for this run." >&2
-    exit 1
-  fi
-
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "npm is required to run UI E2E validation." >&2
-    echo "Set LOCAL_VALIDATE_SKIP_E2E=1 to skip E2E validation for this run." >&2
-    exit 1
-  fi
-
-  if [[ ! -x "crates/gateway/ui/node_modules/.bin/playwright" ]]; then
-    echo "Playwright is not installed for crates/gateway/ui." >&2
-    echo "Install with: (cd crates/gateway/ui && npm install && npm run e2e:install)" >&2
-    echo "Set LOCAL_VALIDATE_SKIP_E2E=1 to skip E2E validation for this run." >&2
-    exit 1
-  fi
-}
 
 repair_stale_llama_build_dirs() {
   shopt -s nullglob
@@ -397,7 +372,6 @@ run_check "local/test" "$test_cmd"
 
 # Gateway web UI e2e tests.
 if [[ "${LOCAL_VALIDATE_SKIP_E2E:-0}" != "1" ]]; then
-  ensure_e2e_ready
   run_check "local/e2e" "$e2e_cmd"
 else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
