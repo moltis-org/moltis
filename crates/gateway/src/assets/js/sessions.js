@@ -455,6 +455,22 @@ export function refreshWelcomeCardIfNeeded() {
 	}
 }
 
+function ensureSessionInClientStore(key, entry, projectId) {
+	var existing = sessionStore.getByKey(key);
+	if (existing) return existing;
+
+	var created = { ...entry, key: key };
+	if (projectId && !created.projectId) created.projectId = projectId;
+	var createdSession = sessionStore.upsert(created);
+
+	// Keep state.js mirror in sync for legacy call sites.
+	var inLegacy = S.sessions.some((s) => s.key === key);
+	if (!inLegacy) {
+		S.setSessions([...S.sessions, created]);
+	}
+	return createdSession;
+}
+
 export function switchSession(key, searchContext, projectId) {
 	sessionStore.setActive(key);
 	// Dual-write to state.js for backward compat
@@ -483,6 +499,7 @@ export function switchSession(key, searchContext, projectId) {
 	sendRpc("sessions.switch", switchParams).then((res) => {
 		if (res?.ok && res.payload) {
 			var entry = res.payload.entry || {};
+			ensureSessionInClientStore(key, entry, projectId);
 			restoreSessionState(entry, projectId);
 			var history = res.payload.history || [];
 			var msgEls = [];
@@ -535,9 +552,11 @@ export function switchSession(key, searchContext, projectId) {
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
 			postHistoryLoadActions(key, searchContext, msgEls);
+			if (S.chatInput) S.chatInput.focus();
 		} else {
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
+			if (S.chatInput) S.chatInput.focus();
 		}
 	});
 }

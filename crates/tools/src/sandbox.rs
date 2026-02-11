@@ -423,18 +423,26 @@ pub trait Sandbox: Send + Sync {
 
 /// Compute the content-hash tag for a pre-built sandbox image.
 /// Pure function — independent of any specific container CLI.
-pub fn sandbox_image_tag(base: &str, packages: &[String]) -> String {
+pub fn sandbox_image_tag(repo: &str, base: &str, packages: &[String]) -> String {
     use std::hash::Hasher;
     let mut h = std::hash::DefaultHasher::new();
     // Bump this when the Dockerfile template changes to force a rebuild.
     h.write(b"v4");
+    h.write(repo.as_bytes());
     h.write(base.as_bytes());
     let mut sorted: Vec<&String> = packages.iter().collect();
     sorted.sort();
     for p in &sorted {
         h.write(p.as_bytes());
     }
-    format!("moltis-sandbox:{:016x}", h.finish())
+    format!("{repo}:{:016x}", h.finish())
+}
+
+fn is_sandbox_image_tag(tag: &str) -> bool {
+    let Some((repo, _)) = tag.split_once(':') else {
+        return false;
+    };
+    repo.ends_with("-sandbox")
 }
 
 /// Check whether a container image exists locally.
@@ -457,7 +465,7 @@ pub struct SandboxImage {
     pub created: String,
 }
 
-/// List all local `moltis-sandbox:*` images across available container CLIs.
+/// List all local `<instance>-sandbox:*` images across available container CLIs.
 pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
     let mut images = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -478,7 +486,7 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.splitn(3, '\t').collect();
                 if parts.len() == 3
-                    && parts[0].starts_with("moltis-sandbox:")
+                    && is_sandbox_image_tag(parts[0])
                     && seen.insert(parts[0].to_string())
                 {
                     images.push(SandboxImage {
@@ -503,7 +511,7 @@ pub async fn list_sandbox_images() -> Result<Vec<SandboxImage>> {
             for line in stdout.lines().skip(1) {
                 // Columns are whitespace-separated: NAME TAG DIGEST
                 let cols: Vec<&str> = line.split_whitespace().collect();
-                if cols.len() >= 2 && cols[0] == "moltis-sandbox" {
+                if cols.len() >= 2 && cols[0].ends_with("-sandbox") {
                     let tag = format!("{}:{}", cols[0], cols[1]);
                     if !seen.insert(tag.clone()) {
                         continue;
@@ -570,10 +578,10 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Remove a specific `moltis-sandbox:*` image.
+/// Remove a specific `<instance>-sandbox:*` image.
 pub async fn remove_sandbox_image(tag: &str) -> Result<()> {
     anyhow::ensure!(
-        tag.starts_with("moltis-sandbox:"),
+        is_sandbox_image_tag(tag),
         "refusing to remove non-sandbox image: {tag}"
     );
     for cli in &["docker", "container"] {
@@ -600,7 +608,7 @@ pub async fn remove_sandbox_image(tag: &str) -> Result<()> {
     Ok(())
 }
 
-/// Remove all local `moltis-sandbox:*` images.
+/// Remove all local `<instance>-sandbox:*` images.
 pub async fn clean_sandbox_images() -> Result<usize> {
     let images = list_sandbox_images().await?;
     let count = images.len();
@@ -636,6 +644,10 @@ impl DockerSandbox {
 
     fn container_name(&self, id: &SandboxId) -> String {
         format!("{}-{}", self.container_prefix(), id.key)
+    }
+
+    fn image_repo(&self) -> &str {
+        self.container_prefix()
     }
 
     fn resource_args(&self) -> Vec<String> {
@@ -725,9 +737,9 @@ impl Sandbox for DockerSandbox {
             anyhow::bail!("docker run failed: {}", stderr.trim());
         }
 
-        // Skip provisioning if the image is a pre-built moltis-sandbox image
+        // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
-        let is_prebuilt = image.starts_with("moltis-sandbox:");
+        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
         if !is_prebuilt {
             provision_packages("docker", &name, &self.config.packages).await?;
         }
@@ -744,7 +756,7 @@ impl Sandbox for DockerSandbox {
             return Ok(None);
         }
 
-        let tag = sandbox_image_tag(base, packages);
+        let tag = sandbox_image_tag(self.image_repo(), base, packages);
 
         // Check if image already exists.
         if sandbox_image_exists("docker", &tag).await {
@@ -1035,6 +1047,10 @@ impl AppleContainerSandbox {
         format!("{}-{}", self.container_prefix(), id.key)
     }
 
+    fn image_repo(&self) -> &str {
+        self.container_prefix()
+    }
+
     /// Check whether the `container` CLI is available.
     pub async fn is_available() -> bool {
         tokio::process::Command::new("container")
@@ -1202,9 +1218,9 @@ impl Sandbox for AppleContainerSandbox {
 
         info!(name, image, "apple container created and running");
 
-        // Skip provisioning if the image is a pre-built moltis-sandbox image
+        // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
-        let is_prebuilt = image.starts_with("moltis-sandbox:");
+        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
         if !is_prebuilt {
             provision_packages("container", &name, &self.config.packages).await?;
         }
@@ -1299,7 +1315,7 @@ impl Sandbox for AppleContainerSandbox {
             return Ok(None);
         }
 
-        let tag = sandbox_image_tag(base, packages);
+        let tag = sandbox_image_tag(self.image_repo(), base, packages);
 
         if sandbox_image_exists("container", &tag).await {
             info!(
@@ -2004,10 +2020,10 @@ mod tests {
     #[test]
     fn test_docker_image_tag_deterministic() {
         let packages = vec!["curl".into(), "git".into(), "wget".into()];
-        let tag1 = sandbox_image_tag("ubuntu:25.10", &packages);
-        let tag2 = sandbox_image_tag("ubuntu:25.10", &packages);
+        let tag1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
+        let tag2 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
         assert_eq!(tag1, tag2);
-        assert!(tag1.starts_with("moltis-sandbox:"));
+        assert!(tag1.starts_with("moltis-main-sandbox:"));
     }
 
     #[test]
@@ -2015,16 +2031,16 @@ mod tests {
         let p1 = vec!["curl".into(), "git".into()];
         let p2 = vec!["git".into(), "curl".into()];
         assert_eq!(
-            sandbox_image_tag("ubuntu:25.10", &p1),
-            sandbox_image_tag("ubuntu:25.10", &p2),
+            sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p1),
+            sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p2),
         );
     }
 
     #[test]
     fn test_docker_image_tag_changes_with_base() {
         let packages = vec!["curl".into()];
-        let t1 = sandbox_image_tag("ubuntu:25.10", &packages);
-        let t2 = sandbox_image_tag("ubuntu:24.04", &packages);
+        let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
+        let t2 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:24.04", &packages);
         assert_ne!(t1, t2);
     }
 
@@ -2032,8 +2048,8 @@ mod tests {
     fn test_docker_image_tag_changes_with_packages() {
         let p1 = vec!["curl".into()];
         let p2 = vec!["curl".into(), "git".into()];
-        let t1 = sandbox_image_tag("ubuntu:25.10", &p1);
-        let t2 = sandbox_image_tag("ubuntu:25.10", &p2);
+        let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p1);
+        let t2 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p2);
         assert_ne!(t1, t2);
     }
 

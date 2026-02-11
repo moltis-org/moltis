@@ -2,6 +2,45 @@ use {anyhow::Result, clap::Subcommand};
 
 use moltis_tools::sandbox;
 
+fn sanitize_instance_slug(name: &str) -> String {
+    let base = name.to_lowercase();
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in base.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if !last_dash {
+                out.push(mapped);
+            }
+            last_dash = true;
+        } else {
+            out.push(mapped);
+            last_dash = false;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "moltis".to_string()
+    } else {
+        out
+    }
+}
+
+fn instance_sandbox_prefix(config: &moltis_config::MoltisConfig) -> String {
+    let mut identity_name = config.identity.name.clone();
+    if let Some(file_identity) = moltis_config::load_identity()
+        && file_identity.name.is_some()
+    {
+        identity_name = file_identity.name;
+    }
+    let slug = sanitize_instance_slug(identity_name.as_deref().unwrap_or("moltis"));
+    format!("moltis-{slug}-sandbox")
+}
+
 #[derive(Subcommand)]
 pub enum SandboxAction {
     /// List pre-built sandbox images.
@@ -10,7 +49,7 @@ pub enum SandboxAction {
     Build,
     /// Remove a specific sandbox image by tag.
     Remove {
-        /// Image tag (e.g. moltis-sandbox:abc123).
+        /// Image tag (e.g. moltis-main-sandbox:abc123).
         tag: String,
     },
     /// Remove all pre-built sandbox images.
@@ -41,7 +80,8 @@ async fn list() -> Result<()> {
 
 async fn build() -> Result<()> {
     let config = moltis_config::discover_and_load();
-    let sandbox_config = sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let mut sandbox_config = sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    sandbox_config.container_prefix = Some(instance_sandbox_prefix(&config));
 
     let packages = sandbox_config.packages.clone();
     if packages.is_empty() {
@@ -54,7 +94,11 @@ async fn build() -> Result<()> {
         .image
         .clone()
         .unwrap_or_else(|| sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
-    let tag = sandbox::sandbox_image_tag(&base, &packages);
+    let repo = sandbox_config
+        .container_prefix
+        .clone()
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    let tag = sandbox::sandbox_image_tag(&repo, &base, &packages);
     println!("Base:     {base}");
     println!("Packages: {}", packages.join(", "));
     println!("Tag:      {tag}");

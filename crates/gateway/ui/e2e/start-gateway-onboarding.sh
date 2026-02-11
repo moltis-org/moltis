@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)"
 
-PORT="${MOLTIS_E2E_ONBOARDING_PORT:-18790}"
+PORT="${MOLTIS_E2E_ONBOARDING_PORT:-0}"
 RUNTIME_ROOT="${MOLTIS_E2E_ONBOARDING_RUNTIME_DIR:-${REPO_ROOT}/target/e2e-runtime-onboarding}"
 CONFIG_DIR="${RUNTIME_ROOT}/config"
 DATA_DIR="${RUNTIME_ROOT}/data"

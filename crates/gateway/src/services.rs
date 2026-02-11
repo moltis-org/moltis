@@ -1550,6 +1550,10 @@ pub trait BrowserService: Send + Sync {
     async fn cleanup_idle(&self) {}
     /// Shut down all browser instances (called on gateway exit).
     async fn shutdown(&self) {}
+    /// Attempt graceful shutdown for a fixed time budget.
+    async fn shutdown_with_grace(&self, grace: std::time::Duration) -> bool {
+        tokio::time::timeout(grace, self.shutdown()).await.is_ok()
+    }
     /// Close all browser sessions (called on sessions.clear_all).
     async fn close_all(&self) {}
 }
@@ -1569,20 +1573,24 @@ pub struct RealBrowserService {
 }
 
 impl RealBrowserService {
-    pub fn new(config: &moltis_config::schema::BrowserConfig) -> Self {
-        let browser_config = moltis_browser::BrowserConfig::from(config);
+    pub fn new(config: &moltis_config::schema::BrowserConfig, container_prefix: String) -> Self {
+        let mut browser_config = moltis_browser::BrowserConfig::from(config);
+        browser_config.container_prefix = container_prefix;
         Self {
             manager: moltis_browser::BrowserManager::new(browser_config),
         }
     }
 
-    pub fn from_config(config: &moltis_config::schema::MoltisConfig) -> Option<Self> {
+    pub fn from_config(
+        config: &moltis_config::schema::MoltisConfig,
+        container_prefix: String,
+    ) -> Option<Self> {
         if !config.tools.browser.enabled {
             return None;
         }
         // Check if Chrome/Chromium is available and warn if not
         moltis_browser::detect::check_and_warn(config.tools.browser.chrome_path.as_deref());
-        Some(Self::new(&config.tools.browser))
+        Some(Self::new(&config.tools.browser, container_prefix))
     }
 }
 
@@ -2166,6 +2174,19 @@ impl GatewayServices {
 mod tests {
     use super::*;
 
+    struct SlowShutdownBrowserService;
+
+    #[async_trait::async_trait]
+    impl BrowserService for SlowShutdownBrowserService {
+        async fn request(&self, _p: Value) -> ServiceResult {
+            Err("not used".into())
+        }
+
+        async fn shutdown(&self) {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     #[test]
     fn risky_install_pattern_detects_piped_shell() {
         assert_eq!(
@@ -2185,6 +2206,10 @@ mod tests {
         // Default trait implementations — should not panic.
         svc.cleanup_idle().await;
         svc.shutdown().await;
+        assert!(
+            svc.shutdown_with_grace(std::time::Duration::from_millis(10))
+                .await
+        );
         svc.close_all().await;
     }
 
@@ -2193,5 +2218,14 @@ mod tests {
         let svc = NoopBrowserService;
         let result = svc.request(serde_json::json!({})).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn browser_shutdown_with_grace_times_out() {
+        let svc = SlowShutdownBrowserService;
+        assert!(
+            !svc.shutdown_with_grace(std::time::Duration::from_millis(5))
+                .await
+        );
     }
 }

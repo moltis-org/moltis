@@ -38,7 +38,7 @@ npm run e2e
 ### Onboarding server (`start-gateway-onboarding.sh`)
 
 Same as above but does **not** seed `IDENTITY.md` or `USER.md`, so the
-app enters onboarding mode. Runs on port 18790 by default.
+app enters onboarding mode. Uses a random free port by default.
 
 ## Playwright Projects
 
@@ -46,9 +46,9 @@ The test suite is split into three Playwright projects:
 
 | Project | Port | Spec files | Notes |
 |---------|------|------------|-------|
-| `default` | 18789 | All except `auth.spec.js` and `onboarding.spec.js` | Seeded identity, no password |
-| `auth` | 18789 | `auth.spec.js` | Runs after `default`; sets a password to test login |
-| `onboarding` | 18790 | `onboarding.spec.js` | Separate server without seeded identity |
+| `default` | Random free port (`MOLTIS_E2E_PORT`) | All except `auth.spec.js` and `onboarding.spec.js` | Seeded identity, no password |
+| `auth` | Same as `default` | `auth.spec.js` | Runs after `default`; sets a password to test login |
+| `onboarding` | Random free port (`MOLTIS_E2E_ONBOARDING_PORT`) | `onboarding.spec.js` | Separate server without seeded identity |
 
 ## Spec Files
 

@@ -156,6 +156,22 @@ export function setAll(serverSessions) {
 	sessions.value = result;
 }
 
+/**
+ * Upsert a single session from server data.
+ * Reuses existing instance when present; creates and appends when missing.
+ */
+export function upsert(serverData) {
+	if (!(serverData && serverData.key)) return null;
+	var prev = getByKey(serverData.key);
+	if (prev) {
+		prev.update(serverData);
+		return prev;
+	}
+	var next = new Session(serverData);
+	sessions.value = [...sessions.value, next];
+	return next;
+}
+
 /** Fetch sessions from the server via RPC. */
 export function fetch() {
 	return sendRpc("sessions.list", {}).then((res) => {
@@ -187,6 +203,7 @@ export var sessionStore = {
 	switchInProgress,
 	Session,
 	setAll,
+	upsert,
 	fetch,
 	getByKey,
 	setActive,

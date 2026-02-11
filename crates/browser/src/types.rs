@@ -352,6 +352,9 @@ pub struct BrowserConfig {
     /// Sandbox mode is controlled per-session via the request, not globally.
     #[serde(default = "default_sandbox_image")]
     pub sandbox_image: String,
+    /// Container name prefix for sandboxed browser instances.
+    #[serde(default = "default_container_prefix")]
+    pub container_prefix: String,
     /// Allowed domains for navigation (empty = all allowed).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
@@ -359,6 +362,10 @@ pub struct BrowserConfig {
 
 fn default_sandbox_image() -> String {
     "browserless/chrome".to_string()
+}
+
+fn default_container_prefix() -> String {
+    "moltis-browser".to_string()
 }
 
 impl Default for BrowserConfig {
@@ -377,6 +384,7 @@ impl Default for BrowserConfig {
             user_agent: None,
             chrome_args: Vec::new(),
             sandbox_image: default_sandbox_image(),
+            container_prefix: default_container_prefix(),
             allowed_domains: Vec::new(),
         }
     }
@@ -398,6 +406,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             user_agent: cfg.user_agent.clone(),
             chrome_args: cfg.chrome_args.clone(),
             sandbox_image: cfg.sandbox_image.clone(),
+            container_prefix: default_container_prefix(),
             allowed_domains: cfg.allowed_domains.clone(),
         }
     }

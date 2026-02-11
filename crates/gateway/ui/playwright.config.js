@@ -1,9 +1,37 @@
 const { defineConfig } = require("@playwright/test");
+const { execFileSync } = require("child_process");
 
-const port = process.env.MOLTIS_E2E_PORT || "18789";
+function pickFreePort() {
+	return execFileSync(
+		process.execPath,
+		[
+			"-e",
+			"const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{process.stdout.write(String(s.address().port));s.close();});",
+		],
+		{ encoding: "utf8" },
+	).trim();
+}
+
+function resolvePort(envVar, usedPorts) {
+	var configured = process.env[envVar];
+	if (configured && configured !== "0") {
+		usedPorts.add(configured);
+		return configured;
+	}
+	var picked = pickFreePort();
+	while (usedPorts.has(picked)) {
+		picked = pickFreePort();
+	}
+	process.env[envVar] = picked;
+	usedPorts.add(picked);
+	return picked;
+}
+
+const usedPorts = new Set();
+const port = resolvePort("MOLTIS_E2E_PORT", usedPorts);
 const baseURL = process.env.MOLTIS_E2E_BASE_URL || `http://127.0.0.1:${port}`;
 
-const onboardingPort = process.env.MOLTIS_E2E_ONBOARDING_PORT || "18790";
+const onboardingPort = resolvePort("MOLTIS_E2E_ONBOARDING_PORT", usedPorts);
 const onboardingBaseURL = process.env.MOLTIS_E2E_ONBOARDING_BASE_URL || `http://127.0.0.1:${onboardingPort}`;
 
 module.exports = defineConfig({

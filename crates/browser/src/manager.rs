@@ -49,6 +49,19 @@ impl Default for BrowserManager {
 impl BrowserManager {
     /// Create a new browser manager with the given configuration.
     pub fn new(config: BrowserConfig) -> Self {
+        match crate::container::cleanup_stale_browser_containers(&config.container_prefix) {
+            Ok(removed) if removed > 0 => {
+                info!(
+                    removed,
+                    "removed stale browser containers from previous runs"
+                );
+            },
+            Ok(_) => {},
+            Err(e) => {
+                warn!(error = %e, "failed to clean stale browser containers at startup");
+            },
+        }
+
         info!(
             sandbox_image = %config.sandbox_image,
             "browser manager initialized (sandbox mode controlled per-session)"

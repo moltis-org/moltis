@@ -311,6 +311,51 @@ fn should_prebuild_sandbox_image(
     !matches!(mode, moltis_tools::sandbox::SandboxMode::Off) && !packages.is_empty()
 }
 
+fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
+    let mut raw_name = config.identity.name.clone();
+    if let Some(file_identity) = moltis_config::load_identity()
+        && file_identity.name.is_some()
+    {
+        raw_name = file_identity.name;
+    }
+
+    let base = raw_name
+        .unwrap_or_else(|| "moltis".to_string())
+        .to_lowercase();
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in base.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if !last_dash {
+                out.push(mapped);
+            }
+            last_dash = true;
+        } else {
+            out.push(mapped);
+            last_dash = false;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "moltis".to_string()
+    } else {
+        out
+    }
+}
+
+fn sandbox_container_prefix(instance_slug: &str) -> String {
+    format!("moltis-{instance_slug}-sandbox")
+}
+
+fn browser_container_prefix(instance_slug: &str) -> String {
+    format!("moltis-{instance_slug}-browser")
+}
+
 async fn ollama_has_model(base_url: &str, model: &str) -> bool {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let response = match reqwest::Client::new().get(url).send().await {
@@ -805,6 +850,9 @@ pub async fn start_gateway(
 
     // Load config file (moltis.toml / .yaml / .json) if present.
     let mut config = moltis_config::discover_and_load();
+    let instance_slug_value = instance_slug(&config);
+    let browser_container_prefix = browser_container_prefix(&instance_slug_value);
+    let sandbox_container_prefix = sandbox_container_prefix(&instance_slug_value);
 
     // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
     if no_tls {
@@ -901,7 +949,9 @@ pub async fn start_gateway(
     services.exec_approval = Arc::new(LiveExecApprovalService::new(Arc::clone(&approval_manager)));
 
     // Wire browser service if enabled.
-    if let Some(browser_svc) = crate::services::RealBrowserService::from_config(&config) {
+    if let Some(browser_svc) =
+        crate::services::RealBrowserService::from_config(&config, browser_container_prefix)
+    {
         services.browser = Arc::new(browser_svc);
     }
 
@@ -1367,6 +1417,7 @@ pub async fn start_gateway(
 
     // Build sandbox router from config (shared across sessions).
     let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    sandbox_config.container_prefix = Some(sandbox_container_prefix);
     sandbox_config.timezone = config
         .user
         .timezone
@@ -2648,22 +2699,6 @@ pub async fn start_gateway(
         }
     }
 
-    // Register tailscale shutdown hook (reset serve/funnel on exit).
-    #[cfg(feature = "tailscale")]
-    if tailscale_mode != TailscaleMode::Off && tailscale_reset_on_exit {
-        let ts_mode = tailscale_mode;
-        tokio::spawn(async move {
-            // Wait for ctrl-c or shutdown signal.
-            tokio::signal::ctrl_c().await.ok();
-            info!("shutting down tailscale {ts_mode}");
-            let manager = CliTailscaleManager::new();
-            if let Err(e) = manager.disable().await {
-                warn!("failed to reset tailscale on exit: {e}");
-            }
-            std::process::exit(0);
-        });
-    }
-
     // Spawn periodic browser cleanup task (every 30s, removes idle instances).
     {
         let browser_for_cleanup = Arc::clone(&browser_for_lifecycle);
@@ -2677,14 +2712,52 @@ pub async fn start_gateway(
         });
     }
 
-    // Spawn browser shutdown handler (stop all containers on ctrl-c).
+    // Spawn shutdown handler:
+    // - reset tailscale state on exit (when configured)
+    // - give browser pool 5s to shut down gracefully
+    // - force process exit to avoid hanging after ctrl-c
     {
         let browser_for_shutdown = Arc::clone(&browser_for_lifecycle);
+        #[cfg(feature = "tailscale")]
+        let reset_tailscale_on_exit =
+            tailscale_mode != TailscaleMode::Off && tailscale_reset_on_exit;
+        #[cfg(feature = "tailscale")]
+        let ts_mode = tailscale_mode;
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                info!("shutting down browser pool");
-                browser_for_shutdown.shutdown().await;
+            if tokio::signal::ctrl_c().await.is_err() {
+                return;
             }
+
+            #[cfg(feature = "tailscale")]
+            if reset_tailscale_on_exit {
+                info!("shutting down tailscale {ts_mode}");
+                let manager = CliTailscaleManager::new();
+                if let Err(e) = manager.disable().await {
+                    warn!("failed to reset tailscale on exit: {e}");
+                }
+            }
+
+            let shutdown_grace = std::time::Duration::from_secs(5);
+            info!(
+                grace_secs = shutdown_grace.as_secs(),
+                "shutting down browser pool"
+            );
+            if browser_for_shutdown
+                .shutdown_with_grace(shutdown_grace)
+                .await
+            {
+                info!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shut down"
+                );
+            } else {
+                warn!(
+                    grace_secs = shutdown_grace.as_secs(),
+                    "browser pool shutdown exceeded grace period, forcing process exit"
+                );
+            }
+
+            std::process::exit(0);
         });
     }
 

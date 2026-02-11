@@ -10,6 +10,18 @@ use {
     tracing::{debug, info, warn},
 };
 
+fn browser_container_name_prefix(container_prefix: &str) -> String {
+    format!("{container_prefix}-")
+}
+
+fn new_browser_container_name(container_prefix: &str) -> String {
+    format!(
+        "{}{}",
+        browser_container_name_prefix(container_prefix),
+        uuid::Uuid::new_v4().as_simple()
+    )
+}
+
 /// Container backend type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerBackend {
@@ -51,15 +63,27 @@ impl BrowserContainer {
     /// Start a new browser container using the auto-detected backend.
     ///
     /// Returns a container instance with the host port for CDP connections.
-    pub fn start(image: &str, viewport_width: u32, viewport_height: u32) -> Result<Self> {
+    pub fn start(
+        image: &str,
+        container_prefix: &str,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<Self> {
         let backend = detect_backend()?;
-        Self::start_with_backend(backend, image, viewport_width, viewport_height)
+        Self::start_with_backend(
+            backend,
+            image,
+            container_prefix,
+            viewport_width,
+            viewport_height,
+        )
     }
 
     /// Start a new browser container with a specific backend.
     pub fn start_with_backend(
         backend: ContainerBackend,
         image: &str,
+        container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
     ) -> Result<Self> {
@@ -81,13 +105,21 @@ impl BrowserContainer {
         );
 
         let container_id = match backend {
-            ContainerBackend::Docker => {
-                start_docker_container(image, host_port, viewport_width, viewport_height)?
-            },
+            ContainerBackend::Docker => start_docker_container(
+                image,
+                container_prefix,
+                host_port,
+                viewport_width,
+                viewport_height,
+            )?,
             #[cfg(target_os = "macos")]
-            ContainerBackend::AppleContainer => {
-                start_apple_container(image, host_port, viewport_width, viewport_height)?
-            },
+            ContainerBackend::AppleContainer => start_apple_container(
+                image,
+                container_prefix,
+                host_port,
+                viewport_width,
+                viewport_height,
+            )?,
         };
 
         debug!(
@@ -194,15 +226,20 @@ impl Drop for BrowserContainer {
 /// Start a Docker container for the browser.
 fn start_docker_container(
     image: &str,
+    container_prefix: &str,
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
 ) -> Result<String> {
+    let container_name = new_browser_container_name(container_prefix);
+
     let output = Command::new("docker")
         .args([
             "run",
             "-d",   // Detached
             "--rm", // Auto-remove on stop
+            "--name",
+            &container_name,
             "-p",
             &format!("{}:3000", host_port), // Map CDP port
             "-e",
@@ -225,24 +262,23 @@ fn start_docker_container(
         bail!("failed to start docker container: {}", stderr.trim());
     }
 
-    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if container_id.is_empty() {
-        bail!("docker returned empty container ID");
+    if container_name.is_empty() {
+        bail!("docker container name is empty");
     }
 
-    Ok(container_id)
+    Ok(container_name)
 }
 
 /// Start an Apple Container for the browser.
 #[cfg(target_os = "macos")]
 fn start_apple_container(
     image: &str,
+    container_prefix: &str,
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
 ) -> Result<String> {
-    // Generate a unique container name
-    let container_name = format!("moltis-browser-{}", uuid::Uuid::new_v4().as_simple());
+    let container_name = new_browser_container_name(container_prefix);
 
     // Apple Container uses different syntax for port mapping and env vars
     let output = Command::new("container")
@@ -305,10 +341,8 @@ fn is_apple_container_functional() -> bool {
     if !is_cli_available("container") {
         return false;
     }
-    // Check if the pull plugin is available by running a help command
-    // The pull command will fail gracefully if the plugin is missing
     Command::new("container")
-        .args(["pull", "--help"])
+        .args(["image", "pull", "--help"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -431,6 +465,142 @@ pub fn is_container_available() -> bool {
     is_docker_available()
 }
 
+fn parse_docker_container_names(output: &[u8], container_prefix: &str) -> Vec<String> {
+    let name_prefix = browser_container_name_prefix(container_prefix);
+    String::from_utf8_lossy(output)
+        .lines()
+        .map(str::trim)
+        .filter(|name| name.starts_with(&name_prefix))
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+struct AppleContainerListEntry {
+    configuration: AppleContainerConfig,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+struct AppleContainerConfig {
+    id: String,
+}
+
+#[cfg(target_os = "macos")]
+fn parse_apple_container_names(output: &[u8]) -> Result<Vec<String>> {
+    let entries: Vec<AppleContainerListEntry> =
+        serde_json::from_slice(output).context("failed to parse apple container list JSON")?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| entry.configuration.id)
+        .collect())
+}
+
+#[cfg(target_os = "macos")]
+fn parse_apple_container_names_for_prefix(
+    output: &[u8],
+    container_prefix: &str,
+) -> Result<Vec<String>> {
+    let name_prefix = browser_container_name_prefix(container_prefix);
+    Ok(parse_apple_container_names(output)?
+        .into_iter()
+        .filter(|name| name.starts_with(&name_prefix))
+        .collect())
+}
+
+fn cleanup_stale_docker_browser_containers(container_prefix: &str) -> Result<usize> {
+    if !is_docker_available() {
+        return Ok(0);
+    }
+
+    let output = Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}"])
+        .output()
+        .context("failed to list docker containers")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "docker ps failed while cleaning stale browser containers: {}",
+            stderr.trim()
+        );
+    }
+
+    let names = parse_docker_container_names(&output.stdout, container_prefix);
+    let mut removed = 0usize;
+    for name in names {
+        let rm = Command::new("docker")
+            .args(["rm", "-f", &name])
+            .output()
+            .with_context(|| format!("failed to remove stale docker browser container {name}"))?;
+        if rm.status.success() {
+            removed += 1;
+        } else {
+            let stderr = String::from_utf8_lossy(&rm.stderr);
+            warn!(
+                container_name = %name,
+                error = %stderr.trim(),
+                "failed to remove stale docker browser container"
+            );
+        }
+    }
+
+    Ok(removed)
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usize> {
+    if !is_cli_available("container") {
+        return Ok(0);
+    }
+
+    let output = Command::new("container")
+        .args(["list", "--all", "--format", "json"])
+        .output()
+        .context("failed to list apple containers")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "container list failed while cleaning stale browser containers: {}",
+            stderr.trim()
+        );
+    }
+
+    let names = parse_apple_container_names_for_prefix(&output.stdout, container_prefix)?;
+    let mut removed = 0usize;
+    for name in names {
+        let rm = Command::new("container")
+            .args(["delete", "--force", &name])
+            .output()
+            .with_context(|| format!("failed to remove stale apple browser container {name}"))?;
+        if rm.status.success() {
+            removed += 1;
+        } else {
+            let stderr = String::from_utf8_lossy(&rm.stderr);
+            warn!(
+                container_name = %name,
+                error = %stderr.trim(),
+                "failed to remove stale apple browser container"
+            );
+        }
+    }
+
+    Ok(removed)
+}
+
+/// Remove stale browser containers left behind by previous runs.
+///
+/// Browser containers are named with an instance-specific prefix so startup can
+/// clean up orphaned instances before creating new ones.
+pub fn cleanup_stale_browser_containers(container_prefix: &str) -> Result<usize> {
+    let mut removed = cleanup_stale_docker_browser_containers(container_prefix)?;
+    #[cfg(target_os = "macos")]
+    {
+        removed += cleanup_stale_apple_browser_containers(container_prefix)?;
+    }
+    Ok(removed)
+}
+
 /// Pull the browser container image if not present.
 /// Falls back to Docker if the primary backend fails.
 pub fn ensure_image(image: &str) -> Result<()> {
@@ -477,10 +647,14 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 
     info!(image, backend = cli, "pulling browser container image");
 
-    let output = Command::new(cli)
-        .args(["pull", image])
-        .output()
-        .context("failed to pull image")?;
+    let output = match backend {
+        ContainerBackend::Docker => Command::new(cli).args(["pull", image]).output(),
+        #[cfg(target_os = "macos")]
+        ContainerBackend::AppleContainer => {
+            Command::new(cli).args(["image", "pull", image]).output()
+        },
+    }
+    .context("failed to pull image")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -504,6 +678,37 @@ mod tests {
     fn test_find_available_port() {
         let port = find_available_port().unwrap();
         assert!(port > 0);
+    }
+
+    #[test]
+    fn test_new_browser_container_name_prefix() {
+        let name = new_browser_container_name("moltis-test-browser");
+        assert!(name.starts_with("moltis-test-browser-"));
+    }
+
+    #[test]
+    fn test_parse_docker_container_names_filters_prefix() {
+        let input = b"moltis-test-browser-abc\nother-container\nmoltis-test-browser-def\n";
+        let parsed = parse_docker_container_names(input, "moltis-test-browser");
+        assert_eq!(parsed, vec![
+            "moltis-test-browser-abc".to_string(),
+            "moltis-test-browser-def".to_string()
+        ]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_parse_apple_container_names_filters_prefix() {
+        let json = br#"[
+          {"configuration":{"id":"moltis-test-browser-123"}},
+          {"configuration":{"id":"not-browser"}},
+          {"configuration":{"id":"moltis-test-browser-456"}}
+        ]"#;
+        let parsed = parse_apple_container_names_for_prefix(json, "moltis-test-browser").unwrap();
+        assert_eq!(parsed, vec![
+            "moltis-test-browser-123".to_string(),
+            "moltis-test-browser-456".to_string()
+        ]);
     }
 
     #[test]

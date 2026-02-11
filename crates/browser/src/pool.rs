@@ -323,6 +323,7 @@ impl BrowserPool {
         // Start the container
         let container = BrowserContainer::start(
             &self.config.sandbox_image,
+            &self.config.container_prefix,
             self.config.viewport_width,
             self.config.viewport_height,
         )

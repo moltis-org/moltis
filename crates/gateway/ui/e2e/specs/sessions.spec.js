@@ -15,18 +15,34 @@ test.describe("Session management", () => {
 	});
 
 	test("new session button creates a session", async ({ page }) => {
-		await navigateAndWait(page, "/");
+		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		const sessionItems = page.locator("#sessionList .session-item");
+		const initialCount = await sessionItems.count();
 
 		await createSession(page);
+		const firstSessionPath = new URL(page.url()).pathname;
+		const firstSessionKey = firstSessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
 
 		// URL should change to a new session (not main)
 		await expect(page).not.toHaveURL(/\/chats\/main$/);
 		await expect(page).toHaveURL(/\/chats\//);
+		await expect(page.locator(`#sessionList .session-item[data-session-key="${firstSessionKey}"]`)).toHaveClass(/active/);
+		await expect(sessionItems).toHaveCount(initialCount + 1);
+		await expect(page.locator("#chatInput")).toBeFocused();
 
-		// The new session should appear in the sidebar
-		const items = await page.locator("#sessionList .session-item").count();
-		expect(items).toBeGreaterThanOrEqual(1);
+		// Regression: creating a second session should still update the list
+		// and mark the new session as active.
+		await createSession(page);
+		const secondSessionPath = new URL(page.url()).pathname;
+		const secondSessionKey = secondSessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+		await expect(page.locator(`#sessionList .session-item[data-session-key="${secondSessionKey}"]`)).toHaveClass(
+			/active/,
+		);
+		await expect(sessionItems).toHaveCount(initialCount + 2);
+		await expect(page.locator("#chatInput")).toBeFocused();
+
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("clicking a session switches to it", async ({ page }) => {
