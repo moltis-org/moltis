@@ -15,7 +15,7 @@
 
 services:
   moltis:
-    image: ghcr.io/penso/moltis:latest
+    image: ghcr.io/moltis-org/moltis:latest
     container_name: moltis
     restart: unless-stopped
     ports:

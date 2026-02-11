@@ -140,7 +140,7 @@ docker run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 
 # Podman (rootless)
 podman run -d \
@@ -149,7 +149,7 @@ podman run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 
 # Podman (rootful)
 podman run -d \
@@ -158,7 +158,7 @@ podman run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 Open `http://localhost:13131` in your browser and complete the setup.

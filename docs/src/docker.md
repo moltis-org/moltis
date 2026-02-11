@@ -13,7 +13,7 @@ docker run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 Open http://localhost:13131 in your browser and configure your LLM provider to start chatting.
@@ -45,7 +45,7 @@ docker run -d \
   -v ./config:/home/moltis/.config/moltis \
   -v ./data:/home/moltis/.moltis \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 With bind mounts, you can edit `config/moltis.toml` directly on the host.
@@ -70,7 +70,7 @@ will fail.
 Mounting the Docker socket gives the container full access to the Docker
 daemon. This is equivalent to root access on the host for practical purposes.
 Only run Moltis containers from trusted sources (official images from
-`ghcr.io/penso/moltis`).
+`ghcr.io/moltis-org/moltis`).
 
 If you cannot mount the Docker socket, Moltis will run in "no sandbox" mode —
 commands execute directly inside the Moltis container itself, which provides
@@ -84,7 +84,7 @@ complete example:
 ```yaml
 services:
   moltis:
-    image: ghcr.io/penso/moltis:latest
+    image: ghcr.io/moltis-org/moltis:latest
     container_name: moltis
     restart: unless-stopped
     ports:
@@ -115,7 +115,7 @@ podman run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 
 # Podman rootful
 podman run -d \
@@ -124,7 +124,7 @@ podman run -d \
   -v moltis-config:/home/moltis/.config/moltis \
   -v moltis-data:/home/moltis/.moltis \
   -v /run/podman/podman.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 You may need to enable the Podman socket service first:
@@ -155,7 +155,7 @@ docker run -d \
   -v ./config:/config \
   -v ./data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/penso/moltis:latest
+  ghcr.io/moltis-org/moltis:latest
 ```
 
 ## Building Locally
