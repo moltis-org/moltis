@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-02-11
+
+### Added
+
+- **Instance-scoped container naming**: Browser and sandbox container/image
+  prefixes now derive from the configured instance name, so multiple Moltis
+  instances do not collide.
+
+### Changed
+
+- **Stale container cleanup targeting**: Startup cleanup now removes only
+  containers that belong to the active instance prefix instead of sweeping
+  unrelated containers.
+- **Apple container runtime probing**: Browser container backend checks now use
+  the modern Apple container CLI flow (`container image pull --help`) without
+  legacy fallback behavior.
+
+### Fixed
+
+- **Release workflow artifacts**: Disabled docker build record artifact uploads
+  in release CI to avoid release workflow failures from missing artifact paths.
+- **Release preflight consistency**: Pinned nightly toolchain and aligned
+  release preflight checks with CI formatting/lint gates.
+
 ## [0.7.1] - 2026-02-11
 
 ### Fixed
