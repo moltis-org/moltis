@@ -299,11 +299,12 @@ test.describe("Login page", () => {
 		await signInBtn.click();
 
 		const error = page.locator(".auth-error");
-		await expect(error).toContainText("Wrong password, you can retry in 4 seconds");
+		await expect(error).toContainText("Wrong password");
+		await expect(error).not.toContainText("retry in");
 		await expect(signInBtn).toBeDisabled();
 		await expect(signInBtn).toContainText("Retry in 4s");
 
-		await expect.poll(async () => await error.textContent()).toMatch(/Wrong password, you can retry in [1-3] seconds/);
+		await expect.poll(async () => await signInBtn.textContent()).toMatch(/Retry in [1-3]s/);
 
 		await expect.poll(async () => await signInBtn.isDisabled(), { timeout: 6000 }).toBe(false);
 		await expect(signInBtn).toContainText("Sign in");

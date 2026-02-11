@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HTTP endpoint throttling**: Added gateway-level per-IP rate limits for
+  login (`/api/auth/login`), auth API routes, general API routes, and WebSocket
+  upgrades, with `429` responses, `Retry-After` headers, and JSON
+  `retry_after_seconds`.
+- **Login retry UX**: The login page now disables the password Sign In button
+  while throttled and shows a live `Retry in Xs` countdown.
+
+### Changed
+
+- **Auth-aware throttling policy**: IP throttling is now bypassed when auth is
+  not required for the current request (authenticated requests, auth-disabled
+  mode, and local Tier-2 setup mode). This keeps brute-force protection for
+  unauthenticated/auth-required traffic while avoiding localhost friction.
+- **Login error copy**: During throttled login retries, the error message stays
+  static while the retry countdown is shown only on the button.
+
+### Documentation
+
+- Added throttling/security notes to `README.md`, `docs/src/index.md`,
+  `docs/src/authentication.md`, and `docs/src/security.md`.
+
 ## [0.6.1] - 2026-02-10
 
 ### Fixed

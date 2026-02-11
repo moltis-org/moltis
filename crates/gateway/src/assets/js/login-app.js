@@ -40,11 +40,6 @@ async function parseLoginFailure(response) {
 	return { type: "error", message: bodyText || "Login failed" };
 }
 
-function retryMessage(seconds) {
-	if (seconds <= 0) return null;
-	return `Wrong password, you can retry in ${seconds} ${seconds === 1 ? "second" : "seconds"}`;
-}
-
 function startPasskeyLogin(setError, setLoading) {
 	setError(null);
 	if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
@@ -114,7 +109,6 @@ function renderLoginCard({
 	onPasskeyLogin,
 	loading,
 	retrySecondsLeft,
-	throttledMessage,
 	error,
 }) {
 	return html`<div class="auth-card">
@@ -153,8 +147,7 @@ function renderLoginCard({
 			</button>`
 				: null
 		}
-		${throttledMessage ? html`<p class="auth-error mt-2">${throttledMessage}</p>` : null}
-		${!throttledMessage && error ? html`<p class="auth-error mt-2">${error}</p>` : null}
+		${error ? html`<p class="auth-error mt-2">${error}</p>` : null}
 	</div>`;
 }
 
@@ -212,6 +205,7 @@ function LoginApp() {
 				var failure = await parseLoginFailure(r);
 				if (failure.type === "retry") {
 					setRetrySecondsLeft(failure.retryAfter);
+					setError("Wrong password");
 				} else if (failure.type === "invalid_password") {
 					setError("Invalid password");
 				} else {
@@ -239,7 +233,6 @@ function LoginApp() {
 	var showPassword = hasPassword || !hasPasskeys;
 	var showPasskeys = hasPasskeys;
 	var showDivider = showPassword && showPasskeys;
-	var throttledMessage = retryMessage(retrySecondsLeft);
 
 	return renderLoginCard({
 		title,
@@ -252,7 +245,6 @@ function LoginApp() {
 		onPasskeyLogin,
 		loading,
 		retrySecondsLeft,
-		throttledMessage,
 		error,
 	});
 }
