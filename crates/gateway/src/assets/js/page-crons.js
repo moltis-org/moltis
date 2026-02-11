@@ -9,6 +9,7 @@ import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { navigate, registerPrefix } from "./router.js";
+import { routes } from "./routes.js";
 import { models as modelsSig } from "./stores/model-store.js";
 import { ComboSelect, ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
 
@@ -23,7 +24,7 @@ var showModal = signal(false);
 var editingJob = signal(null);
 var activeSection = signal("jobs");
 var _cronsContainer = null;
-var cronsRouteBase = "/crons";
+var cronsRouteBase = routes.crons;
 var syncCronsRoute = true;
 
 // ── Heartbeat state ──────────────────────────────────────────
@@ -775,11 +776,11 @@ function CronsPage() {
   `;
 }
 
-registerPrefix("/crons", initCrons, teardownCrons);
+registerPrefix(routes.crons, initCrons, teardownCrons);
 
 export function initCrons(container, param, options) {
 	_cronsContainer = container;
-	cronsRouteBase = options?.routeBase || "/crons";
+	cronsRouteBase = options?.routeBase || routes.crons;
 	syncCronsRoute = options?.syncRoute !== false;
 
 	container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
@@ -811,6 +812,6 @@ export function initCrons(container, param, options) {
 export function teardownCrons() {
 	if (_cronsContainer) render(null, _cronsContainer);
 	_cronsContainer = null;
-	cronsRouteBase = "/crons";
+	cronsRouteBase = routes.crons;
 	syncCronsRoute = true;
 }

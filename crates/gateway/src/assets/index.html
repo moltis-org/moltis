@@ -108,7 +108,7 @@
 
 <!-- Top bar -->
 <header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
-  <a href="/chats" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
+  <a href="{{ routes.chats }}" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
   <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name)||"moltis";var u=(i&&i.user_name&&String(i.user_name).trim())||"";if(u)a=a+": "+u+" AI assistant";document.title=a}()</script>
   <span class="status-dot" id="statusDot"></span>
   <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
@@ -156,7 +156,7 @@
 <!-- Auth disabled warning banner (shown by JS when auth is removed) -->
 <div id="authDisabledBanner" class="auth-disabled-banner" style="display:none">
   <span>Authentication is disabled. Anyone with network access can control moltis and your computer.</span>
-  <a href="/settings/security" class="auth-disabled-setup">Set up authentication</a>
+  <a href="{{ routes.security }}" class="auth-disabled-setup">Set up authentication</a>
 </div>
 
 <!-- Update available banner (shown when a newer GitHub release exists) -->
@@ -308,7 +308,7 @@
   Enabling Funnel exposes moltis to the public internet. This code has not been security-audited. Use at your own risk.
 </div>
 <div id="ts-funnel-auth-btn" style="display:none">
-  <a href="/settings/security" class="provider-btn">Set up authentication</a>
+  <a href="{{ routes.security }}" class="provider-btn">Set up authentication</a>
 </div>
 
 <!-- Voice provider setup instructions (toggled by page-settings.js) -->
@@ -532,14 +532,11 @@ endpoint = "http://localhost:8000"</code>
 
 <template id="tpl-no-providers-card">
   <div id="noProvidersCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
-    <div class="text-[var(--muted)] mb-4">
-      <span class="icon icon-no-providers" style="width:48px;height:48px"></span>
-    </div>
     <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLM Providers Connected</h2>
     <p class="text-sm text-[var(--muted)] mb-6">
       You have not connected any LLM providers yet. Add a provider to start chatting.
     </p>
-    <a href="/providers" class="provider-btn">Go to Providers</a>
+    <a href="{{ routes.providers }}" class="provider-btn">Go to Providers</a>
   </div>
 </template>
 

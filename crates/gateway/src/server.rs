@@ -3547,6 +3547,42 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
 /// Injects a `<script>` tag with pre-fetched bootstrap data (channels,
 /// sessions, models, projects) so the UI can render synchronously without
 /// waiting for the WebSocket handshake — similar to the gon pattern in Rails.
+/// All SPA route paths, defined once in Rust and exposed to both
+/// askama templates (HTML `href` attributes) and JavaScript via gon.
+#[cfg(feature = "web-ui")]
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SpaRoutes {
+    chats: &'static str,
+    settings: &'static str,
+    providers: &'static str,
+    security: &'static str,
+    identity: &'static str,
+    config: &'static str,
+    logs: &'static str,
+    onboarding: &'static str,
+    projects: &'static str,
+    skills: &'static str,
+    crons: &'static str,
+    monitoring: &'static str,
+}
+
+#[cfg(feature = "web-ui")]
+static SPA_ROUTES: SpaRoutes = SpaRoutes {
+    chats: "/chats",
+    settings: "/settings",
+    providers: "/settings/providers",
+    security: "/settings/security",
+    identity: "/settings/identity",
+    config: "/settings/config",
+    logs: "/settings/logs",
+    onboarding: "/onboarding",
+    projects: "/projects",
+    skills: "/skills",
+    crons: "/crons",
+    monitoring: "/monitoring",
+};
+
 /// Server-side data injected into every page as `window.__MOLTIS__`
 /// (gon pattern — see CLAUDE.md § Server-Injected Data).
 ///
@@ -3577,6 +3613,9 @@ struct GonData {
     /// Sandbox runtime info so the UI can render sandbox status without
     /// waiting for the auth-protected `/api/bootstrap` endpoint.
     sandbox: SandboxGonInfo,
+    /// Central SPA route definitions so JS can read paths from gon
+    /// instead of hardcoding them.
+    routes: SpaRoutes,
 }
 
 /// Sandbox runtime snapshot included in gon data so the settings page
@@ -3731,6 +3770,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         deploy_platform: gw.deploy_platform.clone(),
         update: gw.inner.read().await.update.clone(),
         sandbox,
+        routes: SPA_ROUTES.clone(),
     }
 }
 
@@ -3956,6 +3996,7 @@ struct IndexHtmlTemplate<'a> {
     share_site_name: &'a str,
     share_image_url: &'a str,
     share_image_alt: &'a str,
+    routes: &'a SpaRoutes,
 }
 
 #[cfg(feature = "web-ui")]
@@ -4066,6 +4107,7 @@ async fn render_spa_template(
                 share_site_name: &share_meta.site_name,
                 share_image_url: SHARE_IMAGE_URL,
                 share_image_alt: &share_meta.image_alt,
+                routes: &SPA_ROUTES,
             };
             match template.render() {
                 Ok(html) => html,
@@ -5697,6 +5739,7 @@ mod tests {
             share_site_name: "moltis",
             share_image_url: SHARE_IMAGE_URL,
             share_image_alt: "preview <image>",
+            routes: &SPA_ROUTES,
         };
         let html = match template.render() {
             Ok(html) => html,
@@ -6014,6 +6057,7 @@ mod tests {
             share_site_name: "moltis",
             share_image_url: SHARE_IMAGE_URL,
             share_image_alt: "preview",
+            routes: &SPA_ROUTES,
         };
         let index_html = match index_template.render() {
             Ok(html) => html,

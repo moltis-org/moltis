@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import uPlot from "uplot";
 import { onEvent } from "./events.js";
 import { registerPrefix } from "./router.js";
+import { routes } from "./routes.js";
 
 var metricsData = signal(null);
 var historyPoints = signal([]);
@@ -17,7 +18,7 @@ var error = signal(null);
 var isLive = signal(false);
 var unsubscribe = null;
 var _monitoringContainer = null;
-var monitoringPathBase = "/monitoring";
+var monitoringPathBase = routes.monitoring;
 var monitoringSyncPath = true;
 
 // Time range options (in seconds)
@@ -716,7 +717,7 @@ function MonitoringPage({ initialTab }) {
 export function initMonitoring(container, param, options) {
 	// param is "charts" for /monitoring/charts, null for /monitoring
 	_monitoringContainer = container;
-	monitoringPathBase = options?.pathBase || "/monitoring";
+	monitoringPathBase = options?.pathBase || routes.monitoring;
 	monitoringSyncPath = options?.syncPath !== false;
 	var initialTab = param === "charts" ? "charts" : "overview";
 	render(html`<${MonitoringPage} initialTab=${initialTab} />`, container);
@@ -732,11 +733,11 @@ export function teardownMonitoring() {
 	loading.value = true;
 	error.value = null;
 	isLive.value = false;
-	monitoringPathBase = "/monitoring";
+	monitoringPathBase = routes.monitoring;
 	monitoringSyncPath = true;
 	if (_monitoringContainer) render(null, _monitoringContainer);
 	_monitoringContainer = null;
 }
 
 // Register as prefix route: /monitoring and /monitoring/charts
-registerPrefix("/monitoring", initMonitoring, teardownMonitoring);
+registerPrefix(routes.monitoring, initMonitoring, teardownMonitoring);

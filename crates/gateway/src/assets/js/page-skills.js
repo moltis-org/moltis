@@ -9,6 +9,7 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
+import { routes } from "./routes.js";
 import * as S from "./state.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
 
@@ -853,4 +854,4 @@ export function teardownSkills() {
 	_skillsContainer = null;
 }
 
-registerPage("/skills", initSkills, teardownSkills);
+registerPage(routes.skills, initSkills, teardownSkills);

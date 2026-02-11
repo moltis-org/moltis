@@ -13,6 +13,7 @@ import { renderProjectSelect } from "./projects.js";
 import { initPWA } from "./pwa.js";
 import { initInstallBanner } from "./pwa-install.js";
 import { mount, navigate, registerPage, sessionPath } from "./router.js";
+import { routes } from "./routes.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import { fetchSessions, refreshActiveSession, refreshWelcomeCardIfNeeded, renderSessionList } from "./sessions.js";
 import * as S from "./state.js";
@@ -118,7 +119,7 @@ if (logoutBtn) {
 }
 if (settingsBtn) {
 	settingsBtn.addEventListener("click", () => {
-		navigate("/settings/identity");
+		navigate(routes.identity);
 	});
 }
 
