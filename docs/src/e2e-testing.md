@@ -81,4 +81,7 @@ npx playwright show-trace test-results/<test-dir>/trace.zip
 
 The `just ui-e2e` target is the intended command for CI.
 
-When adding CI coverage, gate pull requests on this target so UI regressions fail fast.
+Pull requests use the local-validation flow: the E2E workflow waits for a
+`local/e2e` commit status, published by `./scripts/local-validate.sh`.
+
+Pushes to `main`, tags, and manual dispatch still run the hosted E2E job.

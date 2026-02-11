@@ -19,6 +19,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/e2e.yml"
+      - "scripts/local-validate.sh"
+      - "scripts/check-local-status.py"
   workflow_dispatch:
 
 concurrency:
@@ -31,8 +33,28 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  local-validation:
+    name: Local E2E Validation
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Verify local status context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRED_CONTEXT: local/e2e
+        run: python3 scripts/check-local-status.py
+
   zizmor:
     name: Workflow Security
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,6 +69,7 @@ jobs:
 
   e2e:
     name: E2E Tests
+    if: ${{ github.event_name != 'pull_request' }}
     needs: zizmor
     runs-on: ubuntu-latest
     permissions:
