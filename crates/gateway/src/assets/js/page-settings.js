@@ -584,6 +584,7 @@ function SecuritySection() {
 	var [authDisabled, setAuthDisabled] = useState(false);
 	var [localhostOnly, setLocalhostOnly] = useState(false);
 	var [hasPassword, setHasPassword] = useState(true);
+	var [hasPasskeys, setHasPasskeys] = useState(false);
 	var [setupComplete, setSetupComplete] = useState(false);
 	var [authLoading, setAuthLoading] = useState(true);
 
@@ -614,6 +615,10 @@ function SecuritySection() {
 		"operator.pairing": false,
 	});
 
+	function notifyAuthStatusChanged() {
+		window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
+	}
+
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
@@ -621,6 +626,7 @@ function SecuritySection() {
 				if (d?.auth_disabled) setAuthDisabled(true);
 				if (d?.localhost_only) setLocalhostOnly(true);
 				if (d?.has_password === false) setHasPassword(false);
+				if (d?.has_passkeys === true) setHasPasskeys(true);
 				if (d?.setup_complete) setSetupComplete(true);
 				if (d?.passkey_origins) setPasskeyOrigins(d.passkey_origins);
 				setAuthLoading(false);
@@ -634,6 +640,7 @@ function SecuritySection() {
 			.then((r) => (r.ok ? r.json() : { passkeys: [] }))
 			.then((d) => {
 				setPasskeys(d.passkeys || []);
+				setHasPasskeys((d.passkeys || []).length > 0);
 				setPkLoading(false);
 				rerender();
 			})
@@ -675,6 +682,7 @@ function SecuritySection() {
 					setNewPw("");
 					setConfirmPw("");
 					setHasPassword(true);
+					notifyAuthStatusChanged();
 				} else return r.text().then((t) => setPwErr(t));
 				setPwSaving(false);
 				rerender();
@@ -733,7 +741,9 @@ function SecuritySection() {
 						.then((r2) => r2.json())
 						.then((d) => {
 							setPasskeys(d.passkeys || []);
+							setHasPasskeys((d.passkeys || []).length > 0);
 							setPkMsg("Passkey added.");
+							notifyAuthStatusChanged();
 							rerender();
 						});
 				} else
@@ -782,6 +792,8 @@ function SecuritySection() {
 			.then(() => fetch("/api/auth/passkeys").then((r) => r.json()))
 			.then((d) => {
 				setPasskeys(d.passkeys || []);
+				setHasPasskeys((d.passkeys || []).length > 0);
+				notifyAuthStatusChanged();
 				rerender();
 			});
 	}
@@ -903,11 +915,11 @@ function SecuritySection() {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
 
 		${
-			localhostOnly && !hasPassword
+			localhostOnly && !hasPassword && !hasPasskeys
 				? html`<div class="alert-info-text max-w-form">
 					<span class="alert-label-info">Note: </span>
-					Moltis is running on localhost, so you have full access without a password.
-					Set a password before exposing moltis to the network.
+					Localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has no effect.
+					Add credentials to require login on localhost and before exposing Moltis to your network.
 				</div>`
 				: null
 		}

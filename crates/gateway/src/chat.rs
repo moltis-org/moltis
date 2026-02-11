@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::OsStr,
     path::PathBuf,
     process::Stdio,
@@ -183,20 +183,80 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn normalize_model_key(value: &str) -> String {
+pub(crate) fn normalize_model_key(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_separator = true;
+
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            last_was_separator = false;
+            continue;
+        }
+
+        if !last_was_separator {
+            normalized.push(' ');
+            last_was_separator = true;
+        }
+    }
+
+    normalized.trim().to_string()
+}
+
+fn normalize_provider_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
+    matches!(
+        normalize_provider_key(provider_name).as_str(),
+        "local-llm" | "ollama"
+    )
+}
+
+/// Returns `true` if the model matches the allowlist patterns.
+/// An empty pattern list means all models are allowed.
+/// Matching is case-insensitive substring against the full model ID, raw model
+/// ID, and display name.
+pub(crate) fn model_matches_allowlist(
+    model: &moltis_agents::providers::ModelInfo,
+    patterns: &[String],
+) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    if is_allowlist_exempt_provider(&model.provider) {
+        return true;
+    }
+    let full = normalize_model_key(&model.id);
+    let raw = normalize_model_key(raw_model_id(&model.id));
+    let display = normalize_model_key(&model.display_name);
+    patterns.iter().any(|p| {
+        full.contains(p.as_str()) || raw.contains(p.as_str()) || display.contains(p.as_str())
+    })
+}
+
+pub(crate) fn model_matches_allowlist_with_provider(
+    model: &moltis_agents::providers::ModelInfo,
+    provider_name: Option<&str>,
+    patterns: &[String],
+) -> bool {
+    if provider_name.is_some_and(is_allowlist_exempt_provider) {
+        return true;
+    }
+    model_matches_allowlist(model, patterns)
 }
 
 fn provider_filter_from_params(params: &Value) -> Option<String> {
     params
         .get("provider")
         .and_then(|v| v.as_str())
-        .map(normalize_model_key)
+        .map(normalize_provider_key)
         .filter(|v| !v.is_empty())
 }
 
 fn provider_matches_filter(model_provider: &str, provider_filter: Option<&str>) -> bool {
-    provider_filter.is_none_or(|expected| normalize_model_key(model_provider) == expected)
+    provider_filter.is_none_or(|expected| normalize_provider_key(model_provider) == expected)
 }
 
 fn probe_max_parallel_per_provider(params: &Value) -> usize {
@@ -205,6 +265,28 @@ fn probe_max_parallel_per_provider(params: &Value) -> usize {
         .and_then(|v| v.as_u64())
         .map(|v| v.clamp(1, 8) as usize)
         .unwrap_or(1)
+}
+
+fn provider_model_entry(model_id: &str, display_name: &str) -> Value {
+    serde_json::json!({
+        "modelId": model_id,
+        "displayName": display_name,
+    })
+}
+
+fn push_provider_model(
+    grouped: &mut BTreeMap<String, Vec<Value>>,
+    provider_name: &str,
+    model_id: &str,
+    display_name: &str,
+) {
+    if provider_name.trim().is_empty() || model_id.trim().is_empty() {
+        return;
+    }
+    grouped
+        .entry(provider_name.to_string())
+        .or_default()
+        .push(provider_model_entry(model_id, display_name));
 }
 
 const PROBE_RATE_LIMIT_INITIAL_BACKOFF_MS: u64 = 1_000;
@@ -845,6 +927,7 @@ pub struct LiveModelService {
     state: Arc<OnceCell<Arc<GatewayState>>>,
     detect_gate: Arc<Semaphore>,
     priority_order: HashMap<String, usize>,
+    allowed_models: Vec<String>,
 }
 
 impl LiveModelService {
@@ -852,6 +935,7 @@ impl LiveModelService {
         providers: Arc<RwLock<ProviderRegistry>>,
         disabled: Arc<RwLock<DisabledModelsStore>>,
         priority_models: Vec<String>,
+        allowed_models: Vec<String>,
     ) -> Self {
         let mut priority_order = HashMap::new();
         for (idx, model) in priority_models.into_iter().enumerate() {
@@ -860,12 +944,18 @@ impl LiveModelService {
                 let _ = priority_order.entry(key).or_insert(idx);
             }
         }
+        let allowed_models: Vec<String> = allowed_models
+            .into_iter()
+            .map(|p| normalize_model_key(&p))
+            .filter(|p| !p.is_empty())
+            .collect();
         Self {
             providers,
             disabled,
             state: Arc::new(OnceCell::new()),
             detect_gate: Arc::new(Semaphore::new(1)),
             priority_order,
+            allowed_models,
         }
     }
 
@@ -925,7 +1015,15 @@ impl ModelService for LiveModelService {
             reg.list_models()
                 .iter()
                 .filter(|m| !disabled.is_disabled(&m.id))
-                .filter(|m| disabled.unsupported_info(&m.id).is_none()),
+                .filter(|m| disabled.unsupported_info(&m.id).is_none())
+                .filter(|m| {
+                    let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
+                    model_matches_allowlist_with_provider(
+                        m,
+                        provider_name.as_deref(),
+                        &self.allowed_models,
+                    )
+                }),
         );
         let models: Vec<_> = prioritized
             .iter()
@@ -950,7 +1048,10 @@ impl ModelService for LiveModelService {
     async fn list_all(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(reg.list_models().iter());
+        let prioritized = self.prioritize_models(reg.list_models().iter().filter(|m| {
+            let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
+            model_matches_allowlist_with_provider(m, provider_name.as_deref(), &self.allowed_models)
+        }));
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1144,6 +1245,9 @@ impl ModelService for LiveModelService {
         let mut flagged = 0usize;
         let mut cleared = 0usize;
         let mut errors = 0usize;
+        let mut supported_by_provider: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let mut unsupported_by_provider: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let mut errors_by_provider: BTreeMap<String, Vec<Value>> = BTreeMap::new();
 
         while let Some(joined) = tasks.next().await {
             checked += 1;
@@ -1184,6 +1288,12 @@ impl ModelService for LiveModelService {
             match outcome.status {
                 ProbeStatus::Supported => {
                     supported += 1;
+                    push_provider_model(
+                        &mut supported_by_provider,
+                        &outcome.provider_name,
+                        &outcome.model_id,
+                        &outcome.display_name,
+                    );
                     let mut changed = false;
                     {
                         let mut store = self.disabled.write().await;
@@ -1223,6 +1333,12 @@ impl ModelService for LiveModelService {
                 },
                 ProbeStatus::Unsupported { detail, provider } => {
                     unsupported += 1;
+                    push_provider_model(
+                        &mut unsupported_by_provider,
+                        &outcome.provider_name,
+                        &outcome.model_id,
+                        &outcome.display_name,
+                    );
                     let mut changed = false;
                     let mut updated_at_ms = now_ms();
                     {
@@ -1271,6 +1387,12 @@ impl ModelService for LiveModelService {
                 },
                 ProbeStatus::Error { message } => {
                     errors += 1;
+                    push_provider_model(
+                        &mut errors_by_provider,
+                        &outcome.provider_name,
+                        &outcome.model_id,
+                        &outcome.display_name,
+                    );
                     results.push(serde_json::json!({
                         "modelId": outcome.model_id,
                         "displayName": outcome.display_name,
@@ -1317,6 +1439,9 @@ impl ModelService for LiveModelService {
             "flagged": flagged,
             "cleared": cleared,
             "errors": errors,
+            "supportedByProvider": supported_by_provider,
+            "unsupportedByProvider": unsupported_by_provider,
+            "errorsByProvider": errors_by_provider,
             "results": results,
         });
 
@@ -5524,6 +5649,7 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec!["gpt-5.2".into(), "claude-opus-4-5".into()],
+            vec![],
         );
 
         let m1 = moltis_agents::providers::ModelInfo {
@@ -5546,6 +5672,242 @@ mod tests {
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
+    }
+
+    #[test]
+    fn priority_models_match_separator_variants() {
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+                &moltis_config::schema::ProvidersConfig::default(),
+            ))),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec!["gpt 5.2".into(), "claude-sonnet-4.5".into()],
+            vec![],
+        );
+
+        let m1 = moltis_agents::providers::ModelInfo {
+            id: "openai-codex::gpt-5.2".into(),
+            provider: "openai-codex".into(),
+            display_name: "GPT-5.2".into(),
+        };
+        let m2 = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-sonnet-4-5-20250929".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Sonnet 4.5".into(),
+        };
+        let m3 = moltis_agents::providers::ModelInfo {
+            id: "google::gemini-3-flash".into(),
+            provider: "gemini".into(),
+            display_name: "Gemini 3 Flash".into(),
+        };
+
+        let ordered = service.prioritize_models(vec![&m3, &m2, &m1].into_iter());
+        assert_eq!(ordered[0].id, m1.id);
+        assert_eq!(ordered[1].id, m2.id);
+        assert_eq!(ordered[2].id, m3.id);
+    }
+
+    #[test]
+    fn allowed_models_filters_by_substring_match() {
+        let m1 = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Opus 4.5".into(),
+        };
+        let m2 = moltis_agents::providers::ModelInfo {
+            id: "openai-codex::gpt-5.2".into(),
+            provider: "openai-codex".into(),
+            display_name: "GPT 5.2".into(),
+        };
+        let m3 = moltis_agents::providers::ModelInfo {
+            id: "google::gemini-3-flash".into(),
+            provider: "google".into(),
+            display_name: "Gemini 3 Flash".into(),
+        };
+
+        let patterns: Vec<String> = vec!["opus".into()];
+        assert!(model_matches_allowlist(&m1, &patterns));
+        assert!(!model_matches_allowlist(&m2, &patterns));
+        assert!(!model_matches_allowlist(&m3, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_empty_shows_all() {
+        let m = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Opus 4.5".into(),
+        };
+        assert!(model_matches_allowlist(&m, &[]));
+    }
+
+    #[test]
+    fn allowed_models_case_insensitive() {
+        let m = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Opus 4.5".into(),
+        };
+
+        // Uppercase pattern matches lowercase model key.
+        let patterns = vec![normalize_model_key("OPUS")];
+        assert!(model_matches_allowlist(&m, &patterns));
+
+        // Mixed case.
+        let patterns = vec![normalize_model_key("OpUs")];
+        assert!(model_matches_allowlist(&m, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_match_separator_variants() {
+        let m = moltis_agents::providers::ModelInfo {
+            id: "openai-codex::gpt-5.2".into(),
+            provider: "openai-codex".into(),
+            display_name: "GPT-5.2".into(),
+        };
+
+        let patterns = vec![normalize_model_key("gpt 5.2")];
+        assert!(model_matches_allowlist(&m, &patterns));
+
+        let patterns = vec![normalize_model_key("gpt-5-2")];
+        assert!(model_matches_allowlist(&m, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_does_not_filter_local_llm_or_ollama() {
+        let local = moltis_agents::providers::ModelInfo {
+            id: "local-llm::qwen2.5-coder-7b-q4_k_m".into(),
+            provider: "local-llm".into(),
+            display_name: "Qwen2.5 Coder 7B".into(),
+        };
+        let ollama = moltis_agents::providers::ModelInfo {
+            id: "ollama::llama3.1:8b".into(),
+            provider: "ollama".into(),
+            display_name: "Llama 3.1 8B".into(),
+        };
+        let patterns = vec![normalize_model_key("opus")];
+
+        assert!(model_matches_allowlist(&local, &patterns));
+        assert!(model_matches_allowlist(&ollama, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_does_not_filter_ollama_when_provider_is_aliased() {
+        let aliased = moltis_agents::providers::ModelInfo {
+            id: "local-ai::llama3.1:8b".into(),
+            provider: "local-ai".into(),
+            display_name: "Llama 3.1 8B".into(),
+        };
+        let patterns = vec![normalize_model_key("opus")];
+
+        assert!(model_matches_allowlist_with_provider(
+            &aliased,
+            Some("ollama"),
+            &patterns
+        ));
+    }
+
+    #[tokio::test]
+    async fn allowed_models_filters_list_and_list_all() {
+        let mut registry = ProviderRegistry::from_env_with_config(
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "anthropic::claude-opus-4-5".to_string(),
+                provider: "anthropic".to_string(),
+                display_name: "Claude Opus 4.5".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "anthropic".to_string(),
+                id: "anthropic::claude-opus-4-5".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai-codex::gpt-5.2".to_string(),
+                provider: "openai-codex".to_string(),
+                display_name: "GPT 5.2".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "openai-codex".to_string(),
+                id: "openai-codex::gpt-5.2".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "google::gemini-3-flash".to_string(),
+                provider: "google".to_string(),
+                display_name: "Gemini 3 Flash".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "google".to_string(),
+                id: "google::gemini-3-flash".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
+                "opus".into(),
+            ]);
+
+        // list() should only contain opus.
+        let result = service.list().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+
+        // list_all() should also only contain opus.
+        let result = service.list_all().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+    }
+
+    #[tokio::test]
+    async fn allowed_models_keeps_ollama_when_provider_is_aliased() {
+        let mut registry = ProviderRegistry::from_env_with_config(
+            &moltis_config::schema::ProvidersConfig::default(),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai-codex::gpt-5.2".to_string(),
+                provider: "openai-codex".to_string(),
+                display_name: "GPT 5.2".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "openai-codex".to_string(),
+                id: "openai-codex::gpt-5.2".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "local-ai::llama3.1:8b".to_string(),
+                provider: "local-ai".to_string(),
+                display_name: "Llama 3.1 8B".to_string(),
+            },
+            Arc::new(StaticProvider {
+                name: "ollama".to_string(),
+                id: "local-ai::llama3.1:8b".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
+                "opus".into(),
+            ]);
+
+        let result = service.list().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+
+        let result = service.list_all().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
     }
 
     #[test]
@@ -5575,6 +5937,41 @@ mod tests {
         assert!(provider_matches_filter("github-copilot", None));
     }
 
+    #[test]
+    fn push_provider_model_groups_models_by_provider() {
+        let mut grouped: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        push_provider_model(
+            &mut grouped,
+            "openai-codex",
+            "openai-codex::gpt-5.2",
+            "GPT-5.2",
+        );
+        push_provider_model(
+            &mut grouped,
+            "openai-codex",
+            "openai-codex::gpt-5.1-codex-mini",
+            "GPT-5.1 Codex Mini",
+        );
+        push_provider_model(
+            &mut grouped,
+            "anthropic",
+            "anthropic::claude-sonnet-4-5-20250929",
+            "Claude Sonnet 4.5",
+        );
+
+        let openai = grouped.get("openai-codex").expect("openai group exists");
+        assert_eq!(openai.len(), 2);
+        assert_eq!(openai[0]["modelId"], "openai-codex::gpt-5.2");
+        assert_eq!(openai[1]["modelId"], "openai-codex::gpt-5.1-codex-mini");
+
+        let anthropic = grouped.get("anthropic").expect("anthropic group exists");
+        assert_eq!(anthropic.len(), 1);
+        assert_eq!(
+            anthropic[0]["modelId"],
+            "anthropic::claude-sonnet-4-5-20250929"
+        );
+    }
+
     #[tokio::test]
     async fn list_all_includes_disabled_models_and_list_hides_them() {
         let mut registry = ProviderRegistry::from_env_with_config(
@@ -5598,7 +5995,8 @@ mod tests {
             store.disable("unit-test-provider::unit-test-model");
         }
 
-        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![]);
 
         let all = service
             .list_all()
@@ -5655,6 +6053,7 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec![],
+            vec![],
         );
         let result = service.test(serde_json::json!({})).await;
         assert!(result.is_err());
@@ -5668,6 +6067,7 @@ mod tests {
                 &moltis_config::schema::ProvidersConfig::default(),
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
             vec![],
         );
         let result = service
@@ -5698,6 +6098,7 @@ mod tests {
         let service = LiveModelService::new(
             Arc::new(RwLock::new(registry)),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
             vec![],
         );
         let result = service

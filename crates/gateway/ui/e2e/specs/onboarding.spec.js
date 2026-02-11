@@ -94,4 +94,51 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByText("Loading…")).toHaveCount(0);
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("telegram bot fields disable credential autofill", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
+		if (
+			await authHeading
+				.isVisible()
+				.catch(() => false)
+		) {
+			const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
+			await expect(authSkip).toBeVisible();
+			await authSkip.click();
+		}
+
+		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+		await expect(identityHeading).toBeVisible();
+		await page.getByPlaceholder("e.g. Alice").fill("E2E User");
+		await page.getByPlaceholder("e.g. Rex").fill("E2E Bot");
+		await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+		await expect(page.getByRole("heading", { name: "Add LLMs", exact: true })).toBeVisible();
+		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
+
+		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
+		for (let i = 0; i < 3; i++) {
+			if (
+				await channelHeading
+					.isVisible()
+					.catch(() => false)
+			) {
+				break;
+			}
+			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
+			await expect(skipBtn).toBeVisible();
+			await skipBtn.click();
+		}
+
+		await expect(channelHeading).toBeVisible();
+		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("autocomplete", "off");
+		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
+		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("autocomplete", "off");
+		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("name", "telegram_bot_token");
+		expect(pageErrors).toEqual([]);
+	});
 });

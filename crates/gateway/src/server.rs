@@ -969,6 +969,7 @@ pub async fn start_gateway(
         Arc::clone(&registry),
         config.providers.clone(),
         deploy_platform.clone(),
+        config.chat.allowed_models.clone(),
     ));
 
     // Wire live local-llm service when the feature is enabled.
@@ -1004,6 +1005,7 @@ pub async fn start_gateway(
             Arc::clone(&registry),
             Arc::clone(&model_store),
             config.chat.priority_models.clone(),
+            config.chat.allowed_models.clone(),
         ));
         services = services.with_model(Arc::clone(&svc) as Arc<dyn crate::services::ModelService>);
         Some(svc)
@@ -6033,6 +6035,27 @@ mod tests {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(axum::http::header::HOST, "localhost:18789".parse().unwrap());
         headers.insert("x-forwarded-for", "203.0.113.50".parse().unwrap());
+        assert!(!is_local_connection(&headers, addr, false));
+    }
+
+    #[test]
+    fn not_local_when_xff_spoofs_loopback_value() {
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "localhost:18789".parse().unwrap());
+        // Header presence alone marks the request as proxied, even when value
+        // is spoofed to look loopback.
+        headers.insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        assert!(!is_local_connection(&headers, addr, false));
+    }
+
+    #[test]
+    fn not_local_when_forwarded_spoofs_loopback_value() {
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "localhost:18789".parse().unwrap());
+        // RFC 7239 Forwarded header should never allow localhost bypass.
+        headers.insert("forwarded", "for=127.0.0.1;proto=https".parse().unwrap());
         assert!(!is_local_connection(&headers, addr, false));
     }
 

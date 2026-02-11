@@ -151,6 +151,10 @@ message_queue_mode = "followup"   # How to handle messages during an active agen
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
 # priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
+# allowed_models = ["opus", "gpt 5.2", "gemini-3"]  # Optional: only show models matching these patterns (local-llm/ollama are always included)
+# recent + popular patterns: "gpt 5.2", "sonnet 4.5", "gemini 3", "kimi-k2.5", "minimax m2.1", "glm 4.7"
+# value-focused patterns: "haiku", "mini", "nano", "flash", "kimi-k2.5", "minimax m2.1", "glm 4.7"
+allowed_models = ["gpt 5.2", "sonnet 4.5", "haiku", "mini", "flash", "kimi-k2.5", "minimax m2.1", "glm 4.7"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS

@@ -285,6 +285,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("message_queue_mode", Leaf),
                 ("priority_models", Leaf),
+                ("allowed_models", Leaf),
             ])),
         ),
         ("tools", tools()),

@@ -743,6 +743,8 @@ pub struct LiveProviderSetupService {
     /// When set, local-only providers (local-llm, ollama) are hidden from
     /// the available list because they cannot run on cloud VMs.
     deploy_platform: Option<String>,
+    /// Normalized allowlist patterns for filtering models (lowercase, non-empty).
+    allowed_models: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -757,7 +759,13 @@ impl LiveProviderSetupService {
         registry: Arc<RwLock<ProviderRegistry>>,
         config: ProvidersConfig,
         deploy_platform: Option<String>,
+        allowed_models: Vec<String>,
     ) -> Self {
+        let allowed_models: Vec<String> = allowed_models
+            .into_iter()
+            .map(|p| crate::chat::normalize_model_key(&p))
+            .filter(|p| !p.is_empty())
+            .collect();
         Self {
             registry,
             config: Arc::new(Mutex::new(config)),
@@ -765,6 +773,7 @@ impl LiveProviderSetupService {
             key_store: KeyStore::new(),
             pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
+            allowed_models,
         }
     }
 
@@ -1370,12 +1379,20 @@ impl ProviderSetupService for LiveProviderSetupService {
         // Build a temporary registry from the temp config.
         let temp_registry = ProviderRegistry::from_env_with_config(&temp_config);
 
-        // Filter models for this provider.
+        // Filter models for this provider and by allowlist.
         let models: Vec<_> = temp_registry
             .list_models()
             .iter()
             .filter(|m| {
                 normalize_provider_name(&m.provider) == normalize_provider_name(provider_name)
+            })
+            .filter(|m| {
+                let runtime_provider_name = temp_registry.get(&m.id).map(|p| p.name().to_string());
+                crate::chat::model_matches_allowlist_with_provider(
+                    m,
+                    runtime_provider_name.as_deref(),
+                    &self.allowed_models,
+                )
             })
             .cloned()
             .collect();
@@ -1842,7 +1859,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .remove_key(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -1854,7 +1871,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         assert!(svc.remove_key(serde_json::json!({})).await.is_err());
     }
 
@@ -1863,7 +1880,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let provider = known_providers()
             .into_iter()
             .find(|p| p.name == "openai-codex")
@@ -1928,7 +1945,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
         assert!(!arr.is_empty());
@@ -1952,7 +1969,7 @@ mod tests {
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        let svc = LiveProviderSetupService::new(registry, config, None);
+        let svc = LiveProviderSetupService::new(registry, config, None, vec![]);
 
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -1976,7 +1993,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2009,7 +2026,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .save_key(serde_json::json!({"provider": "nonexistent", "apiKey": "test"}))
             .await;
@@ -2021,7 +2038,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         assert!(svc.save_key(serde_json::json!({})).await.is_err());
         assert!(
             svc.save_key(serde_json::json!({"provider": "anthropic"}))
@@ -2035,7 +2052,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .oauth_start(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -2047,7 +2064,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let redirect_uri = "https://example.com/auth/callback";
 
         let result = svc
@@ -2083,7 +2100,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .oauth_status(serde_json::json!({"provider": "openai-codex"}))
             .await
@@ -2174,7 +2191,8 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let _svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let _svc =
+            LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
 
         // All new API-key providers should be accepted by save_key
         let providers = known_providers();
@@ -2205,7 +2223,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2241,6 +2259,7 @@ mod tests {
             registry,
             ProvidersConfig::default(),
             Some("flyio".to_string()),
+            vec![],
         );
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -2276,7 +2295,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2320,7 +2339,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .validate_key(serde_json::json!({"provider": "nonexistent", "apiKey": "sk-test"}))
             .await;
@@ -2333,7 +2352,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc.validate_key(serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("missing 'provider'"));
@@ -2344,7 +2363,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         let result = svc
             .validate_key(serde_json::json!({"provider": "anthropic"}))
             .await;
@@ -2357,7 +2376,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
         // Ollama doesn't require an API key, so this should not error on missing apiKey.
         // It will likely return valid=false due to connection issues, but it should not
         // reject with a "missing apiKey" error.
