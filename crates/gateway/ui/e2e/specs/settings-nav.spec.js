@@ -16,9 +16,9 @@ test.describe("Settings navigation", () => {
 		{ id: "security", heading: "Security" },
 		{ id: "tailscale", heading: "Tailscale" },
 		{ id: "notifications", heading: "Notifications" },
-		{ id: "providers", heading: "Providers" },
+		{ id: "providers", heading: "LLMs" },
 		{ id: "channels", heading: "Channels" },
-		{ id: "mcp", heading: "MCP Tools" },
+		{ id: "mcp", heading: "MCP" },
 		{ id: "hooks", heading: "Hooks" },
 		{ id: "sandboxes", heading: "Sandboxes" },
 		{ id: "logs", heading: "Logs" },
@@ -62,6 +62,35 @@ test.describe("Settings navigation", () => {
 
 	test("provider page renders from settings", async ({ page }) => {
 		await navigateAndWait(page, "/settings/providers");
-		await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
+	});
+
+	test("sidebar groups and order match product layout", async ({ page }) => {
+		await navigateAndWait(page, "/settings/identity");
+
+		await expect(page.locator(".settings-group-label").nth(0)).toHaveText("General");
+		await expect(page.locator(".settings-group-label").nth(1)).toHaveText("Security");
+		await expect(page.locator(".settings-group-label").nth(2)).toHaveText("Integrations");
+		await expect(page.locator(".settings-group-label").nth(3)).toHaveText("Systems");
+
+		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
+		const expectedWithVoice = [
+			"Identity",
+			"Environment",
+			"Memory",
+			"Notifications",
+			"Security",
+			"Tailscale",
+			"LLMs",
+			"Channels",
+			"Voice",
+			"MCP",
+			"Hooks",
+			"Sandboxes",
+			"Logs",
+			"Configuration",
+		];
+		const expectedWithoutVoice = expectedWithVoice.filter((item) => item !== "Voice");
+		expect(navItems).toEqual(navItems.includes("Voice") ? expectedWithVoice : expectedWithoutVoice);
 	});
 });

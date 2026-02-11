@@ -1,4 +1,4 @@
-// ── Providers page (Preact + HTM + Signals) ─────────────────
+// ── LLMs page (Preact + HTM + Signals) ──────────────────────
 
 import { signal } from "@preact/signals";
 import { html } from "htm/preact";
@@ -299,7 +299,7 @@ function ProvidersPage() {
 	return html`
 		<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<div class="flex items-center gap-3">
-					<h2 class="text-lg font-medium text-[var(--text-strong)]">Providers</h2>
+					<h2 class="text-lg font-medium text-[var(--text-strong)]">LLMs</h2>
 					<button
 						class="provider-btn"
 						onClick=${() => {

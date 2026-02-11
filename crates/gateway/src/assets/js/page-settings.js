@@ -61,19 +61,19 @@ var sections = [
 		icon: html`<span class="icon icon-person"></span>`,
 	},
 	{
-		id: "memory",
-		label: "Memory",
-		icon: html`<span class="icon icon-database"></span>`,
-	},
-	{
 		id: "environment",
 		label: "Environment",
 		icon: html`<span class="icon icon-terminal"></span>`,
 	},
 	{
-		id: "voice",
-		label: "Voice",
-		icon: html`<span class="icon icon-microphone"></span>`,
+		id: "memory",
+		label: "Memory",
+		icon: html`<span class="icon icon-database"></span>`,
+	},
+	{
+		id: "notifications",
+		label: "Notifications",
+		icon: html`<span class="icon icon-bell"></span>`,
 	},
 	{ group: "Security" },
 	{
@@ -86,15 +86,10 @@ var sections = [
 		label: "Tailscale",
 		icon: html`<span class="icon icon-globe"></span>`,
 	},
-	{
-		id: "notifications",
-		label: "Notifications",
-		icon: html`<span class="icon icon-bell"></span>`,
-	},
 	{ group: "Integrations" },
 	{
 		id: "providers",
-		label: "Providers",
+		label: "LLMs",
 		icon: html`<span class="icon icon-server"></span>`,
 		page: true,
 	},
@@ -105,8 +100,13 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "voice",
+		label: "Voice",
+		icon: html`<span class="icon icon-microphone"></span>`,
+	},
+	{
 		id: "mcp",
-		label: "MCP Tools",
+		label: "MCP",
 		icon: html`<span class="icon icon-link"></span>`,
 		page: true,
 	},
@@ -116,7 +116,7 @@ var sections = [
 		icon: html`<span class="icon icon-wrench"></span>`,
 		page: true,
 	},
-	{ group: "System" },
+	{ group: "Systems" },
 	{
 		id: "sandboxes",
 		label: "Sandboxes",

@@ -1,4 +1,4 @@
-// ── MCP Tools page ──────────────────────────────────────────
+// ── MCP page ────────────────────────────────────────────────
 
 import { signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
@@ -206,7 +206,7 @@ function FeaturedCard(props) {
 function FeaturedSection() {
 	return html`<div>
     <div class="flex items-center justify-between mb-2">
-      <h3 class="text-sm font-medium text-[var(--text-strong)]">Popular MCP Tools</h3>
+      <h3 class="text-sm font-medium text-[var(--text-strong)]">Popular MCP Servers</h3>
       <a href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener noreferrer"
         class="text-xs text-[var(--accent)] hover:underline">Browse all servers on GitHub \u2192</a>
     </div>
@@ -313,7 +313,7 @@ function InstallBox() {
 	}
 
 	return html`<div class="max-w-[600px] border-t border-[var(--border)] pt-4">
-    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Add custom MCP tool</h3>
+    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Add Custom MCP Server</h3>
     <div class="flex gap-2 mb-3">
       <button onClick=${() => {
 				transportType.value = "stdio";
@@ -548,7 +548,7 @@ function ServerCard({ server }) {
 function ConfiguredServersSection() {
 	var s = servers.value;
 	return html`<div>
-    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Configured MCP Tools</h3>
+    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Configured MCP Servers</h3>
     <div>
       ${(!s || s.length === 0) && !loading.value && html`<div class="p-3 text-[var(--muted)] text-sm">No MCP tools configured. Add one from the popular list above or enter a custom command.</div>`}
       ${s.map((server) => html`<${ServerCard} key=${server.name} server=${server} />`)}
@@ -572,7 +572,7 @@ function McpPage() {
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">MCP Tools</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">MCP</h2>
         <button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${refreshServers}>Refresh</button>
       </div>
       <div class="max-w-[600px] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius)] px-5 py-4 leading-relaxed">
@@ -601,7 +601,7 @@ function McpPage() {
       <${InstallBox} />
       <${FeaturedSection} />
       <${ConfiguredServersSection} />
-      ${loading.value && servers.value.length === 0 && html`<div class="p-6 text-center text-[var(--muted)] text-sm">Loading MCP tools\u2026</div>`}
+      ${loading.value && servers.value.length === 0 && html`<div class="p-6 text-center text-[var(--muted)] text-sm">Loading MCP servers\u2026</div>`}
     </div>
     <${Toasts} />
     <${ConfirmDialog} />

@@ -6,7 +6,7 @@ test.describe("Provider setup page", () => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/providers");
 
-		await expect(page.getByRole("heading", { name: "Providers" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
