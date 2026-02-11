@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-02-11
+
 ### Changed
 
 - **Session delete UX**: Forked sessions with no new messages beyond the fork
   point are deleted immediately without a confirmation dialog.
+
+### Fixed
+
+- **Localhost passkey compatibility**: Gateway startup URLs and TLS redirect
+  hints now use `localhost` for loopback hosts, while WebAuthn also allows
+  `moltis.localhost` as an additional origin when RP ID is `localhost`.
 
 ## [0.8.3] - 2026-02-11
 
