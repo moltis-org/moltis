@@ -89,6 +89,10 @@ cargo install moltis --git https://github.com/moltis-org/moltis
   images, configurable packages, and per-session isolation
 - **Authentication** — password and passkey (WebAuthn) authentication with
   session cookies, API key support, and a first-run setup code flow
+- **Endpoint throttling** — built-in per-IP request throttling for
+  unauthenticated traffic when auth is enforced, with strict limits for
+  password login attempts and sensible caps for API/WS traffic (`429` +
+  `Retry-After` on limit hit)
 - **WebSocket security** — Origin validation to prevent Cross-Site WebSocket
   Hijacking (CSWSH)
 - **Onboarding wizard** — guided setup for agent identity (name, emoji,

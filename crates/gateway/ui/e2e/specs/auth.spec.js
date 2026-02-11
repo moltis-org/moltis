@@ -249,6 +249,68 @@ test.describe("Login page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("login page shows retry countdown and disables submit when rate limited", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.addInitScript(() => {
+			var origFetch = window.fetch;
+			window.fetch = function (...args) {
+				var url = typeof args[0] === "string" ? args[0] : args[0].url;
+				if (url.endsWith("/api/auth/status")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								authenticated: false,
+								setup_required: false,
+								auth_disabled: false,
+								localhost_only: false,
+								has_password: true,
+								has_passkeys: false,
+							}),
+							{ status: 200, headers: { "Content-Type": "application/json" } },
+						),
+					);
+				}
+				if (url.endsWith("/api/auth/login")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								error: "too many requests",
+								retry_after_seconds: 4,
+							}),
+							{
+								status: 429,
+								headers: {
+									"Content-Type": "application/json",
+									"Retry-After": "4",
+								},
+							},
+						),
+					);
+				}
+				return origFetch.apply(this, args);
+			};
+		});
+
+		await page.goto("/login");
+		await page.getByPlaceholder("Enter password").fill("wrong-password");
+
+		const signInBtn = page.locator('button[type="submit"]');
+		await signInBtn.click();
+
+		const error = page.locator(".auth-error");
+		await expect(error).toContainText("Wrong password, you can retry in 4 seconds");
+		await expect(signInBtn).toBeDisabled();
+		await expect(signInBtn).toContainText("Retry in 4s");
+
+		await expect.poll(async () => await error.textContent()).toMatch(/Wrong password, you can retry in [1-3] seconds/);
+
+		await expect.poll(async () => await signInBtn.isDisabled(), { timeout: 6000 }).toBe(false);
+		await expect(signInBtn).toContainText("Sign in");
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("login page redirects to / when already authenticated", async ({ page }) => {
 		// On the test server, /api/auth/status returns authenticated: true
 		// (localhost bypass). The login page should detect this and redirect.

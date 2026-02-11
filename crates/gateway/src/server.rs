@@ -126,11 +126,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -244,13 +247,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -401,6 +405,7 @@ fn approval_manager_from_config(config: &moltis_config::MoltisConfig) -> Approva
 pub struct AppState {
     pub gateway: Arc<GatewayState>,
     pub methods: Arc<MethodRegistry>,
+    pub request_throttle: Arc<crate::request_throttle::RequestThrottle>,
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
 }
@@ -670,6 +675,7 @@ pub fn build_gateway_app(
     let app_state = AppState {
         gateway: state,
         methods,
+        request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
         push_service,
     };
 
@@ -693,6 +699,11 @@ pub fn build_gateway_app(
                 crate::auth_middleware::auth_gate,
             ))
     };
+
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        crate::request_throttle::throttle_gate,
+    ));
 
     let router = apply_middleware_stack(router, cors, http_request_logs);
 
@@ -735,6 +746,7 @@ pub fn build_gateway_app(
     let app_state = AppState {
         gateway: state,
         methods,
+        request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
     };
 
     #[cfg(feature = "web-ui")]
@@ -757,6 +769,11 @@ pub fn build_gateway_app(
                 crate::auth_middleware::auth_gate,
             ))
     };
+
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        crate::request_throttle::throttle_gate,
+    ));
 
     let router = apply_middleware_stack(router, cors, http_request_logs);
 
@@ -959,16 +976,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -2754,10 +2772,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -2820,12 +2843,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
@@ -3816,7 +3842,6 @@ async fn render_spa_template(
     gateway: &GatewayState,
     template_name: &str,
 ) -> axum::response::Response {
-
     let raw = read_asset(template_name)
         .and_then(|b| String::from_utf8(b).ok())
         .unwrap_or_default();

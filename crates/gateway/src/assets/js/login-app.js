@@ -12,12 +12,159 @@ var identity = gon.identity || null;
 // Set page title from identity.
 if (identity?.name) document.title = identity.name;
 
+async function parseLoginFailure(response) {
+	if (response.status === 429) {
+		var retryAfter = 0;
+		try {
+			var data = await response.json();
+			if (data && Number.isFinite(data.retry_after_seconds)) {
+				retryAfter = Math.max(1, Math.ceil(data.retry_after_seconds));
+			}
+		} catch {
+			// Ignore JSON parse errors and fall back to Retry-After header.
+		}
+		if (retryAfter <= 0) {
+			var retryAfterHeader = Number.parseInt(response.headers.get("Retry-After") || "0", 10);
+			if (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0) {
+				retryAfter = retryAfterHeader;
+			}
+		}
+		return { type: "retry", retryAfter: Math.max(1, retryAfter) };
+	}
+
+	if (response.status === 401) {
+		return { type: "invalid_password" };
+	}
+
+	var bodyText = await response.text();
+	return { type: "error", message: bodyText || "Login failed" };
+}
+
+function retryMessage(seconds) {
+	if (seconds <= 0) return null;
+	return `Wrong password, you can retry in ${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
+
+function startPasskeyLogin(setError, setLoading) {
+	setError(null);
+	if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
+		setError(`Passkeys require a domain name. Use localhost instead of ${location.hostname}`);
+		return;
+	}
+	setLoading(true);
+	fetch("/api/auth/passkey/auth/begin", { method: "POST" })
+		.then((r) => r.json())
+		.then((data) => {
+			var options = data.options;
+			options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
+			if (options.publicKey.allowCredentials) {
+				for (var c of options.publicKey.allowCredentials) {
+					c.id = base64ToBuffer(c.id);
+				}
+			}
+			return navigator.credentials
+				.get({ publicKey: options.publicKey })
+				.then((cred) => ({ cred, challengeId: data.challenge_id }));
+		})
+		.then(({ cred, challengeId }) => {
+			var body = {
+				challenge_id: challengeId,
+				credential: {
+					id: cred.id,
+					rawId: bufferToBase64(cred.rawId),
+					type: cred.type,
+					response: {
+						authenticatorData: bufferToBase64(cred.response.authenticatorData),
+						clientDataJSON: bufferToBase64(cred.response.clientDataJSON),
+						signature: bufferToBase64(cred.response.signature),
+						userHandle: cred.response.userHandle ? bufferToBase64(cred.response.userHandle) : null,
+					},
+				},
+			};
+			return fetch("/api/auth/passkey/auth/finish", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		})
+		.then((r) => {
+			if (r.ok) {
+				location.href = "/";
+			} else {
+				return r.text().then((t) => {
+					setError(t || "Passkey authentication failed");
+					setLoading(false);
+				});
+			}
+		})
+		.catch((err) => {
+			setError(err.message || "Passkey authentication failed");
+			setLoading(false);
+		});
+}
+
+function renderLoginCard({
+	title,
+	showPassword,
+	showPasskeys,
+	showDivider,
+	password,
+	setPassword,
+	onPasswordLogin,
+	onPasskeyLogin,
+	loading,
+	retrySecondsLeft,
+	throttledMessage,
+	error,
+}) {
+	return html`<div class="auth-card">
+		<h1 class="auth-title">${title}</h1>
+		<p class="auth-subtitle">Sign in to continue</p>
+		${
+			showPassword
+				? html`<form onSubmit=${onPasswordLogin} class="flex flex-col gap-3">
+			<div>
+				<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
+				<input
+					type="password"
+					class="provider-key-input w-full"
+					value=${password}
+					onInput=${(e) => setPassword(e.target.value)}
+					placeholder="Enter password"
+					autofocus
+				/>
+			</div>
+			<button type="submit" class="provider-btn w-full mt-1" disabled=${loading || retrySecondsLeft > 0}>
+				${loading ? "Signing in\u2026" : retrySecondsLeft > 0 ? `Retry in ${retrySecondsLeft}s` : "Sign in"}
+			</button>
+		</form>`
+				: null
+		}
+		${showDivider ? html`<div class="auth-divider"><span>or</span></div>` : null}
+		${
+			showPasskeys
+				? html`<button
+				type="button"
+				class="provider-btn ${showPassword ? "provider-btn-secondary" : ""} w-full"
+				onClick=${onPasskeyLogin}
+				disabled=${loading}
+			>
+				Sign in with passkey
+			</button>`
+				: null
+		}
+		${throttledMessage ? html`<p class="auth-error mt-2">${throttledMessage}</p>` : null}
+		${!throttledMessage && error ? html`<p class="auth-error mt-2">${error}</p>` : null}
+	</div>`;
+}
+
 // ── Login form component ─────────────────────────────────────
 
 function LoginApp() {
 	var [password, setPassword] = useState("");
 	var [error, setError] = useState(null);
 	var [loading, setLoading] = useState(false);
+	var [retrySecondsLeft, setRetrySecondsLeft] = useState(0);
 	var [hasPasskeys, setHasPasskeys] = useState(false);
 	var [hasPassword, setHasPassword] = useState(false);
 	var [ready, setReady] = useState(false);
@@ -38,8 +185,17 @@ function LoginApp() {
 			.catch(() => setReady(true));
 	}, []);
 
+	useEffect(() => {
+		if (retrySecondsLeft <= 0) return undefined;
+		var timer = setInterval(() => {
+			setRetrySecondsLeft((value) => (value > 1 ? value - 1 : 0));
+		}, 1000);
+		return () => clearInterval(timer);
+	}, [retrySecondsLeft]);
+
 	function onPasswordLogin(e) {
 		e.preventDefault();
+		if (retrySecondsLeft > 0) return;
 		setError(null);
 		setLoading(true);
 		fetch("/api/auth/login", {
@@ -47,13 +203,21 @@ function LoginApp() {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ password }),
 		})
-			.then((r) => {
+			.then(async (r) => {
 				if (r.ok) {
 					location.href = "/";
-				} else {
-					setError("Invalid password");
-					setLoading(false);
+					return;
 				}
+
+				var failure = await parseLoginFailure(r);
+				if (failure.type === "retry") {
+					setRetrySecondsLeft(failure.retryAfter);
+				} else if (failure.type === "invalid_password") {
+					setError("Invalid password");
+				} else {
+					setError(failure.message);
+				}
+				setLoading(false);
 			})
 			.catch((err) => {
 				setError(err.message);
@@ -62,61 +226,7 @@ function LoginApp() {
 	}
 
 	function onPasskeyLogin() {
-		setError(null);
-		if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
-			setError(`Passkeys require a domain name. Use localhost instead of ${location.hostname}`);
-			return;
-		}
-		setLoading(true);
-		fetch("/api/auth/passkey/auth/begin", { method: "POST" })
-			.then((r) => r.json())
-			.then((data) => {
-				var options = data.options;
-				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
-				if (options.publicKey.allowCredentials) {
-					for (var c of options.publicKey.allowCredentials) {
-						c.id = base64ToBuffer(c.id);
-					}
-				}
-				return navigator.credentials
-					.get({ publicKey: options.publicKey })
-					.then((cred) => ({ cred, challengeId: data.challenge_id }));
-			})
-			.then(({ cred, challengeId }) => {
-				var body = {
-					challenge_id: challengeId,
-					credential: {
-						id: cred.id,
-						rawId: bufferToBase64(cred.rawId),
-						type: cred.type,
-						response: {
-							authenticatorData: bufferToBase64(cred.response.authenticatorData),
-							clientDataJSON: bufferToBase64(cred.response.clientDataJSON),
-							signature: bufferToBase64(cred.response.signature),
-							userHandle: cred.response.userHandle ? bufferToBase64(cred.response.userHandle) : null,
-						},
-					},
-				};
-				return fetch("/api/auth/passkey/auth/finish", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(body),
-				});
-			})
-			.then((r) => {
-				if (r.ok) {
-					location.href = "/";
-				} else {
-					return r.text().then((t) => {
-						setError(t || "Passkey authentication failed");
-						setLoading(false);
-					});
-				}
-			})
-			.catch((err) => {
-				setError(err.message || "Passkey authentication failed");
-				setLoading(false);
-			});
+		startPasskeyLogin(setError, setLoading);
 	}
 
 	if (!ready) {
@@ -129,45 +239,22 @@ function LoginApp() {
 	var showPassword = hasPassword || !hasPasskeys;
 	var showPasskeys = hasPasskeys;
 	var showDivider = showPassword && showPasskeys;
+	var throttledMessage = retryMessage(retrySecondsLeft);
 
-	return html`<div class="auth-card">
-		<h1 class="auth-title">${title}</h1>
-		<p class="auth-subtitle">Sign in to continue</p>
-		${
-			showPassword
-				? html`<form onSubmit=${onPasswordLogin} class="flex flex-col gap-3">
-			<div>
-				<label class="text-xs text-[var(--muted)] mb-1 block">Password</label>
-				<input
-					type="password"
-					class="provider-key-input w-full"
-					value=${password}
-					onInput=${(e) => setPassword(e.target.value)}
-					placeholder="Enter password"
-					autofocus
-				/>
-			</div>
-			<button type="submit" class="provider-btn w-full mt-1" disabled=${loading}>
-				${loading ? "Signing in\u2026" : "Sign in"}
-			</button>
-		</form>`
-				: null
-		}
-		${showDivider ? html`<div class="auth-divider"><span>or</span></div>` : null}
-		${
-			showPasskeys
-				? html`<button
-				type="button"
-				class="provider-btn ${showPassword ? "provider-btn-secondary" : ""} w-full"
-				onClick=${onPasskeyLogin}
-				disabled=${loading}
-			>
-				Sign in with passkey
-			</button>`
-				: null
-		}
-		${error ? html`<p class="auth-error mt-2">${error}</p>` : null}
-	</div>`;
+	return renderLoginCard({
+		title,
+		showPassword,
+		showPasskeys,
+		showDivider,
+		password,
+		setPassword,
+		onPasswordLogin,
+		onPasskeyLogin,
+		loading,
+		retrySecondsLeft,
+		throttledMessage,
+		error,
+	});
 }
 
 // ── Base64url helpers for WebAuthn ───────────────────────────

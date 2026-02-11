@@ -271,6 +271,18 @@ async fn reset_auth_removes_all_authentication() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
+    // Auth-disabled mode should also bypass endpoint throttling.
+    for _ in 0..220 {
+        let resp = reqwest::get(format!("http://{addr}/api/bootstrap"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            200,
+            "requests should not be rate-limited when auth is disabled"
+        );
+    }
+
     // /api/auth/status should report authenticated: true, auth_disabled: true.
     let resp = reqwest::get(format!("http://{addr}/api/auth/status"))
         .await
@@ -796,4 +808,106 @@ async fn login_cookie_omits_domain_for_external_host() {
         !cookie_header.contains("Domain="),
         "session cookie should NOT include Domain for external host, got: {cookie_header}"
     );
+}
+
+/// Password login attempts are throttled to reduce brute-force attempts.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn login_endpoint_rate_limited_after_repeated_failures() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::new();
+
+    for _ in 0..5 {
+        let resp = client
+            .post(format!("http://{addr}/api/auth/login"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"password":"wrong-password"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            401,
+            "login should fail before throttle engages"
+        );
+    }
+
+    let throttled = client
+        .post(format!("http://{addr}/api/auth/login"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"password":"wrong-password"}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(throttled.status(), 429);
+
+    let retry_after = throttled
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    assert!(
+        retry_after >= 1,
+        "expected Retry-After header on throttled login response"
+    );
+}
+
+/// Normal API endpoints are also throttled with a higher ceiling for regular use.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn api_endpoint_rate_limited_after_high_request_volume() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::new();
+
+    for _ in 0..180 {
+        let resp = client
+            .get(format!("http://{addr}/api/bootstrap"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            401,
+            "unauthenticated protected requests should pass through auth middleware before throttle engages"
+        );
+    }
+
+    let throttled = client
+        .get(format!("http://{addr}/api/bootstrap"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(throttled.status(), 429);
+}
+
+/// Authenticated requests bypass IP throttling.
+#[cfg(feature = "web-ui")]
+#[tokio::test]
+async fn authenticated_api_endpoint_not_rate_limited() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+
+    for _ in 0..220 {
+        let resp = client
+            .get(format!("http://{addr}/api/bootstrap"))
+            .header("Cookie", format!("moltis_session={token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            200,
+            "authenticated requests should bypass throttling"
+        );
+    }
 }

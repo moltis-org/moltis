@@ -32,6 +32,7 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 - **Sandboxed Execution** — Commands run in isolated containers (Docker or Apple Container)
 - **MCP Support** — Connect to Model Context Protocol servers for extended capabilities
 - **Multi-Channel** — Web UI, Telegram, API access with synchronized responses
+- **Built-in Throttling** — Per-IP endpoint limits with strict login protection
 - **Long-Term Memory** — Embeddings-powered knowledge base with hybrid search
 - **Hook System** — Observe, modify, or block actions at any lifecycle point
 - **Compile-Time Safety** — Misconfigurations caught by `cargo check`, not runtime crashes
