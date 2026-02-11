@@ -163,6 +163,62 @@ test.describe("Authentication", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("reset-auth localhost state keeps classic security controls", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.addInitScript(() => {
+			const origFetch = window.fetch;
+			window.fetch = function (...args) {
+				var url = typeof args[0] === "string" ? args[0] : args[0].url;
+				if (url.endsWith("/api/auth/status")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								authenticated: true,
+								setup_required: false,
+								auth_disabled: true,
+								localhost_only: true,
+								has_password: false,
+								has_passkeys: false,
+								setup_complete: false,
+							}),
+							{
+								status: 200,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+					);
+				}
+				if (url.endsWith("/api/auth/passkeys")) {
+					return Promise.resolve(
+						new Response(JSON.stringify({ passkeys: [] }), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+				if (url.endsWith("/api/auth/api-keys")) {
+					return Promise.resolve(
+						new Response(JSON.stringify({ api_keys: [] }), {
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						}),
+					);
+				}
+				return origFetch.apply(this, args);
+			};
+		});
+
+		await page.goto("/settings/security");
+		await expectPageContentMounted(page);
+		await expect(page).toHaveURL(/\/settings\/security$/);
+		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByText("Authentication has been removed.", { exact: false })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Set Password" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Passkeys" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Set up authentication" })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("logout button updates after runtime auth status change", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.addInitScript(() => {

@@ -682,6 +682,8 @@ function SecuritySection() {
 					setNewPw("");
 					setConfirmPw("");
 					setHasPassword(true);
+					setSetupComplete(true);
+					setAuthDisabled(false);
 					notifyAuthStatusChanged();
 				} else return r.text().then((t) => setPwErr(t));
 				setPwSaving(false);
@@ -742,6 +744,8 @@ function SecuritySection() {
 						.then((d) => {
 							setPasskeys(d.passkeys || []);
 							setHasPasskeys((d.passkeys || []).length > 0);
+							setSetupComplete(true);
+							setAuthDisabled(false);
 							setPkMsg("Passkey added.");
 							notifyAuthStatusChanged();
 							rerender();
@@ -890,18 +894,13 @@ function SecuritySection() {
 		</div>`;
 	}
 
-	if (authDisabled) {
-		var isScary = !localhostOnly;
+	if (authDisabled && !localhostOnly) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
 			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--error);background:color-mix(in srgb, var(--error) 5%, transparent);">
 				<strong style="color:var(--error);">Authentication is disabled</strong>
 				<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
-					${
-						isScary
-							? "Anyone with network access can control moltis and your computer. Set up a password to protect your instance."
-							: "Authentication has been removed. While localhost-only access is safe, you should set up a password before exposing moltis to the network."
-					}
+					Anyone with network access can control moltis and your computer. Set up a password to protect your instance.
 				</p>
 				<button type="button" class="provider-btn" style="margin-top:10px;"
 					onClick=${() => {
@@ -913,6 +912,17 @@ function SecuritySection() {
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Security</h2>
+
+		${
+			authDisabled && localhostOnly
+				? html`<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--error);background:color-mix(in srgb, var(--error) 5%, transparent);">
+					<strong style="color:var(--error);">Authentication is disabled</strong>
+					<p class="text-xs text-[var(--muted)]" style="margin:8px 0 0;">
+						Authentication has been removed. Localhost-only access is safe, set a password or passkey below to re-enable authentication.
+					</p>
+				</div>`
+				: null
+		}
 
 		${
 			localhostOnly && !hasPassword && !hasPasskeys
