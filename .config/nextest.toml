@@ -8,5 +8,7 @@ retries = 0
 # In CI, retry flaky tests once before failing the run.
 failure-output = "immediate-final"
 retries        = 2
+# Kill tests that hang for more than 120 seconds.
+slow-timeout   = { period = "60s", terminate-after = 2 }
 # Produce JUnit XML for GitHub Actions test summary.
 junit.path = "junit.xml"

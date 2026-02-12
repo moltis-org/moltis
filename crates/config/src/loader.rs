@@ -105,14 +105,18 @@ pub fn discover_and_load() -> MoltisConfig {
         debug!(path = %path.display(), "loading config");
         match load_config(&path) {
             Ok(mut cfg) => {
-                // If port is 0 (default/missing), generate a random port and save it
+                // If port is 0 (default/missing), generate a random port and save it.
+                // Use `save_config_to_path` directly instead of `save_config` because
+                // this function may be called from within `update_config`, which already
+                // holds `CONFIG_SAVE_LOCK`. Re-acquiring a `std::sync::Mutex` on the
+                // same thread would deadlock.
                 if cfg.server.port == 0 {
                     cfg.server.port = generate_random_port();
                     debug!(
                         port = cfg.server.port,
                         "generated random port for existing config"
                     );
-                    if let Err(e) = save_config(&cfg) {
+                    if let Err(e) = save_config_to_path(&path, &cfg) {
                         warn!(error = %e, "failed to save config with generated port");
                     }
                 }
