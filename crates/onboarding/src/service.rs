@@ -447,7 +447,9 @@ mod tests {
         assert!(res["soul"].is_null());
 
         let soul_path = dir.path().join("SOUL.md");
-        assert!(!soul_path.exists());
+        // save_soul(None) writes an empty file (not deleted) to prevent re-seeding
+        assert!(soul_path.exists());
+        assert!(std::fs::read_to_string(&soul_path).unwrap().is_empty());
 
         // Reports as onboarded
         assert_eq!(svc.wizard_status()["onboarded"], true);
