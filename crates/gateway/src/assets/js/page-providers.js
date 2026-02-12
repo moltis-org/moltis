@@ -23,10 +23,6 @@ var detectProgress = signal(null);
 var deletingProvider = signal("");
 var providerActionError = signal("");
 
-function providerSortRank(provider) {
-	return provider === "local-llm" || provider === "ollama" ? 0 : 1;
-}
-
 function countUniqueProviders(models) {
 	return new Set(models.map((m) => m.provider)).size;
 }
@@ -174,9 +170,13 @@ function groupProviderRows(models, metaMap) {
 
 	var result = Array.from(groups.values());
 	result.sort((a, b) => {
-		var aRank = providerSortRank(a.provider);
-		var bRank = providerSortRank(b.provider);
-		if (aRank !== bRank) return aRank - bRank;
+		var aOrder = metaMap?.get(a.provider)?.uiOrder;
+		var bOrder = metaMap?.get(b.provider)?.uiOrder;
+		var hasAOrder = Number.isFinite(aOrder);
+		var hasBOrder = Number.isFinite(bOrder);
+		if (hasAOrder && hasBOrder && aOrder !== bOrder) return aOrder - bOrder;
+		if (hasAOrder && !hasBOrder) return -1;
+		if (!hasAOrder && hasBOrder) return 1;
 		return a.providerDisplayName.localeCompare(b.providerDisplayName);
 	});
 	for (var providerGroup of result) {

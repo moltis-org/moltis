@@ -820,7 +820,7 @@ impl ProviderRegistry {
             .get("kimi-code")
             .and_then(|e| e.base_url.clone())
             .or_else(|| std::env::var("KIMI_BASE_URL").ok())
-            .unwrap_or_else(|| "https://api.moonshot.ai/v1".into());
+            .unwrap_or_else(|| "https://api.kimi.com/coding/v1".into());
 
         let build_provider = |model_id: &str| -> Arc<dyn LlmProvider> {
             if let Some(api_key) = api_key.as_ref() {

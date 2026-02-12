@@ -4,6 +4,7 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
@@ -44,7 +45,7 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 	"ollama",
 ];
 
-var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
+var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 export function openProviderModal() {
 	var m = els();
@@ -58,12 +59,10 @@ export function openProviderModal() {
 		}
 		var providers = res.payload || [];
 
-		// Sort: local/ollama first, then alphabetically
 		providers.sort((a, b) => {
-			var aIsLocal = a.authType === "local" || a.name === "ollama";
-			var bIsLocal = b.authType === "local" || b.name === "ollama";
-			if (aIsLocal && !bIsLocal) return -1;
-			if (!aIsLocal && bIsLocal) return 1;
+			var aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+			var bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+			if (aOrder !== bOrder) return aOrder - bOrder;
 			return a.displayName.localeCompare(b.displayName);
 		});
 
@@ -113,6 +112,17 @@ export function closeProviderModal() {
 	els().modal.classList.add("hidden");
 }
 
+function setFormError(errorPanel, message) {
+	if (!errorPanel) return;
+	if (!message) {
+		errorPanel.style.display = "none";
+		errorPanel.textContent = "";
+		return;
+	}
+	errorPanel.textContent = `Error: ${message}`;
+	errorPanel.style.display = "";
+}
+
 export function showApiKeyForm(provider) {
 	var m = els();
 	m.title.textContent = provider.displayName;
@@ -135,6 +145,30 @@ export function showApiKeyForm(provider) {
 	keyInp.type = "password";
 	keyInp.placeholder = provider.name === "ollama" ? "(optional for Ollama)" : "sk-...";
 	form.appendChild(keyInp);
+
+	var errorPanel = document.createElement("div");
+	errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+	errorPanel.style.display = "none";
+	form.appendChild(errorPanel);
+
+	var keyHelp = providerApiKeyHelp(provider);
+	if (keyHelp) {
+		var keyHelpLine = document.createElement("div");
+		keyHelpLine.className = "text-xs text-[var(--muted)] mt-1";
+		if (keyHelp.url) {
+			keyHelpLine.append(`${keyHelp.text} `);
+			var keyLink = document.createElement("a");
+			keyLink.href = keyHelp.url;
+			keyLink.target = "_blank";
+			keyLink.rel = "noopener noreferrer";
+			keyLink.className = "text-[var(--accent)] underline";
+			keyLink.textContent = keyHelp.label || keyHelp.url;
+			keyHelpLine.appendChild(keyLink);
+		} else {
+			keyHelpLine.textContent = keyHelp.text;
+		}
+		form.appendChild(keyHelpLine);
+	}
 
 	// Endpoint field for OpenAI-compatible providers
 	var endpointInp = null;
@@ -191,19 +225,20 @@ export function showApiKeyForm(provider) {
 	saveBtn.addEventListener("click", () => {
 		var key = keyInp.value.trim();
 		// Ollama doesn't require a key
-		if (!key && provider.name !== "ollama") return;
+		if (!key && provider.name !== "ollama") {
+			setFormError(errorPanel, "API key is required.");
+			return;
+		}
 
 		// Model is required for bring-your-own providers
 		if (needsModel && modelInp && !modelInp.value.trim()) {
-			keyLabel.textContent = "Model ID is required";
-			keyLabel.classList.add("text-error");
+			setFormError(errorPanel, "Model ID is required.");
 			return;
 		}
 
 		saveBtn.disabled = true;
 		saveBtn.textContent = "Validating...";
-		keyLabel.classList.remove("text-error");
-		keyLabel.textContent = "API Key";
+		setFormError(errorPanel, null);
 
 		var keyVal = key || "ollama";
 		var endpointVal = endpointInp?.value.trim() || null;
@@ -214,8 +249,7 @@ export function showApiKeyForm(provider) {
 				if (!result.valid) {
 					saveBtn.disabled = false;
 					saveBtn.textContent = "Save & Validate";
-					keyLabel.textContent = result.error || "Validation failed. Please check your credentials.";
-					keyLabel.classList.add("text-error");
+					setFormError(errorPanel, result.error || "Validation failed. Please check your credentials.");
 					return;
 				}
 
@@ -231,8 +265,7 @@ export function showApiKeyForm(provider) {
 			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Save & Validate";
-				keyLabel.textContent = err?.message || "Validation failed.";
-				keyLabel.classList.add("text-error");
+				setFormError(errorPanel, err?.message || "Validation failed.");
 			});
 	});
 	btns.appendChild(saveBtn);
@@ -269,7 +302,7 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 	wrapper.appendChild(list);
 
 	var errorArea = document.createElement("div");
-	errorArea.className = "text-xs text-[var(--error)] mt-2";
+	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
 	errorArea.style.display = "none";
 	wrapper.appendChild(errorArea);
 
@@ -379,19 +412,19 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 
 function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
 	var m = els();
+	var effectiveModelVal = provider.name === "ollama" && selectedModelId ? selectedModelId : modelVal;
 
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
 		if (wrapper?._errorArea) {
-			wrapper._errorArea.textContent = msg;
-			wrapper._errorArea.style.display = "";
+			setFormError(wrapper._errorArea, msg);
 			if (wrapper._resetSelection) wrapper._resetSelection();
 		}
 	}
 
 	var savePromise = skipSave
 		? Promise.resolve({ ok: true })
-		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, modelVal));
+		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, effectiveModelVal));
 
 	savePromise
 		.then(async (res) => {
@@ -406,8 +439,10 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
-				// Persist model preference for the provider.
-				await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				// For Ollama we persisted the model via save_key so the registry can probe it.
+				if (provider.name !== "ollama") {
+					await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				}
 				localStorage.setItem("moltis-model", selectedModelId);
 			}
 
@@ -802,7 +837,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 			return;
 		}
 		filtered.forEach((model) => {
-			var card = createModelCard(model, provider);
+			var card = createModelCard(model, provider, sysInfo.totalRamGb);
 			modelsList.appendChild(card);
 		});
 	}
@@ -1065,9 +1100,11 @@ function formatDownloads(n) {
 	return n.toString();
 }
 
-function createModelCard(model, provider) {
+function createModelCard(model, provider, totalRamGb) {
 	var card = document.createElement("div");
 	card.className = "model-card";
+	var detectedRamGb = Number.isFinite(totalRamGb) ? totalRamGb : 0;
+	var hasEnoughRam = detectedRamGb >= model.minRamGb;
 
 	var header = document.createElement("div");
 	header.className = "flex items-center justify-between";
@@ -1085,11 +1122,18 @@ function createModelCard(model, provider) {
 	ramBadge.textContent = `${model.minRamGb}GB`;
 	badges.appendChild(ramBadge);
 
-	if (model.suggested) {
+	if (model.suggested && hasEnoughRam) {
 		var suggestedBadge = document.createElement("span");
 		suggestedBadge.className = "recommended-badge";
 		suggestedBadge.textContent = "Recommended";
 		badges.appendChild(suggestedBadge);
+	}
+
+	if (!hasEnoughRam) {
+		var insufficientBadge = document.createElement("span");
+		insufficientBadge.className = "tier-badge";
+		insufficientBadge.textContent = "Insufficient RAM";
+		badges.appendChild(insufficientBadge);
 	}
 
 	header.appendChild(badges);
@@ -1099,6 +1143,15 @@ function createModelCard(model, provider) {
 	meta.className = "text-xs text-[var(--muted)] mt-1";
 	meta.textContent = `Context: ${(model.contextWindow / 1000).toFixed(0)}k tokens`;
 	card.appendChild(meta);
+
+	if (!hasEnoughRam) {
+		card.classList.add("disabled");
+		var warning = document.createElement("div");
+		warning.className = "text-xs text-[var(--error)] mt-1";
+		warning.textContent = `You do not have enough RAM for this model (${detectedRamGb}GB detected, ${model.minRamGb}GB required).`;
+		card.appendChild(warning);
+		return card;
+	}
 
 	card.addEventListener("click", () => selectLocalModel(model, provider));
 

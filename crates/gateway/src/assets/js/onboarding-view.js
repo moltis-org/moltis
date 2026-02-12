@@ -11,6 +11,7 @@ import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { detectPasskeyName } from "./passkey-detect.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
@@ -498,7 +499,7 @@ function IdentityStep({ onNext, onBack }) {
 // ── Provider step ───────────────────────────────────────────
 
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
-var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
+var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 // ── Provider row for multi-provider onboarding ──────────────
 
@@ -558,6 +559,7 @@ function OnboardingProviderRow({
 
 	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
 	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+	var keyHelp = providerApiKeyHelp(provider);
 
 	// Filter models for the model selector.
 	var filteredModels = (providerModels || []).filter(
@@ -606,6 +608,17 @@ function OnboardingProviderRow({
 						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
 						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+					${
+						keyHelp
+							? html`<div class="text-xs text-[var(--muted)] mt-1">
+							${
+								keyHelp.url
+									? html`${keyHelp.text} <a href=${keyHelp.url} target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] underline">${keyHelp.label || keyHelp.url}</a>`
+									: keyHelp.text
+							}
+						</div>`
+							: null
+					}
 				</div>
 				${
 					supportsEndpoint
@@ -763,10 +776,9 @@ function OnboardingProviderRow({
 
 function sortProviders(list) {
 	list.sort((a, b) => {
-		var aIsLocal = a.authType === "local" || a.name === "ollama";
-		var bIsLocal = b.authType === "local" || b.name === "ollama";
-		if (aIsLocal && !bIsLocal) return -1;
-		if (!aIsLocal && bIsLocal) return 1;
+		var aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+		var bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+		if (aOrder !== bOrder) return aOrder - bOrder;
 		return a.displayName.localeCompare(b.displayName);
 	});
 	return list;
@@ -986,9 +998,10 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
+		var effectiveModelVal = providerName === "ollama" && selectedModelId ? selectedModelId : modelVal;
 		var payload = { provider: providerName, apiKey: keyVal };
 		if (endpointVal) payload.baseUrl = endpointVal;
-		if (modelVal) payload.model = modelVal;
+		if (effectiveModelVal) payload.model = effectiveModelVal;
 
 		sendRpc("providers.save_key", payload)
 			.then(async (res) => {
@@ -1007,8 +1020,10 @@ function ProviderStep({ onNext, onBack }) {
 						setModelTestError(testResult.error || "Model test failed. Try another model.");
 						return;
 					}
-					// Persist model preference for the provider.
-					await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
+					// For Ollama we persisted the selected model in save_key so probing works immediately.
+					if (providerName !== "ollama") {
+						await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
+					}
 					// Store chosen model in localStorage for the UI.
 					localStorage.setItem("moltis-model", selectedModelId);
 				}

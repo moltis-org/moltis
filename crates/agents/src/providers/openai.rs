@@ -45,6 +45,53 @@ impl OpenAiProvider {
             client: reqwest::Client::new(),
         }
     }
+
+    fn requires_reasoning_content_on_tool_messages(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("moonshot")
+            || self.base_url.contains("moonshot.ai")
+            || self.base_url.contains("moonshot.cn")
+    }
+
+    fn serialize_messages_for_request(&self, messages: &[ChatMessage]) -> Vec<serde_json::Value> {
+        let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
+        messages
+            .iter()
+            .map(|message| {
+                let mut value = message.to_openai_value();
+
+                if !needs_reasoning_content {
+                    return value;
+                }
+
+                let is_assistant =
+                    value.get("role").and_then(serde_json::Value::as_str) == Some("assistant");
+                let has_tool_calls = value
+                    .get("tool_calls")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|calls| !calls.is_empty());
+
+                if !is_assistant || !has_tool_calls {
+                    return value;
+                }
+
+                let reasoning_content = value
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+
+                if value.get("content").is_none() {
+                    value["content"] = serde_json::Value::String(String::new());
+                }
+
+                if value.get("reasoning_content").is_none() {
+                    value["reasoning_content"] = serde_json::Value::String(reasoning_content);
+                }
+
+                value
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -74,8 +121,7 @@ impl LlmProvider for OpenAiProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let openai_messages: Vec<serde_json::Value> =
-            messages.iter().map(ChatMessage::to_openai_value).collect();
+        let openai_messages = self.serialize_messages_for_request(messages);
         let mut body = serde_json::json!({
             "model": self.model,
             "messages": openai_messages,
@@ -151,8 +197,7 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let openai_messages: Vec<serde_json::Value> =
-                messages.iter().map(ChatMessage::to_openai_value).collect();
+            let openai_messages = self.serialize_messages_for_request(&messages);
             let mut body = serde_json::json!({
                 "model": self.model,
                 "messages": openai_messages,
@@ -253,7 +298,7 @@ mod tests {
         tokio_stream::StreamExt,
     };
 
-    use crate::model::ChatMessage;
+    use crate::model::{ChatMessage, ToolCall};
 
     use super::*;
 
@@ -318,6 +363,81 @@ mod tests {
                 }
             }
         })]
+    }
+
+    #[test]
+    fn moonshot_serialization_includes_reasoning_content_for_tool_messages() {
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "kimi-k2.5".to_string(),
+            "https://api.moonshot.ai/v1".to_string(),
+            "moonshot".to_string(),
+        );
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
+
+        let serialized = provider.serialize_messages_for_request(&messages);
+        assert_eq!(serialized.len(), 1);
+        assert_eq!(serialized[0]["role"], "assistant");
+        assert_eq!(serialized[0]["content"], "");
+        assert_eq!(serialized[0]["reasoning_content"], "");
+    }
+
+    #[test]
+    fn non_moonshot_serialization_does_not_add_reasoning_content() {
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-4o".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
+
+        let serialized = provider.serialize_messages_for_request(&messages);
+        assert_eq!(serialized.len(), 1);
+        assert!(serialized[0].get("reasoning_content").is_none());
+    }
+
+    #[tokio::test]
+    async fn moonshot_stream_request_includes_reasoning_content_on_tool_history() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n\
+                   data: [DONE]\n\n";
+        let (base_url, captured) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "kimi-k2.5".to_string(),
+            base_url,
+            "moonshot".to_string(),
+        );
+        let messages = vec![
+            ChatMessage::user("run uname"),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "exec:0".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }]),
+            ChatMessage::tool("exec:0", "Linux host 6.0"),
+        ];
+
+        let mut stream = provider.stream_with_tools(messages, sample_tools());
+        while stream.next().await.is_some() {}
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let body = reqs[0].body.as_ref().expect("request should have a body");
+        let history = body["messages"]
+            .as_array()
+            .expect("messages should be an array");
+        assert_eq!(history[1]["role"], "assistant");
+        assert_eq!(history[1]["content"], "");
+        assert_eq!(history[1]["reasoning_content"], "");
+        assert!(history[1]["tool_calls"].is_array());
     }
 
     // ── Regression: stream_with_tools must send tools in the API body ────

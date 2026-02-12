@@ -2,7 +2,7 @@
 
 import { html } from "htm/preact";
 import { render } from "preact";
-import { chatAddMsg, chatAddMsgWithImages, updateTokenBar } from "./chat-ui.js";
+import { chatAddMsg, chatAddMsgWithImages } from "./chat-ui.js";
 import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
@@ -16,9 +16,8 @@ import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { bumpSessionCount, fetchSessions, setSessionReplying, switchSession } from "./sessions.js";
+import { bumpSessionCount, clearActiveSession, setSessionReplying, switchSession } from "./sessions.js";
 import * as S from "./state.js";
-import { sessionStore } from "./stores/session-store.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
@@ -435,44 +434,6 @@ function toggleDebugPanel() {
 	if (hidden) refreshDebugPanel();
 }
 
-// ── Raw prompt panel ─────────────────────────────────────
-
-function refreshRawPromptPanel() {
-	var panel = S.$("rawPromptPanel");
-	if (!panel) return;
-	panel.textContent = "";
-	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building prompt\u2026"));
-
-	sendRpc("chat.raw_prompt", {}).then((res) => {
-		panel.textContent = "";
-		if (!(res?.ok && res.payload)) {
-			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build prompt"));
-			return;
-		}
-		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-2");
-		header.textContent = `Full system prompt sent to the model · ${res.payload.charCount} chars · ${res.payload.toolCount} tools · native_tools=${res.payload.native_tools}`;
-		panel.appendChild(header);
-
-		var pre = ctxEl(
-			"pre",
-			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-3 overflow-y-auto text-[var(--text)]",
-		);
-		pre.style.maxHeight = "320px";
-		pre.textContent = res.payload.prompt;
-		panel.appendChild(pre);
-	});
-}
-
-function toggleRawPromptPanel() {
-	var panel = S.$("rawPromptPanel");
-	var btn = S.$("rawPromptBtn");
-	if (!panel) return;
-	var hidden = panel.classList.contains("hidden");
-	panel.classList.toggle("hidden", !hidden);
-	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
-	if (hidden) refreshRawPromptPanel();
-}
-
 // ── Full context panel ───────────────────────────────────
 
 var ROLE_COLORS = {
@@ -585,7 +546,7 @@ function refreshFullContextPanel() {
 
 		var messages = res.payload.messages || [];
 
-		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary text-xs");
+		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
 		copyBtn.textContent = "Copy";
 		copyBtn.addEventListener("click", () => {
 			var lines = messages.map((m) => {
@@ -678,20 +639,7 @@ export function showModelNotice(model) {
 // ── Slash command handlers ───────────────────────────────
 function handleSlashCommand(cmdName) {
 	if (cmdName === "clear") {
-		sendRpc("chat.clear", {}).then((res) => {
-			if (res?.ok) {
-				if (S.chatMsgBox) S.chatMsgBox.textContent = "";
-				S.setSessionTokens({ input: 0, output: 0 });
-				updateTokenBar();
-				// Reset client-side counts before fetch so the optimistic
-				// guard in update() doesn't block the server's zero.
-				var session = sessionStore.getByKey(S.activeSessionKey);
-				if (session) session.syncCounts(0, 0);
-				fetchSessions();
-			} else {
-				chatAddMsg("error", res?.error?.message || "Clear failed");
-			}
-		});
+		clearActiveSession();
 		return;
 	}
 	if (cmdName === "compact") {
@@ -886,10 +834,6 @@ var chatPageHTML =
 	'<span class="icon icon-md icon-wrench" style="flex-shrink:0;"></span>' +
 	'<span id="debugPanelLabel">Debug</span>' +
 	"</button>" +
-	'<button id="rawPromptBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show raw system prompt sent to model">' +
-	'<span class="icon icon-md icon-code" style="flex-shrink:0;"></span>' +
-	'<span id="rawPromptLabel">Prompt</span>' +
-	"</button>" +
 	'<button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
 	'<span class="icon icon-md icon-document" style="flex-shrink:0;"></span>' +
 	'<span id="fullContextLabel">Context</span>' +
@@ -898,7 +842,6 @@ var chatPageHTML =
 	"</div>" +
 	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
-	'<div id="rawPromptPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:400px;"></div>' +
 	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
 	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
@@ -980,9 +923,6 @@ registerPrefix(
 
 		var debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
-
-		var rawBtn = S.$("rawPromptBtn");
-		if (rawBtn) rawBtn.addEventListener("click", toggleRawPromptPanel);
 
 		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
 

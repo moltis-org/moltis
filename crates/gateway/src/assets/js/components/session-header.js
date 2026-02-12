@@ -6,7 +6,7 @@
 import { html } from "htm/preact";
 import { useCallback, useRef, useState } from "preact/hooks";
 import { sendRpc } from "../helpers.js";
-import { fetchSessions, switchSession } from "../sessions.js";
+import { clearActiveSession, fetchSessions, switchSession } from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
 import { confirmDialog } from "../ui.js";
 
@@ -25,13 +25,14 @@ export function SessionHeader() {
 	var currentKey = sessionStore.activeSessionKey.value;
 
 	var [renaming, setRenaming] = useState(false);
+	var [clearing, setClearing] = useState(false);
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
 	var displayName = fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
 
 	var isMain = currentKey === "main";
-	var isChannel = (session && session.channelBinding) || currentKey.startsWith("telegram:");
+	var isChannel = session?.channelBinding || currentKey.startsWith("telegram:");
 	var isCron = currentKey.startsWith("cron:");
 	var canRename = !(isMain || isChannel || isCron);
 
@@ -108,6 +109,14 @@ export function SessionHeader() {
 		}
 	}, [currentKey, session]);
 
+	var onClear = useCallback(() => {
+		if (clearing) return;
+		setClearing(true);
+		clearActiveSession().finally(() => {
+			setClearing(false);
+		});
+	}, [clearing]);
+
 	return html`
 		<div class="flex items-center gap-2">
 			${
@@ -130,6 +139,14 @@ export function SessionHeader() {
 				html`
 				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
 					Fork
+				</button>
+			`
+			}
+			${
+				isMain &&
+				html`
+				<button class="chat-session-btn" onClick=${onClear} title="Clear session" disabled=${clearing}>
+					${clearing ? "Clearing\u2026" : "Clear"}
 				</button>
 			`
 			}
