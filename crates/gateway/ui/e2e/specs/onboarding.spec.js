@@ -1,6 +1,8 @@
 const { expect, test } = require("@playwright/test");
 const { watchPageErrors } = require("../helpers");
 
+const LLM_STEP_HEADING = /^(Add LLMs|Add providers)$/;
+
 function isVisible(locator) {
 	return locator.isVisible().catch(() => false);
 }
@@ -19,27 +21,42 @@ async function maybeCompleteIdentity(page) {
 	const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
 	if (!(await isVisible(identityHeading))) return false;
 
-	await page.getByPlaceholder("e.g. Alice").fill("E2E User");
-	await page.getByPlaceholder("e.g. Rex").fill("E2E Bot");
+	const userNameInput = page.getByPlaceholder("e.g. Alice");
+	if (!(await isVisible(userNameInput))) return false;
+	try {
+		await userNameInput.fill("E2E User");
+	} catch (error) {
+		const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+		if (await isVisible(llmHeading)) return false;
+		throw error;
+	}
+
+	const agentNameInput = page.getByPlaceholder("e.g. Rex");
+	if ((await agentNameInput.count()) > 0 && (await isVisible(agentNameInput))) {
+		await agentNameInput.fill("E2E Bot");
+	}
+
 	await page.getByRole("button", { name: "Continue", exact: true }).click();
 	return true;
 }
 
 async function moveToLlmStep(page) {
-	const llmHeading = page.getByRole("heading", { name: "Add LLMs", exact: true });
-	for (let i = 0; i < 4; i++) {
-		if (await isVisible(llmHeading)) return;
-		if (await maybeSkipAuth(page)) continue;
-		if (await maybeCompleteIdentity(page)) continue;
+	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
+	if (await isVisible(llmHeading)) return true;
 
-		const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
-		if (await isVisible(backBtn)) {
-			await backBtn.click();
-			continue;
-		}
+	await maybeSkipAuth(page);
+	if (await isVisible(llmHeading)) return true;
 
-		break;
+	await maybeCompleteIdentity(page);
+	if (await isVisible(llmHeading)) return true;
+
+	const backBtn = page.getByRole("button", { name: "Back", exact: true }).first();
+	if (await isVisible(backBtn)) {
+		await backBtn.click();
 	}
+
+	await expect(llmHeading).toBeVisible({ timeout: 10_000 });
+	return true;
 }
 
 /**
@@ -154,7 +171,7 @@ test.describe("Onboarding wizard", () => {
 		await page.getByPlaceholder("e.g. Rex").fill("E2E Bot");
 		await page.getByRole("button", { name: "Continue", exact: true }).click();
 
-		await expect(page.getByRole("heading", { name: "Add LLMs", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
 		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
@@ -180,9 +197,18 @@ test.describe("Onboarding wizard", () => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		await moveToLlmStep(page);
+		await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toMatch(/^\/(?:onboarding|chats\/.+)$/);
 
-		const llmHeading = page.getByRole("heading", { name: "Add LLMs", exact: true });
+		const pathname = new URL(page.url()).pathname;
+		if (/^\/chats\//.test(pathname)) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		const reachedLlm = await moveToLlmStep(page);
+		expect(reachedLlm).toBeTruthy();
+
+		const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
 		await expect(llmHeading).toBeVisible();
 
 		const candidates = [

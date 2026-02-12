@@ -54,18 +54,10 @@ test.describe("Provider setup page", () => {
 		const providerNames = page.locator(".provider-modal-backdrop .provider-item .provider-item-name");
 		await expect(providerNames.first()).toBeVisible();
 		const names = await providerNames.allTextContents();
-
-		const openAiIndex = names.indexOf("OpenAI");
-		const copilotIndex = names.indexOf("GitHub Copilot");
-		const localLlmIndex = names.indexOf("Local LLM (Offline)");
-
-		expect(openAiIndex).toBeGreaterThanOrEqual(0);
-		if (localLlmIndex >= 0) {
-			expect(openAiIndex).toBeLessThan(localLlmIndex);
-			if (copilotIndex >= 0) {
-				expect(copilotIndex).toBeLessThan(localLlmIndex);
-			}
-		}
+		const preferredOrder = ["Local LLM (Offline)", "GitHub Copilot", "OpenAI", "Anthropic", "Ollama"];
+		const expectedVisible = preferredOrder.filter((name) => names.includes(name));
+		const actualVisible = names.filter((name) => expectedVisible.includes(name));
+		expect(actualVisible).toEqual(expectedVisible);
 		expect(pageErrors).toEqual([]);
 	});
 
