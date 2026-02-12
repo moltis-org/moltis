@@ -186,16 +186,22 @@ test.describe("Session management", () => {
 
 		// Simulate an unmodified fork: set forkPoint = messageCount = 5
 		// so the session looks like a fork with messages but no new ones added.
-		await page.evaluate(() => {
-			const store = window.__moltis_stores?.sessionStore;
-			if (!store) throw new Error("session store not exposed");
-			const session = store.activeSession.value;
-			if (!session) throw new Error("no active session");
-			session.forkPoint = 5;
-			session.messageCount = 5;
-			// Bump dataVersion to trigger re-render
-			session.dataVersion.value++;
-		});
+		await expect
+			.poll(
+				() =>
+					page.evaluate(() => {
+						const store = window.__moltis_stores?.sessionStore;
+						const session = store?.activeSession?.value;
+						if (!session) return false;
+						session.forkPoint = 5;
+						session.messageCount = 5;
+						// Bump dataVersion to trigger re-render
+						session.dataVersion.value++;
+						return true;
+					}),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
 
 		// Click the Delete button — should NOT show a confirmation dialog
 		const deleteBtn = page.locator('button[title="Delete session"]');
@@ -220,15 +226,21 @@ test.describe("Session management", () => {
 		await createSession(page);
 
 		// Simulate a modified fork: messageCount > forkPoint
-		await page.evaluate(() => {
-			const store = window.__moltis_stores?.sessionStore;
-			if (!store) throw new Error("session store not exposed");
-			const session = store.activeSession.value;
-			if (!session) throw new Error("no active session");
-			session.forkPoint = 3;
-			session.messageCount = 5;
-			session.dataVersion.value++;
-		});
+		await expect
+			.poll(
+				() =>
+					page.evaluate(() => {
+						const store = window.__moltis_stores?.sessionStore;
+						const session = store?.activeSession?.value;
+						if (!session) return false;
+						session.forkPoint = 3;
+						session.messageCount = 5;
+						session.dataVersion.value++;
+						return true;
+					}),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
 
 		const deleteBtn = page.locator('button[title="Delete session"]');
 		await expect(deleteBtn).toBeVisible();

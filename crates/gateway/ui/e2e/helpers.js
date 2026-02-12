@@ -7,15 +7,18 @@ const { expect } = require("@playwright/test");
 async function expectPageContentMounted(page) {
 	await expect
 		// biome-ignore lint/suspicious/useAwait: page.evaluate returns a Promise
-		.poll(async () => {
-			return page.evaluate(() => {
-				const el = document.getElementById("pageContent");
-				if (!el) return 0;
-				return el.childElementCount;
-			});
-		}, {
-			timeout: 20_000,
-		})
+		.poll(
+			async () => {
+				return page.evaluate(() => {
+					const el = document.getElementById("pageContent");
+					if (!el) return 0;
+					return el.childElementCount;
+				});
+			},
+			{
+				timeout: 20_000,
+			},
+		)
 		.toBeGreaterThan(0);
 }
 
@@ -94,6 +97,26 @@ async function createSession(page) {
 	await page.locator("#newSessionBtn").click();
 	await page.waitForURL((url) => url.href !== currentUrl, { timeout: 10_000 });
 	await expectPageContentMounted(page);
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const store = window.__moltis_stores?.sessionStore;
+					if (!store) return false;
+
+					const pathname = window.location.pathname || "";
+					if (!pathname.startsWith("/chats/")) return false;
+					const expectedKey = decodeURIComponent(pathname.slice("/chats/".length)).replace(/\//g, ":");
+
+					const activeKey = store.activeSessionKey?.value || "";
+					if (activeKey !== expectedKey) return false;
+
+					const activeSession = store.getByKey ? store.getByKey(activeKey) : store.activeSession?.value;
+					return Boolean(activeSession && activeSession.key === activeKey);
+				}),
+			{ timeout: 10_000 },
+		)
+		.toBe(true);
 }
 
 module.exports = {

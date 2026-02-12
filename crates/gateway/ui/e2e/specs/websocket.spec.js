@@ -220,9 +220,14 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("auth.credentials_changed event redirects to /login", async ({ page }) => {
+	test("auth.credentials_changed event redirects through /login", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
+
+		var loginNavigation = page.waitForRequest(
+			(request) => request.isNavigationRequest() && new URL(request.url()).pathname === "/login",
+			{ timeout: 10_000 },
+		);
 
 		// Inject the auth.credentials_changed event via system-event RPC.
 		await sendRpcFromPage(page, "system-event", {
@@ -230,7 +235,10 @@ test.describe("WebSocket connection lifecycle", () => {
 			payload: { reason: "test_disconnect" },
 		});
 
-		// The event handler should redirect the browser to /login.
-		await expect.poll(() => new URL(page.url()).pathname).toBe("/login");
+		// The event handler should trigger a navigation to /login.
+		await loginNavigation;
+
+		// In local no-password mode, /login immediately routes back to chat.
+		await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:login|chats\/.+)$/);
 	});
 });
