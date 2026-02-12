@@ -2068,26 +2068,6 @@ mod tests {
                     },
                 })
             } else {
-                let assistant_tool_text = messages
-                    .iter()
-                    .find_map(|m| {
-                        if let ChatMessage::Assistant {
-                            content,
-                            tool_calls,
-                        } = m
-                        {
-                            if tool_calls.is_empty() {
-                                return None;
-                            }
-                            return content.as_deref();
-                        }
-                        None
-                    })
-                    .unwrap_or("");
-                assert!(
-                    !assistant_tool_text.is_empty(),
-                    "forced exec should preserve assistant reasoning text"
-                );
                 let tool_content = messages
                     .iter()
                     .find_map(|m| {
@@ -2278,7 +2258,7 @@ mod tests {
                     .unwrap_or("");
                 assert!(
                     !assistant_tool_text.is_empty(),
-                    "forced exec should preserve streamed assistant reasoning text"
+                    "forced exec should preserve assistant reasoning text"
                 );
                 let tool_content = messages
                     .iter()
@@ -3493,6 +3473,26 @@ mod tests {
                     }),
                 ]))
             } else {
+                let assistant_tool_text = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Assistant {
+                            content,
+                            tool_calls,
+                        } = m
+                        {
+                            if tool_calls.is_empty() {
+                                return None;
+                            }
+                            return content.as_deref();
+                        }
+                        None
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !assistant_tool_text.is_empty(),
+                    "forced exec should preserve streamed assistant reasoning text"
+                );
                 let tool_content = messages
                     .iter()
                     .find_map(|m| {
