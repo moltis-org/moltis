@@ -6,7 +6,7 @@ retries = 0
 
 [profile.ci]
 # In CI, retry flaky tests once before failing the run.
-retries = 2
 failure-output = "immediate-final"
+retries        = 2
 # Produce JUnit XML for GitHub Actions test summary.
 junit.path = "junit.xml"
