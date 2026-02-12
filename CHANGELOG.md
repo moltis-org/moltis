@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-02-11
+
 ### Security
 
 - **Disconnect all WS clients on credential change**: WebSocket connections
@@ -15,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential removed). An `auth.credentials_changed` event notifies browsers
   to redirect to `/login`. Existing sessions are also invalidated on password
   change for defense-in-depth.
+
+### Fixed
+
+- **Onboarding test for SOUL.md clear behavior**: Fixed `identity_update_partial`
+  test to match the new empty-file behavior from v0.8.13.
 
 ## [0.8.13] - 2026-02-11
 
