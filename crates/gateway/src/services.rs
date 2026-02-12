@@ -459,7 +459,7 @@ impl ChatService for NoopChatService {
     }
 
     async fn clear(&self, _p: Value) -> ServiceResult {
-        Err("chat not configured".into())
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _p: Value) -> ServiceResult {

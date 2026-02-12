@@ -73,7 +73,9 @@ async function openFullContextWithRetry(page) {
 	for (let attempt = 0; attempt < 5; attempt++) {
 		await waitForWsConnected(page);
 		const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
-		const noProvidersConfigured = fullContextRpc?.error?.message?.includes("no LLM providers configured");
+		const noProvidersConfigured =
+			fullContextRpc?.error?.message?.includes("no LLM providers configured") ||
+			fullContextRpc?.error?.message?.includes("chat not configured");
 
 		const panelVisible = await panel.isVisible().catch(() => false);
 		if (panelVisible) {
@@ -228,7 +230,9 @@ test.describe("Chat input and slash commands", () => {
 		const pageErrors = watchPageErrors(page);
 		const copyBtn = await openFullContextWithRetry(page);
 		if (copyBtn === null) {
-			await expect(page.locator("#fullContextPanel").getByText("Failed to build context", { exact: true })).toBeVisible();
+			await expect(
+				page.locator("#fullContextPanel").getByText("Failed to build context", { exact: true }),
+			).toBeVisible();
 			expect(pageErrors).toEqual([]);
 			return;
 		}
