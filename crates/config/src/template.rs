@@ -83,7 +83,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama"] # Providers shown in onboarding/picker UI ([] = show all)
+offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moonshot"] # Providers shown in onboarding/picker UI ([] = show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
@@ -141,6 +141,14 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama"] # Pro
 # api_key = "..."                             # Or set OPENROUTER_API_KEY env var
 # model = "anthropic/claude-3.5-sonnet"       # Any model on OpenRouter
 # base_url = "https://openrouter.ai/api/v1"
+
+# ── Moonshot (Kimi) ─────────────────────────────────────────
+# [providers.moonshot]
+# enabled = true
+# api_key = "..."                             # Or set MOONSHOT_API_KEY env var
+# model = "kimi-k2.5"
+# base_url = "https://api.moonshot.ai/v1"
+# alias = "moonshot"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT SETTINGS
