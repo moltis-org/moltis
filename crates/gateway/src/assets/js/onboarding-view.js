@@ -110,6 +110,11 @@ function AuthStep({ onNext, skippable }) {
 			.catch(() => setLoading(false));
 	}, []);
 
+	// Pre-select passkey when available (easier than passwords)
+	useEffect(() => {
+		if (passkeyEnabled && method === null) setMethod("passkey");
+	}, [passkeyEnabled]);
+
 	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: password+code validation
 	function onPasswordSubmit(e) {
 		e.preventDefault();
