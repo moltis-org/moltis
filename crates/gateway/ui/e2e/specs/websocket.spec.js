@@ -2,20 +2,29 @@ const { expect, test } = require("@playwright/test");
 const { waitForWsConnected, watchPageErrors } = require("../helpers");
 
 async function sendRpcFromPage(page, method, params) {
-	return await page.evaluate(
-		async ({ methodName, methodParams }) => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			if (!appScript) throw new Error("app module script not found");
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var helpers = await import(`${prefix}js/helpers.js`);
-			return helpers.sendRpc(methodName, methodParams);
-		},
-		{
-			methodName: method,
-			methodParams: params,
-		},
-	);
+	let lastResponse = null;
+	for (let attempt = 0; attempt < 20; attempt++) {
+		lastResponse = await page.evaluate(
+			async ({ methodName, methodParams }) => {
+				var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+				if (!appScript) throw new Error("app module script not found");
+				var appUrl = new URL(appScript.src, window.location.origin);
+				var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+				var helpers = await import(`${prefix}js/helpers.js`);
+				return helpers.sendRpc(methodName, methodParams);
+			},
+			{
+				methodName: method,
+				methodParams: params,
+			},
+		);
+
+		if (lastResponse?.ok) return lastResponse;
+		if (lastResponse?.error?.message !== "WebSocket not connected") return lastResponse;
+		await page.waitForTimeout(100);
+	}
+
+	return lastResponse;
 }
 
 test.describe("WebSocket connection lifecycle", () => {

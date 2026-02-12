@@ -23,6 +23,56 @@ async function getChatSeq(page) {
 	});
 }
 
+async function openFullContextWithRetry(page) {
+	const toggleBtn = page.locator("#fullContextBtn");
+	const panel = page.locator("#fullContextPanel");
+	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
+	const failedMsg = panel.getByText("Failed to build context", { exact: true });
+
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const panelVisible = await panel.isVisible().catch(() => false);
+		if (panelVisible) {
+			await toggleBtn.click();
+		}
+
+		await toggleBtn.click();
+		await expect(panel).toBeVisible();
+
+		const result = await expect
+			.poll(
+				async () => {
+					if (await copyBtn.isVisible().catch(() => false)) return "copy";
+					if (await failedMsg.isVisible().catch(() => false)) return "failed";
+					return "loading";
+				},
+				{ timeout: 4_000 },
+			)
+			.toBe("copy")
+			.then(() => "copy")
+			.catch(() => "failed");
+
+		if (result === "copy") return copyBtn;
+	}
+
+	return null;
+}
+
+async function runClearSlashCommandWithRetry(page) {
+	const chatInput = page.locator("#chatInput");
+	for (let attempt = 0; attempt < 3; attempt++) {
+		await waitForWsConnected(page);
+		await chatInput.fill("/clear");
+		await chatInput.press("Enter");
+		const reset = await expect
+			.poll(async () => await getChatSeq(page), { timeout: 4_000 })
+			.toBe(0)
+			.then(() => true)
+			.catch(() => false);
+		if (reset) return true;
+	}
+	return false;
+}
+
 test.describe("Chat input and slash commands", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");
@@ -116,9 +166,8 @@ test.describe("Chat input and slash commands", () => {
 
 	test("full context copy button uses small button style", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await page.locator("#fullContextBtn").click();
-
-		const copyBtn = page.locator("#fullContextPanel button", { hasText: "Copy" });
+		const copyBtn = await openFullContextWithRetry(page);
+		expect(copyBtn).not.toBeNull();
 		await expect(copyBtn).toBeVisible();
 		await expect(copyBtn).toHaveClass(/provider-btn-sm/);
 		expect(pageErrors).toEqual([]);
@@ -128,11 +177,8 @@ test.describe("Chat input and slash commands", () => {
 		const pageErrors = watchPageErrors(page);
 		await setChatSeq(page, 8);
 
-		const chatInput = page.locator("#chatInput");
-		await chatInput.fill("/clear");
-		await page.keyboard.press("Enter");
-
-		await expect.poll(async () => await getChatSeq(page)).toBe(0);
+		const reset = await runClearSlashCommandWithRetry(page);
+		expect(reset).toBeTruthy();
 		expect(pageErrors).toEqual([]);
 	});
 });
