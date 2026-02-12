@@ -1,0 +1,12 @@
+[profile.default]
+# Show which test is running and summary of failures at the end.
+failure-output = "immediate-final"
+# No retries locally by default.
+retries = 0
+
+[profile.ci]
+# In CI, retry flaky tests once before failing the run.
+failure-output = "immediate-final"
+retries        = 2
+# Produce JUnit XML for GitHub Actions test summary.
+junit.path = "junit.xml"
