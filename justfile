@@ -196,7 +196,7 @@ ship commit_message='' pr_title='' pr_body='':
 
 # Run all tests
 test:
-    cargo test --all-features
+    cargo nextest run --all-features
 
 # Install browser tooling for gateway web UI e2e tests.
 ui-e2e-install:

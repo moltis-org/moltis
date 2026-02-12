@@ -140,13 +140,23 @@ jobs:
             git tag v0.0.0
           fi
       - run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
-      - run: cargo test -Z unstable-options --all-features --timings
       - name: Upload cargo timing reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cargo-timings-rust-ci-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/cargo-timings/
+          if-no-files-found: ignore
+      - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --all-features --profile ci
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
 
   coverage:

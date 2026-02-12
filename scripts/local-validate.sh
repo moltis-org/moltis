@@ -145,7 +145,7 @@ fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +${nightly_toolchain} fmt --all -- --ch
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/gateway/src/assets/js/}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
-test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo test --all-features}"
+test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
 
@@ -154,7 +154,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
     lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings"
   fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
-    test_cmd="cargo test"
+    test_cmd="cargo nextest run"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
     coverage_cmd="cargo llvm-cov --workspace --html"
