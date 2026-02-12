@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.13] - 2026-02-11
+
+### Added
+
+- **Auto-create SOUL.md on first run**: `SOUL.md` is now seeded with the
+  default soul text when the file doesn't exist, mirroring how `moltis.toml`
+  is auto-created. If deleted, it re-seeds on next load.
+
+### Fixed
+
+- **SOUL.md clear via settings**: Clearing the soul textarea in settings no
+  longer re-creates the default on the next load. An explicit clear now writes
+  an empty file to distinguish "user cleared soul" from "file never existed".
+- **Onboarding WS connection timing**: Deferred WebSocket connection until
+  authentication completes, preventing connection failures during onboarding.
+
+### Changed
+
+- **Passkey auth preselection**: Onboarding now preselects the passkey
+  authentication method when a passkey is already registered.
+- **Moonshot provider**: Added Moonshot to the default offered providers list.
+
 ## [0.8.12] - 2026-02-11
 
 ### Fixed
