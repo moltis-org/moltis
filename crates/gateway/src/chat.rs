@@ -4493,12 +4493,48 @@ async fn deliver_channel_replies(
     desired_reply_medium: ReplyMedium,
 ) {
     let targets = state.drain_channel_replies(session_key).await;
-    if targets.is_empty() || text.is_empty() {
+    let is_telegram_session = session_key.starts_with("telegram:");
+    if targets.is_empty() {
+        if is_telegram_session {
+            info!(
+                session_key,
+                text_len = text.len(),
+                "telegram reply delivery skipped: no pending targets"
+            );
+        }
         return;
+    }
+    if text.is_empty() {
+        if is_telegram_session {
+            info!(
+                session_key,
+                target_count = targets.len(),
+                "telegram reply delivery skipped: empty response text"
+            );
+        }
+        return;
+    }
+    if is_telegram_session {
+        info!(
+            session_key,
+            target_count = targets.len(),
+            text_len = text.len(),
+            reply_medium = ?desired_reply_medium,
+            "telegram reply delivery starting"
+        );
     }
     let outbound = match state.services.channel_outbound_arc() {
         Some(o) => o,
-        None => return,
+        None => {
+            if is_telegram_session {
+                info!(
+                    session_key,
+                    target_count = targets.len(),
+                    "telegram reply delivery skipped: outbound unavailable"
+                );
+            }
+            return;
+        },
     };
     // Drain buffered status log entries to build a logbook suffix.
     let status_log = state.drain_channel_status_log(session_key).await;
