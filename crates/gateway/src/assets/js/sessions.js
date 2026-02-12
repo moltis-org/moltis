@@ -61,6 +61,30 @@ export function fetchSessions() {
 	});
 }
 
+/** Clear history for the currently active session and reset local UI state. */
+export function clearActiveSession() {
+	var prevHistoryIdx = S.lastHistoryIndex;
+	var prevSeq = S.chatSeq;
+	S.setLastHistoryIndex(-1);
+	S.setChatSeq(0);
+	return sendRpc("chat.clear", {}).then((res) => {
+		if (res?.ok) {
+			if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+			S.setSessionTokens({ input: 0, output: 0 });
+			updateTokenBar();
+			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
+			var session = sessionStore.getByKey(activeKey);
+			if (session) session.syncCounts(0, 0);
+			fetchSessions();
+			return res;
+		}
+		S.setLastHistoryIndex(prevHistoryIdx);
+		S.setChatSeq(prevSeq);
+		chatAddMsg("error", res?.error?.message || "Clear failed");
+		return res;
+	});
+}
+
 /** Re-fetch the active session entry and restore sandbox/model state. */
 export function refreshActiveSession() {
 	if (!S.activeSessionKey) return;

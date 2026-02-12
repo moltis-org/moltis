@@ -142,6 +142,99 @@ fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
     parse_fenced_tool_call_from_text(text).or_else(|| parse_function_tool_call_from_text(text))
 }
 
+/// Detect a direct shell command in the latest user turn.
+///
+/// This is intentionally conservative and only targets command-shaped inputs
+/// like `pwd`, `ls -la`, `uname -a`, etc. Natural-language requests are ignored.
+fn direct_shell_command_from_user_content(user_content: &UserContent) -> Option<String> {
+    let text = match user_content {
+        UserContent::Text(text) => text.trim(),
+        UserContent::Multimodal(_) => return None,
+    };
+
+    if text.is_empty()
+        || text.len() > 512
+        || text.contains('\n')
+        || text.contains('\r')
+        || text.starts_with('/')
+        || text.starts_with("```")
+        || text.ends_with('?')
+        || text.ends_with('.')
+        || text.ends_with('!')
+    {
+        return None;
+    }
+
+    // Keep this scoped to shell-ish ASCII input.
+    let is_allowed_char = |c: char| {
+        c.is_ascii_alphanumeric()
+            || c.is_ascii_whitespace()
+            || "_-./~:$@=%+,'\"|&*()[]{}<>!?\\".contains(c)
+    };
+    if !text.chars().all(is_allowed_char) {
+        return None;
+    }
+
+    let lower = text.to_ascii_lowercase();
+    let conversational_prefixes = [
+        "can you",
+        "could you",
+        "would you",
+        "please ",
+        "show ",
+        "tell ",
+        "explain ",
+        "what ",
+        "why ",
+        "how ",
+        "when ",
+        "where ",
+        "who ",
+        "i ",
+        "we ",
+        "let's ",
+    ];
+    if conversational_prefixes
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    {
+        return None;
+    }
+
+    let mut parts = text.split_whitespace();
+    let first = parts.next()?;
+    let first_lower = first.to_ascii_lowercase();
+    if matches!(
+        first_lower.as_str(),
+        "run"
+            | "execute"
+            | "show"
+            | "tell"
+            | "explain"
+            | "describe"
+            | "what"
+            | "why"
+            | "how"
+            | "can"
+            | "could"
+            | "would"
+            | "please"
+    ) {
+        return None;
+    }
+
+    // Require the first token to look like a command/path.
+    let first_token_ok = first
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "_-./~+".contains(c))
+        || first.contains('=');
+    if !first_token_ok {
+        return None;
+    }
+
+    Some(text.to_string())
+}
+
 fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
     // Look for ```tool_call ... ``` blocks.
     let start_marker = "```tool_call";
@@ -582,6 +675,7 @@ pub async fn run_agent_loop_with_context(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
+    let direct_shell_command = direct_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -715,6 +809,24 @@ pub async fn run_agent_loop_with_context(
             );
             response.text = remaining_text;
             response.tool_calls = vec![tc];
+        }
+
+        // Final fallback: if the user turn is a direct shell command and the
+        // model returned plain text, force one exec tool call instead of a
+        // text-only reply so command turns are deterministic in the UI.
+        if response.tool_calls.is_empty()
+            && iterations == 1
+            && total_tool_calls == 0
+            && let Some(command) = direct_shell_command.as_ref()
+            && tools.get("exec").is_some()
+        {
+            info!(command = %command, "forcing exec tool call from direct command input");
+            response.text = None;
+            response.tool_calls = vec![ToolCall {
+                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                name: "exec".to_string(),
+                arguments: serde_json::json!({ "command": command }),
+            }];
         }
 
         for tc in &response.tool_calls {
@@ -1021,6 +1133,7 @@ pub async fn run_agent_loop_streaming(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
+    let direct_shell_command = direct_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -1276,6 +1389,24 @@ pub async fn run_agent_loop_streaming(
             );
             accumulated_text = remaining_text.unwrap_or_default();
             tool_calls = vec![tc];
+        }
+
+        // Final fallback: if the user turn is a direct shell command and the
+        // model returned plain text, force one exec tool call instead of a
+        // text-only reply so command turns are deterministic in the UI.
+        if tool_calls.is_empty()
+            && iterations == 1
+            && total_tool_calls == 0
+            && let Some(command) = direct_shell_command.as_ref()
+            && tools.get("exec").is_some()
+        {
+            info!(command = %command, "forcing exec tool call from direct command input");
+            accumulated_text.clear();
+            tool_calls = vec![ToolCall {
+                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                name: "exec".to_string(),
+                arguments: serde_json::json!({ "command": command }),
+            }];
         }
 
         // Dispatch AfterLLMCall hook — may block tool execution.
@@ -2064,6 +2195,127 @@ mod tests {
             evts.iter()
                 .any(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }))
         );
+    }
+
+    /// Native-tool provider that returns plain text (no structured tool call)
+    /// on the first turn for a command-like prompt.
+    struct DirectCommandNoToolProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for DirectCommandNoToolProvider {
+        fn name(&self) -> &str {
+            "mock-direct-command"
+        }
+
+        fn id(&self) -> &str {
+            "mock-direct-command"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Ok(CompletionResponse {
+                    text: Some("I'll summarize the command output for you.".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                        ..Default::default()
+                    },
+                })
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !tool_content.is_empty(),
+                    "forced exec should append a tool result message"
+                );
+                Ok(CompletionResponse {
+                    text: Some("done".into()),
+                    tool_calls: vec![],
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        ..Default::default()
+                    },
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_direct_command_forces_exec_non_streaming() {
+        let provider = Arc::new(DirectCommandNoToolProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.tool_calls_made, 1);
+        assert_eq!(result.text, "done");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                name, arguments, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "exec");
+        assert_eq!(args["command"], "pwd");
     }
 
     /// Native-tool provider that emits XML-like function text instead of
@@ -3138,6 +3390,139 @@ mod tests {
         assert_eq!(name, "process");
         assert_eq!(args["action"], "start");
         assert_eq!(args["command"], "pwd");
+    }
+
+    /// Streaming provider that returns plain text only (no tool calls) on
+    /// a command-like prompt. Runner should force an exec call on iteration 1.
+    struct DirectCommandNoToolStreamProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for DirectCommandNoToolStreamProvider {
+        fn name(&self) -> &str {
+            "mock-direct-command-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-direct-command-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream_with_tools(messages, vec![])
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count == 0 {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("I can summarize that command output.".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                        ..Default::default()
+                    }),
+                ]))
+            } else {
+                let tool_content = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Tool { content, .. } = m {
+                            Some(content.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !tool_content.is_empty(),
+                    "forced exec should append a tool result message"
+                );
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("stream done".into()),
+                    StreamEvent::Done(Usage {
+                        input_tokens: 5,
+                        output_tokens: 5,
+                        ..Default::default()
+                    }),
+                ]))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_direct_command_forces_exec_streaming() {
+        let provider = Arc::new(DirectCommandNoToolStreamProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("uname -a".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.tool_calls_made, 1);
+        assert_eq!(result.text, "stream done");
+
+        let evts = events.lock().unwrap();
+        let tool_start = evts.iter().find_map(|e| {
+            if let RunnerEvent::ToolCallStart {
+                name, arguments, ..
+            } = e
+            {
+                Some((name.clone(), arguments.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(tool_start.is_some(), "should emit ToolCallStart");
+        let (name, args) = tool_start.unwrap();
+        assert_eq!(name, "exec");
+        assert_eq!(args["command"], "uname -a");
     }
 
     // ── Streaming tool-call index mapping tests ─────────────────────

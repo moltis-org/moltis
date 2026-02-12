@@ -1,5 +1,11 @@
 const { expect, test } = require("@playwright/test");
-const { expectPageContentMounted, navigateAndWait, waitForWsConnected, createSession } = require("../helpers");
+const {
+	expectPageContentMounted,
+	navigateAndWait,
+	waitForWsConnected,
+	createSession,
+	watchPageErrors,
+} = require("../helpers");
 
 test.describe("Session management", () => {
 	test("session list renders on load", async ({ page }) => {
@@ -92,6 +98,23 @@ test.describe("Session management", () => {
 
 		await expect(page).not.toHaveURL(newSessionUrl);
 		await expectPageContentMounted(page);
+	});
+
+	test("main session shows clear action while non-main sessions show delete", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/");
+		await waitForWsConnected(page);
+		await expectPageContentMounted(page);
+
+		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+		await expect(page.locator('button[title="Delete session"]')).toHaveCount(0);
+
+		await createSession(page);
+
+		await expect(page.locator('button[title="Clear session"]')).toHaveCount(0);
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("session search filters the list", async ({ page }) => {

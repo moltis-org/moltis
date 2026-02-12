@@ -1790,6 +1790,10 @@ impl ChatService for LiveChatService {
             Some(sk) => sk.to_string(),
             None => self.session_key_for(conn_id.as_deref()).await,
         };
+        let queued_replay = params
+            .get("_queued_replay")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Track client-side sequence number for ordering diagnostics.
         // Note: seq resets to 1 on page reload, so a drop from a high value
@@ -1797,32 +1801,45 @@ impl ChatService for LiveChatService {
         // a continuous ascending sequence.
         let client_seq = params.get("_seq").and_then(|v| v.as_u64());
         if let Some(seq) = client_seq {
-            let mut seq_map = self.last_client_seq.write().await;
-            let last = seq_map.entry(session_key.clone()).or_insert(0);
-            if seq == 1 && *last > 1 {
-                // Page reload — reset tracking.
+            if queued_replay {
                 debug!(
                     session = %session_key,
-                    prev_seq = *last,
-                    "client seq reset (page reload)"
-                );
-            } else if seq <= *last {
-                warn!(
-                    session = %session_key,
                     seq,
-                    last_seq = *last,
-                    "client seq out of order (duplicate or reorder)"
+                    "client seq replayed from queue; skipping ordering diagnostics"
                 );
-            } else if seq > *last + 1 {
-                warn!(
-                    session = %session_key,
-                    seq,
-                    last_seq = *last,
-                    gap = seq - *last - 1,
-                    "client seq gap detected (missing messages)"
-                );
+            } else {
+                let mut seq_map = self.last_client_seq.write().await;
+                let last = seq_map.entry(session_key.clone()).or_insert(0);
+                if *last == 0 {
+                    // First observed sequence for this session in this process.
+                    // We cannot infer a gap yet because earlier messages may have
+                    // come from another tab/process before we started tracking.
+                    debug!(session = %session_key, seq, "client seq initialized");
+                } else if seq == 1 && *last > 1 {
+                    // Page reload — reset tracking.
+                    debug!(
+                        session = %session_key,
+                        prev_seq = *last,
+                        "client seq reset (page reload)"
+                    );
+                } else if seq <= *last {
+                    warn!(
+                        session = %session_key,
+                        seq,
+                        last_seq = *last,
+                        "client seq out of order (duplicate or reorder)"
+                    );
+                } else if seq > *last + 1 {
+                    warn!(
+                        session = %session_key,
+                        seq,
+                        last_seq = *last,
+                        gap = seq - *last - 1,
+                        "client seq gap detected (missing messages)"
+                    );
+                }
+                *last = seq;
             }
-            *last = seq;
         }
 
         // Resolve model: explicit param → session metadata → first registered.
@@ -2377,7 +2394,9 @@ impl ChatService for LiveChatService {
                                 .extend(rest);
                         }
                         info!(session = %session_key_clone, "replaying queued message (followup)");
-                        if let Err(e) = chat.send(first.params).await {
+                        let mut replay_params = first.params;
+                        replay_params["_queued_replay"] = serde_json::json!(true);
+                        if let Err(e) = chat.send(replay_params).await {
                             warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
                         }
                     },
@@ -2398,6 +2417,7 @@ impl ChatService for LiveChatService {
                             };
                             let mut merged = last.params.clone();
                             merged["text"] = serde_json::json!(combined.join("\n\n"));
+                            merged["_queued_replay"] = serde_json::json!(true);
                             if let Err(e) = chat.send(merged).await {
                                 warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
                             }
@@ -2707,6 +2727,13 @@ impl ChatService for LiveChatService {
             .clear(&session_key)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Reset client sequence tracking for this session. A cleared chat starts
+        // a fresh sequence from the web UI.
+        {
+            let mut seq_map = self.last_client_seq.write().await;
+            seq_map.remove(&session_key);
+        }
 
         // Reset metadata message count and preview.
         self.session_metadata.touch(&session_key, 0).await;

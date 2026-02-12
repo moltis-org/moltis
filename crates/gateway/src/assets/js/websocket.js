@@ -40,6 +40,33 @@ import { connectWs, forceReconnect } from "./ws-connect.js";
 // ── Chat event handlers ──────────────────────────────────────
 
 var ttsWebStatus = null; // null = unknown, true/false = enabled state
+var pendingToolCallEnds = new Map();
+
+function toolCallLogicalId(payload) {
+	if (!payload) return "";
+	if (payload.runId) return `${payload.runId}:${payload.toolCallId}`;
+	return String(payload.toolCallId || "");
+}
+
+function toolCallCardId(payload) {
+	if (payload?.runId) {
+		return `tool-${payload.runId}-${payload.toolCallId}`;
+	}
+	return `tool-${payload.toolCallId}`;
+}
+
+function toolCallEventKey(eventSession, payload) {
+	return `${eventSession}:${toolCallLogicalId(payload)}`;
+}
+
+function clearPendingToolCallEndsForSession(sessionKey) {
+	var prefix = `${sessionKey}:`;
+	for (var key of pendingToolCallEnds.keys()) {
+		if (key.startsWith(prefix)) {
+			pendingToolCallEnds.delete(key);
+		}
+	}
+}
 
 async function appendAssistantVoiceIfEnabled(msgEl, text) {
 	if (!(msgEl && text)) return false;
@@ -136,13 +163,21 @@ function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 		S.setStreamEl(null);
 		S.setStreamText("");
 	}
+	var cardId = toolCallCardId(p);
+	if (document.getElementById(cardId)) return;
 	var tpl = document.getElementById("tpl-exec-card");
 	var frag = tpl.content.cloneNode(true);
 	var card = frag.firstElementChild;
-	card.id = `tool-${p.toolCallId}`;
+	card.id = cardId;
 	var cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
 	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
 	S.chatMsgBox.appendChild(card);
+	var endKey = toolCallEventKey(eventSession, p);
+	var pendingEnd = pendingToolCallEnds.get(endKey);
+	if (pendingEnd) {
+		pendingToolCallEnds.delete(endKey);
+		completeToolCard(card, pendingEnd, eventSession);
+	}
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
@@ -185,28 +220,20 @@ function appendToolResult(toolCard, result, eventSession) {
 	}
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
-function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
-	// Always bump badge — the server persists a tool_result message for each call.
-	bumpSessionCount(eventSession, 1);
-	if (!(isActive && isChatPage)) return;
-	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
-	if (!toolCard) return;
+function isToolValidationErrorPayload(p) {
+	if (!(p && !p.success && p.error && p.error.detail)) return false;
+	var errDetail = p.error.detail.toLowerCase();
+	return (
+		errDetail.includes("missing field") ||
+		errDetail.includes("missing required") ||
+		errDetail.includes("missing 'action'") ||
+		errDetail.includes("missing 'url'")
+	);
+}
 
-	// Check if this is a schema validation error (model sent malformed args)
-	// These are expected sometimes and the agent retries automatically
-	var isValidationError = false;
-	if (!p.success && p.error && p.error.detail) {
-		var errDetail = p.error.detail.toLowerCase();
-		isValidationError =
-			errDetail.includes("missing field") ||
-			errDetail.includes("missing required") ||
-			errDetail.includes("missing 'action'") ||
-			errDetail.includes("missing 'url'");
-	}
-
-	// Use muted "retry" style for validation errors, normal styles otherwise
-	if (isValidationError) {
+function completeToolCard(toolCard, p, eventSession) {
+	// Use muted "retry" style for validation errors, normal styles otherwise.
+	if (isToolValidationErrorPayload(p)) {
 		toolCard.className = "msg exec-card exec-retry";
 	} else {
 		toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
@@ -214,14 +241,42 @@ function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
+
 	if (p.success && p.result) {
 		appendToolResult(toolCard, p.result, eventSession);
-	} else if (!p.success && p.error && p.error.detail) {
+		return;
+	}
+	if (!p.success && p.error && p.error.detail) {
 		var errMsg = document.createElement("div");
-		errMsg.className = isValidationError ? "exec-retry-detail" : "exec-error-detail";
+		errMsg.className = isToolValidationErrorPayload(p) ? "exec-retry-detail" : "exec-error-detail";
 		errMsg.textContent = p.error.detail;
 		toolCard.appendChild(errMsg);
 	}
+}
+
+function clearStaleRunningToolCards() {
+	if (!S.chatMsgBox) return;
+	var statusEls = S.chatMsgBox.querySelectorAll(".msg.exec-card .exec-status");
+	for (var statusEl of statusEls) {
+		var card = statusEl.closest(".msg.exec-card");
+		statusEl.remove();
+		if (!card) continue;
+		if (!(card.classList.contains("exec-ok") || card.classList.contains("exec-err"))) {
+			card.className = "msg exec-card exec-ok";
+		}
+	}
+}
+
+function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
+	// Always bump badge — the server persists a tool_result message for each call.
+	bumpSessionCount(eventSession, 1);
+	if (!(isActive && isChatPage)) return;
+	var toolCard = document.getElementById(toolCallCardId(p));
+	if (!toolCard) {
+		pendingToolCallEnds.set(toolCallEventKey(eventSession, p), p);
+		return;
+	}
+	completeToolCard(toolCard, p, eventSession);
 }
 
 function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
@@ -324,6 +379,7 @@ function appendFinalFooter(msgEl, p) {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	// Always bump badge — the server persists the final assistant message.
 	bumpSessionCount(eventSession, 1);
 	// Compare against the per-session history index so cross-session
@@ -343,6 +399,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
+	clearStaleRunningToolCards();
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
 		// Voice pending path: we suppressed streaming, so render everything at once.
@@ -440,6 +497,7 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 }
 
 function handleChatError(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	setSessionReplying(eventSession, false);
 	// Reset per-session stream state
 	var errSession = sessionStore.getByKey(eventSession);
@@ -449,6 +507,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
+	clearStaleRunningToolCards();
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
 	} else {
@@ -479,11 +538,16 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 }
 
 function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	// Reset badge, unread state, and history index for every client.
 	var session = sessionStore.getByKey(eventSession);
 	if (session) {
 		session.syncCounts(0, 0);
 		session.lastHistoryIndex.value = -1;
+	}
+	if (isActive) {
+		S.setLastHistoryIndex(-1);
+		S.setChatSeq(0);
 	}
 	if (!(isActive && isChatPage)) return;
 	// Active viewer: clear the chat box and token bar.

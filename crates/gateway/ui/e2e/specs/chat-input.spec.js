@@ -1,5 +1,27 @@
 const { expect, test } = require("@playwright/test");
-const { navigateAndWait, waitForWsConnected } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+
+async function setChatSeq(page, seq) {
+	await page.evaluate(async (nextSeq) => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var state = await import(`${prefix}js/state.js`);
+		state.setChatSeq(nextSeq);
+	}, seq);
+}
+
+async function getChatSeq(page) {
+	return await page.evaluate(async () => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var state = await import(`${prefix}js/state.js`);
+		return state.chatSeq;
+	});
+}
 
 test.describe("Chat input and slash commands", () => {
 	test.beforeEach(async ({ page }) => {
@@ -86,5 +108,31 @@ test.describe("Chat input and slash commands", () => {
 	test("send button is present", async ({ page }) => {
 		const sendBtn = page.locator("#sendBtn");
 		await expect(sendBtn).toBeVisible();
+	});
+
+	test("prompt button is hidden from chat header", async ({ page }) => {
+		await expect(page.locator("#rawPromptBtn")).toHaveCount(0);
+	});
+
+	test("full context copy button uses small button style", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.locator("#fullContextBtn").click();
+
+		const copyBtn = page.locator("#fullContextPanel button", { hasText: "Copy" });
+		await expect(copyBtn).toBeVisible();
+		await expect(copyBtn).toHaveClass(/provider-btn-sm/);
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("/clear resets client chat sequence", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await setChatSeq(page, 8);
+
+		const chatInput = page.locator("#chatInput");
+		await chatInput.fill("/clear");
+		await page.keyboard.press("Enter");
+
+		await expect.poll(async () => await getChatSeq(page)).toBe(0);
+		expect(pageErrors).toEqual([]);
 	});
 });

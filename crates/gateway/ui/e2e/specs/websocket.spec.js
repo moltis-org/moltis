@@ -117,4 +117,84 @@ test.describe("WebSocket connection lifecycle", () => {
 		).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("out-of-order tool events still resolve exec card", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		const clear = await sendRpcFromPage(page, "chat.clear", {});
+		expect(clear?.ok).toBeTruthy();
+
+		const toolCallId = "reorder-exec-1";
+		await sendRpcFromPage(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_end",
+				toolCallId,
+				toolName: "exec",
+				success: true,
+				result: { stdout: "ok", stderr: "", exit_code: 0 },
+			},
+		});
+
+		await sendRpcFromPage(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				toolCallId,
+				toolName: "exec",
+				arguments: { command: "df -h" },
+			},
+		});
+
+		const card = page.locator(`#tool-${toolCallId}`);
+		await expect(card).toBeVisible();
+		await expect(card).toHaveClass(/exec-ok/);
+		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toHaveCount(0);
+		await expect(page.locator(`#tool-${toolCallId} .exec-output`)).toContainText("ok");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("final event clears stale running exec status when tool end is missed", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		const clear = await sendRpcFromPage(page, "chat.clear", {});
+		expect(clear?.ok).toBeTruthy();
+
+		const toolCallId = "stale-exec-1";
+		await sendRpcFromPage(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				toolCallId,
+				toolName: "exec",
+				arguments: { command: "df -h" },
+			},
+		});
+
+		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toBeVisible();
+
+		await sendRpcFromPage(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "done",
+				messageIndex: 999999,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+			},
+		});
+
+		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toHaveCount(0);
+		await expect(page.locator(`#tool-${toolCallId}`)).toHaveClass(/exec-ok/);
+		expect(pageErrors).toEqual([]);
+	});
 });
