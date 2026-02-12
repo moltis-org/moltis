@@ -2195,7 +2195,7 @@ function OnboardingPage() {
 	var [step, setStep] = useState(-1); // -1 = checking
 	var [authNeeded, setAuthNeeded] = useState(false);
 	var [authSkippable, setAuthSkippable] = useState(false);
-	var [voiceAvailable, setVoiceAvailable] = useState(false);
+	var [voiceAvailable] = useState(() => getGon("voice_enabled") === true);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
 	var sessionsPanelRef = useRef(null);
@@ -2249,34 +2249,6 @@ function OnboardingPage() {
 				ensureWsConnected();
 				setStep(1);
 			});
-	}, []);
-
-	// Probe voice feature availability
-	useEffect(() => {
-		var cancelled = false;
-		var attempts = 0;
-
-		function probe() {
-			if (cancelled) return;
-			sendRpc("voice.providers.all", {}).then((res) => {
-				if (cancelled) return;
-				if (res?.ok) {
-					setVoiceAvailable(true);
-					return;
-				}
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
-					attempts += 1;
-					window.setTimeout(probe, 200);
-					return;
-				}
-				// Voice not compiled or other error — leave false
-			});
-		}
-
-		probe();
-		return () => {
-			cancelled = true;
-		};
 	}, []);
 
 	if (step === -1) {
