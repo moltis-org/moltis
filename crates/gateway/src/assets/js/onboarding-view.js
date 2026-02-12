@@ -16,7 +16,14 @@ import { startProviderOAuth } from "./provider-oauth.js";
 import { testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
-import { forceReconnect } from "./ws-connect.js";
+import { connectWs } from "./ws-connect.js";
+
+var wsStarted = false;
+function ensureWsConnected() {
+	if (wsStarted) return;
+	wsStarted = true;
+	connectWs({ backoff: { factor: 2, max: 10000 } });
+}
 
 // ── Step indicator ──────────────────────────────────────────
 
@@ -143,7 +150,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -211,7 +218,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					setSaving(false);
 					setPasskeyDone(true);
 				} else {
@@ -250,7 +257,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -313,7 +320,7 @@ function AuthStep({ onNext, skippable }) {
 						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
 					</button>
 					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${() => {
-						forceReconnect();
+						ensureWsConnected();
 						onNext();
 					}}>Skip</button>
 				</div>
@@ -2233,11 +2240,13 @@ function OnboardingPage() {
 					setStep(0);
 				} else {
 					setAuthNeeded(false);
+					ensureWsConnected();
 					setStep(1);
 				}
 			})
 			.catch(() => {
 				setAuthNeeded(false);
+				ensureWsConnected();
 				setStep(1);
 			});
 	}, []);
