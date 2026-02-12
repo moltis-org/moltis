@@ -30,9 +30,6 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 # macOS / Linux via Homebrew
 brew install moltis-org/tap/moltis
 
-# Pre-built binary via cargo-binstall (no compilation)
-cargo binstall moltis
-
 # Docker (multi-arch: amd64/arm64)
 docker pull ghcr.io/moltis-org/moltis:latest
 
