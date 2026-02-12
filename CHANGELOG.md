@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.12] - 2026-02-11
+
+### Fixed
+
+- **E2E test CI stability**: `NoopChatService::clear()` now returns Ok instead
+  of an error when no LLM providers are configured, fixing 5 e2e test failures
+  in CI environments. Hardened websocket, chat-input, and onboarding-auth e2e
+  tests against startup race conditions and flaky selectors.
+
 ## [0.8.8] - 2026-02-11
 
 ### Changed
