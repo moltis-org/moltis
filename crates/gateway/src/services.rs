@@ -7,6 +7,7 @@ use {
     moltis_channels::ChannelOutbound,
     serde_json::Value,
     std::{collections::HashSet, path::Path, sync::Arc},
+    tracing::warn,
 };
 
 /// Error type returned by service methods.
@@ -1762,6 +1763,14 @@ pub trait ModelService: Send + Sync {
 
 pub struct NoopModelService;
 
+fn model_service_not_configured_error(operation: &'static str) -> ServiceError {
+    warn!(
+        operation,
+        "model service not configured (gateway services not fully initialized)"
+    );
+    "model service not configured".into()
+}
+
 #[async_trait]
 impl ModelService for NoopModelService {
     async fn list(&self) -> ServiceResult {
@@ -1773,19 +1782,21 @@ impl ModelService for NoopModelService {
     }
 
     async fn disable(&self, _params: Value) -> ServiceResult {
-        Err("model service not configured".into())
+        Err(model_service_not_configured_error("models.disable"))
     }
 
     async fn enable(&self, _params: Value) -> ServiceResult {
-        Err("model service not configured".into())
+        Err(model_service_not_configured_error("models.enable"))
     }
 
     async fn detect_supported(&self, _params: Value) -> ServiceResult {
-        Err("model service not configured".into())
+        Err(model_service_not_configured_error(
+            "models.detect_supported",
+        ))
     }
 
     async fn test(&self, _params: Value) -> ServiceResult {
-        Err("model service not configured".into())
+        Err(model_service_not_configured_error("models.test"))
     }
 }
 
@@ -2227,5 +2238,11 @@ mod tests {
             !svc.shutdown_with_grace(std::time::Duration::from_millis(5))
                 .await
         );
+    }
+
+    #[test]
+    fn model_service_not_configured_error_returns_expected_message() {
+        let error = model_service_not_configured_error("models.test");
+        assert_eq!(error, "model service not configured");
     }
 }

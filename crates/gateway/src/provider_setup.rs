@@ -1023,10 +1023,14 @@ impl LiveProviderSetupService {
                         return;
                     }
                     let new_registry = ProviderRegistry::from_env_with_config(&config);
+                    let provider_summary = new_registry.provider_summary();
+                    let model_count = new_registry.list_models().len();
                     let mut reg = registry.write().await;
                     *reg = new_registry;
                     info!(
                         provider = %provider_name,
+                        provider_summary = %provider_summary,
+                        models = model_count,
                         "device-flow OAuth complete, rebuilt provider registry"
                     );
                 },
@@ -1247,11 +1251,15 @@ impl ProviderSetupService for LiveProviderSetupService {
         // Rebuild the provider registry with saved keys merged into config.
         let effective = self.effective_config();
         let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let provider_summary = new_registry.provider_summary();
+        let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
         *reg = new_registry;
 
         info!(
             provider = provider_name,
+            provider_summary = %provider_summary,
+            models = model_count,
             "saved provider config to disk and rebuilt provider registry"
         );
 
@@ -1284,10 +1292,14 @@ impl ProviderSetupService for LiveProviderSetupService {
         if self.has_oauth_tokens(&provider_name) {
             let effective = self.effective_config();
             let new_registry = ProviderRegistry::from_env_with_config(&effective);
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
             let mut reg = self.registry.write().await;
             *reg = new_registry;
             info!(
                 provider = %provider_name,
+                provider_summary = %provider_summary,
+                models = model_count,
                 "oauth start skipped because provider already has tokens; rebuilt provider registry"
             );
             return Ok(serde_json::json!({
@@ -1351,10 +1363,14 @@ impl ProviderSetupService for LiveProviderSetupService {
                             }
                             // Rebuild registry with new tokens
                             let new_registry = ProviderRegistry::from_env_with_config(&config);
+                            let provider_summary = new_registry.provider_summary();
+                            let model_count = new_registry.list_models().len();
                             let mut reg = registry.write().await;
                             *reg = new_registry;
                             info!(
                                 provider = %provider_name,
+                                provider_summary = %provider_summary,
+                                models = model_count,
                                 "OAuth flow complete, rebuilt provider registry"
                             );
                         },
@@ -1415,11 +1431,15 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         let effective = self.effective_config();
         let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let provider_summary = new_registry.provider_summary();
+        let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
         *reg = new_registry;
 
         info!(
             provider = %pending.provider_name,
+            provider_summary = %provider_summary,
+            models = model_count,
             "OAuth callback complete, rebuilt provider registry"
         );
 

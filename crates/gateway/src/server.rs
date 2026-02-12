@@ -885,7 +885,15 @@ pub async fn start_gateway(
     let registry = Arc::new(tokio::sync::RwLock::new(
         ProviderRegistry::from_env_with_config(&effective_providers),
     ));
-    let provider_summary = registry.read().await.provider_summary();
+    let (provider_summary, providers_available_at_startup) = {
+        let reg = registry.read().await;
+        (reg.provider_summary(), !reg.is_empty())
+    };
+    if !providers_available_at_startup {
+        warn!(
+            "no LLM providers at startup; model/chat services remain active and will pick up providers after credentials are saved"
+        );
+    }
 
     if !has_explicit_provider_settings {
         if auto_detected_provider_sources.is_empty() {
@@ -1000,18 +1008,14 @@ pub async fn start_gateway(
         crate::chat::DisabledModelsStore::load(),
     ));
 
-    let live_model_service: Option<Arc<LiveModelService>> = if !registry.read().await.is_empty() {
-        let svc = Arc::new(LiveModelService::new(
-            Arc::clone(&registry),
-            Arc::clone(&model_store),
-            config.chat.priority_models.clone(),
-            config.chat.allowed_models.clone(),
-        ));
-        services = services.with_model(Arc::clone(&svc) as Arc<dyn crate::services::ModelService>);
-        Some(svc)
-    } else {
-        None
-    };
+    let live_model_service = Arc::new(LiveModelService::new(
+        Arc::clone(&registry),
+        Arc::clone(&model_store),
+        config.chat.priority_models.clone(),
+        config.chat.allowed_models.clone(),
+    ));
+    services = services
+        .with_model(Arc::clone(&live_model_service) as Arc<dyn crate::services::ModelService>);
 
     // Wire live MCP service.
     let mcp_configured_count;
@@ -2238,11 +2242,12 @@ pub async fn start_gateway(
     }
 
     // Set the state on model service for broadcasting model update events.
-    if let Some(svc) = &live_model_service {
-        svc.set_state(Arc::clone(&state));
+    live_model_service.set_state(Arc::clone(&state));
 
-        // Run an initial background model support probe once after startup.
-        let probe_service = Arc::clone(svc);
+    // Run an initial background model support probe once after startup.
+    // Skip the initial pass when no providers are available yet.
+    if providers_available_at_startup {
+        let probe_service = Arc::clone(&live_model_service);
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             if let Err(err) = crate::services::ModelService::detect_supported(
@@ -2263,7 +2268,7 @@ pub async fn start_gateway(
     state.inner.write().await.heartbeat_config = config.heartbeat.clone();
 
     // Wire live chat service (needs state reference, so done after state creation).
-    if !registry.read().await.is_empty() {
+    {
         let broadcaster = Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         let env_provider: Arc<dyn EnvVarProvider> = credential_store.clone();
         let exec_tool = moltis_tools::exec::ExecTool::default()
