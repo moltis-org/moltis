@@ -143,7 +143,7 @@ fi
 nightly_toolchain="${LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN:-nightly-2025-11-30}"
 fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +${nightly_toolchain} fmt --all -- --check}"
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/gateway/src/assets/js/}"
-zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high >/dev/null 2>&1 || true}"
+zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-zizmor . --min-severity high}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
 test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
@@ -369,7 +369,7 @@ fi
 run_check "local/lockfile" "cargo fetch --locked"
 
 # Keep lint/test sequential to maximize incremental compile reuse.
-# These do not wait on local/zizmor (advisory and non-blocking).
+# These do not wait on local/zizmor, but local/zizmor remains required.
 run_check "local/lint" "$lint_cmd"
 run_check "local/test" "$test_cmd"
 
@@ -390,11 +390,17 @@ elif [[ "${LOCAL_VALIDATE_SKIP_COVERAGE:-0}" != "1" ]]; then
   echo "Skipping coverage (cargo-llvm-cov not installed). Install with: cargo install cargo-llvm-cov"
 fi
 
-# Collect local/zizmor result at the end without affecting pass/fail.
-if wait "$zizmor_pid"; then
-  report_async_result "local/zizmor" "$zizmor_pid" || true
-else
-  report_async_result "local/zizmor" "$zizmor_pid" || true
+# Collect local/zizmor result at the end and fail if it found issues.
+zizmor_failed=0
+if ! wait "$zizmor_pid"; then
+  zizmor_failed=1
+fi
+if ! report_async_result "local/zizmor" "$zizmor_pid"; then
+  zizmor_failed=1
+fi
+if [[ "$zizmor_failed" -ne 0 ]]; then
+  echo "local/zizmor failed." >&2
+  exit 1
 fi
 
 if [[ "$LOCAL_ONLY" -eq 1 ]]; then
