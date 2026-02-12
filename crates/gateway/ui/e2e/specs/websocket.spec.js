@@ -1,30 +1,46 @@
 const { expect, test } = require("@playwright/test");
 const { waitForWsConnected, watchPageErrors } = require("../helpers");
 
+function isRetryableRpcError(message) {
+	if (typeof message !== "string") return false;
+	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+}
+
 async function sendRpcFromPage(page, method, params) {
 	let lastResponse = null;
-	for (let attempt = 0; attempt < 20; attempt++) {
-		lastResponse = await page.evaluate(
-			async ({ methodName, methodParams }) => {
-				var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-				if (!appScript) throw new Error("app module script not found");
-				var appUrl = new URL(appScript.src, window.location.origin);
-				var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-				var helpers = await import(`${prefix}js/helpers.js`);
-				return helpers.sendRpc(methodName, methodParams);
-			},
-			{
-				methodName: method,
-				methodParams: params,
-			},
-		);
+	for (let attempt = 0; attempt < 40; attempt++) {
+		if (attempt > 0) {
+			await waitForWsConnected(page);
+			await page.waitForTimeout(100);
+		}
+		lastResponse = await page
+			.evaluate(
+				async ({ methodName, methodParams }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) throw new Error("app module script not found");
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var helpers = await import(`${prefix}js/helpers.js`);
+					return helpers.sendRpc(methodName, methodParams);
+				},
+				{
+					methodName: method,
+					methodParams: params,
+				},
+			)
+			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
 
 		if (lastResponse?.ok) return lastResponse;
-		if (lastResponse?.error?.message !== "WebSocket not connected") return lastResponse;
-		await page.waitForTimeout(100);
+		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
 	}
 
 	return lastResponse;
+}
+
+async function expectRpcOk(page, method, params) {
+	const response = await sendRpcFromPage(page, method, params);
+	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
+	return response;
 }
 
 test.describe("WebSocket connection lifecycle", () => {
@@ -77,15 +93,14 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolOutput = "Linux moltis-moltis-sandbox-main 6.12.28 #1 SMP Tue May 20 15:19:05 UTC 2025 aarch64 GNU/Linux";
 		const finalText =
 			"The command executed successfully. The output shows:\n- Kernel name: Linux\n- Hostname: moltis-moltis-sandbox-main\n\n" +
 			toolOutput;
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -96,7 +111,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -105,7 +120,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -132,11 +147,10 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolCallId = "reorder-exec-1";
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -148,7 +162,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -172,11 +186,10 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolCallId = "stale-exec-1";
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -189,7 +202,7 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toBeVisible();
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",

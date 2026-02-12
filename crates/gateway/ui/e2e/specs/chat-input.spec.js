@@ -1,6 +1,47 @@
 const { expect, test } = require("@playwright/test");
 const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
+function isRetryableRpcError(message) {
+	if (typeof message !== "string") return false;
+	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+}
+
+async function sendRpcFromPage(page, method, params) {
+	let lastResponse = null;
+	for (let attempt = 0; attempt < 30; attempt++) {
+		if (attempt > 0) {
+			await waitForWsConnected(page);
+		}
+		lastResponse = await page
+			.evaluate(
+				async ({ methodName, methodParams }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) throw new Error("app module script not found");
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var helpers = await import(`${prefix}js/helpers.js`);
+					return helpers.sendRpc(methodName, methodParams);
+				},
+				{
+					methodName: method,
+					methodParams: params,
+				},
+			)
+			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
+
+		if (lastResponse?.ok) return lastResponse;
+		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
+	}
+	return lastResponse;
+}
+
+async function waitForChatInputReady(page) {
+	const chatInput = page.locator("#chatInput");
+	await expect(chatInput).toBeVisible({ timeout: 15_000 });
+	await expect(chatInput).toBeEnabled();
+	return chatInput;
+}
+
 async function setChatSeq(page, seq) {
 	await page.evaluate(async (nextSeq) => {
 		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
@@ -29,7 +70,11 @@ async function openFullContextWithRetry(page) {
 	const copyBtn = panel.getByRole("button", { name: "Copy", exact: true });
 	const failedMsg = panel.getByText("Failed to build context", { exact: true });
 
-	for (let attempt = 0; attempt < 3; attempt++) {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		await waitForWsConnected(page);
+		const fullContextRpc = await sendRpcFromPage(page, "chat.full_context", {});
+		const noProvidersConfigured = fullContextRpc?.error?.message?.includes("no LLM providers configured");
+
 		const panelVisible = await panel.isVisible().catch(() => false);
 		if (panelVisible) {
 			await toggleBtn.click();
@@ -52,16 +97,22 @@ async function openFullContextWithRetry(page) {
 			.catch(() => "failed");
 
 		if (result === "copy") return copyBtn;
+		if (result === "failed" && noProvidersConfigured) {
+			return null;
+		}
 	}
 
-	return null;
+	return false;
 }
 
 async function runClearSlashCommandWithRetry(page) {
 	const chatInput = page.locator("#chatInput");
-	for (let attempt = 0; attempt < 3; attempt++) {
+	for (let attempt = 0; attempt < 6; attempt++) {
 		await waitForWsConnected(page);
+		await waitForChatInputReady(page);
+		await chatInput.click();
 		await chatInput.fill("/clear");
+		await expect(chatInput).toHaveValue("/clear");
 		await chatInput.press("Enter");
 		const reset = await expect
 			.poll(async () => await getChatSeq(page), { timeout: 4_000 })
@@ -69,6 +120,9 @@ async function runClearSlashCommandWithRetry(page) {
 			.then(() => true)
 			.catch(() => false);
 		if (reset) return true;
+		// Recover test state so the next slash-command attempt starts cleanly.
+		await sendRpcFromPage(page, "chat.clear", {});
+		await setChatSeq(page, 8);
 	}
 	return false;
 }
@@ -77,6 +131,7 @@ test.describe("Chat input and slash commands", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await waitForChatInputReady(page);
 	});
 
 	test("chat input is visible and focusable", async ({ page }) => {
@@ -96,7 +151,11 @@ test.describe("Chat input and slash commands", () => {
 
 		// Should have at least one menu item
 		const items = slashMenu.locator(".slash-menu-item");
-		await expect(items).not.toHaveCount(0);
+		await expect
+			.poll(async () => await items.count(), {
+				timeout: 10_000,
+			})
+			.toBeGreaterThan(0);
 	});
 
 	test("slash menu filters as user types", async ({ page }) => {
@@ -111,10 +170,11 @@ test.describe("Chat input and slash commands", () => {
 
 		// Type more to filter
 		await chatInput.fill("/cl");
-		await page.waitForTimeout(200);
-
-		const countFiltered = await slashMenu.locator(".slash-menu-item").count();
-		expect(countFiltered).toBeLessThanOrEqual(countAll);
+		await expect
+			.poll(async () => await slashMenu.locator(".slash-menu-item").count(), {
+				timeout: 5_000,
+			})
+			.toBeLessThanOrEqual(countAll);
 	});
 
 	test("Escape dismisses slash menu", async ({ page }) => {
@@ -167,6 +227,12 @@ test.describe("Chat input and slash commands", () => {
 	test("full context copy button uses small button style", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const copyBtn = await openFullContextWithRetry(page);
+		if (copyBtn === null) {
+			await expect(page.locator("#fullContextPanel").getByText("Failed to build context", { exact: true })).toBeVisible();
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+		expect(copyBtn).not.toBe(false);
 		expect(copyBtn).not.toBeNull();
 		await expect(copyBtn).toBeVisible();
 		await expect(copyBtn).toHaveClass(/provider-btn-sm/);
