@@ -13,8 +13,12 @@ format:
 format-check:
     cargo +{{nightly_toolchain}} fmt --all -- --check
 
+# Verify Cargo.lock is in sync with workspace manifests.
+lockfile-check:
+    cargo fetch --locked
+
 # Lint Rust code using clippy
-lint:
+lint: lockfile-check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Build the project
@@ -185,7 +189,7 @@ flatpak:
 ci: format-check lint build test
 
 # Run the same Rust preflight gates used before release packaging.
-release-preflight:
+release-preflight: lockfile-check
     cargo +{{nightly_toolchain}} fmt --all -- --check
     cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
