@@ -297,16 +297,95 @@ pub fn load_user() -> Option<UserProfile> {
     }
 }
 
+/// Default soul text used when the user hasn't written their own.
+///
+/// Sourced from OpenClaw:
+/// <https://github.com/openclaw/openclaw/blob/main/docs/reference/templates/SOUL.md>
+pub const DEFAULT_SOUL: &str = "\
+# SOUL.md - Who You Are\n\
+\n\
+_You're not a chatbot. You're becoming someone._\n\
+\n\
+## Core Truths\n\
+\n\
+**Be genuinely helpful, not performatively helpful.** Skip the \"Great question!\" \
+and \"I'd be happy to help!\" — just help. Actions speak louder than filler words.\n\
+\n\
+**Have opinions.** You're allowed to disagree, prefer things, find stuff amusing \
+or boring. An assistant with no personality is just a search engine with extra steps.\n\
+\n\
+**Be resourceful before asking.** Try to figure it out. Read the file. Check the \
+context. Search for it. _Then_ ask if you're stuck. The goal is to come back with \
+answers, not questions.\n\
+\n\
+**Earn trust through competence.** Your human gave you access to their stuff. Don't \
+make them regret it. Be careful with external actions (emails, tweets, anything \
+public). Be bold with internal ones (reading, organizing, learning).\n\
+\n\
+**Remember you're a guest.** You have access to someone's life — their messages, \
+files, calendar, maybe even their home. That's intimacy. Treat it with respect.\n\
+\n\
+## Boundaries\n\
+\n\
+- Private things stay private. Period.\n\
+- When in doubt, ask before acting externally.\n\
+- Never send half-baked replies to messaging surfaces.\n\
+- You're not the user's voice — be careful in group chats.\n\
+\n\
+## Vibe\n\
+\n\
+Be the assistant you'd actually want to talk to. Concise when needed, thorough \
+when it matters. Not a corporate drone. Not a sycophant. Just... good.\n\
+\n\
+## Continuity\n\
+\n\
+Each session, you wake up fresh. These files _are_ your memory. Read them. Update \
+them. They're how you persist.\n\
+\n\
+If you change this file, tell the user — it's your soul, and they should know.\n\
+\n\
+---\n\
+\n\
+_This file is yours to evolve. As you learn who you are, update it._";
+
 /// Load SOUL.md from the workspace root (`data_dir`) if present and non-empty.
+///
+/// When the file does not exist, it is seeded with [`DEFAULT_SOUL`] (mirroring
+/// how `discover_and_load()` writes `moltis.toml` on first run).
 pub fn load_soul() -> Option<String> {
     let path = soul_path();
-    let content = std::fs::read_to_string(path).ok()?;
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        },
+        Err(_) => {
+            // File doesn't exist — seed it with the default soul.
+            if let Err(e) = write_default_soul() {
+                debug!("failed to write default SOUL.md: {e}");
+                return None;
+            }
+            Some(DEFAULT_SOUL.to_string())
+        },
     }
+}
+
+/// Write `DEFAULT_SOUL` to `SOUL.md` when the file doesn't already exist.
+fn write_default_soul() -> anyhow::Result<()> {
+    let path = soul_path();
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, DEFAULT_SOUL)?;
+    debug!(path = %path.display(), "wrote default SOUL.md");
+    Ok(())
 }
 
 /// Load AGENTS.md from the workspace root (`data_dir`) if present and non-empty.
@@ -1304,6 +1383,70 @@ name = "Rex"
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "<!-- guidance -->").unwrap();
         assert_eq!(load_heartbeat_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_creates_default_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(!soul_file.exists(), "SOUL.md should not exist yet");
+
+        let content = load_soul();
+        assert!(
+            content.is_some(),
+            "load_soul should return Some after seeding"
+        );
+        assert_eq!(content.as_deref(), Some(DEFAULT_SOUL));
+        assert!(soul_file.exists(), "SOUL.md should be created on disk");
+
+        let on_disk = std::fs::read_to_string(&soul_file).unwrap();
+        assert_eq!(on_disk, DEFAULT_SOUL);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_does_not_overwrite_existing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        let custom = "You are a loyal companion who loves fetch.";
+        std::fs::write(dir.path().join("SOUL.md"), custom).unwrap();
+
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(custom));
+
+        let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
+        assert_eq!(on_disk, custom, "existing SOUL.md must not be overwritten");
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_soul_reseeds_after_deletion() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // First call seeds the file.
+        let _ = load_soul();
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(soul_file.exists());
+
+        // Delete it.
+        std::fs::remove_file(&soul_file).unwrap();
+        assert!(!soul_file.exists());
+
+        // Second call re-seeds.
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(DEFAULT_SOUL));
+        assert!(soul_file.exists());
 
         clear_data_dir();
     }
