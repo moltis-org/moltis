@@ -405,21 +405,22 @@ pub fn load_heartbeat_md() -> Option<String> {
 
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
-/// - `Some(non-empty)` writes `SOUL.md`
-/// - `None` or empty removes `SOUL.md` when it exists
+/// - `Some(non-empty)` writes `SOUL.md` with the given content
+/// - `None` or empty writes an empty `SOUL.md` so that `load_soul()`
+///   returns `None` without re-seeding the default
 pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
     let path = soul_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     match soul.map(str::trim) {
         Some(content) if !content.is_empty() => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
             std::fs::write(&path, content)?;
         },
         _ => {
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-            }
+            // Write an empty file rather than deleting so `load_soul()`
+            // distinguishes "user cleared soul" from "file never existed".
+            std::fs::write(&path, "")?;
         },
     }
     Ok(path)
@@ -1447,6 +1448,60 @@ name = "Rex"
         let content = load_soul();
         assert_eq!(content.as_deref(), Some(DEFAULT_SOUL));
         assert!(soul_file.exists());
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_none_prevents_reseed() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // Auto-seed SOUL.md.
+        let _ = load_soul();
+        let soul_file = dir.path().join("SOUL.md");
+        assert!(soul_file.exists());
+
+        // User explicitly clears the soul via settings.
+        save_soul(None).expect("save_soul(None)");
+        assert!(
+            soul_file.exists(),
+            "save_soul(None) should leave an empty file, not delete"
+        );
+        assert!(
+            std::fs::read_to_string(&soul_file).unwrap().is_empty(),
+            "file should be empty after clearing"
+        );
+
+        // load_soul must return None — NOT re-seed.
+        let content = load_soul();
+        assert_eq!(
+            content, None,
+            "load_soul must return None after explicit clear, not re-seed"
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn save_soul_some_overwrites_default() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        // Auto-seed.
+        let _ = load_soul();
+
+        // User writes custom soul.
+        let custom = "You love fetch and belly rubs.";
+        save_soul(Some(custom)).expect("save_soul");
+
+        let content = load_soul();
+        assert_eq!(content.as_deref(), Some(custom));
+
+        let on_disk = std::fs::read_to_string(dir.path().join("SOUL.md")).unwrap();
+        assert_eq!(on_disk, custom);
 
         clear_data_dir();
     }
