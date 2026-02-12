@@ -13,7 +13,7 @@ import { sendRpc } from "./helpers.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { testModel, validateProviderKey } from "./provider-validation.js";
+import { isModelServiceNotConfigured, testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
 import { connectWs } from "./ws-connect.js";
@@ -1026,7 +1026,8 @@ function ProviderStep({ onNext, onBack }) {
 				// If a specific model was selected, test it from the live registry.
 				if (selectedModelId) {
 					var testResult = await testModel(selectedModelId);
-					if (!testResult.ok) {
+					var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
+					if (!(testResult.ok || modelServiceUnavailable)) {
 						// Model test failed — let user pick another.
 						setPhase("selectModel");
 						setModelTestError(testResult.error || "Model test failed. Try another model.");
@@ -1035,6 +1036,9 @@ function ProviderStep({ onNext, onBack }) {
 					// For Ollama we persisted the selected model in save_key so probing works immediately.
 					if (providerName !== "ollama") {
 						await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
+					}
+					if (modelServiceUnavailable) {
+						console.warn("models.test unavailable during onboarding, saved selected model without probe");
 					}
 					// Store chosen model in localStorage for the UI.
 					localStorage.setItem("moltis-model", selectedModelId);

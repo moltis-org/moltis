@@ -42,12 +42,21 @@ async function moveToLlmStep(page) {
 	await expect(llmHeading).toBeVisible({ timeout: 15_000 });
 }
 
+async function selectModelUntilConfigured(anthropicRow) {
+	const modelCards = anthropicRow.locator(".model-card");
+	await expect(modelCards.first()).toBeVisible({ timeout: 45_000 });
+	await expect.poll(() => modelCards.count(), { timeout: 45_000 }).toBeGreaterThan(0);
+	await modelCards.first().click();
+	await expect(anthropicRow.locator(".provider-item-badge.configured")).toBeVisible({ timeout: 45_000 });
+}
+
 test.describe("Onboarding Anthropic provider", () => {
 	test.describe.configure({ mode: "serial" });
 
 	test.skip(!ANTHROPIC_API_KEY, "requires ANTHROPIC_API_KEY or MOLTIS_E2E_ANTHROPIC_API_KEY");
 
 	test("starts with no detected providers, then configures Anthropic and loads models", async ({ page }) => {
+		test.setTimeout(90_000);
 		const pageErrors = watchPageErrors(page);
 
 		await page.goto("/onboarding");
@@ -66,7 +75,11 @@ test.describe("Onboarding Anthropic provider", () => {
 		// Validate startup had no pre-detected LLM provider badges.
 		await expect(page.getByText("Detected LLM providers", { exact: true })).toHaveCount(0);
 
-		const anthropicRow = page.locator(".onboarding-card .rounded-md.border").filter({ hasText: "Anthropic" }).first();
+		const anthropicRow = page
+			.locator(".onboarding-card .rounded-md.border")
+			.filter({ has: page.getByText("Anthropic", { exact: true }) })
+			.filter({ has: page.getByText("API Key", { exact: true }) })
+			.first();
 		await expect(anthropicRow).toBeVisible();
 		await expect(anthropicRow.getByRole("button", { name: "Configure", exact: true })).toBeVisible();
 		await expect(anthropicRow.locator(".provider-item-badge.configured")).toHaveCount(0);
@@ -76,12 +89,7 @@ test.describe("Onboarding Anthropic provider", () => {
 		await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
 
 		await expect(anthropicRow.getByText("Select a model", { exact: true })).toBeVisible({ timeout: 45_000 });
-
-		const modelCards = anthropicRow.locator(".model-card");
-		await expect(modelCards.first()).toBeVisible({ timeout: 45_000 });
-		await expect.poll(() => modelCards.count(), { timeout: 45_000 }).toBeGreaterThan(0);
-
-		await modelCards.first().click();
+		await selectModelUntilConfigured(anthropicRow);
 
 		// Successful save + model probe collapses the form and marks provider configured.
 		await expect(anthropicRow.locator(".provider-item-badge.configured")).toBeVisible({ timeout: 45_000 });

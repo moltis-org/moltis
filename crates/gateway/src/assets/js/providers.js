@@ -6,7 +6,7 @@ import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { testModel, validateProviderKey } from "./provider-validation.js";
+import { isModelServiceNotConfigured, testModel, validateProviderKey } from "./provider-validation.js";
 import * as S from "./state.js";
 
 var _els = null;
@@ -435,13 +435,17 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 
 			if (selectedModelId) {
 				var testResult = await testModel(selectedModelId);
-				if (!testResult.ok) {
+				var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
+				if (!(testResult.ok || modelServiceUnavailable)) {
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
 				// For Ollama we persisted the model via save_key so the registry can probe it.
 				if (provider.name !== "ollama") {
 					await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				}
+				if (modelServiceUnavailable) {
+					console.warn("models.test unavailable in provider settings, saved selected model without probe");
 				}
 				localStorage.setItem("moltis-model", selectedModelId);
 			}

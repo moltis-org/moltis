@@ -1,5 +1,9 @@
 import { sendRpc } from "./helpers.js";
 
+const MODEL_SERVICE_NOT_CONFIGURED = "model service not configured";
+const MODEL_TEST_RETRY_ATTEMPTS = 40;
+const MODEL_TEST_RETRY_DELAY_MS = 250;
+
 function firstProbeFailure(payload) {
 	var results = Array.isArray(payload?.results) ? payload.results : [];
 	var failed = results.find((r) => r?.status === "error" || r?.status === "unsupported");
@@ -44,6 +48,11 @@ export function humanizeProbeError(error) {
 	return error;
 }
 
+export function isModelServiceNotConfigured(error) {
+	if (!error || typeof error !== "string") return false;
+	return error.toLowerCase().includes(MODEL_SERVICE_NOT_CONFIGURED);
+}
+
 /**
  * Validate provider credentials without saving them.
  * Returns { valid, models?, error? }.
@@ -76,13 +85,31 @@ export async function validateProviderKey(provider, apiKey, baseUrl, model) {
  * Returns { ok, error? }.
  */
 export async function testModel(modelId) {
-	var res = await sendRpc("models.test", { modelId });
-	if (res?.ok) {
-		return { ok: true };
+	for (var attempt = 0; attempt < MODEL_TEST_RETRY_ATTEMPTS; attempt++) {
+		var res = await sendRpc("models.test", { modelId });
+		if (res?.ok) {
+			return { ok: true };
+		}
+
+		var message = res?.error?.message || "Model test failed.";
+		var lower = String(message).toLowerCase();
+		var shouldRetry = lower.includes(MODEL_SERVICE_NOT_CONFIGURED) && attempt < MODEL_TEST_RETRY_ATTEMPTS - 1;
+
+		if (!shouldRetry) {
+			return {
+				ok: false,
+				error: humanizeProbeError(message),
+			};
+		}
+
+		await new Promise((resolve) => {
+			window.setTimeout(resolve, MODEL_TEST_RETRY_DELAY_MS);
+		});
 	}
+
 	return {
 		ok: false,
-		error: humanizeProbeError(res?.error?.message || "Model test failed."),
+		error: humanizeProbeError("Model test failed."),
 	};
 }
 
