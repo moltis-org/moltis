@@ -821,7 +821,9 @@ pub async fn run_agent_loop_with_context(
             && tools.get("exec").is_some()
         {
             info!(command = %command, "forcing exec tool call from direct command input");
-            response.text = None;
+            // Preserve the model's planning/reasoning text on the assistant
+            // tool-call message. Some providers (e.g. Moonshot thinking mode)
+            // require this history field for follow-up tool turns.
             response.tool_calls = vec![ToolCall {
                 id: format!("forced-{}", uuid::Uuid::new_v4()),
                 name: "exec".to_string(),
@@ -1401,7 +1403,9 @@ pub async fn run_agent_loop_streaming(
             && tools.get("exec").is_some()
         {
             info!(command = %command, "forcing exec tool call from direct command input");
-            accumulated_text.clear();
+            // Preserve streamed reasoning/planning text on the assistant tool
+            // message so providers that validate thinking history accept the
+            // next iteration.
             tool_calls = vec![ToolCall {
                 id: format!("forced-{}", uuid::Uuid::new_v4()),
                 name: "exec".to_string(),
@@ -2064,6 +2068,26 @@ mod tests {
                     },
                 })
             } else {
+                let assistant_tool_text = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Assistant {
+                            content,
+                            tool_calls,
+                        } = m
+                        {
+                            if tool_calls.is_empty() {
+                                return None;
+                            }
+                            return content.as_deref();
+                        }
+                        None
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !assistant_tool_text.is_empty(),
+                    "forced exec should preserve assistant reasoning text"
+                );
                 let tool_content = messages
                     .iter()
                     .find_map(|m| {
@@ -2236,6 +2260,26 @@ mod tests {
                     },
                 })
             } else {
+                let assistant_tool_text = messages
+                    .iter()
+                    .find_map(|m| {
+                        if let ChatMessage::Assistant {
+                            content,
+                            tool_calls,
+                        } = m
+                        {
+                            if tool_calls.is_empty() {
+                                return None;
+                            }
+                            return content.as_deref();
+                        }
+                        None
+                    })
+                    .unwrap_or("");
+                assert!(
+                    !assistant_tool_text.is_empty(),
+                    "forced exec should preserve streamed assistant reasoning text"
+                );
                 let tool_content = messages
                     .iter()
                     .find_map(|m| {
