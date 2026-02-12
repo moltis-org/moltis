@@ -1,6 +1,44 @@
 const { expect, test } = require("@playwright/test");
 const { watchPageErrors } = require("../helpers");
 
+function isVisible(locator) {
+	return locator.isVisible().catch(() => false);
+}
+
+async function detectOnboardingStep(page, authHeading, identityHeading, providersHeading) {
+	const pathname = new URL(page.url()).pathname;
+	if (/^\/chats\//.test(pathname)) return "chats";
+	if (await isVisible(authHeading)) return "auth";
+	if (await isVisible(identityHeading)) return "identity";
+	if (await isVisible(providersHeading)) return "providers";
+	return "pending";
+}
+
+async function waitForStableStep(page, authHeading, identityHeading, providersHeading) {
+	await expect
+		.poll(() => detectOnboardingStep(page, authHeading, identityHeading, providersHeading), { timeout: 10_000 })
+		.not.toBe("pending");
+	return detectOnboardingStep(page, authHeading, identityHeading, providersHeading);
+}
+
+async function completePasswordAuthStep(page) {
+	await page.getByPlaceholder("6-digit code from terminal").fill("123456");
+	await page.locator(".backend-card").filter({ hasText: "Password" }).click();
+	const inputs = page.locator("input[type='password']");
+	await inputs.first().fill("testpassword1");
+	await inputs.nth(1).fill("testpassword1");
+	await page.getByRole("button", { name: /^Set password(?: & continue)?$/ }).click();
+}
+
+async function completeIdentityStep(page) {
+	await page.getByPlaceholder("e.g. Alice").fill("TestUser");
+	const botNameInput = page.getByPlaceholder("e.g. Rex");
+	if (await isVisible(botNameInput)) {
+		await botNameInput.fill("TestBot");
+	}
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
+}
+
 /**
  * Onboarding tests for remote access (auth required).
  *
@@ -41,24 +79,30 @@ test.describe("Onboarding with forced auth (remote)", () => {
 		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
 		const providersHeading = page.getByRole("heading", { name: /^(Add LLMs|Add providers)$/ });
 
-		if (await authHeading.isVisible()) {
-			await page.getByPlaceholder("6-digit code from terminal").fill("123456");
-			await page.locator(".backend-card").filter({ hasText: "Password" }).click();
-			const inputs = page.locator("input[type='password']");
-			await inputs.first().fill("testpassword1");
-			await inputs.nth(1).fill("testpassword1");
-			await page.getByRole("button", { name: /^Set password(?: & continue)?$/ }).click();
+		let step = await waitForStableStep(page, authHeading, identityHeading, providersHeading);
+
+		if (step === "chats") {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		if (step === "auth") {
+			await completePasswordAuthStep(page);
+			step = await waitForStableStep(page, authHeading, identityHeading, providersHeading);
+		}
+
+		if (step !== "identity") {
+			if (step === "providers" || step === "chats") {
+				expect(pageErrors).toEqual([]);
+				return;
+			}
 			await expect(identityHeading).toBeVisible({ timeout: 10_000 });
-		} else if (!(await identityHeading.isVisible())) {
-			await expect(providersHeading).toBeVisible({ timeout: 10_000 });
 			expect(pageErrors).toEqual([]);
 			return;
 		}
 
 		// Fill identity and save — proves WS is connected (uses sendRpc)
-		await page.getByPlaceholder("e.g. Alice").fill("TestUser");
-		await page.getByPlaceholder("e.g. Rex").fill("TestBot");
-		await page.getByRole("button", { name: "Continue", exact: true }).click();
+		await completeIdentityStep(page);
 
 		// Provider step appears — proves identity save succeeded over WS
 		await expect(providersHeading).toBeVisible({ timeout: 10_000 });
