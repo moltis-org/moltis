@@ -399,6 +399,14 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            providers: HashMap::new(),
+            models: Vec::new(),
+        }
+    }
+
     fn has_provider_model(&self, provider: &str, model_id: &str) -> bool {
         self.providers
             .contains_key(&namespaced_model_id(provider, model_id))
@@ -585,10 +593,7 @@ impl ProviderRegistry {
     /// 3. genai-backed providers (if `provider-genai` feature enabled, no tool support)
     /// 4. OpenAI Codex OAuth providers (if `provider-openai-codex` feature enabled)
     pub fn from_env_with_config(config: &ProvidersConfig) -> Self {
-        let mut reg = Self {
-            providers: HashMap::new(),
-            models: Vec::new(),
-        };
+        let mut reg = Self::empty();
 
         // Built-in providers first: they support tool calling.
         reg.register_builtin_providers(config);

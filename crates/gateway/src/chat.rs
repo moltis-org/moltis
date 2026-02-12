@@ -5836,9 +5836,7 @@ mod tests {
 
     #[tokio::test]
     async fn allowed_models_filters_list_and_list_all() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
-        );
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "anthropic::claude-opus-4-5".to_string(),
@@ -5894,9 +5892,7 @@ mod tests {
 
     #[tokio::test]
     async fn allowed_models_keeps_ollama_when_provider_is_aliased() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
-        );
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "openai-codex::gpt-5.2".to_string(),
@@ -6001,9 +5997,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_all_includes_disabled_models_and_list_hides_them() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
-        );
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "unit-test-model".to_string(),
