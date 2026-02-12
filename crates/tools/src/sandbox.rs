@@ -1021,7 +1021,7 @@ impl Sandbox for CgroupSandbox {
 #[cfg(target_os = "macos")]
 pub struct AppleContainerSandbox {
     pub config: SandboxConfig,
-    name_generations: tokio::sync::RwLock<HashMap<String, u32>>,
+    name_generations: RwLock<HashMap<String, u32>>,
 }
 
 #[cfg(target_os = "macos")]
@@ -1029,7 +1029,7 @@ impl AppleContainerSandbox {
     pub fn new(config: SandboxConfig) -> Self {
         Self {
             config,
-            name_generations: tokio::sync::RwLock::new(HashMap::new()),
+            name_generations: RwLock::new(HashMap::new()),
         }
     }
 
@@ -2164,14 +2164,10 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(args, vec![
-            "--memory",
-            "256M",
-            "--cpus",
-            "0.5",
-            "--pids-limit",
-            "50"
-        ]);
+        assert_eq!(
+            args,
+            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
+        );
     }
 
     #[test]
