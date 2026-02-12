@@ -219,4 +219,18 @@ test.describe("WebSocket connection lifecycle", () => {
 		await expect(page.locator(`#tool-${toolCallId}`)).toHaveClass(/exec-ok/);
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("auth.credentials_changed event redirects to /login", async ({ page }) => {
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		// Inject the auth.credentials_changed event via system-event RPC.
+		await sendRpcFromPage(page, "system-event", {
+			event: "auth.credentials_changed",
+			payload: { reason: "test_disconnect" },
+		});
+
+		// The event handler should redirect the browser to /login.
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/login");
+	});
 });

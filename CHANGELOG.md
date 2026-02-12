@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Disconnect all WS clients on credential change**: WebSocket connections
+  opened before auth setup are now disconnected when credentials change
+  (password set/changed, passkey registered during setup, auth reset, last
+  credential removed). An `auth.credentials_changed` event notifies browsers
+  to redirect to `/login`. Existing sessions are also invalidated on password
+  change for defense-in-depth.
+
 ## [0.8.13] - 2026-02-11
 
 ### Added

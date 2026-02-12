@@ -67,7 +67,7 @@ pub struct MetricsUpdatePayload {
     pub point: MetricsHistoryPoint,
 }
 
-use moltis_protocol::ConnectParams;
+use moltis_protocol::{ConnectParams, EventFrame};
 
 use moltis_tools::sandbox::SandboxRouter;
 
@@ -610,5 +610,162 @@ impl GatewayState {
         let _ = count;
 
         removed
+    }
+
+    /// Disconnect all WebSocket clients: send an `auth.credentials_changed`
+    /// event so browsers can redirect to login, then drain every connection.
+    pub async fn disconnect_all_clients(&self, reason: &str) {
+        let mut inner = self.inner.write().await;
+
+        // Build and serialize the notification frame.
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let frame = EventFrame::new(
+            "auth.credentials_changed",
+            serde_json::json!({ "reason": reason }),
+            seq,
+        );
+        if let Ok(json) = serde_json::to_string(&frame) {
+            for client in inner.clients.values() {
+                let _ = client.send(&json);
+            }
+        }
+
+        // Drain all state keyed by connection.
+        inner.nodes.clear();
+        inner.clients.clear();
+        inner.active_sessions.clear();
+        inner.active_projects.clear();
+
+        drop(inner);
+
+        #[cfg(feature = "metrics")]
+        moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(0.0);
+
+        tracing::info!(
+            reason,
+            "disconnected all WebSocket clients (credentials changed)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use {
+        super::*,
+        crate::{
+            auth::{AuthMode, ResolvedAuth},
+            services::GatewayServices,
+        },
+    };
+
+    fn test_state() -> Arc<GatewayState> {
+        GatewayState::new(
+            ResolvedAuth {
+                mode: AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            GatewayServices::noop(),
+        )
+    }
+
+    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::UnboundedReceiver<String>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let client = ConnectedClient {
+            conn_id: conn_id.to_string(),
+            connect_params: ConnectParams {
+                min_protocol: 1,
+                max_protocol: 1,
+                client: moltis_protocol::ClientInfo {
+                    id: "test".into(),
+                    display_name: None,
+                    version: "0.0.0".into(),
+                    platform: "test".into(),
+                    device_family: None,
+                    model_identifier: None,
+                    mode: "operator".into(),
+                    instance_id: None,
+                },
+                caps: None,
+                commands: None,
+                permissions: None,
+                path_env: None,
+                role: None,
+                scopes: None,
+                device: None,
+                auth: None,
+                locale: None,
+                user_agent: None,
+                timezone: None,
+            },
+            sender: tx,
+            connected_at: Instant::now(),
+            last_activity: Instant::now(),
+            accept_language: None,
+            remote_ip: None,
+            timezone: None,
+        };
+        (client, rx)
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_drains_state_and_notifies() {
+        let state = test_state();
+
+        let (c1, mut rx1) = mock_client("conn-1");
+        let (c2, mut rx2) = mock_client("conn-2");
+        state.register_client(c1).await;
+        state.register_client(c2).await;
+
+        // Set up some active_sessions / active_projects entries.
+        {
+            let mut inner = state.inner.write().await;
+            inner
+                .active_sessions
+                .insert("conn-1".into(), "session-a".into());
+            inner
+                .active_projects
+                .insert("conn-2".into(), "project-b".into());
+        }
+
+        assert_eq!(state.client_count().await, 2);
+
+        state.disconnect_all_clients("test_reason").await;
+
+        // All clients are removed.
+        assert_eq!(state.client_count().await, 0);
+
+        // active_sessions and active_projects are cleared.
+        {
+            let inner = state.inner.read().await;
+            assert!(inner.active_sessions.is_empty());
+            assert!(inner.active_projects.is_empty());
+        }
+
+        // Both receivers got the event frame before the channel closed.
+        let msg1 = rx1.recv().await.expect("should receive event");
+        let msg2 = rx2.recv().await.expect("should receive event");
+
+        let frame1: serde_json::Value = serde_json::from_str(&msg1).unwrap();
+        assert_eq!(frame1["event"], "auth.credentials_changed");
+        assert_eq!(frame1["payload"]["reason"], "test_reason");
+
+        let frame2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
+        assert_eq!(frame2["event"], "auth.credentials_changed");
+
+        // Channels are closed (all senders dropped).
+        assert!(rx1.recv().await.is_none());
+        assert!(rx2.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_is_noop_when_empty() {
+        let state = test_state();
+        assert_eq!(state.client_count().await, 0);
+        // Should not panic.
+        state.disconnect_all_clients("noop").await;
+        assert_eq!(state.client_count().await, 0);
     }
 }

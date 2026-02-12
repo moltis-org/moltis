@@ -171,7 +171,11 @@ async fn setup_handler(
         }
     }
 
-    // Clear setup code and create session.
+    // Disconnect pre-setup WebSocket clients and clear setup code.
+    state
+        .gateway_state
+        .disconnect_all_clients("setup_complete")
+        .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
         Ok(token) => session_response(token, &headers),
@@ -234,7 +238,11 @@ async fn reset_auth_handler(
 ) -> impl IntoResponse {
     match state.credential_store.reset_all().await {
         Ok(()) => {
-            // Generate a new setup code so the re-setup flow is protected.
+            // Disconnect all clients before generating new setup code.
+            state
+                .gateway_state
+                .disconnect_all_clients("auth_reset")
+                .await;
             let code = generate_setup_code();
             tracing::info!("setup code: {code} (enter this in the browser to set your password)");
             state.gateway_state.inner.write().await.setup_code = Some(secrecy::Secret::new(code));
@@ -274,7 +282,13 @@ async fn change_password_handler(
             .add_password(&body.new_password)
             .await
         {
-            Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+            Ok(()) => {
+                state
+                    .gateway_state
+                    .disconnect_all_clients("password_changed")
+                    .await;
+                Json(serde_json::json!({ "ok": true })).into_response()
+            },
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         };
     }
@@ -285,7 +299,13 @@ async fn change_password_handler(
         .change_password(&current_password, &body.new_password)
         .await
     {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            state
+                .gateway_state
+                .disconnect_all_clients("password_changed")
+                .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("incorrect") {
@@ -373,8 +393,19 @@ async fn remove_passkey_handler(
     State(state): State<AuthState>,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> impl IntoResponse {
+    let was_setup_complete = state.credential_store.is_setup_complete();
     match state.credential_store.remove_passkey(id).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(()) => {
+            // If removing the last credential flipped setup_complete from true→false,
+            // disconnect all clients so they are forced through re-setup.
+            if was_setup_complete && !state.credential_store.is_setup_complete() {
+                state
+                    .gateway_state
+                    .disconnect_all_clients("last_credential_removed")
+                    .await;
+            }
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -679,7 +710,11 @@ async fn setup_passkey_register_finish_handler(
             .into_response();
     }
 
-    // Clear setup code and create session.
+    // Disconnect pre-setup WebSocket clients and clear setup code.
+    state
+        .gateway_state
+        .disconnect_all_clients("setup_complete")
+        .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
         Ok(token) => session_response(token, &headers),

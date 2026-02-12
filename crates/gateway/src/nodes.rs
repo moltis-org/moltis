@@ -72,6 +72,12 @@ impl NodeRegistry {
         Ok(())
     }
 
+    /// Remove all nodes (used when disconnecting all clients).
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.by_conn.clear();
+    }
+
     pub fn count(&self) -> usize {
         self.nodes.len()
     }

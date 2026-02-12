@@ -814,9 +814,15 @@ function handleLocationRequest(payload) {
 	);
 }
 
+function handleAuthCredentialsChanged(payload) {
+	console.warn("Auth credentials changed:", payload.reason);
+	window.location.href = "/login";
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	error: handleWsError,
+	"auth.credentials_changed": handleAuthCredentialsChanged,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,
