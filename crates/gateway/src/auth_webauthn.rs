@@ -83,13 +83,11 @@ impl WebAuthnState {
             .map_err(|e| anyhow::anyhow!("start_passkey_registration: {e}"))?;
 
         let challenge_id = uuid::Uuid::new_v4().to_string();
-        self.pending_registrations.insert(
-            challenge_id.clone(),
-            PendingRegistration {
+        self.pending_registrations
+            .insert(challenge_id.clone(), PendingRegistration {
                 state: reg_state,
                 created_at: Instant::now(),
-            },
-        );
+            });
 
         Ok((challenge_id, ccr))
     }
@@ -134,13 +132,11 @@ impl WebAuthnState {
             .map_err(|e| anyhow::anyhow!("start_passkey_authentication: {e}"))?;
 
         let challenge_id = uuid::Uuid::new_v4().to_string();
-        self.pending_authentications.insert(
-            challenge_id.clone(),
-            PendingAuthentication {
+        self.pending_authentications
+            .insert(challenge_id.clone(), PendingAuthentication {
                 state: auth_state,
                 created_at: Instant::now(),
-            },
-        );
+            });
 
         Ok((challenge_id, rcr))
     }

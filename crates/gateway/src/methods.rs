@@ -5593,10 +5593,10 @@ mod tests {
             VoiceProviderId::parse_tts_list_id,
         );
         let ids: Vec<_> = filtered.into_iter().map(|p| p.id).collect();
-        assert_eq!(
-            ids,
-            vec![VoiceProviderId::OpenaiTts, VoiceProviderId::Piper]
-        );
+        assert_eq!(ids, vec![
+            VoiceProviderId::OpenaiTts,
+            VoiceProviderId::Piper
+        ]);
     }
 
     #[test]

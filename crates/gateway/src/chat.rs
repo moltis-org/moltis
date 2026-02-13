@@ -1173,11 +1173,7 @@ fn suggest_model_ids(
             .then(left.0.cmp(&right.0))
     });
 
-    ranked
-        .into_iter()
-        .map(|(id, _, _, _, _)| id)
-        .take(limit)
-        .collect()
+    ranked.into_iter().map(|(id, ..)| id).take(limit).collect()
 }
 
 #[async_trait]

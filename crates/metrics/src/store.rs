@@ -343,24 +343,22 @@ mod tests {
         let store = SqliteMetricsStore::in_memory().await.unwrap();
 
         let mut point = make_point(1000, 10);
-        point.by_provider.insert(
-            "anthropic".to_string(),
-            ProviderTokens {
+        point
+            .by_provider
+            .insert("anthropic".to_string(), ProviderTokens {
                 input_tokens: 500,
                 output_tokens: 200,
                 completions: 5,
                 errors: 0,
-            },
-        );
-        point.by_provider.insert(
-            "openai".to_string(),
-            ProviderTokens {
+            });
+        point
+            .by_provider
+            .insert("openai".to_string(), ProviderTokens {
                 input_tokens: 300,
                 output_tokens: 100,
                 completions: 5,
                 errors: 1,
-            },
-        );
+            });
 
         store.save_point(&point).await.unwrap();
 

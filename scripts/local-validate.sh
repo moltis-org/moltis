@@ -140,8 +140,33 @@ EOF
   fi
 fi
 
-nightly_toolchain="${LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN:-nightly-2025-11-30}"
-fmt_cmd="${LOCAL_VALIDATE_FMT_CMD:-cargo +${nightly_toolchain} fmt --all -- --check}"
+detect_nightly_toolchain() {
+  if [[ -n "${LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN:-}" ]]; then
+    printf '%s' "$LOCAL_VALIDATE_NIGHTLY_TOOLCHAIN"
+    return
+  fi
+
+  if [[ -f justfile ]]; then
+    local justfile_toolchain
+    justfile_toolchain="$(sed -nE 's/^nightly_toolchain := "([^"]+)"/\1/p' justfile | head -n1)"
+    if [[ -n "$justfile_toolchain" ]]; then
+      printf '%s' "$justfile_toolchain"
+      return
+    fi
+  fi
+
+  printf '%s' "nightly-2025-11-30"
+}
+
+nightly_toolchain="$(detect_nightly_toolchain)"
+
+if [[ -n "${LOCAL_VALIDATE_FMT_CMD:-}" ]]; then
+  fmt_cmd="$LOCAL_VALIDATE_FMT_CMD"
+elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+  fmt_cmd="just format-check"
+else
+  fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
+fi
 biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/gateway/src/assets/js/}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
 lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
