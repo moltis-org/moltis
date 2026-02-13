@@ -220,6 +220,63 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("map links render branded svg icons", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		await expectRpcOk(page, "chat.clear", {});
+
+		const toolCallId = "map-links-icons-1";
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				toolCallId,
+				toolName: "show_map",
+				arguments: { label: "Tartine Bakery" },
+			},
+		});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_end",
+				toolCallId,
+				toolName: "show_map",
+				success: true,
+				result: {
+					label: "Tartine Bakery",
+					map_links: {
+						google_maps: "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery&center=37.7615,-122.4241",
+						apple_maps: "https://maps.apple.com/?ll=37.7615,-122.4241&q=Tartine+Bakery&z=15",
+						openstreetmap:
+							"https://www.openstreetmap.org/search?query=Tartine+Bakery&mlat=37.7615&mlon=-122.4241#map=15/37.7615/-122.4241",
+					},
+				},
+			},
+		});
+
+		const card = page.locator(`#tool-${toolCallId}`);
+		await expect(card).toBeVisible();
+		await expect(card.locator("img.map-service-icon")).toHaveCount(3);
+		await expect(card.locator('a:has-text("Google Maps") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-google-maps\.svg$/,
+		);
+		await expect(card.locator('a:has-text("Apple Maps") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-apple-maps\.svg$/,
+		);
+		await expect(card.locator('a:has-text("OpenStreetMap") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-openstreetmap\.svg$/,
+		);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("auth.credentials_changed event redirects through /login", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);

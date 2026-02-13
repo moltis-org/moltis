@@ -181,7 +181,7 @@ jobs:
         with:
           toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: coverage-v1
           cache-all-crates: true

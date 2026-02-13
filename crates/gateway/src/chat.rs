@@ -633,6 +633,34 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+fn is_safe_user_audio_filename(filename: &str) -> bool {
+    !filename.is_empty()
+        && filename.len() <= 255
+        && filename
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+}
+
+fn user_audio_path_from_params(params: &Value, session_key: &str) -> Option<String> {
+    let filename = params
+        .get("_audio_filename")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    if !is_safe_user_audio_filename(filename) {
+        warn!(
+            session = %session_key,
+            filename = filename,
+            "ignoring invalid user audio filename"
+        );
+        return None;
+    }
+
+    let key = SessionStore::key_to_filename(session_key);
+    Some(format!("media/{key}/{filename}"))
+}
+
 fn detect_runtime_shell() -> Option<String> {
     let candidate = std::env::var("SHELL")
         .ok()
@@ -1997,9 +2025,11 @@ impl ChatService for LiveChatService {
         // know the message won't be queued — avoids double-persist when a
         // queued message is replayed via send()).
         let channel_meta = params.get("channel").cloned();
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         let user_msg = PersistedMessage::User {
             content: message_content,
             created_at: Some(now_ms()),
+            audio: user_audio,
             channel: channel_meta,
             seq: client_seq,
             run_id: Some(run_id.clone()),
@@ -2522,8 +2552,16 @@ impl ChatService for LiveChatService {
             }
         };
 
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         // Persist the user message.
-        let user_msg = PersistedMessage::user(&text);
+        let user_msg = PersistedMessage::User {
+            content: MessageContent::Text(text.clone()),
+            created_at: Some(now_ms()),
+            audio: user_audio,
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
         if let Err(e) = self
             .session_store
             .append(&session_key, &user_msg.to_value())
@@ -5217,6 +5255,31 @@ mod tests {
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
         delay: Duration,
+    }
+
+    #[test]
+    fn is_safe_user_audio_filename_allows_sanitized_names() {
+        assert!(is_safe_user_audio_filename("voice-123.webm"));
+        assert!(is_safe_user_audio_filename("recording_1.ogg"));
+    }
+
+    #[test]
+    fn user_audio_path_from_params_builds_session_scoped_media_path() {
+        let params = serde_json::json!({
+            "_audio_filename": "voice-123.webm",
+        });
+        assert_eq!(
+            user_audio_path_from_params(&params, "session:abc"),
+            Some("media/session_abc/voice-123.webm".to_string())
+        );
+    }
+
+    #[test]
+    fn user_audio_path_from_params_rejects_invalid_filename() {
+        let params = serde_json::json!({
+            "_audio_filename": "../secret.webm",
+        });
+        assert!(user_audio_path_from_params(&params, "main").is_none());
     }
 
     #[async_trait]

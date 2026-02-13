@@ -7,6 +7,46 @@ const {
 	watchPageErrors,
 } = require("../helpers");
 
+function isRetryableRpcError(message) {
+	if (typeof message !== "string") return false;
+	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+}
+
+async function sendRpcFromPage(page, method, params) {
+	let lastResponse = null;
+	for (let attempt = 0; attempt < 40; attempt++) {
+		if (attempt > 0) {
+			await waitForWsConnected(page);
+		}
+		lastResponse = await page
+			.evaluate(
+				async ({ methodName, methodParams }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) throw new Error("app module script not found");
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var helpers = await import(`${prefix}js/helpers.js`);
+					return helpers.sendRpc(methodName, methodParams);
+				},
+				{
+					methodName: method,
+					methodParams: params,
+				},
+			)
+			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
+
+		if (lastResponse?.ok) return lastResponse;
+		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
+	}
+	return lastResponse;
+}
+
+async function expectRpcOk(page, method, params) {
+	const response = await sendRpcFromPage(page, method, params);
+	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
+	return response;
+}
+
 test.describe("Session management", () => {
 	test("session list renders on load", async ({ page }) => {
 		await navigateAndWait(page, "/");
@@ -117,6 +157,127 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("share button creates cutoff notice and copyable link", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await page.evaluate(() => {
+			window.__shareTestCopiedLink = "";
+			window.__shareTestPromptLink = "";
+			window.prompt = (_message, defaultValue) => {
+				window.__shareTestPromptLink = typeof defaultValue === "string" ? defaultValue : "";
+				return window.__shareTestPromptLink;
+			};
+			try {
+				Object.defineProperty(window.navigator, "clipboard", {
+					configurable: true,
+					value: {
+						writeText: (value) => {
+							window.__shareTestCopiedLink = String(value);
+						},
+					},
+				});
+			} catch (_err) {
+				// Browser may expose clipboard as non-configurable in tests.
+			}
+		});
+
+		await page.locator('button[title="Share snapshot"]').click();
+		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await expect(
+			page.getByText(
+				"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.",
+			),
+		).toBeVisible();
+		await page.locator('[data-share-visibility="public"]').click();
+
+		await expect
+			.poll(() => page.evaluate(() => window.__shareTestCopiedLink || window.__shareTestPromptLink || ""), {
+				timeout: 10_000,
+			})
+			.toMatch(/\/share\//);
+
+		await expect(
+			page.locator(".msg.system").filter({
+				hasText: "This session until here has been shared. Later messages are not included in the shared link.",
+			}),
+		).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("share copy fallback uses styled modal instead of browser prompt", async ({ page }) => {
+		await page.addInitScript(() => {
+			window.__sharePromptCalled = false;
+			window.prompt = () => {
+				window.__sharePromptCalled = true;
+				return "";
+			};
+			Object.defineProperty(window.navigator, "clipboard", {
+				configurable: true,
+				value: {
+					writeText: () => Promise.reject(new Error("clipboard blocked for test")),
+				},
+			});
+		});
+
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await page.locator('button[title="Share snapshot"]').click();
+		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await page.locator('[data-share-visibility="public"]').click();
+
+		const linkModal = page.locator('[data-share-link-modal="true"]');
+		await expect(linkModal).toBeVisible();
+		await expect(page.locator('[data-share-link-input="true"]')).toHaveValue(/\/share\//);
+
+		const promptCalled = await page.evaluate(() => window.__sharePromptCalled === true);
+		expect(promptCalled).toBe(false);
+
+		await page.locator('[data-share-link-close="true"]').click();
+		await expect(linkModal).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("private share requires key and strips it from URL", async ({ page, request }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const create = await expectRpcOk(page, "sessions.share.create", {
+			key: "main",
+			visibility: "private",
+		});
+		const sharePath = create?.payload?.path || "";
+		const accessKey = create?.payload?.accessKey || "";
+		expect(sharePath).toMatch(/^\/share\/.+/);
+		expect(accessKey).toBeTruthy();
+
+		const deniedResponse = await request.get(sharePath);
+		expect(deniedResponse.status()).toBe(404);
+
+		await page.goto(`${sharePath}?k=${encodeURIComponent(accessKey)}`);
+		await page.waitForURL((url) => url.pathname === sharePath && !url.searchParams.has("k"), { timeout: 10_000 });
+
+		await expect(page.locator("main")).toBeVisible();
+		await expect(page.locator("a[href='https://www.moltis.org']")).toBeVisible();
+		const shareFooter = page.locator(".share-page-footer");
+		await expect(shareFooter).toContainText("Get your AI assistant at");
+		await expect(shareFooter.locator("strong")).toHaveCount(0);
+		await expect(page.locator("#chatInput")).toHaveCount(0);
+		await expect(page.locator("meta[property='og:image']")).toHaveCount(1);
+		await expect(page.locator(".theme-toggle")).toBeVisible();
+		await expect(page.locator('.theme-btn[data-theme-val="light"]')).toBeVisible();
+		await expect(page.locator('.theme-btn[data-theme-val="dark"]')).toBeVisible();
+		await expect(page.locator("script[nonce]")).toHaveCount(2);
+		await expect(page.locator(".share-time")).toHaveCount(0);
+		const imageViewer = page.locator('[data-image-viewer="true"]');
+		await expect(imageViewer).toHaveCount(1);
+		await expect(imageViewer).toHaveAttribute("aria-hidden", "true");
+
+		expect(pageErrors).toEqual([]);
+	});
 	test("main session preview updates after clear on first message without reload", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/chats/main");
@@ -155,7 +316,6 @@ test.describe("Session management", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
-
 	test("session search filters the list", async ({ page }) => {
 		await navigateAndWait(page, "/");
 		await waitForWsConnected(page);

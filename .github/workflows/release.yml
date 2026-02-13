@@ -554,7 +554,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - uses: snapcore/action-build@b391f430cb2650fd359ed4d2cfe88b2c481800e0 # v1
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: build-snap
 
       - name: Sign with Sigstore and generate checksums

@@ -263,6 +263,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             // tool_result entries are UI-only metadata (persisted tool execution
             // output); they are not part of the LLM conversation context.
             "tool_result" => continue,
+            // notice entries are UI-only informational messages.
+            "notice" => continue,
             other => {
                 tracing::warn!(
                     index = i,
@@ -648,6 +650,19 @@ mod tests {
                 "result": {"stdout": "file.txt", "exit_code": 0}
             }),
             serde_json::json!({"role": "assistant", "content": "done"}),
+        ];
+        let msgs = values_to_chat_messages(&values);
+        assert_eq!(msgs.len(), 2);
+        assert!(matches!(&msgs[0], ChatMessage::User { .. }));
+        assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn convert_skips_notice_entries() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "before"}),
+            serde_json::json!({"role": "notice", "content": "shared cutoff marker"}),
+            serde_json::json!({"role": "assistant", "content": "after"}),
         ];
         let msgs = values_to_chat_messages(&values);
         assert_eq!(msgs.len(), 2);

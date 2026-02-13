@@ -7,9 +7,12 @@ use std::path::PathBuf;
 
 #[cfg(feature = "web-ui")]
 use askama::Template;
-
 #[cfg(feature = "web-ui")]
 use axum::response::{Html, Redirect};
+#[cfg(feature = "web-ui")]
+use base64::Engine as _;
+#[cfg(feature = "web-ui")]
+use chrono::{Local, TimeZone, Utc};
 use {
     axum::{
         Router,
@@ -30,7 +33,15 @@ use {
 };
 
 #[cfg(feature = "web-ui")]
-use axum::{extract::Path, http::StatusCode};
+use axum::{
+    extract::{Path, Query},
+    http::StatusCode,
+};
+#[cfg(feature = "web-ui")]
+use axum_extra::extract::{
+    CookieJar,
+    cookie::{Cookie, SameSite},
+};
 
 use {moltis_channels::ChannelPlugin, moltis_protocol::TICK_INTERVAL_MS};
 
@@ -730,6 +741,7 @@ pub fn build_gateway_app(
 
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route("/share/{share_id}", get(share_page_handler))
             .route("/onboarding", get(onboarding_handler))
             .route("/login", get(login_handler_page))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
@@ -800,6 +812,7 @@ pub fn build_gateway_app(
 
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route("/share/{share_id}", get(share_page_handler))
             .route("/onboarding", get(onboarding_handler))
             .route("/login", get(login_handler_page))
             .route("/assets/v/{version}/{*path}", get(versioned_asset_handler))
@@ -1261,6 +1274,7 @@ pub async fn start_gateway(
         Arc::new(moltis_projects::SqliteProjectStore::new(db_pool.clone()));
     let session_store = Arc::new(SessionStore::new(sessions_dir));
     let session_metadata = Arc::new(SqliteSessionMetadata::new(db_pool.clone()));
+    let session_share_store = Arc::new(crate::share_store::ShareStore::new(db_pool.clone()));
     let session_state_store = Arc::new(moltis_sessions::state_store::SessionStateStore::new(
         db_pool.clone(),
     ));
@@ -1788,6 +1802,7 @@ pub async fn start_gateway(
 
     services = services.with_session_metadata(Arc::clone(&session_metadata));
     services = services.with_session_store(Arc::clone(&session_store));
+    services = services.with_session_share_store(Arc::clone(&session_share_store));
 
     // ── Hook discovery & registration ─────────────────────────────────────
     seed_default_workspace_markdown_files();
@@ -1801,6 +1816,7 @@ pub async fn start_gateway(
     {
         let mut session_svc =
             LiveSessionService::new(Arc::clone(&session_store), Arc::clone(&session_metadata))
+                .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
@@ -3960,6 +3976,413 @@ async fn login_handler_page(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 #[cfg(feature = "web-ui")]
+fn not_found_share_response() -> axum::response::Response {
+    (StatusCode::NOT_FOUND, "share not found").into_response()
+}
+
+#[cfg(feature = "web-ui")]
+fn share_cookie_name(share_id: &str) -> String {
+    format!("moltis_share_{}", share_id)
+}
+
+#[cfg(feature = "web-ui")]
+fn truncate_for_meta(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        text.to_string()
+    } else {
+        format!("{}…", &text[..text.floor_char_boundary(max)])
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn first_share_message_preview(snapshot: &crate::share_store::ShareSnapshot) -> String {
+    let mut out = String::new();
+    for msg in &snapshot.messages {
+        if msg.content.trim().is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(" — ");
+        }
+        out.push_str(msg.content.trim());
+        if out.len() >= 180 {
+            break;
+        }
+    }
+
+    if out.is_empty() {
+        "Shared conversation snapshot from Moltis".to_string()
+    } else {
+        truncate_for_meta(&out, 220)
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn build_session_share_meta(
+    identity: &moltis_config::ResolvedIdentity,
+    snapshot: &crate::share_store::ShareSnapshot,
+) -> ShareMeta {
+    let agent_name = identity_name(identity);
+    let session_name = snapshot
+        .session_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Session");
+
+    let title = format!("{session_name} · shared via {agent_name}");
+    let description = first_share_message_preview(snapshot);
+    let image_alt = format!("{session_name} shared from {agent_name}");
+
+    ShareMeta {
+        title,
+        description,
+        site_name: agent_name.to_owned(),
+        image_alt,
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn human_share_time(ts_ms: u64) -> String {
+    let millis = ts_ms.min(i64::MAX as u64) as i64;
+    Utc.timestamp_millis_opt(millis)
+        .single()
+        .map(|utc| {
+            utc.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "1970-01-01 00:00".to_string())
+}
+
+#[cfg(feature = "web-ui")]
+fn share_user_label(identity: &moltis_config::ResolvedIdentity) -> String {
+    identity
+        .user_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("User")
+        .to_string()
+}
+
+#[cfg(feature = "web-ui")]
+fn share_assistant_label(identity: &moltis_config::ResolvedIdentity) -> String {
+    let name = identity_name(identity);
+    match identity
+        .emoji
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(emoji) => format!("{emoji} {name}"),
+        None => name.to_string(),
+    }
+}
+
+#[cfg(feature = "web-ui")]
+fn image_dimensions_from_data_url(data_url: &str) -> Option<(u32, u32)> {
+    let (meta, body) = data_url.split_once(',')?;
+    if !meta.starts_with("data:image/") || !meta.contains(";base64") {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(body.trim())
+        .ok()?;
+    let metadata = moltis_media::image_ops::get_image_metadata(&bytes).ok()?;
+    Some((metadata.width, metadata.height))
+}
+
+#[cfg(feature = "web-ui")]
+fn map_share_message_views(
+    snapshot: &crate::share_store::ShareSnapshot,
+    identity: &moltis_config::ResolvedIdentity,
+) -> Vec<ShareMessageView> {
+    let user_label = share_user_label(identity);
+    let assistant_label = share_assistant_label(identity);
+
+    snapshot
+        .messages
+        .iter()
+        .filter_map(|msg| {
+            let (role_class, role_label) = match msg.role {
+                crate::share_store::SharedMessageRole::User => ("user", user_label.clone()),
+                crate::share_store::SharedMessageRole::Assistant => {
+                    ("assistant", assistant_label.clone())
+                },
+                crate::share_store::SharedMessageRole::ToolResult => ("tool", "Tool".to_string()),
+                crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => return None,
+            };
+            let footer = match msg.role {
+                crate::share_store::SharedMessageRole::Assistant => {
+                    match (&msg.provider, &msg.model) {
+                        (Some(provider), Some(model)) => Some(format!("{provider} / {model}")),
+                        (None, Some(model)) => Some(model.clone()),
+                        (Some(provider), None) => Some(provider.clone()),
+                        (None, None) => None,
+                    }
+                },
+                crate::share_store::SharedMessageRole::User
+                | crate::share_store::SharedMessageRole::ToolResult
+                | crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => None,
+            };
+            let (tool_state_class, tool_state_label, tool_state_badge_class) = match msg.role {
+                crate::share_store::SharedMessageRole::ToolResult => match msg.tool_success {
+                    Some(true) => (Some("msg-tool-success"), Some("Success"), Some("ok")),
+                    Some(false) => (Some("msg-tool-fail"), Some("Failed"), Some("fail")),
+                    None => (None, None, None),
+                },
+                crate::share_store::SharedMessageRole::User
+                | crate::share_store::SharedMessageRole::Assistant
+                | crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => (None, None, None),
+            };
+            let (is_exec_card, exec_card_class, exec_command) = match msg.role {
+                crate::share_store::SharedMessageRole::ToolResult => {
+                    if msg.tool_name.as_deref() == Some("exec") {
+                        let card_class = match msg.tool_success {
+                            Some(true) => Some("exec-ok"),
+                            Some(false) => Some("exec-err"),
+                            None => None,
+                        };
+                        (true, card_class, msg.tool_command.clone())
+                    } else {
+                        (false, None, None)
+                    }
+                },
+                crate::share_store::SharedMessageRole::User
+                | crate::share_store::SharedMessageRole::Assistant
+                | crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => (false, None, None),
+            };
+            let (
+                image_preview_data_url,
+                image_link_data_url,
+                image_preview_width,
+                image_preview_height,
+                image_has_dimensions,
+            ) = if let Some(image) = msg.image.as_ref() {
+                let preview = &image.preview;
+                let link = image
+                    .full
+                    .as_ref()
+                    .map_or_else(|| preview.data_url.clone(), |full| full.data_url.clone());
+                (
+                    Some(preview.data_url.clone()),
+                    Some(link),
+                    preview.width,
+                    preview.height,
+                    true,
+                )
+            } else if let Some(legacy_data_url) = msg.image_data_url.clone() {
+                if let Some((width, height)) = image_dimensions_from_data_url(&legacy_data_url) {
+                    (
+                        Some(legacy_data_url.clone()),
+                        Some(legacy_data_url),
+                        width,
+                        height,
+                        true,
+                    )
+                } else {
+                    (
+                        Some(legacy_data_url.clone()),
+                        Some(legacy_data_url),
+                        0,
+                        0,
+                        false,
+                    )
+                }
+            } else {
+                (None, None, 0, 0, false)
+            };
+            Some(ShareMessageView {
+                role_class,
+                role_label,
+                content: msg.content.clone(),
+                audio_data_url: msg.audio_data_url.clone(),
+                image_preview_data_url,
+                image_link_data_url,
+                image_preview_width,
+                image_preview_height,
+                image_has_dimensions,
+                tool_state_class,
+                tool_state_label,
+                tool_state_badge_class,
+                is_exec_card,
+                exec_card_class,
+                exec_command,
+                map_link_google: msg
+                    .map_links
+                    .as_ref()
+                    .and_then(|links| links.google_maps.clone()),
+                map_link_apple: msg
+                    .map_links
+                    .as_ref()
+                    .and_then(|links| links.apple_maps.clone()),
+                map_link_openstreetmap: msg
+                    .map_links
+                    .as_ref()
+                    .and_then(|links| links.openstreetmap.clone()),
+                created_at_ms: msg.created_at,
+                created_at_label: msg.created_at.map(human_share_time),
+                footer,
+            })
+        })
+        .collect()
+}
+
+#[cfg(feature = "web-ui")]
+async fn share_page_handler(
+    Path(share_id): Path<String>,
+    Query(query): Query<ShareAccessQuery>,
+    jar: CookieJar,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(ref share_store) = state.gateway.services.session_share_store else {
+        return not_found_share_response();
+    };
+
+    let share = match share_store.get_active_by_id(&share_id).await {
+        Ok(Some(share)) => share,
+        Ok(None) => return not_found_share_response(),
+        Err(e) => {
+            warn!(share_id, error = %e, "failed to load shared session");
+            return not_found_share_response();
+        },
+    };
+
+    let cookie_name = share_cookie_name(&share.id);
+    let cookie_access_granted = jar.get(&cookie_name).is_some_and(|cookie| {
+        crate::share_store::ShareStore::verify_access_key(&share, cookie.value())
+    });
+    let query_access_granted = query
+        .k
+        .as_deref()
+        .is_some_and(|key| crate::share_store::ShareStore::verify_access_key(&share, key));
+
+    if share.visibility == crate::share_store::ShareVisibility::Private
+        && !(cookie_access_granted || query_access_granted)
+    {
+        return not_found_share_response();
+    }
+
+    if share.visibility == crate::share_store::ShareVisibility::Private
+        && query_access_granted
+        && !cookie_access_granted
+    {
+        let Some(access_key) = query.k else {
+            return not_found_share_response();
+        };
+        let mut cookie = Cookie::new(cookie_name, access_key);
+        cookie.set_http_only(true);
+        cookie.set_same_site(Some(SameSite::Lax));
+        cookie.set_path(format!("/share/{}", share.id));
+        cookie.set_secure(state.gateway.tls_active);
+        return (
+            jar.add(cookie),
+            Redirect::to(&format!("/share/{}", share.id)),
+        )
+            .into_response();
+    }
+
+    let view_count = share_store
+        .increment_views(&share.id)
+        .await
+        .unwrap_or(share.views);
+
+    let snapshot: crate::share_store::ShareSnapshot =
+        match serde_json::from_str(&share.snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                warn!(share_id, error = %e, "failed to parse session share snapshot");
+                return not_found_share_response();
+            },
+        };
+
+    let identity = state
+        .gateway
+        .services
+        .onboarding
+        .identity_get()
+        .await
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let share_meta = build_session_share_meta(&identity, &snapshot);
+    let messages = map_share_message_views(&snapshot, &identity);
+    let assistant_name = identity_name(&identity).to_owned();
+    let assistant_emoji = identity
+        .emoji
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("🤖")
+        .to_string();
+    let visibility_label = if share.visibility == crate::share_store::ShareVisibility::Public {
+        "public"
+    } else {
+        "private"
+    };
+    let nonce = uuid::Uuid::new_v4().to_string();
+
+    let template = ShareHtmlTemplate {
+        nonce: &nonce,
+        page_title: &share_meta.title,
+        share_title: &share_meta.title,
+        share_description: &share_meta.description,
+        share_site_name: &share_meta.site_name,
+        share_image_url: SHARE_IMAGE_URL,
+        share_image_alt: &share_meta.image_alt,
+        assistant_name: &assistant_name,
+        assistant_emoji: &assistant_emoji,
+        view_count,
+        share_visibility: visibility_label,
+        messages: &messages,
+    };
+    let body = match template.render() {
+        Ok(html) => html,
+        Err(e) => {
+            warn!(share_id, error = %e, "failed to render share template");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "failed to render share").into_response();
+        },
+    };
+
+    let mut response = Html(body).into_response();
+    let headers = response.headers_mut();
+    if let Ok(value) = "no-store".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, value);
+    }
+    if let Ok(value) = "no-referrer".parse() {
+        headers.insert(axum::http::header::REFERRER_POLICY, value);
+    }
+    if let Ok(value) = "noindex, nofollow, noarchive".parse() {
+        headers.insert(
+            axum::http::header::HeaderName::from_static("x-robots-tag"),
+            value,
+        );
+    }
+    let csp = format!(
+        "default-src 'none'; \
+         script-src 'self' 'nonce-{nonce}'; \
+         style-src 'unsafe-inline'; \
+         img-src 'self' data: https://www.moltis.org; \
+         media-src 'self' data:; \
+         connect-src 'self' data:; \
+         base-uri 'none'; \
+         frame-ancestors 'none'; \
+         form-action 'none'; \
+         object-src 'none'"
+    );
+    if let Ok(value) = csp.parse() {
+        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, value);
+    }
+
+    response
+}
+
+#[cfg(feature = "web-ui")]
 const SHARE_IMAGE_URL: &str = "https://www.moltis.org/og-social.jpg?v=4";
 
 #[cfg(feature = "web-ui")]
@@ -4014,6 +4437,56 @@ struct OnboardingHtmlTemplate<'a> {
     nonce: &'a str,
     page_title: &'a str,
     gon_json: &'a str,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(askama::Template)]
+#[template(path = "share.html", escape = "html")]
+struct ShareHtmlTemplate<'a> {
+    nonce: &'a str,
+    page_title: &'a str,
+    share_title: &'a str,
+    share_description: &'a str,
+    share_site_name: &'a str,
+    share_image_url: &'a str,
+    share_image_alt: &'a str,
+    assistant_name: &'a str,
+    assistant_emoji: &'a str,
+    view_count: u64,
+    share_visibility: &'a str,
+    messages: &'a [ShareMessageView],
+}
+
+#[cfg(feature = "web-ui")]
+struct ShareMessageView {
+    role_class: &'static str,
+    role_label: String,
+    content: String,
+    audio_data_url: Option<String>,
+    image_preview_data_url: Option<String>,
+    image_link_data_url: Option<String>,
+    image_preview_width: u32,
+    image_preview_height: u32,
+    image_has_dimensions: bool,
+    tool_state_class: Option<&'static str>,
+    tool_state_label: Option<&'static str>,
+    tool_state_badge_class: Option<&'static str>,
+    is_exec_card: bool,
+    exec_card_class: Option<&'static str>,
+    exec_command: Option<String>,
+    map_link_google: Option<String>,
+    map_link_apple: Option<String>,
+    map_link_openstreetmap: Option<String>,
+    created_at_ms: Option<u64>,
+    created_at_label: Option<String>,
+    footer: Option<String>,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(serde::Deserialize)]
+struct ShareAccessQuery {
+    #[serde(default)]
+    k: Option<String>,
 }
 
 #[cfg(feature = "web-ui")]
@@ -5765,6 +6238,32 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
+    fn share_labels_use_identity_user_and_emoji() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            emoji: Some("🤖".to_owned()),
+            user_name: Some("Fabien".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(share_user_label(&identity), "Fabien");
+        assert_eq!(share_assistant_label(&identity), "🤖 Moltis");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn share_labels_fallback_when_identity_fields_missing() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "   ".to_owned(),
+            user_name: Some("   ".to_owned()),
+            emoji: Some("   ".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(share_user_label(&identity), "User");
+        assert_eq!(share_assistant_label(&identity), "moltis");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
     fn askama_template_escapes_share_meta_values() {
         let template = IndexHtmlTemplate {
             build_ts: "dev",
@@ -5791,6 +6290,262 @@ mod tests {
         assert!(!html.contains("desc <b>safe</b>"));
         assert!(html.contains("preview &#60;image&#62;") || html.contains("preview &lt;image&gt;"));
         assert!(!html.contains("preview <image>"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn share_template_renders_theme_toggle_and_audio() {
+        let messages = vec![ShareMessageView {
+            role_class: "assistant",
+            role_label: "🤖 Moltis".to_string(),
+            content: "Audio response".to_string(),
+            audio_data_url: Some("data:audio/ogg;base64,T2dnUw==".to_string()),
+            image_preview_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+            image_link_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+            image_preview_width: 600,
+            image_preview_height: 400,
+            image_has_dimensions: true,
+            tool_state_class: None,
+            tool_state_label: None,
+            tool_state_badge_class: None,
+            is_exec_card: false,
+            exec_card_class: None,
+            exec_command: None,
+            map_link_google: Some(
+                "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery".to_string(),
+            ),
+            map_link_apple: Some("https://maps.apple.com/?q=Tartine+Bakery".to_string()),
+            map_link_openstreetmap: Some(
+                "https://www.openstreetmap.org/search?query=Tartine+Bakery".to_string(),
+            ),
+            created_at_ms: Some(1_770_966_725_000),
+            created_at_label: Some("2026-02-13 05:32:05 UTC".to_string()),
+            footer: Some("provider / model".to_string()),
+        }];
+        let template = ShareHtmlTemplate {
+            nonce: "nonce-123",
+            page_title: "title",
+            share_title: "title",
+            share_description: "desc",
+            share_site_name: "site",
+            share_image_url: SHARE_IMAGE_URL,
+            share_image_alt: "alt",
+            assistant_name: "Moltis",
+            assistant_emoji: "🤖",
+            view_count: 7,
+            share_visibility: "public",
+            messages: &messages,
+        };
+        let html = template.render().unwrap_or_default();
+        assert!(html.contains("class=\"share-toolbar\""));
+        assert!(html.contains("class=\"theme-toggle\""));
+        assert!(html.contains("data-theme-val=\"light\""));
+        assert!(html.contains("data-theme-val=\"dark\""));
+        assert!(html.contains("class=\"share-page-footer\""));
+        assert!(html.contains("Get your AI assistant at"));
+        assert!(html.contains("src=\"/assets/icons/icon-96.png\""));
+        assert!(!html.contains("data-epoch-ms=\"1770966600000\""));
+        assert!(html.contains("data-epoch-ms=\"1770966725000\""));
+        assert!(html.contains("data-audio-src=\"data:audio/ogg;base64,T2dnUw==\""));
+        assert!(html.contains("waveform-player"));
+        assert!(html.contains("data:audio/ogg;base64,T2dnUw=="));
+        assert!(html.contains("width=\"600\""));
+        assert!(html.contains("height=\"400\""));
+        assert!(html.contains("data-image-viewer-open=\"true\""));
+        assert!(html.contains("data-image-viewer=\"true\""));
+        assert!(html.contains("class=\"msg-map-link-icon\""));
+        assert!(html.contains("src=\"/assets/icons/map-google-maps.svg\""));
+        assert!(html.contains("src=\"/assets/icons/map-apple-maps.svg\""));
+        assert!(html.contains("src=\"/assets/icons/map-openstreetmap.svg\""));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn map_share_message_views_skips_system_and_notice_roles() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            user_name: Some("Fabien".to_owned()),
+            emoji: Some("🤖".to_owned()),
+            ..Default::default()
+        };
+        let snapshot = crate::share_store::ShareSnapshot {
+            session_key: "main".to_string(),
+            session_label: Some("main".to_string()),
+            cutoff_message_count: 4,
+            created_at: 1_770_966_600_000,
+            messages: vec![
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::User,
+                    content: "hi".to_string(),
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: Some(1_770_966_601_000),
+                    model: None,
+                    provider: None,
+                },
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::System,
+                    content: "system warning".to_string(),
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: Some(1_770_966_602_000),
+                    model: None,
+                    provider: None,
+                },
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::Notice,
+                    content: "share boundary".to_string(),
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: Some(1_770_966_603_000),
+                    model: None,
+                    provider: None,
+                },
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::Assistant,
+                    content: "hello".to_string(),
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: Some(1_770_966_604_000),
+                    model: Some("gpt-5.2".to_string()),
+                    provider: Some("openai-codex".to_string()),
+                },
+            ],
+        };
+
+        let views = map_share_message_views(&snapshot, &identity);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].role_class, "user");
+        assert_eq!(views[1].role_class, "assistant");
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn map_share_message_views_includes_tool_result_media_and_links() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            user_name: Some("Fabien".to_owned()),
+            emoji: Some("🤖".to_owned()),
+            ..Default::default()
+        };
+        let snapshot = crate::share_store::ShareSnapshot {
+            session_key: "main".to_string(),
+            session_label: Some("main".to_string()),
+            cutoff_message_count: 1,
+            created_at: 1_770_966_600_000,
+            messages: vec![crate::share_store::SharedMessage {
+                role: crate::share_store::SharedMessageRole::ToolResult,
+                content: "Tartine Bakery".to_string(),
+                audio_data_url: None,
+                image: Some(crate::share_store::SharedImageSet {
+                    preview: crate::share_store::SharedImageAsset {
+                        data_url: "data:image/png;base64,ZmFrZQ==".to_string(),
+                        width: 600,
+                        height: 400,
+                    },
+                    full: None,
+                }),
+                image_data_url: None,
+                map_links: Some(crate::share_store::SharedMapLinks {
+                    apple_maps: Some("https://maps.apple.com/?q=Tartine+Bakery".to_string()),
+                    google_maps: Some(
+                        "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery"
+                            .to_string(),
+                    ),
+                    openstreetmap: None,
+                }),
+                tool_success: Some(true),
+                tool_name: Some("show_map".to_string()),
+                tool_command: None,
+                created_at: Some(1_770_966_604_000),
+                model: None,
+                provider: None,
+            }],
+        };
+
+        let views = map_share_message_views(&snapshot, &identity);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].role_class, "tool");
+        assert_eq!(views[0].role_label, "Tool");
+        assert!(
+            views[0]
+                .image_preview_data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(views[0].image_preview_width, 600);
+        assert_eq!(views[0].image_preview_height, 400);
+        assert!(views[0].image_has_dimensions);
+        assert_eq!(views[0].tool_state_class, Some("msg-tool-success"));
+        assert_eq!(views[0].tool_state_label, Some("Success"));
+        assert_eq!(views[0].tool_state_badge_class, Some("ok"));
+        assert!(!views[0].is_exec_card);
+        assert!(views[0].exec_card_class.is_none());
+        assert!(views[0].exec_command.is_none());
+        assert!(views[0].map_link_google.is_some());
+        assert!(views[0].map_link_apple.is_some());
+        assert!(views[0].map_link_openstreetmap.is_none());
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn map_share_message_views_marks_exec_tool_cards() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            user_name: Some("Fabien".to_owned()),
+            emoji: Some("🤖".to_owned()),
+            ..Default::default()
+        };
+        let snapshot = crate::share_store::ShareSnapshot {
+            session_key: "main".to_string(),
+            session_label: Some("main".to_string()),
+            cutoff_message_count: 1,
+            created_at: 1_770_966_600_000,
+            messages: vec![crate::share_store::SharedMessage {
+                role: crate::share_store::SharedMessageRole::ToolResult,
+                content: "{\n  \"ok\": true\n}".to_string(),
+                audio_data_url: None,
+                image: None,
+                image_data_url: None,
+                map_links: None,
+                tool_success: Some(false),
+                tool_name: Some("exec".to_string()),
+                tool_command: Some("curl -s https://example.com".to_string()),
+                created_at: Some(1_770_966_604_000),
+                model: None,
+                provider: None,
+            }],
+        };
+
+        let views = map_share_message_views(&snapshot, &identity);
+        assert_eq!(views.len(), 1);
+        assert!(views[0].is_exec_card);
+        assert_eq!(views[0].exec_card_class, Some("exec-err"));
+        assert_eq!(
+            views[0].exec_command.as_deref(),
+            Some("curl -s https://example.com")
+        );
     }
 
     #[cfg(feature = "web-ui")]
