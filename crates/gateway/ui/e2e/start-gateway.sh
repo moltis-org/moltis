@@ -32,6 +32,9 @@ name: e2e-user
 This file is managed by Moltis settings.
 EOF
 
+# Mark onboarding as complete so the app skips the wizard.
+touch "${DATA_DIR}/.onboarded"
+
 cd "${REPO_ROOT}"
 
 export MOLTIS_CONFIG_DIR="${CONFIG_DIR}"

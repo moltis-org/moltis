@@ -1892,6 +1892,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         info!(
             provider = provider_name,
             count = models.len(),
+            models = ?models,
             "saved model preferences and rebuilt registry"
         );
         Ok(serde_json::json!({ "ok": true }))

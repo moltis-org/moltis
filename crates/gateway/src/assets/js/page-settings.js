@@ -1564,8 +1564,8 @@ function ConfigSection() {
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Configuration</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:700px;margin:0;">
 			Edit the full moltis configuration. This includes server, tools, LLM providers, auth, and all other settings.
-			Test your changes before saving. Changes require a restart to take effect.
-			<a href="https://moltis.dev/docs/configuration" target="_blank" rel="noopener"
+			Test your changes before saving. Changes require a restart to take effect.${" "}
+			<a href="https://docs.moltis.org/configuration.html" target="_blank" rel="noopener"
 				style="color:var(--accent);text-decoration:underline;">View documentation \u2197</a>
 		</p>
 		${

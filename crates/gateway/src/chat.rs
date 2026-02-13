@@ -1535,10 +1535,13 @@ impl ModelService for LiveModelService {
         drop(stream);
 
         match result {
-            Ok(Ok(())) => Ok(serde_json::json!({
-                "ok": true,
-                "modelId": model_id,
-            })),
+            Ok(Ok(())) => {
+                info!(model_id, "model probe succeeded");
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "modelId": model_id,
+                }))
+            },
             Ok(Err(err)) => {
                 let error_obj = crate::chat_error::parse_chat_error(&err, Some(provider.name()));
                 let detail = error_obj
@@ -1547,9 +1550,13 @@ impl ModelService for LiveModelService {
                     .unwrap_or(&err)
                     .to_string();
 
+                warn!(model_id, error = %detail, "model probe failed");
                 Err(detail)
             },
-            Err(_) => Err("Connection timed out after 10 seconds".to_string()),
+            Err(_) => {
+                warn!(model_id, "model probe timed out after 10s");
+                Err("Connection timed out after 10 seconds".to_string())
+            },
         }
     }
 }

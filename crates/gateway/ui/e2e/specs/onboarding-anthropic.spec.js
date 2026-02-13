@@ -42,11 +42,13 @@ async function moveToLlmStep(page) {
 	await expect(llmHeading).toBeVisible({ timeout: 15_000 });
 }
 
-async function selectModelUntilConfigured(anthropicRow) {
+async function selectModelAndSave(anthropicRow) {
 	const modelCards = anthropicRow.locator(".model-card");
 	await expect(modelCards.first()).toBeVisible({ timeout: 45_000 });
 	await expect.poll(() => modelCards.count(), { timeout: 45_000 }).toBeGreaterThan(0);
 	await modelCards.first().click();
+	await expect(modelCards.first()).toHaveClass(/selected/, { timeout: 5_000 });
+	await anthropicRow.getByRole("button", { name: "Save", exact: true }).click();
 	await expect(anthropicRow.locator(".provider-item-badge.configured")).toBeVisible({ timeout: 45_000 });
 }
 
@@ -88,8 +90,8 @@ test.describe("Onboarding Anthropic provider", () => {
 		await anthropicRow.locator("input[type='password']").first().fill(ANTHROPIC_API_KEY);
 		await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
 
-		await expect(anthropicRow.getByText("Select a model", { exact: true })).toBeVisible({ timeout: 45_000 });
-		await selectModelUntilConfigured(anthropicRow);
+		await expect(anthropicRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
+		await selectModelAndSave(anthropicRow);
 
 		// Successful save + model probe collapses the form and marks provider configured.
 		await expect(anthropicRow.locator(".provider-item-badge.configured")).toBeVisible({ timeout: 45_000 });
