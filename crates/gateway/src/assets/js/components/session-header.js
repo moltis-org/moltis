@@ -8,7 +8,7 @@ import { useCallback, useRef, useState } from "preact/hooks";
 import { sendRpc } from "../helpers.js";
 import { clearActiveSession, fetchSessions, switchSession } from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
-import { confirmDialog } from "../ui.js";
+import { confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
 
 function nextSessionKey(currentKey) {
 	var allSessions = sessionStore.sessions.value;
@@ -18,6 +18,27 @@ function nextSessionKey(currentKey) {
 	if (idx >= 0 && idx + 1 < allSessions.length) return allSessions[idx + 1].key;
 	if (idx > 0) return allSessions[idx - 1].key;
 	return "main";
+}
+
+function buildShareUrl(payload) {
+	var url = `${window.location.origin}${payload.path}`;
+	if (payload.accessKey) {
+		url += `?k=${encodeURIComponent(payload.accessKey)}`;
+	}
+	return url;
+}
+
+async function copyShareUrl(url, visibility) {
+	try {
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(url);
+			showToast("Share link copied", "success");
+			return;
+		}
+	} catch (_err) {
+		// Clipboard APIs can fail on some browsers/permissions.
+	}
+	await shareLinkDialog(url, visibility);
 }
 
 export function SessionHeader() {
@@ -117,6 +138,35 @@ export function SessionHeader() {
 		});
 	}, [clearing]);
 
+	var shareSnapshot = useCallback(
+		async (visibility) => {
+			var res = await sendRpc("sessions.share.create", { key: currentKey, visibility: visibility });
+			if (!(res?.ok && res.payload?.path)) {
+				showToast(res?.error?.message || "Failed to create share link", "error");
+				return;
+			}
+
+			var url = buildShareUrl(res.payload);
+			await copyShareUrl(url, visibility);
+
+			if (visibility === "private") {
+				showToast("Private link includes a key, share it only with trusted people", "success");
+			}
+
+			// Reload the active session so the snapshot cutoff notice appears.
+			switchSession(currentKey);
+			fetchSessions();
+		},
+		[currentKey],
+	);
+
+	var onShare = useCallback(() => {
+		shareVisibilityDialog().then((visibility) => {
+			if (!visibility) return;
+			void shareSnapshot(visibility);
+		});
+	}, [shareSnapshot]);
+
 	return html`
 		<div class="flex items-center gap-2">
 			${
@@ -139,6 +189,9 @@ export function SessionHeader() {
 				html`
 				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
 					Fork
+				</button>
+				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
+					Share
 				</button>
 			`
 			}

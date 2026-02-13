@@ -18,11 +18,20 @@ pub enum PersistedMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
     },
+    /// UI-only informational message (not part of LLM prompt history).
+    Notice {
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_at: Option<u64>,
+    },
     User {
         /// Content can be a string (plain text) or array (multimodal).
         content: MessageContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<u64>,
+        /// Relative media path for uploaded user audio (e.g. "media/main/voice-123.webm").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        audio: Option<String>,
         /// Channel metadata for UI display (e.g., Telegram sender info).
         #[serde(skip_serializing_if = "Option::is_none")]
         channel: Option<serde_json::Value>,
@@ -127,6 +136,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -138,6 +148,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Text(text.into()),
             created_at: Some(now_ms()),
+            audio: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -149,6 +160,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -163,6 +175,7 @@ impl PersistedMessage {
         Self::User {
             content: MessageContent::Multimodal(blocks),
             created_at: Some(now_ms()),
+            audio: None,
             channel: Some(channel),
             seq: None,
             run_id: None,
@@ -195,6 +208,14 @@ impl PersistedMessage {
     /// Create a system message (e.g., for error display).
     pub fn system(text: impl Into<String>) -> Self {
         Self::System {
+            content: text.into(),
+            created_at: Some(now_ms()),
+        }
+    }
+
+    /// Create a notice message shown in UI but skipped from model context.
+    pub fn notice(text: impl Into<String>) -> Self {
+        Self::Notice {
             content: text.into(),
             created_at: Some(now_ms()),
         }
@@ -272,6 +293,7 @@ mod tests {
         let msg = PersistedMessage::User {
             content: MessageContent::Text("hello".to_string()),
             created_at: Some(12345),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -291,6 +313,7 @@ mod tests {
                 ContentBlock::image_base64("image/jpeg", "abc123"),
             ]),
             created_at: Some(12345),
+            audio: None,
             channel: None,
             seq: None,
             run_id: None,
@@ -335,6 +358,18 @@ mod tests {
     }
 
     #[test]
+    fn notice_serializes_correctly() {
+        let msg = PersistedMessage::Notice {
+            content: "shared cutoff".to_string(),
+            created_at: Some(12345),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "notice");
+        assert_eq!(json["content"], "shared cutoff");
+        assert_eq!(json["created_at"], 12345);
+    }
+
+    #[test]
     fn user_text_deserializes_correctly() {
         let json = serde_json::json!({
             "role": "user",
@@ -345,6 +380,39 @@ mod tests {
         match msg {
             PersistedMessage::User { content, .. } => {
                 assert!(matches!(content, MessageContent::Text(t) if t == "hello"));
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn user_with_audio_serializes_correctly() {
+        let msg = PersistedMessage::User {
+            content: MessageContent::Text("voice note".to_string()),
+            created_at: Some(12345),
+            audio: Some("media/main/voice-123.webm".to_string()),
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "voice note");
+        assert_eq!(json["audio"], "media/main/voice-123.webm");
+    }
+
+    #[test]
+    fn user_without_audio_field_deserializes() {
+        let json = serde_json::json!({
+            "role": "user",
+            "content": "old user message",
+            "created_at": 12345
+        });
+        let msg: PersistedMessage = serde_json::from_value(json).unwrap();
+        match msg {
+            PersistedMessage::User { content, audio, .. } => {
+                assert!(matches!(content, MessageContent::Text(t) if t == "old user message"));
+                assert!(audio.is_none());
             },
             _ => panic!("expected User message"),
         }
@@ -381,6 +449,19 @@ mod tests {
                 assert!(matches!(content, MessageContent::Text(t) if t == "test message"));
             },
             _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_notice() {
+        let original = PersistedMessage::notice("snapshot cutoff");
+        let json = original.to_value();
+        let parsed: PersistedMessage = serde_json::from_value(json).unwrap();
+        match parsed {
+            PersistedMessage::Notice { content, .. } => {
+                assert_eq!(content, "snapshot cutoff");
+            },
+            _ => panic!("expected Notice message"),
         }
     }
 

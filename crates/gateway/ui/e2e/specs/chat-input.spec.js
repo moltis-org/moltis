@@ -222,6 +222,27 @@ test.describe("Chat input and slash commands", () => {
 		await expect(sendBtn).toBeVisible();
 	});
 
+	test("audio duration formatter handles invalid values", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const formatted = await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var helpers = await import(`${prefix}js/helpers.js`);
+			return {
+				nan: helpers.formatAudioDuration(Number.NaN),
+				inf: helpers.formatAudioDuration(Number.POSITIVE_INFINITY),
+				short: helpers.formatAudioDuration(2.4),
+			};
+		});
+
+		expect(formatted.nan).toBe("00:00");
+		expect(formatted.inf).toBe("00:00");
+		expect(formatted.short).toBe("00:02");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("prompt button is hidden from chat header", async ({ page }) => {
 		await expect(page.locator("#rawPromptBtn")).toHaveCount(0);
 	});

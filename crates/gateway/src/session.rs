@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use {
     async_trait::async_trait,
+    base64::Engine,
     serde_json::Value,
     tracing::{info, warn},
 };
@@ -10,12 +11,22 @@ use {
     moltis_common::hooks::HookRegistry,
     moltis_projects::ProjectStore,
     moltis_sessions::{
-        metadata::SqliteSessionMetadata, state_store::SessionStateStore, store::SessionStore,
+        message::PersistedMessage, metadata::SqliteSessionMetadata, state_store::SessionStateStore,
+        store::SessionStore,
     },
     moltis_tools::sandbox::SandboxRouter,
 };
 
-use crate::services::{ServiceResult, SessionService};
+use crate::{
+    services::{ServiceResult, SessionService},
+    share_store::{
+        ShareSnapshot, ShareStore, ShareVisibility, SharedMapLinks, SharedMessage,
+        SharedMessageRole,
+    },
+};
+
+const SHARE_BOUNDARY_NOTICE: &str =
+    "This session until here has been shared. Later messages are not included in the shared link.";
 
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
@@ -107,10 +118,273 @@ fn extract_preview(history: &[Value]) -> Option<String> {
     Some(truncate_preview(&combined, MAX))
 }
 
+fn value_u64(msg: &Value, key: &str) -> Option<u64> {
+    msg.get(key).and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_i64().and_then(|n| (n >= 0).then_some(n as u64)))
+    })
+}
+
+fn message_text_for_share(msg: &Value) -> Option<String> {
+    if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+        let trimmed = s.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+
+    let blocks = msg.get("content").and_then(|v| v.as_array())?;
+    let joined = blocks
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+                block.get("text").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed = joined.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn media_filename(path: &str) -> Option<&str> {
+    let filename = path.rsplit('/').next()?.trim();
+    (!filename.is_empty()).then_some(filename)
+}
+
+fn audio_mime_type(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().unwrap_or_default() {
+        "ogg" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "aac" => "audio/aac",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
+        _ => "application/octet-stream",
+    }
+}
+
+fn image_mime_type(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().unwrap_or_default() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" | "svgz" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn message_audio_data_url_for_share(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<String> {
+    let audio_path = msg.get("audio").and_then(|v| v.as_str())?;
+    let filename = media_filename(audio_path)?;
+    let bytes = store.read_media(session_key, filename).await.ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!(
+        "data:{};base64,{}",
+        audio_mime_type(filename),
+        encoded
+    ))
+}
+
+async fn tool_result_image_data_url_for_share(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<String> {
+    let screenshot = msg
+        .get("result")
+        .and_then(|v| v.get("screenshot"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)?;
+    if screenshot.starts_with("data:image/") {
+        return Some(screenshot.to_string());
+    }
+    let filename = media_filename(screenshot)?;
+    let bytes = store.read_media(session_key, filename).await.ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Some(format!(
+        "data:{};base64,{}",
+        image_mime_type(filename),
+        encoded
+    ))
+}
+
+fn sanitize_share_url(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    match parsed.scheme() {
+        "http" | "https" => Some(parsed.into()),
+        _ => None,
+    }
+}
+
+fn tool_result_map_links_for_share(msg: &Value) -> Option<SharedMapLinks> {
+    let map_links = msg
+        .get("result")
+        .and_then(|v| v.get("map_links"))
+        .and_then(|v| v.as_object())?;
+
+    let links = SharedMapLinks {
+        apple_maps: map_links
+            .get("apple_maps")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+        google_maps: map_links
+            .get("google_maps")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+        openstreetmap: map_links
+            .get("openstreetmap")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+    };
+
+    (links.apple_maps.is_some() || links.google_maps.is_some() || links.openstreetmap.is_some())
+        .then_some(links)
+}
+
+fn tool_result_text_for_share(msg: &Value) -> Option<String> {
+    let result = msg.get("result");
+    let mut sections = Vec::new();
+
+    if let Some(label) = result
+        .and_then(|v| v.get("label"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        sections.push(label.to_string());
+    }
+    if let Some(stdout) = result
+        .and_then(|v| v.get("stdout"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|stdout| !stdout.is_empty())
+    {
+        sections.push(stdout.to_string());
+    }
+    if let Some(stderr) = result
+        .and_then(|v| v.get("stderr"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|stderr| !stderr.is_empty())
+    {
+        sections.push(format!("stderr:\n{stderr}"));
+    }
+    if let Some(error) = msg
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    {
+        sections.push(format!("error: {error}"));
+    }
+    if let Some(exit_code) = result
+        .and_then(|v| v.get("exit_code"))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
+        })
+        .filter(|exit_code| *exit_code != 0)
+    {
+        sections.push(format!("exit {exit_code}"));
+    }
+
+    let content = sections.join("\n\n");
+    let trimmed = content.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+async fn to_shared_message(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<SharedMessage> {
+    let role = match msg.get("role").and_then(|v| v.as_str()) {
+        Some("user") => SharedMessageRole::User,
+        Some("assistant") => SharedMessageRole::Assistant,
+        Some("tool_result") => SharedMessageRole::ToolResult,
+        _ => return None,
+    };
+
+    let content = match role {
+        SharedMessageRole::ToolResult => tool_result_text_for_share(msg).unwrap_or_default(),
+        SharedMessageRole::User | SharedMessageRole::Assistant => {
+            message_text_for_share(msg).unwrap_or_default()
+        },
+        SharedMessageRole::System | SharedMessageRole::Notice => String::new(),
+    };
+    let audio_data_url = match role {
+        SharedMessageRole::User | SharedMessageRole::Assistant => {
+            message_audio_data_url_for_share(msg, session_key, store).await
+        },
+        SharedMessageRole::ToolResult | SharedMessageRole::System | SharedMessageRole::Notice => {
+            None
+        },
+    };
+    let image_data_url = match role {
+        SharedMessageRole::ToolResult => {
+            tool_result_image_data_url_for_share(msg, session_key, store).await
+        },
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let map_links = match role {
+        SharedMessageRole::ToolResult => tool_result_map_links_for_share(msg),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+
+    if content.is_empty()
+        && audio_data_url.is_none()
+        && image_data_url.is_none()
+        && map_links.is_none()
+    {
+        return None;
+    }
+    let created_at = value_u64(msg, "created_at");
+    let model = if role == SharedMessageRole::Assistant {
+        msg.get("model")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+    } else {
+        None
+    };
+    let provider = if role == SharedMessageRole::Assistant {
+        msg.get("provider")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+    } else {
+        None
+    };
+
+    Some(SharedMessage {
+        role,
+        content,
+        audio_data_url,
+        image_data_url,
+        map_links,
+        created_at,
+        model,
+        provider,
+    })
+}
+
 /// Live session service backed by JSONL store + SQLite metadata.
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
     metadata: Arc<SqliteSessionMetadata>,
+    share_store: Option<Arc<ShareStore>>,
     sandbox_router: Option<Arc<SandboxRouter>>,
     project_store: Option<Arc<dyn ProjectStore>>,
     hook_registry: Option<Arc<HookRegistry>>,
@@ -123,6 +397,7 @@ impl LiveSessionService {
         Self {
             store,
             metadata,
+            share_store: None,
             sandbox_router: None,
             project_store: None,
             hook_registry: None,
@@ -133,6 +408,11 @@ impl LiveSessionService {
 
     pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
         self.sandbox_router = Some(router);
+        self
+    }
+
+    pub fn with_share_store(mut self, store: Arc<ShareStore>) -> Self {
+        self.share_store = Some(store);
         self
     }
 
@@ -389,6 +669,151 @@ impl SessionService for LiveSessionService {
             "mcpDisabled": entry.mcp_disabled,
             "version": entry.version,
         }))
+    }
+
+    async fn share_create(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+
+        let visibility = params
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<ShareVisibility>().ok())
+            .unwrap_or(ShareVisibility::Public);
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let entry = self
+            .metadata
+            .get(key)
+            .await
+            .ok_or_else(|| format!("session '{key}' not found"))?;
+        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+
+        let snapshot = ShareSnapshot {
+            session_key: key.to_string(),
+            session_label: entry.label.clone(),
+            cutoff_message_count: history.len() as u32,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            messages: {
+                let mut shared_messages = Vec::new();
+                for msg in &history {
+                    if let Some(shared) = to_shared_message(msg, key, self.store.as_ref()).await {
+                        shared_messages.push(shared);
+                    }
+                }
+                shared_messages
+            },
+        };
+        let snapshot_json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+
+        let created = share_store
+            .create_or_replace(
+                key,
+                visibility,
+                snapshot_json,
+                snapshot.cutoff_message_count,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Persist a UI-only notice in the source session so users can see
+        // the exact cutoff marker without affecting future LLM context.
+        let boundary_notice = PersistedMessage::Notice {
+            content: SHARE_BOUNDARY_NOTICE.to_string(),
+            created_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ),
+        };
+        if let Err(e) = self.store.append(key, &boundary_notice.to_value()).await {
+            warn!(
+                session_key = key,
+                share_id = created.share.id,
+                error = %e,
+                "failed to persist share boundary notice; revoking share"
+            );
+            let _ = share_store.revoke(&created.share.id).await;
+            return Err(format!("failed to persist share boundary notice: {e}"));
+        }
+        match self.store.count(key).await {
+            Ok(message_count) => {
+                self.metadata.touch(key, message_count).await;
+            },
+            Err(e) => {
+                warn!(session_key = key, error = %e, "failed to update session message count");
+            },
+        }
+
+        Ok(serde_json::json!({
+            "id": created.share.id,
+            "sessionKey": created.share.session_key,
+            "visibility": created.share.visibility.as_str(),
+            "path": format!("/share/{}", created.share.id),
+            "createdAt": created.share.created_at,
+            "views": created.share.views,
+            "snapshotMessageCount": created.share.snapshot_message_count,
+            "accessKey": created.access_key,
+            "notice": SHARE_BOUNDARY_NOTICE,
+        }))
+    }
+
+    async fn share_list(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let shares = share_store
+            .list_for_session(key)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let items: Vec<Value> = shares
+            .into_iter()
+            .map(|share| {
+                serde_json::json!({
+                    "id": share.id,
+                    "sessionKey": share.session_key,
+                    "visibility": share.visibility.as_str(),
+                    "path": format!("/share/{}", share.id),
+                    "views": share.views,
+                    "createdAt": share.created_at,
+                    "revokedAt": share.revoked_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!(items))
+    }
+
+    async fn share_revoke(&self, params: Value) -> ServiceResult {
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'id' parameter".to_string())?;
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let revoked = share_store.revoke(id).await.map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "revoked": revoked }))
     }
 
     async fn reset(&self, params: Value) -> ServiceResult {
@@ -851,6 +1276,174 @@ mod tests {
         let result = extract_preview(&history).expect("should produce preview");
         assert!(result.ends_with('…'));
         assert!(result.len() <= 204);
+    }
+
+    #[test]
+    fn media_filename_extracts_last_segment() {
+        assert_eq!(media_filename("media/main/voice.ogg"), Some("voice.ogg"));
+        assert_eq!(media_filename("voice.ogg"), Some("voice.ogg"));
+        assert_eq!(media_filename(""), None);
+    }
+
+    #[test]
+    fn audio_mime_type_maps_known_extensions() {
+        assert_eq!(audio_mime_type("voice.ogg"), "audio/ogg");
+        assert_eq!(audio_mime_type("voice.webm"), "audio/webm");
+        assert_eq!(audio_mime_type("voice.mp3"), "audio/mpeg");
+        assert_eq!(audio_mime_type("voice.unknown"), "application/octet-stream");
+    }
+
+    #[test]
+    fn image_mime_type_maps_known_extensions() {
+        assert_eq!(image_mime_type("map.png"), "image/png");
+        assert_eq!(image_mime_type("map.jpeg"), "image/jpeg");
+        assert_eq!(image_mime_type("map.webp"), "image/webp");
+        assert_eq!(image_mime_type("map.unknown"), "application/octet-stream");
+    }
+
+    #[test]
+    fn sanitize_share_url_rejects_unsafe_schemes() {
+        assert_eq!(
+            sanitize_share_url("https://maps.apple.com/?q=test"),
+            Some("https://maps.apple.com/?q=test".to_string())
+        );
+        assert_eq!(sanitize_share_url("javascript:alert(1)"), None);
+        assert_eq!(sanitize_share_url("data:text/html,test"), None);
+    }
+
+    #[tokio::test]
+    async fn message_audio_data_url_for_share_reads_media_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let bytes = b"OggSfake".to_vec();
+        store
+            .save_media("main", "voice.ogg", &bytes)
+            .await
+            .expect("save media");
+
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "audio": "media/main/voice.ogg",
+        });
+
+        let data_url = message_audio_data_url_for_share(&msg, "main", &store).await;
+        assert!(data_url.is_some());
+        assert!(
+            data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:audio/ogg;base64,")
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_skips_system_and_notice_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+
+        let system_msg = serde_json::json!({
+            "role": "system",
+            "content": "system info",
+        });
+        let notice_msg = serde_json::json!({
+            "role": "notice",
+            "content": "share boundary",
+        });
+        let assistant_msg = serde_json::json!({
+            "role": "assistant",
+            "content": "hello",
+        });
+
+        assert!(
+            to_shared_message(&system_msg, "main", &store)
+                .await
+                .is_none()
+        );
+        assert!(
+            to_shared_message(&notice_msg, "main", &store)
+                .await
+                .is_none()
+        );
+        assert!(
+            to_shared_message(&assistant_msg, "main", &store)
+                .await
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_user_audio_without_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        store
+            .save_media("main", "voice-input.webm", b"RIFFfake")
+            .await
+            .expect("save media");
+
+        let user_audio_msg = serde_json::json!({
+            "role": "user",
+            "content": "",
+            "audio": "media/main/voice-input.webm",
+        });
+
+        let shared = to_shared_message(&user_audio_msg, "main", &store)
+            .await
+            .expect("shared message");
+
+        assert!(matches!(shared.role, SharedMessageRole::User));
+        assert!(shared.content.is_empty());
+        assert!(
+            shared
+                .audio_data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:audio/webm;base64,")
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        store
+            .save_media("main", "call-map.png", b"\x89PNGfake")
+            .await
+            .expect("save media");
+
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "show_map",
+            "success": true,
+            "created_at": 1_770_966_725_000_u64,
+            "result": {
+                "label": "Tartine Bakery",
+                "screenshot": "media/main/call-map.png",
+                "map_links": {
+                    "google_maps": "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery",
+                    "apple_maps": "javascript:alert(1)",
+                    "openstreetmap": "https://www.openstreetmap.org/search?query=Tartine+Bakery",
+                },
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared tool_result message");
+
+        assert!(matches!(shared.role, SharedMessageRole::ToolResult));
+        assert!(shared.audio_data_url.is_none());
+        assert!(
+            shared
+                .image_data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:image/png;base64,")
+        );
+        let map_links = shared.map_links.expect("map links");
+        assert!(map_links.google_maps.is_some());
+        assert!(map_links.openstreetmap.is_some());
+        assert!(map_links.apple_maps.is_none());
+        assert!(shared.content.contains("Tartine Bakery"));
     }
 
     // --- Browser service integration tests ---
