@@ -85,7 +85,24 @@ Docker `run` command includes no hardening flags: no `--cap-drop=ALL`, no `--sec
 
 No `deny.toml` exists. No `cargo-deny`, `cargo-audit`, or dependency review step in CI. Known CVEs in transitive dependencies go undetected.
 
-**Remediation:** Create `deny.toml` with advisories (deny), licenses (allow MIT/Apache-2.0/BSD), bans (warn on duplicates). Add `cargo deny check` to CI.
+**`cargo audit` results (2026-02-13):** 2 vulnerabilities, 5 unmaintained crate warnings:
+
+| Advisory | Crate | Version | Severity | Status | Root Cause |
+|----------|-------|---------|----------|--------|------------|
+| [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) | `rsa` | 0.7.2 | Medium (5.9) | **No fix available** | Marvin Attack: timing sidechannel key recovery. Pulled in by `jwt-simple` -> `web-push` -> `moltis-gateway` |
+| [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) | `rsa` | 0.9.10 | Medium (5.9) | **No fix available** | Same advisory. Pulled in by `sqlx-mysql` -> `sqlx` (MySQL driver compiled but not used -- Moltis uses SQLite only) |
+| [RUSTSEC-2025-0012](https://rustsec.org/advisories/RUSTSEC-2025-0012) | `backoff` | 0.4.0 | Warning | Unmaintained | Pulled in by `async-openai` -> `moltis-agents` |
+| [RUSTSEC-2024-0384](https://rustsec.org/advisories/RUSTSEC-2024-0384) | `instant` | 0.1.13 | Warning | Unmaintained | Pulled in by `backoff` and `isahc` -> `web-push` |
+| [RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370) | `proc-macro-error` | 1.0.4 | Warning | Unmaintained | Pulled in by `aquamarine` -> `teloxide` -> `moltis-telegram` |
+| [RUSTSEC-2025-0134](https://rustsec.org/advisories/RUSTSEC-2025-0134) | `rustls-pemfile` | 1.0.4, 2.2.0 | Warning | Unmaintained | v1: `reqwest` -> `teloxide-core`; v2: `moltis-gateway`, `axum-server` |
+
+**npm audit:** 0 vulnerabilities (all devDependencies only).
+
+**Analysis:**
+- The `rsa` Marvin Attack (RUSTSEC-2023-0071) has no upstream fix. The `rsa 0.9.10` instance via `sqlx-mysql` is a phantom dependency -- Moltis uses SQLite, not MySQL. Disabling the `mysql` feature on `sqlx` would eliminate it. The `rsa 0.7.2` instance via `web-push` requires waiting for `web-push` to update its dependency chain.
+- The unmaintained warnings are all in transitive dependencies of upstream crates (`async-openai`, `teloxide`, `web-push`). Direct action is limited to filing upstream issues or finding alternative crates.
+
+**Remediation:** Create `deny.toml` with advisories (deny), licenses (allow MIT/Apache-2.0/BSD), bans (warn on duplicates). Add `cargo deny check` to CI. Disable `sqlx` MySQL feature to drop one `rsa` instance. Consider replacing `web-push` if it remains unmaintained.
 
 ### H5: Data Sovereignty -- Chinese Providers Active by Default
 
