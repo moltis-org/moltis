@@ -1,9 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    pin::Pin,
-    sync::mpsc,
-    time::Duration,
-};
+use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
 
 use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
 
@@ -27,26 +22,29 @@ pub struct OpenAiProvider {
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
 
-const OPENAI_MODEL_EXCLUDED_FRAGMENTS: &[&str] = &[
-    "audio",
-    "realtime",
-    "image",
-    "search",
-    "transcribe",
-    "tts",
-    "moderation",
-    "embedding",
-    "whisper",
-    "deep-research",
+#[derive(Clone, Copy)]
+struct ModelCatalogEntry {
+    id: &'static str,
+    display_name: &'static str,
+}
+
+impl ModelCatalogEntry {
+    const fn new(id: &'static str, display_name: &'static str) -> Self {
+        Self { id, display_name }
+    }
+}
+
+const DEFAULT_OPENAI_MODELS: &[ModelCatalogEntry] = &[
+    ModelCatalogEntry::new("gpt-5.2", "GPT-5.2"),
+    ModelCatalogEntry::new("gpt-5.2-chat-latest", "GPT-5.2 Chat Latest"),
+    ModelCatalogEntry::new("gpt-5-mini", "GPT-5 Mini"),
 ];
 
-const DEFAULT_OPENAI_MODELS: &[(&str, &str)] = &[("gpt-5.3", "GPT-5.3"), ("gpt-5.2", "GPT-5.2")];
-
 #[must_use]
-pub fn default_model_catalog() -> Vec<(String, String)> {
+pub fn default_model_catalog() -> Vec<super::DiscoveredModel> {
     DEFAULT_OPENAI_MODELS
         .iter()
-        .map(|(id, name)| (id.to_string(), name.to_string()))
+        .map(|entry| super::DiscoveredModel::new(entry.id, entry.display_name))
         .collect()
 }
 
@@ -131,45 +129,7 @@ fn is_likely_model_id(model_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
-fn is_reasoning_family_model_id(model_id: &str) -> bool {
-    let mut chars = model_id.chars();
-    matches!(chars.next(), Some('o'))
-        && matches!(chars.next(), Some(second) if second.is_ascii_digit())
-}
-
-fn has_date_suffix(model_id: &str) -> bool {
-    let parts: Vec<&str> = model_id.split('-').collect();
-    if parts.len() < 3 {
-        return false;
-    }
-    let year = parts[parts.len() - 3];
-    let month = parts[parts.len() - 2];
-    let day = parts[parts.len() - 1];
-    year.len() == 4
-        && month.len() == 2
-        && day.len() == 2
-        && year.chars().all(|ch| ch.is_ascii_digit())
-        && month.chars().all(|ch| ch.is_ascii_digit())
-        && day.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn is_supported_chat_model_id(model_id: &str) -> bool {
-    let lower = model_id.to_ascii_lowercase();
-    let starts_with_supported_family = lower.starts_with("gpt-")
-        || lower.starts_with("chatgpt-")
-        || is_reasoning_family_model_id(&lower);
-    if !starts_with_supported_family {
-        return false;
-    }
-    if has_date_suffix(&lower) {
-        return false;
-    }
-    !OPENAI_MODEL_EXCLUDED_FRAGMENTS
-        .iter()
-        .any(|fragment| lower.contains(fragment))
-}
-
-fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
+fn parse_model_entry(entry: &serde_json::Value) -> Option<super::DiscoveredModel> {
     let obj = entry.as_object()?;
     let model_id = obj
         .get("id")
@@ -177,7 +137,7 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
         .or_else(|| obj.get("model"))
         .and_then(serde_json::Value::as_str)?;
 
-    if !is_likely_model_id(model_id) || !is_supported_chat_model_id(model_id) {
+    if !is_likely_model_id(model_id) {
         return None;
     }
 
@@ -188,10 +148,12 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
         .or_else(|| obj.get("title"))
         .and_then(serde_json::Value::as_str);
 
-    Some((
-        model_id.to_string(),
-        normalize_display_name(model_id, display_name),
-    ))
+    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+
+    Some(
+        super::DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
+            .with_created_at(created_at),
+    )
 }
 
 fn collect_candidate_arrays<'a>(
@@ -211,20 +173,47 @@ fn collect_candidate_arrays<'a>(
     }
 }
 
-fn parse_models_payload(value: &serde_json::Value) -> Vec<(String, String)> {
+fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel> {
     let mut candidates = Vec::new();
     collect_candidate_arrays(value, &mut candidates);
 
     let mut models = Vec::new();
     let mut seen = HashSet::new();
     for entry in candidates {
-        if let Some((id, display_name)) = parse_model_entry(entry)
-            && seen.insert(id.clone())
+        if let Some(model) = parse_model_entry(entry)
+            && seen.insert(model.id.clone())
         {
-            models.push((id, display_name));
+            models.push(model);
         }
     }
+
+    // Sort by created_at descending (newest first). Models without a
+    // timestamp are placed after those with one, preserving relative order.
+    models.sort_by(|a, b| match (a.created_at, b.created_at) {
+        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
+        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
     models
+}
+
+fn is_chat_endpoint_unsupported_model_error(body_text: &str) -> bool {
+    let lower = body_text.to_ascii_lowercase();
+    lower.contains("not a chat model")
+        || lower.contains("does not support chat")
+        || lower.contains("only supported in v1/responses")
+        || lower.contains("not supported in the v1/chat/completions endpoint")
+        || lower.contains("input content or output modality contain audio")
+        || lower.contains("requires audio")
+}
+
+fn should_warn_on_api_error(status: reqwest::StatusCode, body_text: &str) -> bool {
+    if is_chat_endpoint_unsupported_model_error(body_text) {
+        return false;
+    }
+    !matches!(status.as_u16(), 404)
 }
 
 fn models_endpoint(base_url: &str) -> String {
@@ -237,7 +226,7 @@ fn models_endpoint(base_url: &str) -> String {
 async fn fetch_models_from_api(
     api_key: secrecy::Secret<String>,
     base_url: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()?;
@@ -258,7 +247,7 @@ async fn fetch_models_from_api(
     let payload: serde_json::Value = serde_json::from_str(&body)?;
     let models = parse_models_payload(&payload);
     if models.is_empty() {
-        anyhow::bail!("openai models API returned no chat models");
+        anyhow::bail!("openai models API returned no models");
     }
     Ok(models)
 }
@@ -266,7 +255,7 @@ async fn fetch_models_from_api(
 fn fetch_models_blocking(
     api_key: secrecy::Secret<String>,
     base_url: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
@@ -283,35 +272,17 @@ fn fetch_models_blocking(
 pub fn live_models(
     api_key: &secrecy::Secret<String>,
     base_url: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let models = fetch_models_blocking(api_key.clone(), base_url.to_string())?;
-    debug!(model_count = models.len(), "loaded openai live models");
+    debug!(model_count = models.len(), "loaded live models");
     Ok(models)
-}
-
-fn merge_with_fallback(
-    discovered: Vec<(String, String)>,
-    fallback: Vec<(String, String)>,
-) -> Vec<(String, String)> {
-    let mut discovered_by_id: HashMap<String, String> = discovered.into_iter().collect();
-    let mut merged = Vec::new();
-
-    for (id, fallback_display) in fallback {
-        let display_name = discovered_by_id.remove(&id).unwrap_or(fallback_display);
-        merged.push((id, display_name));
-    }
-
-    let mut remaining: Vec<(String, String)> = discovered_by_id.into_iter().collect();
-    remaining.sort_by(|left, right| left.0.cmp(&right.0));
-    merged.extend(remaining);
-    merged
 }
 
 #[must_use]
 pub fn available_models(
     api_key: &secrecy::Secret<String>,
     base_url: &str,
-) -> Vec<(String, String)> {
+) -> Vec<super::DiscoveredModel> {
     let fallback = default_model_catalog();
     if cfg!(test) {
         return fallback;
@@ -325,7 +296,7 @@ pub fn available_models(
         },
     };
 
-    let merged = merge_with_fallback(discovered, fallback);
+    let merged = super::merge_discovered_with_fallback_catalog(discovered, fallback);
     debug!(model_count = merged.len(), "loaded openai models catalog");
     merged
 }
@@ -464,7 +435,22 @@ impl LlmProvider for OpenAiProvider {
         let status = http_resp.status();
         if !status.is_success() {
             let body_text = http_resp.text().await.unwrap_or_default();
-            warn!(status = %status, body = %body_text, "openai API error");
+            if should_warn_on_api_error(status, &body_text) {
+                warn!(
+                    status = %status,
+                    model = %self.model,
+                    provider = %self.provider_name,
+                    body = %body_text,
+                    "openai API error"
+                );
+            } else {
+                debug!(
+                    status = %status,
+                    model = %self.model,
+                    provider = %self.provider_name,
+                    "openai model unsupported for chat/completions endpoint"
+                );
+            }
             anyhow::bail!("OpenAI API error HTTP {status}: {body_text}");
         }
 
@@ -945,64 +931,157 @@ mod tests {
     }
 
     #[test]
-    fn parse_models_payload_filters_non_chat_and_snapshot_models() {
+    fn parse_models_payload_keeps_all_valid_model_ids() {
         let payload = serde_json::json!({
             "data": [
                 { "id": "gpt-5.2" },
                 { "id": "gpt-5.2-2025-12-11" },
-                { "id": "gpt-5.2-chat-latest" },
-                { "id": "gpt-5.2-pro" },
-                { "id": "gpt-5.2-codex" },
                 { "id": "gpt-image-1" },
-                { "id": "gpt-4o-mini" },
                 { "id": "o4-mini-deep-research" },
-                { "id": "o1" },
-                { "id": "o1-pro" },
-                { "id": "o3" }
+                { "id": "kimi-k2.5" },
+                { "id": "moonshot-v1-8k" },
+                { "id": "has spaces" },
+                { "id": "" }
             ]
         });
 
         let models = parse_models_payload(&payload);
-        let ids: Vec<String> = models.into_iter().map(|(id, _)| id).collect();
+        let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+        // All valid IDs pass; only empty/whitespace IDs are rejected
         assert_eq!(ids, vec![
             "gpt-5.2",
-            "gpt-5.2-chat-latest",
-            "gpt-5.2-pro",
-            "gpt-5.2-codex",
-            "gpt-4o-mini",
-            "o1",
-            "o1-pro",
-            "o3",
+            "gpt-5.2-2025-12-11",
+            "gpt-image-1",
+            "o4-mini-deep-research",
+            "kimi-k2.5",
+            "moonshot-v1-8k",
         ]);
     }
 
     #[test]
-    fn merge_with_fallback_preserves_fallback_order_then_appends_new_models() {
+    fn parse_models_payload_sorts_by_created_at_descending() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "gpt-4o-mini", "created": 1000 },
+                { "id": "gpt-5.2", "created": 3000 },
+                { "id": "o3", "created": 2000 },
+                { "id": "o1" }
+            ]
+        });
+
+        let models = parse_models_payload(&payload);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        // Newest first (3000, 2000, 1000), then no-timestamp last
+        assert_eq!(ids, vec!["gpt-5.2", "o3", "gpt-4o-mini", "o1"]);
+        assert_eq!(models[0].created_at, Some(3000));
+        assert_eq!(models[3].created_at, None);
+    }
+
+    #[test]
+    fn parse_model_entry_extracts_created_at() {
+        let entry = serde_json::json!({ "id": "gpt-5.2", "created": 1700000000 });
+        let model = parse_model_entry(&entry).unwrap();
+        assert_eq!(model.id, "gpt-5.2");
+        assert_eq!(model.created_at, Some(1700000000));
+    }
+
+    #[test]
+    fn parse_model_entry_without_created_at() {
+        let entry = serde_json::json!({ "id": "gpt-5.2" });
+        let model = parse_model_entry(&entry).unwrap();
+        assert_eq!(model.created_at, None);
+    }
+
+    #[test]
+    fn merge_with_fallback_uses_discovered_models_when_live_fetch_succeeds() {
+        use crate::providers::DiscoveredModel;
         let discovered = vec![
-            ("gpt-5.2".to_string(), "GPT-5.2".to_string()),
-            ("zeta-model".to_string(), "Zeta".to_string()),
-            ("alpha-model".to_string(), "Alpha".to_string()),
+            DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
+            DiscoveredModel::new("zeta-model", "Zeta"),
+            DiscoveredModel::new("alpha-model", "Alpha"),
         ];
         let fallback = vec![
-            ("gpt-5.2".to_string(), "fallback".to_string()),
-            ("gpt-4o".to_string(), "GPT-4o".to_string()),
+            DiscoveredModel::new("gpt-5.2", "fallback"),
+            DiscoveredModel::new("gpt-4o", "GPT-4o"),
         ];
 
-        let merged = merge_with_fallback(discovered, fallback);
-        let ids: Vec<String> = merged.into_iter().map(|(id, _)| id).collect();
-        assert_eq!(ids, vec!["gpt-5.2", "gpt-4o", "alpha-model", "zeta-model"]);
+        let merged = crate::providers::merge_discovered_with_fallback_catalog(discovered, fallback);
+        let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["gpt-5.2", "zeta-model", "alpha-model"]);
+    }
+
+    #[test]
+    fn merge_with_fallback_uses_fallback_when_discovery_is_empty() {
+        use crate::providers::DiscoveredModel;
+        let merged = crate::providers::merge_discovered_with_fallback_catalog(Vec::new(), vec![
+            DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
+            DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
+        ]);
+        let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["gpt-5.2", "gpt-5-mini"]);
     }
 
     #[test]
     fn default_catalog_includes_gpt_5_2() {
         let defaults = default_model_catalog();
-        assert!(defaults.iter().any(|(id, _)| id == "gpt-5.2"));
+        assert!(defaults.iter().any(|m| m.id == "gpt-5.2"));
+    }
+
+    #[test]
+    fn default_catalog_excludes_stale_gpt_5_3() {
+        let defaults = default_model_catalog();
+        assert!(!defaults.iter().any(|m| m.id == "gpt-5.3"));
     }
 
     #[test]
     fn default_catalog_excludes_legacy_openai_fallback_entries() {
         let defaults = default_model_catalog();
-        assert!(!defaults.iter().any(|(id, _)| id == "chatgpt-4o-latest"));
-        assert!(!defaults.iter().any(|(id, _)| id == "gpt-4-turbo"));
+        assert!(!defaults.iter().any(|m| m.id == "chatgpt-4o-latest"));
+        assert!(!defaults.iter().any(|m| m.id == "gpt-4-turbo"));
+    }
+
+    #[test]
+    fn should_warn_on_api_error_suppresses_expected_chat_endpoint_mismatches() {
+        let body = r#"{"error":{"message":"This model is only supported in v1/responses and not in v1/chat/completions."}}"#;
+        assert!(!should_warn_on_api_error(
+            reqwest::StatusCode::NOT_FOUND,
+            body
+        ));
+
+        let body = r#"{"error":{"message":"This is not a chat model and thus not supported in the v1/chat/completions endpoint."}}"#;
+        assert!(!should_warn_on_api_error(
+            reqwest::StatusCode::NOT_FOUND,
+            body
+        ));
+
+        let body = r#"{"error":{"message":"does not support chat"}}"#;
+        assert!(!should_warn_on_api_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn should_warn_on_api_error_keeps_real_failures_as_warnings() {
+        let body = r#"{"error":{"message":"invalid api key"}}"#;
+        assert!(should_warn_on_api_error(
+            reqwest::StatusCode::UNAUTHORIZED,
+            body
+        ));
+        assert!(should_warn_on_api_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn should_warn_on_api_error_suppresses_audio_model_errors() {
+        // Audio models return 400 with this message when probed via
+        // /v1/chat/completions. This should not produce a WARN.
+        let body = r#"{"error":{"message":"This model requires that either input content or output modality contain audio.","type":"invalid_request_error","param":"model","code":"invalid_value"}}"#;
+        assert!(!should_warn_on_api_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
     }
 }

@@ -949,7 +949,7 @@ pub struct LiveModelService {
     disabled: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<OnceCell<Arc<GatewayState>>>,
     detect_gate: Arc<Semaphore>,
-    priority_order: HashMap<String, usize>,
+    priority_models: Arc<RwLock<Vec<String>>>,
 }
 
 impl LiveModelService {
@@ -958,46 +958,64 @@ impl LiveModelService {
         disabled: Arc<RwLock<DisabledModelsStore>>,
         priority_models: Vec<String>,
     ) -> Self {
-        let mut priority_order = HashMap::new();
-        for (idx, model) in priority_models.into_iter().enumerate() {
-            let key = normalize_model_key(&model);
-            if !key.is_empty() {
-                let _ = priority_order.entry(key).or_insert(idx);
-            }
-        }
         Self {
             providers,
             disabled,
             state: Arc::new(OnceCell::new()),
             detect_gate: Arc::new(Semaphore::new(1)),
-            priority_order,
+            priority_models: Arc::new(RwLock::new(priority_models)),
         }
     }
 
-    fn priority_rank(&self, model: &moltis_agents::providers::ModelInfo) -> usize {
+    /// Shared handle to the priority models list. Pass this to services
+    /// that need to update model ordering at runtime (e.g. `save_model`).
+    pub fn priority_models_handle(&self) -> Arc<RwLock<Vec<String>>> {
+        Arc::clone(&self.priority_models)
+    }
+
+    fn build_priority_order(models: &[String]) -> HashMap<String, usize> {
+        let mut order = HashMap::new();
+        for (idx, model) in models.iter().enumerate() {
+            let key = normalize_model_key(model);
+            if !key.is_empty() {
+                let _ = order.entry(key).or_insert(idx);
+            }
+        }
+        order
+    }
+
+    fn priority_rank(
+        order: &HashMap<String, usize>,
+        model: &moltis_agents::providers::ModelInfo,
+    ) -> usize {
         let full = normalize_model_key(&model.id);
-        if let Some(rank) = self.priority_order.get(&full) {
+        if let Some(rank) = order.get(&full) {
             return *rank;
         }
         let raw = normalize_model_key(raw_model_id(&model.id));
-        if let Some(rank) = self.priority_order.get(&raw) {
+        if let Some(rank) = order.get(&raw) {
             return *rank;
         }
         let display = normalize_model_key(&model.display_name);
-        if let Some(rank) = self.priority_order.get(&display) {
+        if let Some(rank) = order.get(&display) {
             return *rank;
         }
         usize::MAX
     }
 
     fn prioritize_models<'a>(
-        &self,
+        order: &HashMap<String, usize>,
         models: impl Iterator<Item = &'a moltis_agents::providers::ModelInfo>,
     ) -> Vec<&'a moltis_agents::providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_agents::providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| (self.priority_rank(model), *idx));
+        ordered.sort_by_key(|(idx, model)| (Self::priority_rank(order, model), *idx));
         ordered.into_iter().map(|(_, model)| model).collect()
+    }
+
+    async fn priority_order(&self) -> HashMap<String, usize> {
+        let list = self.priority_models.read().await;
+        Self::build_priority_order(&list)
     }
 
     /// Set the gateway state reference for broadcasting model updates.
@@ -1026,7 +1044,9 @@ impl ModelService for LiveModelService {
     async fn list(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(
+        let order = self.priority_order().await;
+        let prioritized = Self::prioritize_models(
+            &order,
             reg.list_models()
                 .iter()
                 .filter(|m| !disabled.is_disabled(&m.id))
@@ -1037,11 +1057,14 @@ impl ModelService for LiveModelService {
             .copied()
             .map(|m| {
                 let supports_tools = reg.get(&m.id).is_some_and(|p| p.supports_tools());
+                let preferred = Self::priority_rank(&order, m) != usize::MAX;
                 serde_json::json!({
                     "id": m.id,
                     "provider": m.provider,
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
+                    "preferred": preferred,
+                    "createdAt": m.created_at,
                     "unsupported": false,
                     "unsupportedReason": Value::Null,
                     "unsupportedProvider": Value::Null,
@@ -1055,7 +1078,8 @@ impl ModelService for LiveModelService {
     async fn list_all(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(reg.list_models().iter());
+        let order = self.priority_order().await;
+        let prioritized = Self::prioritize_models(&order, reg.list_models().iter());
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1067,6 +1091,7 @@ impl ModelService for LiveModelService {
                     "provider": m.provider,
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
+                    "createdAt": m.created_at,
                     "disabled": disabled.is_disabled(&m.id),
                     "unsupported": unsupported.is_some(),
                     "unsupportedReason": unsupported.map(|u| u.detail.clone()),
@@ -1481,31 +1506,45 @@ impl ModelService for LiveModelService {
                 .ok_or_else(|| format!("unknown model: {model_id}"))?
         };
 
-        let probe = [ChatMessage::user("ping")];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            provider.complete(&probe, &[]),
-        )
+        // Use streaming and return as soon as the first token arrives.
+        // Dropping the stream closes the HTTP connection, which tells the
+        // provider to stop generating — effectively max_tokens: 1.
+        let probe = vec![ChatMessage::user("ping")];
+        let mut stream = provider.stream(probe);
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Some(event) = stream.next().await {
+                match event {
+                    StreamEvent::Delta(_) | StreamEvent::Done(_) => return Ok(()),
+                    StreamEvent::Error(err) => return Err(err),
+                    // Skip other events (tool calls, etc.) and keep waiting.
+                    _ => continue,
+                }
+            }
+            Err("stream ended without producing any output".to_string())
+        })
         .await;
 
+        // Drop the stream early to cancel the request on the provider side.
+        drop(stream);
+
         match result {
-            Ok(Ok(_)) => Ok(serde_json::json!({
+            Ok(Ok(())) => Ok(serde_json::json!({
                 "ok": true,
                 "modelId": model_id,
             })),
             Ok(Err(err)) => {
-                let error_text = err.to_string();
                 let error_obj =
-                    crate::chat_error::parse_chat_error(&error_text, Some(provider.name()));
+                    crate::chat_error::parse_chat_error(&err, Some(provider.name()));
                 let detail = error_obj
                     .get("detail")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(&error_text)
+                    .unwrap_or(&err)
                     .to_string();
 
                 Err(detail)
             },
-            Err(_) => Err("Connection timed out after 20 seconds".to_string()),
+            Err(_) => Err("Connection timed out after 10 seconds".to_string()),
         }
     }
 }
@@ -5710,31 +5749,30 @@ mod tests {
 
     #[test]
     fn priority_models_pin_raw_model_ids_first() {
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
-                &moltis_config::schema::ProvidersConfig::default(),
-            ))),
-            Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec!["gpt-5.2".into(), "claude-opus-4-5".into()],
-        );
-
         let m1 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
-        let ordered = service.prioritize_models(vec![&m3, &m2, &m1].into_iter());
+        let order = LiveModelService::build_priority_order(
+            &["gpt-5.2".into(), "claude-opus-4-5".into()],
+        );
+        let ordered =
+            LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -5742,31 +5780,30 @@ mod tests {
 
     #[test]
     fn priority_models_match_separator_variants() {
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
-                &moltis_config::schema::ProvidersConfig::default(),
-            ))),
-            Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec!["gpt 5.2".into(), "claude-sonnet-4.5".into()],
-        );
-
         let m1 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
-        let ordered = service.prioritize_models(vec![&m3, &m2, &m1].into_iter());
+        let order = LiveModelService::build_priority_order(
+            &["gpt 5.2".into(), "claude-sonnet-4.5".into()],
+        );
+        let ordered =
+            LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -5778,16 +5815,19 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "google".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
         let patterns: Vec<String> = vec!["opus".into()];
@@ -5802,6 +5842,7 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         assert!(model_matches_allowlist(&m, &[]));
     }
@@ -5812,6 +5853,7 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
 
         // Uppercase pattern matches lowercase model key.
@@ -5829,6 +5871,7 @@ mod tests {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
+            created_at: None,
         };
 
         let patterns = vec![normalize_model_key("gpt 5.2")];
@@ -5844,11 +5887,13 @@ mod tests {
             id: "openai::gpt-5.2".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
+            created_at: None,
         };
         let extended = moltis_agents::providers::ModelInfo {
             id: "openai::gpt-5.2-chat-latest".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2 Chat Latest".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("gpt 5.2")];
 
@@ -5862,6 +5907,7 @@ mod tests {
             id: "anthropic::claude-sonnet-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("sonnet 4.5")];
 
@@ -5874,11 +5920,13 @@ mod tests {
             id: "local-llm::qwen2.5-coder-7b-q4_k_m".into(),
             provider: "local-llm".into(),
             display_name: "Qwen2.5 Coder 7B".into(),
+            created_at: None,
         };
         let ollama = moltis_agents::providers::ModelInfo {
             id: "ollama::llama3.1:8b".into(),
             provider: "ollama".into(),
             display_name: "Llama 3.1 8B".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -5892,6 +5940,7 @@ mod tests {
             id: "local-ai::llama3.1:8b".into(),
             provider: "local-ai".into(),
             display_name: "Llama 3.1 8B".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -5910,6 +5959,7 @@ mod tests {
                 id: "anthropic::claude-opus-4-5".to_string(),
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus 4.5".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "anthropic".to_string(),
@@ -5921,6 +5971,7 @@ mod tests {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -5932,6 +5983,7 @@ mod tests {
                 id: "google::gemini-3-flash".to_string(),
                 provider: "google".to_string(),
                 display_name: "Gemini 3 Flash".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "google".to_string(),
@@ -5952,6 +6004,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_includes_created_at_in_response() {
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5.3".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT-5.3".to_string(),
+                created_at: Some(1700000000),
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5.3".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::babbage-002".to_string(),
+                provider: "openai".to_string(),
+                display_name: "babbage-002".to_string(),
+                created_at: Some(1600000000),
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::babbage-002".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "anthropic::claude-opus".to_string(),
+                provider: "anthropic".to_string(),
+                display_name: "Claude Opus".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "anthropic".to_string(),
+                id: "anthropic::claude-opus".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
+
+        let result = service.list().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+
+        // Verify createdAt is present and correct.
+        let gpt = arr.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
+        assert_eq!(gpt["createdAt"], 1700000000);
+
+        let babbage = arr.iter().find(|m| m["id"] == "openai::babbage-002").unwrap();
+        assert_eq!(babbage["createdAt"], 1600000000);
+
+        let claude = arr.iter().find(|m| m["id"] == "anthropic::claude-opus").unwrap();
+        assert!(claude["createdAt"].is_null());
+
+        // Also verify list_all includes createdAt.
+        let result_all = service.list_all().await.unwrap();
+        let arr_all = result_all.as_array().unwrap();
+        let gpt_all = arr_all.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
+        assert_eq!(gpt_all["createdAt"], 1700000000);
+    }
+
+    #[tokio::test]
     async fn list_includes_ollama_when_provider_is_aliased() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
@@ -5959,6 +6075,7 @@ mod tests {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -5970,6 +6087,7 @@ mod tests {
                 id: "local-ai::llama3.1:8b".to_string(),
                 provider: "local-ai".to_string(),
                 display_name: "Llama 3.1 8B".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "ollama".to_string(),
@@ -6067,6 +6185,7 @@ mod tests {
                 id: "unit-test-model".to_string(),
                 provider: "unit-test-provider".to_string(),
                 display_name: "Unit Test Model".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "unit-test-provider".to_string(),
@@ -6170,6 +6289,7 @@ mod tests {
                 id: "test-provider::test-model".to_string(),
                 provider: "test-provider".to_string(),
                 display_name: "Test Model".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "test-provider".to_string(),

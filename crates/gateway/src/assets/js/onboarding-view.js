@@ -424,11 +424,12 @@ function AuthStep({ onNext, skippable }) {
 // ── Identity step ───────────────────────────────────────────
 
 function IdentityStep({ onNext, onBack }) {
-	var [userName, setUserName] = useState("");
-	var [name, setName] = useState("Moltis");
-	var [emoji, setEmoji] = useState("\u{1f916}");
-	var [creature, setCreature] = useState("");
-	var [vibe, setVibe] = useState("");
+	var identity = getGon("identity") || {};
+	var [userName, setUserName] = useState(identity.user_name || "");
+	var [name, setName] = useState(identity.name || "Moltis");
+	var [emoji, setEmoji] = useState(identity.emoji || "\u{1f916}");
+	var [creature, setCreature] = useState(identity.creature || "");
+	var [vibe, setVibe] = useState(identity.vibe || "");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -619,7 +620,7 @@ function OnboardingProviderRow({
 					<input type="password" class="provider-key-input w-full"
 						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+						placeholder=${provider.keyOptional ? "(optional)" : "sk-..."} />
 					${
 						keyHelp
 							? html`<div class="text-xs text-[var(--muted)] mt-1">
@@ -649,7 +650,7 @@ function OnboardingProviderRow({
 						<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
 						<input type="text" class="provider-key-input w-full"
 							value=${model} onInput=${(e) => setModel(e.target.value)}
-							placeholder=${provider.name === "ollama" ? "llama3" : "model-id"} />
+							placeholder="model-id" />
 					</div>`
 						: null
 				}
@@ -796,6 +797,33 @@ function sortProviders(list) {
 	return list;
 }
 
+function normalizeProviderToken(value) {
+	return String(value || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "");
+}
+
+function modelBelongsToProvider(providerName, model) {
+	var needle = normalizeProviderToken(providerName);
+	if (!needle) return false;
+	var modelProvider = normalizeProviderToken(model?.provider);
+	if (modelProvider?.includes(needle)) {
+		return true;
+	}
+	var modelId = String(model?.id || "");
+	var modelPrefix = normalizeProviderToken(modelId.split("::")[0]);
+	return modelPrefix === needle;
+}
+
+function toModelSelectorRow(modelRow) {
+	return {
+		id: modelRow.id,
+		displayName: modelRow.displayName || modelRow.id,
+		provider: modelRow.provider,
+		supportsTools: modelRow.supportsTools,
+	};
+}
+
 function ProviderStep({ onNext, onBack }) {
 	var [providers, setProviders] = useState([]);
 	var [loading, setLoading] = useState(true);
@@ -813,8 +841,8 @@ function ProviderStep({ onNext, onBack }) {
 	var [modelTestError, setModelTestError] = useState(null);
 	var [modelSearch, setModelSearch] = useState("");
 
-	// Track when model selection originated from OAuth (provider name or null)
-	var [oauthModelSelect, setOauthModelSelect] = useState(null);
+	// Track provider whose credentials already exist and only model selection is needed.
+	var [modelSelectProvider, setModelSelectProvider] = useState(null);
 
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
@@ -888,7 +916,7 @@ function ProviderStep({ onNext, onBack }) {
 		setConfiguring(null);
 		setOauthProvider(null);
 		setLocalProvider(null);
-		setOauthModelSelect(null);
+		setModelSelectProvider(null);
 		setPhase("form");
 		setProviderModels([]);
 		setSelectedModel(null);
@@ -907,14 +935,34 @@ function ProviderStep({ onNext, onBack }) {
 		}
 	}
 
-	function onStartConfigure(name) {
+	async function loadModelsForProvider(providerName) {
+		var modelsRes = await sendRpc("models.list", {});
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		return allModels.filter((m) => modelBelongsToProvider(providerName, m)).map(toModelSelectorRow);
+	}
+
+	async function openModelSelectForConfiguredApiProvider(provider) {
+		if (provider.authType !== "api-key" || !provider.configured) return false;
+		var existingModels = await loadModelsForProvider(provider.name);
+		if (existingModels.length === 0) return false;
+		setModelSelectProvider(provider.name);
+		setConfiguring(provider.name);
+		setProviderModels(existingModels);
+		setPhase("selectModel");
+		return true;
+	}
+
+	async function onStartConfigure(name) {
 		closeAll();
 		var p = providers.find((pr) => pr.name === name);
 		if (!p) return;
 		if (p.authType === "api-key") {
 			setEndpoint(p.baseUrl || "");
 			setModel(p.model || "");
+			if (await openModelSelectForConfiguredApiProvider(p)) return;
 			setConfiguring(name);
+			setPhase("form");
+			return;
 		} else if (p.authType === "oauth") {
 			startOAuth(p);
 		} else if (p.authType === "local") {
@@ -928,7 +976,7 @@ function ProviderStep({ onNext, onBack }) {
 		e.preventDefault();
 		var p = providers.find((pr) => pr.name === configuring);
 		if (!p) return;
-		if (!apiKey.trim() && p.name !== "ollama") {
+		if (!(apiKey.trim() || p.keyOptional)) {
 			setError("API key is required.");
 			return;
 		}
@@ -939,7 +987,7 @@ function ProviderStep({ onNext, onBack }) {
 		setError(null);
 		setPhase("validating");
 
-		var keyVal = apiKey.trim() || "ollama";
+		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 
@@ -973,18 +1021,18 @@ function ProviderStep({ onNext, onBack }) {
 		setModelTestError(null);
 		setPhase("testingModel");
 
-		if (oauthModelSelect) {
-			// OAuth flow: credentials already saved, just test + save model preference.
+		if (modelSelectProvider) {
+			// Existing credentials flow: only test + save preferred model.
 			testModel(modelId).then((testResult) => {
 				if (!testResult.ok) {
 					setPhase("selectModel");
 					setModelTestError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
-				sendRpc("providers.save_model", { provider: oauthModelSelect, model: modelId }).then(() => {
+				sendRpc("providers.save_model", { provider: modelSelectProvider, model: modelId }).then(() => {
 					localStorage.setItem("moltis-model", modelId);
-					setValidationResults((prev) => ({ ...prev, [oauthModelSelect]: { ok: true } }));
-					setOauthModelSelect(null);
+					setValidationResults((prev) => ({ ...prev, [modelSelectProvider]: { ok: true } }));
+					setModelSelectProvider(null);
 					setConfiguring(null);
 					setPhase("form");
 					setProviderModels([]);
@@ -1002,7 +1050,7 @@ function ProviderStep({ onNext, onBack }) {
 		if (!p) return;
 
 		// Save credentials first so the model is available in the live registry.
-		var keyVal = apiKey.trim() || "ollama";
+		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 
@@ -1010,7 +1058,8 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
-		var effectiveModelVal = providerName === "ollama" && selectedModelId ? selectedModelId : modelVal;
+		var p = providers.find((pr) => pr.name === providerName);
+		var effectiveModelVal = p?.keyOptional && selectedModelId ? selectedModelId : modelVal;
 		var payload = { provider: providerName, apiKey: keyVal };
 		if (endpointVal) payload.baseUrl = endpointVal;
 		if (effectiveModelVal) payload.model = effectiveModelVal;
@@ -1033,10 +1082,7 @@ function ProviderStep({ onNext, onBack }) {
 						setModelTestError(testResult.error || "Model test failed. Try another model.");
 						return;
 					}
-					// For Ollama we persisted the selected model in save_key so probing works immediately.
-					if (providerName !== "ollama") {
-						await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
-					}
+					await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
 					if (modelServiceUnavailable) {
 						console.warn("models.test unavailable during onboarding, saved selected model without probe");
 					}
@@ -1092,25 +1138,15 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	async function onOAuthAuthenticated(providerName) {
-		var modelsRes = await sendRpc("models.list", {});
-		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var needle = providerName.replace(/-/g, "").toLowerCase();
-		var provModels = allModels.filter((m) => m.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+		var provModels = await loadModelsForProvider(providerName);
 
 		setOauthProvider(null);
 		setOauthInfo(null);
 
 		if (provModels.length > 0) {
-			setOauthModelSelect(providerName);
+			setModelSelectProvider(providerName);
 			setConfiguring(providerName);
-			setProviderModels(
-				provModels.map((m) => ({
-					id: m.id,
-					displayName: m.displayName || m.id,
-					provider: m.provider,
-					supportsTools: m.supportsTools,
-				})),
-			);
+			setProviderModels(provModels);
 			setPhase("selectModel");
 		} else {
 			sendRpc("models.detect_supported", {

@@ -973,12 +973,6 @@ pub async fn start_gateway(
     services = services.with_onboarding(Arc::new(
         crate::onboarding::GatewayOnboardingService::new(live_onboarding),
     ));
-    services.provider_setup = Arc::new(LiveProviderSetupService::new(
-        Arc::clone(&registry),
-        config.providers.clone(),
-        deploy_platform.clone(),
-    ));
-
     // Wire live local-llm service when the feature is enabled.
     #[cfg(feature = "local-llm")]
     let local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>> = {
@@ -1014,6 +1008,16 @@ pub async fn start_gateway(
     ));
     services = services
         .with_model(Arc::clone(&live_model_service) as Arc<dyn crate::services::ModelService>);
+
+    // Create provider setup after model service so we can share the
+    // priority models handle for live dropdown reordering.
+    let mut provider_setup = LiveProviderSetupService::new(
+        Arc::clone(&registry),
+        config.providers.clone(),
+        deploy_platform.clone(),
+    );
+    provider_setup.set_priority_models(live_model_service.priority_models_handle());
+    services.provider_setup = Arc::new(provider_setup);
 
     // Wire live MCP service.
     let mcp_configured_count;
@@ -2242,25 +2246,11 @@ pub async fn start_gateway(
     // Set the state on model service for broadcasting model update events.
     live_model_service.set_state(Arc::clone(&state));
 
-    // Run an initial background model support probe once after startup.
-    // Skip the initial pass when no providers are available yet.
-    if providers_available_at_startup {
-        let probe_service = Arc::clone(&live_model_service);
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            if let Err(err) = crate::services::ModelService::detect_supported(
-                &*probe_service,
-                serde_json::json!({
-                    "background": true,
-                    "reason": "startup",
-                }),
-            )
-            .await
-            {
-                warn!(error = %err, "initial model support probe failed");
-            }
-        });
-    }
+    // Model support probing is triggered on-demand by the web UI when the
+    // user opens the model selector (via the `models.detect_supported` RPC).
+    // With dynamic model discovery, automatic probing at startup is too
+    // expensive and noisy — non-chat models (image, audio, video) would
+    // generate spurious warnings.
 
     // Store heartbeat config on state for gon data and RPC methods.
     state.inner.write().await.heartbeat_config = config.heartbeat.clone();

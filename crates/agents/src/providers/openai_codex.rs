@@ -280,10 +280,10 @@ pub fn has_stored_tokens() -> bool {
     TokenStore::new().load("openai-codex").is_some() || load_codex_cli_tokens().is_some()
 }
 
-fn default_model_catalog() -> Vec<(String, String)> {
+fn default_model_catalog() -> Vec<super::DiscoveredModel> {
     DEFAULT_CODEX_MODELS
         .iter()
-        .map(|(id, name)| (id.to_string(), name.to_string()))
+        .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
         .collect()
 }
 
@@ -343,7 +343,7 @@ fn is_likely_model_id(model_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
-fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
+fn parse_model_entry(entry: &serde_json::Value) -> Option<super::DiscoveredModel> {
     let obj = entry.as_object()?;
     let model_id = obj
         .get("id")
@@ -362,10 +362,12 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
         .or_else(|| obj.get("title"))
         .and_then(serde_json::Value::as_str);
 
-    Some((
-        model_id.to_string(),
-        normalize_display_name(model_id, display_name),
-    ))
+    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+
+    Some(
+        super::DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
+            .with_created_at(created_at),
+    )
 }
 
 fn collect_candidate_arrays<'a>(
@@ -385,26 +387,36 @@ fn collect_candidate_arrays<'a>(
     }
 }
 
-fn parse_models_payload(value: &serde_json::Value) -> Vec<(String, String)> {
+fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel> {
     let mut candidates = Vec::new();
     collect_candidate_arrays(value, &mut candidates);
 
     let mut models = Vec::new();
     let mut seen = HashSet::new();
     for entry in candidates {
-        if let Some((id, display_name)) = parse_model_entry(entry)
-            && seen.insert(id.clone())
+        if let Some(model) = parse_model_entry(entry)
+            && seen.insert(model.id.clone())
         {
-            models.push((id, display_name));
+            models.push(model);
         }
     }
+
+    // Sort by created_at descending (newest first). Models without a
+    // timestamp are placed after those with one, preserving relative order.
+    models.sort_by(|a, b| match (a.created_at, b.created_at) {
+        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
+        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
     models
 }
 
 async fn fetch_models_from_api(
     access_token: String,
     account_id: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()?;
@@ -433,7 +445,7 @@ async fn fetch_models_from_api(
 fn fetch_models_blocking(
     access_token: String,
     account_id: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
@@ -461,7 +473,7 @@ fn load_access_token_and_account_id() -> anyhow::Result<(String, String)> {
     Ok((access_token, account_id))
 }
 
-pub fn live_models() -> anyhow::Result<Vec<(String, String)>> {
+pub fn live_models() -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let (access_token, account_id) = load_access_token_and_account_id()?;
     let models = fetch_models_blocking(access_token, account_id)?;
     info!(
@@ -471,7 +483,7 @@ pub fn live_models() -> anyhow::Result<Vec<(String, String)>> {
     Ok(models)
 }
 
-pub fn available_models() -> Vec<(String, String)> {
+pub fn available_models() -> Vec<super::DiscoveredModel> {
     let fallback = default_model_catalog();
     let discovered = match live_models() {
         Ok(models) => models,
@@ -486,13 +498,7 @@ pub fn available_models() -> Vec<(String, String)> {
         },
     };
 
-    let mut merged = discovered;
-    let mut seen: HashSet<String> = merged.iter().map(|(id, _)| id.clone()).collect();
-    for (id, display_name) in fallback {
-        if seen.insert(id.clone()) {
-            merged.push((id, display_name));
-        }
-    }
+    let merged = super::merge_discovered_with_fallback_catalog(discovered, fallback);
 
     info!(
         model_count = merged.len(),
@@ -1138,9 +1144,9 @@ mod tests {
         });
         let models = parse_models_payload(&value);
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].0, "gpt-5.3");
-        assert_eq!(models[0].1, "GPT-5.3");
-        assert_eq!(models[1].0, "gpt-5.2-codex");
+        assert_eq!(models[0].id, "gpt-5.3");
+        assert_eq!(models[0].display_name, "GPT-5.3");
+        assert_eq!(models[1].id, "gpt-5.2-codex");
     }
 
     #[test]
@@ -1155,9 +1161,9 @@ mod tests {
         });
         let models = parse_models_payload(&value);
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].0, "gpt-5.3-codex");
-        assert_eq!(models[0].1, "GPT 5.3 Codex");
-        assert_eq!(models[1].0, "gpt-5.1-codex-mini");
+        assert_eq!(models[0].id, "gpt-5.3-codex");
+        assert_eq!(models[0].display_name, "GPT 5.3 Codex");
+        assert_eq!(models[1].id, "gpt-5.1-codex-mini");
     }
 
     #[test]
@@ -1172,7 +1178,7 @@ mod tests {
         });
         let models = parse_models_payload(&value);
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].0, "gpt-5.3");
+        assert_eq!(models[0].id, "gpt-5.3");
     }
 
     #[test]
@@ -1185,7 +1191,7 @@ mod tests {
         });
         let models = parse_models_payload(&value);
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].0, "gpt-5.3");
-        assert_eq!(models[1].0, "gpt-5.3-codex");
+        assert_eq!(models[0].id, "gpt-5.3");
+        assert_eq!(models[1].id, "gpt-5.3-codex");
     }
 }

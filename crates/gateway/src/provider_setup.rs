@@ -342,8 +342,12 @@ pub(crate) fn config_with_saved_keys(
             entry.base_url = Some(url);
         }
 
-        if !saved.models.is_empty() && entry.models.is_empty() {
-            entry.models = normalize_model_list(saved.models);
+        if !saved.models.is_empty() {
+            // Merge: saved models (from "Choose model" UI) go first, then
+            // config models. normalize_model_list deduplicates.
+            let mut merged = saved.models;
+            merged.append(&mut entry.models);
+            entry.models = normalize_model_list(merged);
         }
     }
 
@@ -466,6 +470,8 @@ struct KnownProvider {
     default_base_url: Option<&'static str>,
     /// Whether this provider requires a model to be specified.
     requires_model: bool,
+    /// Whether the API key is optional (e.g. Ollama runs locally without auth).
+    key_optional: bool,
 }
 
 /// Build the known providers list at runtime, including local-llm if enabled.
@@ -478,6 +484,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("ANTHROPIC_API_KEY"),
             default_base_url: Some("https://api.anthropic.com"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "openai",
@@ -486,6 +493,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("OPENAI_API_KEY"),
             default_base_url: Some("https://api.openai.com/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "gemini",
@@ -494,6 +502,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("GEMINI_API_KEY"),
             default_base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "groq",
@@ -502,6 +511,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("GROQ_API_KEY"),
             default_base_url: Some("https://api.groq.com/openai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "xai",
@@ -510,6 +520,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("XAI_API_KEY"),
             default_base_url: Some("https://api.x.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "deepseek",
@@ -518,6 +529,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("DEEPSEEK_API_KEY"),
             default_base_url: Some("https://api.deepseek.com"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "mistral",
@@ -526,6 +538,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MISTRAL_API_KEY"),
             default_base_url: Some("https://api.mistral.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "openrouter",
@@ -533,7 +546,8 @@ fn known_providers() -> Vec<KnownProvider> {
             auth_type: "api-key",
             env_key: Some("OPENROUTER_API_KEY"),
             default_base_url: Some("https://openrouter.ai/api/v1"),
-            requires_model: true, // User must specify which model to use
+            requires_model: true,
+            key_optional: false,
         },
         KnownProvider {
             name: "cerebras",
@@ -542,6 +556,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("CEREBRAS_API_KEY"),
             default_base_url: Some("https://api.cerebras.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "minimax",
@@ -550,6 +565,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MINIMAX_API_KEY"),
             default_base_url: Some("https://api.minimax.chat/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "moonshot",
@@ -558,6 +574,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MOONSHOT_API_KEY"),
             default_base_url: Some("https://api.moonshot.cn/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "venice",
@@ -565,15 +582,17 @@ fn known_providers() -> Vec<KnownProvider> {
             auth_type: "api-key",
             env_key: Some("VENICE_API_KEY"),
             default_base_url: Some("https://api.venice.ai/api/v1"),
-            requires_model: true, // User must specify which model to use
+            requires_model: true,
+            key_optional: false,
         },
         KnownProvider {
             name: "ollama",
             display_name: "Ollama",
-            auth_type: "api-key", // API key is optional, handled specially in UI
+            auth_type: "api-key",
             env_key: Some("OLLAMA_API_KEY"),
             default_base_url: Some("http://localhost:11434"),
-            requires_model: false, // Models are discovered from the local Ollama instance
+            requires_model: false,
+            key_optional: true,
         },
         KnownProvider {
             name: "openai-codex",
@@ -582,6 +601,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "github-copilot",
@@ -590,6 +610,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "kimi-code",
@@ -598,6 +619,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("KIMI_API_KEY"),
             default_base_url: Some("https://api.kimi.com/coding/v1"),
             requires_model: false,
+            key_optional: false,
         },
     ];
 
@@ -612,6 +634,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: true,
+            key_optional: false,
         });
         p
     };
@@ -887,6 +910,9 @@ pub struct LiveProviderSetupService {
     /// When set, local-only providers (local-llm, ollama) are hidden from
     /// the available list because they cannot run on cloud VMs.
     deploy_platform: Option<String>,
+    /// Shared priority models list from `LiveModelService`. Updated by
+    /// `save_model` so the dropdown ordering reflects the latest preference.
+    priority_models: Option<Arc<RwLock<Vec<String>>>>,
 }
 
 #[derive(Clone)]
@@ -909,7 +935,14 @@ impl LiveProviderSetupService {
             key_store: KeyStore::new(),
             pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
+            priority_models: None,
         }
+    }
+
+    /// Wire the shared priority models handle from `LiveModelService` so
+    /// `save_model` can update dropdown ordering at runtime.
+    pub fn set_priority_models(&mut self, handle: Arc<RwLock<Vec<String>>>) {
+        self.priority_models = Some(handle);
     }
 
     fn config_snapshot(&self) -> ProvidersConfig {
@@ -1201,6 +1234,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                         "models": models,
                         "model": model,
                         "requiresModel": provider.requires_model,
+                        "keyOptional": provider.key_optional,
                     }),
                 ))
             })
@@ -1556,7 +1590,7 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn validate_key(&self, params: Value) -> ServiceResult {
-        use moltis_agents::model::{ChatMessage, LlmProvider};
+        use moltis_agents::model::ChatMessage;
 
         let provider_name = params
             .get("provider")
@@ -1664,66 +1698,102 @@ impl ProviderSetupService for LiveProviderSetupService {
             }));
         }
 
-        // Probe the first available model with a "ping" message.
-        let probe_model = &models[0];
-        let llm_provider: Arc<dyn LlmProvider> = match temp_registry.get(&probe_model.id) {
-            Some(p) => p,
-            None => {
-                return Ok(serde_json::json!({
-                    "valid": false,
-                    "error": "Could not instantiate provider for probing.",
-                }));
-            },
-        };
-
         let probe = [ChatMessage::user("ping")];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            llm_provider.complete(&probe, &[]),
-        )
-        .await;
+        let mut probe_attempted = false;
+        let mut unsupported_errors = Vec::new();
+        let mut last_error: Option<String> = None;
+        let mut probe_succeeded = false;
 
-        match result {
-            Ok(Ok(_)) => {
-                // Build model list for the frontend.
-                let model_list: Vec<serde_json::Value> = models
-                    .iter()
-                    .map(|m| {
-                        let supports_tools =
-                            temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());
-                        serde_json::json!({
-                            "id": m.id,
-                            "displayName": m.display_name,
-                            "provider": m.provider,
-                            "supportsTools": supports_tools,
-                        })
-                    })
-                    .collect();
+        // Try multiple models because provider catalogs can include endpoint-
+        // incompatible IDs. We only need one successful probe to validate creds.
+        for probe_model in &models {
+            let Some(llm_provider) = temp_registry.get(&probe_model.id) else {
+                continue;
+            };
 
-                Ok(serde_json::json!({
-                    "valid": true,
-                    "models": model_list,
-                }))
-            },
-            Ok(Err(err)) => {
-                let error_text = err.to_string();
-                let error_obj =
-                    crate::chat_error::parse_chat_error(&error_text, Some(provider_name));
-                let detail = error_obj
-                    .get("detail")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&error_text);
+            probe_attempted = true;
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                llm_provider.complete(&probe, &[]),
+            )
+            .await;
 
-                Ok(serde_json::json!({
-                    "valid": false,
-                    "error": detail,
-                }))
-            },
-            Err(_) => Ok(serde_json::json!({
-                "valid": false,
-                "error": "Connection timed out after 20 seconds. Check your endpoint URL and try again.",
-            })),
+            match result {
+                Ok(Ok(_)) => {
+                    probe_succeeded = true;
+                    break;
+                },
+                Ok(Err(err)) => {
+                    let error_text = err.to_string();
+                    let error_obj =
+                        crate::chat_error::parse_chat_error(&error_text, Some(provider_name));
+                    let detail = error_obj
+                        .get("detail")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&error_text)
+                        .to_string();
+                    let is_unsupported =
+                        error_obj.get("type").and_then(|v| v.as_str()) == Some("unsupported_model");
+                    if is_unsupported {
+                        unsupported_errors.push(detail);
+                        continue;
+                    }
+                    last_error = Some(detail);
+                    break;
+                },
+                Err(_) => {
+                    last_error = Some(
+                        "Connection timed out after 20 seconds. Check your endpoint URL and try again."
+                            .to_string(),
+                    );
+                    break;
+                },
+            }
         }
+
+        if probe_succeeded {
+            // Build model list for the frontend.
+            let model_list: Vec<serde_json::Value> = models
+                .iter()
+                .map(|m| {
+                    let supports_tools =
+                        temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());
+                    serde_json::json!({
+                        "id": m.id,
+                        "displayName": m.display_name,
+                        "provider": m.provider,
+                        "supportsTools": supports_tools,
+                    })
+                })
+                .collect();
+
+            return Ok(serde_json::json!({
+                "valid": true,
+                "models": model_list,
+            }));
+        }
+
+        if !probe_attempted {
+            return Ok(serde_json::json!({
+                "valid": false,
+                "error": "Could not instantiate provider for probing.",
+            }));
+        }
+
+        if let Some(error) = last_error {
+            return Ok(serde_json::json!({
+                "valid": false,
+                "error": error,
+            }));
+        }
+
+        let unsupported_error = unsupported_errors.into_iter().next().unwrap_or_else(|| {
+            "No supported chat models were found for this provider.".to_string()
+        });
+        Ok(serde_json::json!({
+            "valid": false,
+            "error": unsupported_error,
+        }))
     }
 
     async fn save_model(&self, params: Value) -> ServiceResult {
@@ -1743,12 +1813,85 @@ impl ProviderSetupService for LiveProviderSetupService {
             return Err(format!("unknown provider: {provider_name}"));
         }
 
+        // Prepend chosen model to existing saved models so it appears first,
+        // while preserving any previously chosen models.
+        let mut models = vec![model.to_string()];
+        if let Some(existing) = self.key_store.load_config(provider_name) {
+            models.extend(existing.models);
+        }
+
         self.key_store
-            .save_config(provider_name, None, None, Some(vec![model.to_string()]))?;
+            .save_config(provider_name, None, None, Some(models))?;
+
+        // Rebuild the provider registry so the new model ordering takes
+        // effect immediately (models.list reflects updated preferences).
+        let effective = self.effective_config();
+        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let mut reg = self.registry.write().await;
+        *reg = new_registry;
+
+        // Update the cross-provider priority list so the dropdown puts
+        // the chosen model at the top immediately.
+        if let Some(ref priority) = self.priority_models {
+            let mut list = priority.write().await;
+            // Remove any existing occurrence and prepend.
+            let normalized = model.to_string();
+            list.retain(|m| m != &normalized);
+            list.insert(0, normalized);
+        }
 
         info!(
             provider = provider_name,
-            model, "saved model preference for provider"
+            model, "saved model preference and rebuilt registry"
+        );
+        Ok(serde_json::json!({ "ok": true }))
+    }
+
+    async fn save_models(&self, params: Value) -> ServiceResult {
+        let provider_name = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'provider' parameter".to_string())?;
+
+        let models: Vec<String> = params
+            .get("models")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "missing 'models' array parameter".to_string())?
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+
+        // Validate provider exists.
+        let known = known_providers();
+        if !known.iter().any(|p| p.name == provider_name) {
+            return Err(format!("unknown provider: {provider_name}"));
+        }
+
+        self.key_store
+            .save_config(provider_name, None, None, Some(models.clone()))?;
+
+        // Rebuild the provider registry so the new model ordering takes
+        // effect immediately.
+        let effective = self.effective_config();
+        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let mut reg = self.registry.write().await;
+        *reg = new_registry;
+
+        // Update the cross-provider priority list.
+        if let Some(ref priority) = self.priority_models {
+            let mut list = priority.write().await;
+            // Prepend all selected models in order, removing any existing
+            // occurrences to avoid duplicates.
+            for m in models.iter().rev() {
+                list.retain(|existing| existing != m);
+                list.insert(0, m.clone());
+            }
+        }
+
+        info!(
+            provider = provider_name,
+            count = models.len(),
+            "saved model preferences and rebuilt registry"
         );
         Ok(serde_json::json!({ "ok": true }))
     }

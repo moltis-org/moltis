@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-select preferred models per provider**: The LLMs page now has a
+  "Preferred Models" button per provider that opens a multi-select modal.
+  Selected models are pinned at the top of the session model dropdown.
+  New `providers.save_models` RPC accepts multiple model IDs at once.
+
+### Changed
+
+- **Model discovery uses `DiscoveredModel` struct**: Replaced `(String, String)`
+  tuples with a typed `DiscoveredModel` struct across all providers (OpenAI,
+  GitHub Copilot, OpenAI Codex). The struct carries an optional `created_at`
+  timestamp from the `/v1/models` API, enabling discovered models to be sorted
+  newest-first. Preferred/configured models remain pinned at the top.
+- **Removed OpenAI-specific model name filtering from discovery**: The
+  `/v1/models` response is no longer filtered by OpenAI naming conventions
+  (`gpt-*`, `o1`, etc.). All valid model IDs from any provider are now
+  accepted. This fixes model discovery for third-party providers like
+  Moonshot whose model IDs don't follow OpenAI naming.
+- **Disabled automatic model probe at startup**: The background chat
+  completion probe that checked which models are supported is now
+  triggered on-demand by the web UI instead of running automatically
+  2 seconds after startup. With dynamic model discovery, the startup
+  probe was expensive and noisy (non-chat models like image, audio,
+  and video would log spurious warnings).
+- **Model test uses streaming for faster feedback**: The "Testing..."
+  probe when selecting a model now uses streaming and returns on the
+  first token instead of waiting for a full non-streaming response.
+  Timeout reduced from 20s to 10s.
+- **Chosen models merge with config-defined priority**: Models selected
+  via the UI are prepended to the saved models list and merged with
+  config-defined preferred models, so both sources contribute to
+  ordering.
+- **Dynamic cross-provider priority list**: The model dropdown priority
+  is now a shared `Arc<RwLock<Vec<String>>>` updated at runtime when
+  models are saved, instead of a static `HashMap` built once at startup.
+- **Replaced hardcoded Ollama checks with `keyOptional` metadata**: JS
+  files no longer check `provider.name === "ollama"` for behavior.
+  Instead, the backend exposes a `keyOptional` field on provider
+  metadata, making the UI provider-agnostic.
+
 ## [0.8.14] - 2026-02-11
 
 ### Security

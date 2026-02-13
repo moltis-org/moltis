@@ -148,10 +148,24 @@ fn extract_message(obj: &Value) -> Option<&str> {
 
 fn is_unsupported_model_message(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
+
+    // Non-chat modality errors (audio, image, video models probed via chat
+    // completion). These don't mention "model" or "supported" but clearly
+    // indicate the model isn't meant for /v1/chat/completions.
+    if lower.contains("input content or output modality contain audio")
+        || lower.contains("requires audio")
+    {
+        return true;
+    }
+
     let has_model = lower.contains("model");
     let unsupported = lower.contains("not supported")
         || lower.contains("unsupported")
-        || lower.contains("not available");
+        || lower.contains("not available")
+        || lower.contains("not a chat model")
+        || lower.contains("does not support chat")
+        || lower.contains("only supported in v1/responses")
+        || lower.contains("v1/chat/completions");
     has_model && unsupported
 }
 
@@ -296,6 +310,21 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_responses_only_message_maps_to_unsupported_model() {
+        let raw = r#"OpenAI API error HTTP 404: {"error":{"message":"This model is only supported in v1/responses and not in v1/chat/completions."}}"#;
+        let result = parse_chat_error(raw, Some("openai"));
+        assert_eq!(result["type"], "unsupported_model");
+        assert_eq!(result["provider"], "openai");
+    }
+
+    #[test]
+    fn test_openai_not_chat_model_message_maps_to_unsupported_model() {
+        let raw = r#"OpenAI API error HTTP 404: {"error":{"message":"This is not a chat model and thus not supported in the v1/chat/completions endpoint."}}"#;
+        let result = parse_chat_error(raw, Some("openai"));
+        assert_eq!(result["type"], "unsupported_model");
+    }
+
+    #[test]
     fn test_provider_included() {
         let raw = "Connection timed out";
         let result = parse_chat_error(raw, Some("anthropic"));
@@ -330,5 +359,14 @@ mod tests {
         let raw = "The requested model is unsupported for this account";
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "unsupported_model");
+    }
+
+    #[test]
+    fn test_audio_model_error_maps_to_unsupported_model() {
+        // Audio models return this when probed via /v1/chat/completions.
+        let raw = r#"OpenAI API error HTTP 400: {"error":{"message":"This model requires that either input content or output modality contain audio.","type":"invalid_request_error","param":"model","code":"invalid_value"}}"#;
+        let result = parse_chat_error(raw, Some("openai"));
+        assert_eq!(result["type"], "unsupported_model");
+        assert_eq!(result["provider"], "openai");
     }
 }

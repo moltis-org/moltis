@@ -33,6 +33,34 @@ use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret, tokio_stream
 
 use crate::model::{ChatMessage, LlmProvider, StreamEvent};
 
+/// A model discovered from a provider API (e.g. `/v1/models`).
+///
+/// Replaces bare `(String, String)` tuples so that optional metadata
+/// such as `created_at` can travel alongside the id/display_name pair.
+#[derive(Debug, Clone)]
+pub struct DiscoveredModel {
+    pub id: String,
+    pub display_name: String,
+    /// Unix timestamp from the API (e.g. OpenAI `created` field).
+    /// Used to sort models newest-first. `None` for static catalog entries.
+    pub created_at: Option<i64>,
+}
+
+impl DiscoveredModel {
+    pub fn new(id: impl Into<String>, display_name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            display_name: display_name.into(),
+            created_at: None,
+        }
+    }
+
+    pub fn with_created_at(mut self, created_at: Option<i64>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
+
 const MODEL_ID_NAMESPACE_SEP: &str = "::";
 
 #[must_use]
@@ -90,9 +118,10 @@ fn should_fetch_models(config: &ProvidersConfig, provider: &str) -> bool {
 
 fn merge_preferred_and_discovered_models(
     preferred: Vec<String>,
-    discovered: Vec<(String, String)>,
-) -> Vec<(String, String)> {
-    let discovered_by_id: HashMap<String, String> = discovered.iter().cloned().collect();
+    discovered: Vec<DiscoveredModel>,
+) -> Vec<DiscoveredModel> {
+    let discovered_by_id: HashMap<String, &DiscoveredModel> =
+        discovered.iter().map(|m| (m.id.clone(), m)).collect();
     let mut merged = Vec::new();
     let mut seen = HashSet::new();
 
@@ -100,21 +129,56 @@ fn merge_preferred_and_discovered_models(
         if !seen.insert(model_id.clone()) {
             continue;
         }
-        let display = discovered_by_id
-            .get(&model_id)
-            .cloned()
-            .unwrap_or_else(|| model_id.clone());
-        merged.push((model_id, display));
+        let model = if let Some(d) = discovered_by_id.get(&model_id) {
+            DiscoveredModel {
+                id: model_id,
+                display_name: d.display_name.clone(),
+                created_at: d.created_at,
+            }
+        } else {
+            DiscoveredModel::new(model_id.clone(), model_id)
+        };
+        merged.push(model);
     }
 
-    for (model_id, display) in discovered {
-        if !seen.insert(model_id.clone()) {
+    for model in discovered {
+        if !seen.insert(model.id.clone()) {
             continue;
         }
-        merged.push((model_id, display));
+        merged.push(model);
     }
 
     merged
+}
+
+fn merge_discovered_with_fallback_catalog(
+    discovered: Vec<DiscoveredModel>,
+    fallback: Vec<DiscoveredModel>,
+) -> Vec<DiscoveredModel> {
+    if discovered.is_empty() {
+        return fallback;
+    }
+
+    let fallback_by_id: HashMap<String, DiscoveredModel> =
+        fallback.into_iter().map(|m| (m.id.clone(), m)).collect();
+    discovered
+        .into_iter()
+        .map(|m| {
+            let display_name = if m.display_name.trim().is_empty() {
+                fallback_by_id
+                    .get(&m.id)
+                    .map(|fb| fb.display_name.clone())
+                    .unwrap_or_else(|| m.id.clone())
+            } else {
+                m.display_name
+            };
+            DiscoveredModel {
+                id: m.id,
+                display_name,
+                created_at: m.created_at,
+            }
+        })
+        .collect()
 }
 
 fn normalize_ollama_api_base_url(base_url: &str) -> String {
@@ -133,9 +197,7 @@ struct OllamaTagsPayload {
     models: Vec<OllamaTagEntry>,
 }
 
-async fn discover_ollama_models_from_api(
-    base_url: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+async fn discover_ollama_models_from_api(base_url: String) -> anyhow::Result<Vec<DiscoveredModel>> {
     let api_base = normalize_ollama_api_base_url(&base_url);
     let endpoint = format!("{}/api/tags", api_base.trim_end_matches('/'));
     let response = reqwest::Client::builder()
@@ -151,19 +213,19 @@ async fn discover_ollama_models_from_api(
     }
 
     let payload: OllamaTagsPayload = response.json().await?;
-    let mut models: Vec<(String, String)> = payload
+    let mut models: Vec<DiscoveredModel> = payload
         .models
         .into_iter()
         .map(|entry| entry.name.trim().to_string())
         .filter(|model| !model.is_empty())
-        .map(|model| (model.clone(), model))
+        .map(|model| DiscoveredModel::new(model.clone(), model))
         .collect();
-    models.sort_by(|left, right| left.0.cmp(&right.0));
-    models.dedup_by(|left, right| left.0 == right.0);
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    models.dedup_by(|left, right| left.id == right.id);
     Ok(models)
 }
 
-fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<(String, String)>> {
+fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let base_url = base_url.to_string();
     std::thread::spawn(move || {
@@ -326,6 +388,9 @@ pub struct ModelInfo {
     pub id: String,
     pub provider: String,
     pub display_name: String,
+    /// Unix timestamp from the provider API (e.g. OpenAI `created` field).
+    /// `None` for static catalog entries.
+    pub created_at: Option<i64>,
 }
 
 /// Known Anthropic Claude models (model_id, display_name).
@@ -424,8 +489,8 @@ trait DynamicModelDiscovery {
     fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool;
     fn configured_models(&self, config: &ProvidersConfig) -> Vec<String>;
     fn should_fetch_models(&self, config: &ProvidersConfig) -> bool;
-    fn available_models(&self) -> Vec<(String, String)>;
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>>;
+    fn available_models(&self) -> Vec<DiscoveredModel>;
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>>;
     fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider>;
     fn display_name(&self, model_id: &str, discovered: &str) -> String;
 }
@@ -451,11 +516,11 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
         should_fetch_models(config, self.provider_name())
     }
 
-    fn available_models(&self) -> Vec<(String, String)> {
+    fn available_models(&self) -> Vec<DiscoveredModel> {
         openai_codex::available_models()
     }
 
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
         openai_codex::live_models()
     }
 
@@ -489,11 +554,11 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
         should_fetch_models(config, self.provider_name())
     }
 
-    fn available_models(&self) -> Vec<(String, String)> {
+    fn available_models(&self) -> Vec<DiscoveredModel> {
         github_copilot::available_models()
     }
 
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
         github_copilot::live_models()
     }
 
@@ -565,8 +630,8 @@ impl ProviderRegistry {
     fn desired_models_for_dynamic_source(
         source: &dyn DynamicModelDiscovery,
         config: &ProvidersConfig,
-        catalog: Vec<(String, String)>,
-    ) -> Option<Vec<(String, String)>> {
+        catalog: Vec<DiscoveredModel>,
+    ) -> Option<Vec<DiscoveredModel>> {
         if !source.is_enabled_and_authenticated(config) {
             return None;
         }
@@ -580,22 +645,23 @@ impl ProviderRegistry {
         &mut self,
         source: &dyn DynamicModelDiscovery,
         config: &ProvidersConfig,
-        catalog: Vec<(String, String)>,
+        catalog: Vec<DiscoveredModel>,
     ) {
         let Some(models) = Self::desired_models_for_dynamic_source(source, config, catalog) else {
             return;
         };
 
-        for (model_id, discovered_display) in models {
-            if self.has_provider_model(source.provider_name(), &model_id) {
+        for model in models {
+            if self.has_provider_model(source.provider_name(), &model.id) {
                 continue;
             }
-            let provider = source.build_provider(model_id.clone());
+            let provider = source.build_provider(model.id.clone());
             self.register(
                 ModelInfo {
-                    id: model_id.clone(),
+                    id: model.id.clone(),
                     provider: source.provider_name().to_string(),
-                    display_name: source.display_name(&model_id, &discovered_display),
+                    display_name: source.display_name(&model.id, &model.display_name),
+                    created_at: model.created_at,
                 },
                 provider,
             );
@@ -635,14 +701,15 @@ impl ProviderRegistry {
 
         let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = next_models
             .into_iter()
-            .map(|(model_id, discovered_display)| {
+            .map(|model| {
                 (
                     ModelInfo {
-                        id: model_id.clone(),
+                        id: model.id.clone(),
                         provider: source.provider_name().to_string(),
-                        display_name: source.display_name(&model_id, &discovered_display),
+                        display_name: source.display_name(&model.id, &model.display_name),
+                        created_at: model.created_at,
                     },
-                    source.build_provider(model_id),
+                    source.build_provider(model.id),
                 )
             })
             .collect();
@@ -812,6 +879,7 @@ impl ProviderRegistry {
                     id: model_id,
                     provider: genai_provider_name,
                     display_name: display_name.into(),
+                    created_at: None,
                 },
                 provider,
             );
@@ -857,6 +925,7 @@ impl ProviderRegistry {
                 id: model_id,
                 provider: provider_label,
                 display_name: "GPT-4o (async-openai)".into(),
+                created_at: None,
             },
             provider,
         );
@@ -964,13 +1033,15 @@ impl ProviderRegistry {
         let discovered = if should_fetch_models(config, "kimi-code") {
             kimi_code::KIMI_CODE_MODELS
                 .iter()
-                .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+                .map(|(id, name)| DiscoveredModel::new(*id, *name))
                 .collect()
         } else {
             Vec::new()
         };
         let models = merge_preferred_and_discovered_models(preferred, discovered);
-        for (model_id, display_name) in models {
+        for model in models {
+            let (model_id, display_name, created_at) =
+                (model.id, model.display_name, model.created_at);
             if self.has_provider_model("kimi-code", &model_id) {
                 continue;
             }
@@ -980,6 +1051,7 @@ impl ProviderRegistry {
                     id: model_id,
                     provider: "kimi-code".into(),
                     display_name,
+                    created_at,
                 },
                 provider,
             );
@@ -1056,6 +1128,7 @@ impl ProviderRegistry {
                     id: model_id,
                     provider: "local-llm".into(),
                     display_name,
+                    created_at: None,
                 },
                 provider,
             );
@@ -1080,14 +1153,16 @@ impl ProviderRegistry {
             let discovered = if should_fetch_models(config, "anthropic") {
                 ANTHROPIC_MODELS
                     .iter()
-                    .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
                     .collect()
             } else {
                 Vec::new()
             };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
 
-            for (model_id, display_name) in models {
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
@@ -1102,6 +1177,7 @@ impl ProviderRegistry {
                         id: model_id,
                         provider: provider_label.clone(),
                         display_name,
+                        created_at,
                     },
                     provider,
                 );
@@ -1129,7 +1205,9 @@ impl ProviderRegistry {
             };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
 
-            for (model_id, display_name) in models {
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
@@ -1144,6 +1222,7 @@ impl ProviderRegistry {
                         id: model_id,
                         provider: provider_label.clone(),
                         display_name,
+                        created_at,
                     },
                     provider,
                 );
@@ -1189,7 +1268,11 @@ impl ProviderRegistry {
                     continue;
                 }
             }
-            let discovered = if should_fetch_models(config, def.config_name) {
+            // "Bring your own model" providers (empty static catalog, no
+            // configured models) skip discovery — the user must pick a model.
+            let skip_discovery =
+                def.models.is_empty() && preferred.is_empty() && def.config_name != "ollama";
+            let discovered = if !skip_discovery && should_fetch_models(config, def.config_name) {
                 if def.config_name == "ollama" {
                     match discover_ollama_models(&base_url) {
                         Ok(models) => models,
@@ -1201,7 +1284,7 @@ impl ProviderRegistry {
                             );
                             def.models
                                 .iter()
-                                .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
                                 .collect()
                         },
                     }
@@ -1216,7 +1299,7 @@ impl ProviderRegistry {
                             );
                             def.models
                                 .iter()
-                                .map(|(id, name)| ((*id).to_string(), (*name).to_string()))
+                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
                                 .collect()
                         },
                     }
@@ -1225,7 +1308,9 @@ impl ProviderRegistry {
                 Vec::new()
             };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
-            for (model_id, display_name) in models {
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
@@ -1240,6 +1325,7 @@ impl ProviderRegistry {
                         id: model_id,
                         provider: provider_label.clone(),
                         display_name,
+                        created_at,
                     },
                     provider,
                 );
@@ -1498,6 +1584,34 @@ mod tests {
     }
 
     #[test]
+    fn merge_discovered_with_fallback_keeps_discovered_when_non_empty() {
+        let merged = merge_discovered_with_fallback_catalog(
+            vec![
+                DiscoveredModel::new("live-a", "Live A"),
+                DiscoveredModel::new("live-b", "Live B"),
+            ],
+            vec![
+                DiscoveredModel::new("live-a", "Fallback A"),
+                DiscoveredModel::new("fallback-only", "Fallback Only"),
+            ],
+        );
+
+        let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["live-a", "live-b"]);
+    }
+
+    #[test]
+    fn merge_discovered_with_fallback_uses_fallback_when_discovered_empty() {
+        let merged = merge_discovered_with_fallback_catalog(Vec::new(), vec![
+            DiscoveredModel::new("fallback-a", "Fallback A"),
+            DiscoveredModel::new("fallback-b", "Fallback B"),
+        ]);
+
+        let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["fallback-a", "fallback-b"]);
+    }
+
+    #[test]
     fn model_lists_not_empty() {
         assert!(!ANTHROPIC_MODELS.is_empty());
         assert!(!openai::default_model_catalog().is_empty());
@@ -1510,7 +1624,7 @@ mod tests {
     #[test]
     fn model_lists_have_unique_ids() {
         let openai_models = openai::default_model_catalog();
-        let mut openai_ids: Vec<&str> = openai_models.iter().map(|(id, _)| id.as_str()).collect();
+        let mut openai_ids: Vec<&str> = openai_models.iter().map(|m| m.id.as_str()).collect();
         openai_ids.sort();
         openai_ids.dedup();
         assert_eq!(
@@ -1595,6 +1709,7 @@ mod tests {
                 id: "test-model".into(),
                 provider: "test".into(),
                 display_name: "Test Model".into(),
+                created_at: None,
             },
             provider,
         );
@@ -1622,6 +1737,7 @@ mod tests {
                 id: "gpt-5.2-codex".into(),
                 provider: "openai-codex".into(),
                 display_name: "GPT-5.2 Codex (Codex/OAuth)".into(),
+                created_at: None,
             },
             provider,
         );
@@ -1889,6 +2005,7 @@ mod tests {
                     id: id.into(),
                     provider: prov.into(),
                     display_name: id.into(),
+                    created_at: None,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),

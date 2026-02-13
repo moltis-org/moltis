@@ -128,6 +128,7 @@ const WRITE_METHODS: &[&str] = &[
     "models.test",
     "providers.save_key",
     "providers.save_model",
+    "providers.save_models",
     "providers.validate_key",
     "providers.remove_key",
     "providers.oauth.start",
@@ -3163,6 +3164,19 @@ impl MethodRegistry {
                         .services
                         .provider_setup
                         .save_model(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.save_models",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .provider_setup
+                        .save_models(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

@@ -180,7 +180,12 @@ function groupProviderRows(models, metaMap) {
 		return a.providerDisplayName.localeCompare(b.providerDisplayName);
 	});
 	for (var providerGroup of result) {
-		providerGroup.models.sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
+		providerGroup.models.sort((a, b) => {
+			var aTime = a.createdAt || 0;
+			var bTime = b.createdAt || 0;
+			if (aTime !== bTime) return bTime - aTime;
+			return (a.displayName || a.id).localeCompare(b.displayName || b.id);
+		});
 	}
 	return result;
 }
@@ -229,13 +234,11 @@ function ProviderSection(props) {
 		});
 	}
 
-	var hasModelsNoSelection = group.models.length > 0 && !group.selectedModel;
-
-	function onSelectModel() {
+	function onSelectModels() {
 		openModelSelectorForProvider(group.provider, group.providerDisplayName);
 	}
 
-	return html`<div class="max-w-form py-1">
+	return html`<div id=${`provider-${group.provider}`} class="max-w-form py-1">
 		<div class="flex items-center justify-between gap-3">
 			<div class="flex items-center gap-2 min-w-0">
 				<h3 class="text-base font-semibold text-[var(--text-strong)] truncate">${group.providerDisplayName}</h3>
@@ -244,7 +247,7 @@ function ProviderSection(props) {
 				</span>
 			</div>
 			<div class="flex gap-2 shrink-0">
-				${hasModelsNoSelection ? html`<button class="provider-btn provider-btn-sm" onClick=${onSelectModel}>Select Model</button>` : null}
+				${group.models.length > 0 ? html`<button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onSelectModels}>Preferred Models</button>` : null}
 				<button
 					class="provider-btn provider-btn-danger provider-btn-sm"
 					disabled=${deletingProvider.value === group.provider}
@@ -280,7 +283,6 @@ function ProviderSection(props) {
 	</div>`;
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Provider page UI composition keeps related sections in one render function.
 function ProvidersPage() {
 	useEffect(() => {
 		if (connected.value) fetchProviders();
@@ -344,18 +346,36 @@ function ProvidersPage() {
 							: null
 				}
 
-				<div style="max-width:600px;">
-				${
-					loading.value && configuredModels.value.length === 0
-						? html`<div class="text-xs text-[var(--muted)]">Loading…</div>`
-						: configuredModels.value.length === 0
-							? html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No LLM providers configured yet.</div>`
-							: html`<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
-								${groupProviderRows(configuredModels.value, providerMetaSig.value).map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
-							</div>`
-				}
-
-				</div>
+				${(() => {
+					var groups = groupProviderRows(configuredModels.value, providerMetaSig.value);
+					if (loading.value && configuredModels.value.length === 0) {
+						return html`<div class="text-xs text-[var(--muted)]">Loading…</div>`;
+					}
+					if (configuredModels.value.length === 0) {
+						return html`<div class="text-xs text-[var(--muted)]" style="padding:12px 0;">No LLM providers configured yet.</div>`;
+					}
+					return html`<div style="max-width:600px;">
+						${
+							groups.length > 1
+								? html`<div class="flex flex-wrap gap-1 mb-3">
+							${groups.map(
+								(g) => html`<button
+								key=${g.provider}
+								class="text-xs px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-strong)] cursor-pointer"
+								onClick=${() => {
+									var el = document.getElementById(`provider-${g.provider}`);
+									if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+								}}
+							>${g.providerDisplayName}<span class="ml-1 opacity-60">${g.models.length}</span></button>`,
+							)}
+						</div>`
+								: null
+						}
+						<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">
+							${groups.map((g) => html`<${ProviderSection} key=${g.provider} group=${g} />`)}
+						</div>
+					</div>`;
+				})()}
 			</div>
 		<${ConfirmDialog} />
 		`;

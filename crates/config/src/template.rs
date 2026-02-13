@@ -101,10 +101,10 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # alias = "anthropic"                         # Custom name for metrics
 
 # ── OpenAI ────────────────────────────────────────────────────
-# [providers.openai]
+[providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# models = ["gpt-5.2", "gpt-5.2-chat-latest"] # Optional preferred models
+models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # fetch_models = true
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
@@ -146,10 +146,10 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # base_url = "https://openrouter.ai/api/v1"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────
-# [providers.moonshot]
+[providers.moonshot]
 # enabled = true
 # api_key = "..."                             # Or set MOONSHOT_API_KEY env var
-# models = ["kimi-k2.5"]
+models = ["kimi-k2.5"]                        # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
 
