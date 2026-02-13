@@ -39,6 +39,7 @@
   --danger: #ef4444;
   --danger-hover: #dc2626;
   --danger-subtle: rgba(239, 68, 68, 0.16);
+  --toolbar-height: 34px;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: dark;
 }
@@ -88,53 +89,53 @@ main {
 }
 .share-toolbar {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 .share-header {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 18px;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--toolbar-height);
+  background: var(--surface3);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
 }
-.share-header-content {
-  position: static;
-}
-.share-top-row {
+.share-header-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.share-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-height: calc(var(--toolbar-height) - 2px);
+  padding: 0 10px;
 }
 .share-brand-avatar {
-  width: 34px;
-  height: 34px;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
   border-radius: 999px;
   background: var(--surface2);
   border: 1px solid var(--border);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: 0.8rem;
 }
 .share-brand-name {
   color: var(--text-strong);
-  font-size: 0.94rem;
+  font-size: 0.84rem;
   font-weight: 600;
-}
-.share-brand-tag {
-  color: var(--muted);
-  font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .theme-toggle {
+  min-height: var(--toolbar-height);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
   padding: 2px;
   gap: 2px;
 }
@@ -184,10 +185,8 @@ main {
 }
 .share-meta-top {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
 }
 .badge {
   font-size: 11px;
@@ -200,10 +199,6 @@ main {
 }
 .badge.views {
   color: var(--text);
-}
-.share-time {
-  color: inherit;
-  font-size: inherit;
 }
 .timeline {
   display: flex;
@@ -536,6 +531,11 @@ main {
 .share-page-footer a:hover {
   color: var(--text);
 }
+@media (max-width: 720px) {
+  .theme-toggle {
+    align-self: flex-end;
+  }
+}
 </style>
 </head>
 <body>
@@ -546,26 +546,17 @@ main {
       <button class="theme-btn" type="button" data-theme-val="system" title="System theme"><span class="icon icon-monitor"></span></button>
       <button class="theme-btn" type="button" data-theme-val="dark" title="Dark theme"><span class="icon icon-moon"></span></button>
     </div>
-  </div>
-
-  <section class="share-header">
-    <div class="share-header-content">
-      <div class="share-top-row">
-        <div class="share-brand">
-          <span class="share-brand-avatar">{{ assistant_emoji }}</span>
-          <div>
-            <div class="share-brand-name">{{ assistant_name }}</div>
-            <div class="share-brand-tag">Shared conversation snapshot</div>
-          </div>
+    <section class="share-header" aria-label="Shared snapshot header">
+      <div class="share-header-row">
+        <span class="share-brand-avatar">{{ assistant_emoji }}</span>
+        <span class="share-brand-name">{{ assistant_name }}</span>
+        <div class="share-meta-top">
+          <span class="badge views">{{ view_count }} views</span>
+          <span class="badge">{{ share_visibility }}</span>
         </div>
       </div>
-      <div class="share-meta-top">
-        <span class="badge views">{{ view_count }} views</span>
-        <span class="badge">{{ share_visibility }}</span>
-        <span class="badge">shared <time class="share-time" data-epoch-ms="{{ share_created_at_ms }}">{{ share_created_at }}</time></span>
-      </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
   <section class="timeline" aria-label="Shared chat timeline">
     {% if messages.len() == 0 %}

@@ -8,12 +8,11 @@ use std::path::PathBuf;
 #[cfg(feature = "web-ui")]
 use askama::Template;
 #[cfg(feature = "web-ui")]
+use axum::response::{Html, Redirect};
+#[cfg(feature = "web-ui")]
 use base64::Engine as _;
 #[cfg(feature = "web-ui")]
 use chrono::{Local, TimeZone, Utc};
-
-#[cfg(feature = "web-ui")]
-use axum::response::{Html, Redirect};
 use {
     axum::{
         Router,
@@ -141,11 +140,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -259,13 +261,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -1045,16 +1048,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -2891,10 +2895,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -2957,12 +2966,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
@@ -4325,7 +4337,6 @@ async fn share_page_handler(
         .unwrap_or_default();
     let share_meta = build_session_share_meta(&identity, &snapshot);
     let messages = map_share_message_views(&snapshot, &identity);
-    let share_created_at = human_share_time(share.created_at);
     let assistant_name = identity_name(&identity).to_owned();
     let assistant_emoji = identity
         .emoji
@@ -4352,8 +4363,6 @@ async fn share_page_handler(
         assistant_name: &assistant_name,
         assistant_emoji: &assistant_emoji,
         view_count,
-        share_created_at_ms: share.created_at,
-        share_created_at: &share_created_at,
         share_visibility: visibility_label,
         messages: &messages,
     };
@@ -4469,8 +4478,6 @@ struct ShareHtmlTemplate<'a> {
     assistant_name: &'a str,
     assistant_emoji: &'a str,
     view_count: u64,
-    share_created_at_ms: u64,
-    share_created_at: &'a str,
     share_visibility: &'a str,
     messages: &'a [ShareMessageView],
 }
@@ -6256,18 +6263,6 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
-    fn human_share_time_formats_local_minute_timestamp() {
-        let formatted = human_share_time(1_000);
-        assert_eq!(formatted.len(), 16);
-        assert_eq!(formatted.chars().nth(4), Some('-'));
-        assert_eq!(formatted.chars().nth(7), Some('-'));
-        assert_eq!(formatted.chars().nth(10), Some(' '));
-        assert_eq!(formatted.chars().nth(13), Some(':'));
-        assert!(!formatted.contains("UTC"));
-    }
-
-    #[cfg(feature = "web-ui")]
-    #[test]
     fn share_labels_use_identity_user_and_emoji() {
         let identity = moltis_config::ResolvedIdentity {
             name: "Moltis".to_owned(),
@@ -6363,8 +6358,6 @@ mod tests {
             assistant_name: "Moltis",
             assistant_emoji: "🤖",
             view_count: 7,
-            share_created_at_ms: 1_770_966_600_000,
-            share_created_at: "2026-02-13 05:30:00 UTC",
             share_visibility: "public",
             messages: &messages,
         };
@@ -6376,7 +6369,8 @@ mod tests {
         assert!(html.contains("class=\"share-page-footer\""));
         assert!(html.contains("Get your AI assistant at"));
         assert!(html.contains("src=\"/assets/icons/icon-96.png\""));
-        assert!(html.contains("data-epoch-ms=\"1770966600000\""));
+        assert!(!html.contains("data-epoch-ms=\"1770966600000\""));
+        assert!(html.contains("data-epoch-ms=\"1770966725000\""));
         assert!(html.contains("data-audio-src=\"data:audio/ogg;base64,T2dnUw==\""));
         assert!(html.contains("waveform-player"));
         assert!(html.contains("data:audio/ogg;base64,T2dnUw=="));
