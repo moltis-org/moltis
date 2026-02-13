@@ -272,6 +272,9 @@ test.describe("Session management", () => {
 			.poll(async () => await shareTime.textContent(), { timeout: 5_000 })
 			.toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 		await expect(shareTime).not.toContainText("ago");
+		const imageViewer = page.locator('[data-image-viewer="true"]');
+		await expect(imageViewer).toHaveCount(1);
+		await expect(imageViewer).toHaveAttribute("aria-hidden", "true");
 
 		expect(pageErrors).toEqual([]);
 	});

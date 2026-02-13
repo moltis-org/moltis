@@ -414,6 +414,13 @@ async fn to_shared_message(
         | SharedMessageRole::System
         | SharedMessageRole::Notice => None,
     };
+    let tool_success = match role {
+        SharedMessageRole::ToolResult => msg.get("success").and_then(|v| v.as_bool()),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
 
     if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
         return None;
@@ -441,6 +448,7 @@ async fn to_shared_message(
         image,
         image_data_url: None,
         map_links,
+        tool_success,
         created_at,
         model,
         provider,
@@ -1501,6 +1509,7 @@ mod tests {
             .expect("shared tool_result message");
 
         assert!(matches!(shared.role, SharedMessageRole::ToolResult));
+        assert_eq!(shared.tool_success, Some(true));
         assert!(shared.audio_data_url.is_none());
         assert!(shared.image_data_url.is_none());
         let image = shared.image.expect("shared image variants");

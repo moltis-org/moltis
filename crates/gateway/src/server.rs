@@ -4168,6 +4168,17 @@ fn map_share_message_views(
                 | crate::share_store::SharedMessageRole::System
                 | crate::share_store::SharedMessageRole::Notice => None,
             };
+            let (tool_state_class, tool_state_label, tool_state_badge_class) = match msg.role {
+                crate::share_store::SharedMessageRole::ToolResult => match msg.tool_success {
+                    Some(true) => (Some("msg-tool-success"), Some("Success"), Some("ok")),
+                    Some(false) => (Some("msg-tool-fail"), Some("Failed"), Some("fail")),
+                    None => (None, None, None),
+                },
+                crate::share_store::SharedMessageRole::User
+                | crate::share_store::SharedMessageRole::Assistant
+                | crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => (None, None, None),
+            };
             let (
                 image_preview_data_url,
                 image_link_data_url,
@@ -4218,6 +4229,9 @@ fn map_share_message_views(
                 image_preview_width,
                 image_preview_height,
                 image_has_dimensions,
+                tool_state_class,
+                tool_state_label,
+                tool_state_badge_class,
                 map_link_google: msg
                     .map_links
                     .as_ref()
@@ -4478,6 +4492,9 @@ struct ShareMessageView {
     image_preview_width: u32,
     image_preview_height: u32,
     image_has_dimensions: bool,
+    tool_state_class: Option<&'static str>,
+    tool_state_label: Option<&'static str>,
+    tool_state_badge_class: Option<&'static str>,
     map_link_google: Option<String>,
     map_link_apple: Option<String>,
     map_link_openstreetmap: Option<String>,
@@ -6316,6 +6333,9 @@ mod tests {
             image_preview_width: 600,
             image_preview_height: 400,
             image_has_dimensions: true,
+            tool_state_class: None,
+            tool_state_label: None,
+            tool_state_badge_class: None,
             map_link_google: Some(
                 "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery".to_string(),
             ),
@@ -6357,6 +6377,8 @@ mod tests {
         assert!(html.contains("data:audio/ogg;base64,T2dnUw=="));
         assert!(html.contains("width=\"600\""));
         assert!(html.contains("height=\"400\""));
+        assert!(html.contains("data-image-viewer-open=\"true\""));
+        assert!(html.contains("data-image-viewer=\"true\""));
         assert!(html.contains("class=\"msg-map-link-icon\""));
         assert!(html.contains("src=\"/assets/icons/map-google-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-apple-maps.svg\""));
@@ -6385,6 +6407,7 @@ mod tests {
                     image: None,
                     image_data_url: None,
                     map_links: None,
+                    tool_success: None,
                     created_at: Some(1_770_966_601_000),
                     model: None,
                     provider: None,
@@ -6396,6 +6419,7 @@ mod tests {
                     image: None,
                     image_data_url: None,
                     map_links: None,
+                    tool_success: None,
                     created_at: Some(1_770_966_602_000),
                     model: None,
                     provider: None,
@@ -6407,6 +6431,7 @@ mod tests {
                     image: None,
                     image_data_url: None,
                     map_links: None,
+                    tool_success: None,
                     created_at: Some(1_770_966_603_000),
                     model: None,
                     provider: None,
@@ -6418,6 +6443,7 @@ mod tests {
                     image: None,
                     image_data_url: None,
                     map_links: None,
+                    tool_success: None,
                     created_at: Some(1_770_966_604_000),
                     model: Some("gpt-5.2".to_string()),
                     provider: Some("openai-codex".to_string()),
@@ -6466,6 +6492,7 @@ mod tests {
                     ),
                     openstreetmap: None,
                 }),
+                tool_success: Some(true),
                 created_at: Some(1_770_966_604_000),
                 model: None,
                 provider: None,
@@ -6486,6 +6513,9 @@ mod tests {
         assert_eq!(views[0].image_preview_width, 600);
         assert_eq!(views[0].image_preview_height, 400);
         assert!(views[0].image_has_dimensions);
+        assert_eq!(views[0].tool_state_class, Some("msg-tool-success"));
+        assert_eq!(views[0].tool_state_label, Some("Success"));
+        assert_eq!(views[0].tool_state_badge_class, Some("ok"));
         assert!(views[0].map_link_google.is_some());
         assert!(views[0].map_link_apple.is_some());
         assert!(views[0].map_link_openstreetmap.is_none());

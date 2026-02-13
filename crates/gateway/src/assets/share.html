@@ -36,6 +36,9 @@
   --accent: #4ade80;
   --accent-hover: #22c55e;
   --accent-subtle: rgba(74, 222, 128, 0.16);
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --danger-subtle: rgba(239, 68, 68, 0.16);
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: dark;
 }
@@ -52,6 +55,9 @@
   --accent: #16a34a;
   --accent-hover: #15803d;
   --accent-subtle: rgba(22, 163, 74, 0.1);
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-subtle: rgba(220, 38, 38, 0.1);
   color-scheme: light;
 }
 * {
@@ -70,6 +76,9 @@ body {
   display: flex;
   justify-content: center;
   padding: 20px;
+}
+body.image-viewer-open {
+  overflow: hidden;
 }
 main {
   width: min(900px, 100%);
@@ -222,6 +231,14 @@ main {
 .msg-notice {
   background: var(--surface2);
 }
+.msg-tool-success {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
+  background: color-mix(in srgb, var(--accent-subtle) 60%, var(--surface) 40%);
+}
+.msg-tool-fail {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border) 45%);
+  background: color-mix(in srgb, var(--danger-subtle) 60%, var(--surface) 40%);
+}
 .msg-head {
   display: flex;
   justify-content: space-between;
@@ -239,6 +256,31 @@ main {
   color: var(--muted);
   white-space: nowrap;
 }
+.msg-role-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.msg-tool-state {
+  font-size: 0.66rem;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 3px 7px;
+  text-transform: lowercase;
+  letter-spacing: 0.01em;
+}
+.msg-tool-state.ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border) 40%);
+  background: color-mix(in srgb, var(--accent-subtle) 70%, var(--surface2) 30%);
+}
+.msg-tool-state.fail {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border) 40%);
+  background: color-mix(in srgb, var(--danger-subtle) 70%, var(--surface2) 30%);
+}
 .msg-content {
   white-space: pre-wrap;
   word-break: break-word;
@@ -251,12 +293,59 @@ main {
 }
 .msg-image-link {
   display: inline-block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
+  text-align: left;
 }
 .msg-image {
   display: block;
   max-width: min(100%, 430px);
   border-radius: 8px;
   border: 1px solid var(--border);
+}
+.share-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 86%, #000 14%);
+}
+.share-image-viewer[hidden] {
+  display: none;
+}
+.share-image-viewer-image {
+  max-width: min(94vw, 1440px);
+  max-height: 88vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  background: var(--surface);
+}
+.share-image-viewer-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+.share-image-viewer-close:hover {
+  background: var(--surface3);
+  border-color: var(--border-strong);
 }
 .msg-map-links {
   display: flex;
@@ -426,9 +515,21 @@ main {
       <div class="empty">This shared snapshot has no displayable messages.</div>
     {% else %}
       {% for message in messages %}
-        <article class="msg msg-{{ message.role_class }}">
+        <article class="msg msg-{{ message.role_class }}{% match message.tool_state_class %}{% when Some with (tool_state_class) %} {{ tool_state_class }}{% when None %}{% endmatch %}">
           <div class="msg-head">
-            <div class="msg-role">{{ message.role_label }}</div>
+            <div class="msg-role-wrap">
+              <div class="msg-role">{{ message.role_label }}</div>
+              {% match message.tool_state_label %}
+                {% when Some with (tool_state_label) %}
+                  {% match message.tool_state_badge_class %}
+                    {% when Some with (tool_state_badge_class) %}
+                      <span class="msg-tool-state {{ tool_state_badge_class }}">{{ tool_state_label }}</span>
+                    {% when None %}
+                      <span class="msg-tool-state">{{ tool_state_label }}</span>
+                  {% endmatch %}
+                {% when None %}
+              {% endmatch %}
+            </div>
             {% match message.created_at_ms %}
               {% when Some with (created_at_ms) %}
                 <time class="msg-time" data-epoch-ms="{{ created_at_ms }}">
@@ -459,14 +560,19 @@ main {
               <figure class="msg-image-wrap">
                 {% match message.image_link_data_url %}
                   {% when Some with (image_link_data_url) %}
-                    <a class="msg-image-link" href="{{ image_link_data_url }}" target="_blank" rel="noopener noreferrer">
+                    <button class="msg-image-link" type="button" data-image-viewer-open="true" data-image-viewer-src="{{ image_link_data_url }}" aria-label="Open shared media">
                       {% if message.image_has_dimensions %}
                         <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" width="{{ message.image_preview_width }}" height="{{ message.image_preview_height }}" decoding="async">
                       {% else %}
                         <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" decoding="async">
                       {% endif %}
-                    </a>
+                    </button>
                   {% when None %}
+                    {% if message.image_has_dimensions %}
+                      <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" width="{{ message.image_preview_width }}" height="{{ message.image_preview_height }}" decoding="async">
+                    {% else %}
+                      <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" decoding="async">
+                    {% endif %}
                 {% endmatch %}
               </figure>
             {% when None %}
@@ -517,6 +623,10 @@ main {
     <span>Get your AI assistant at <a href="https://www.moltis.org" target="_blank" rel="noopener noreferrer">moltis.org</a></span>
   </footer>
 </main>
+<div class="share-image-viewer" data-image-viewer="true" hidden aria-hidden="true">
+  <button class="share-image-viewer-close" type="button" data-image-viewer-close="true" aria-label="Close image viewer">×</button>
+  <img class="share-image-viewer-image" data-image-viewer-image="true" alt="Shared media full size">
+</div>
 <script nonce="{{ nonce }}">
 !function() {
   function resolveTheme(theme) {
@@ -592,6 +702,52 @@ main {
   }
 
   hydrateTimes();
+
+  var imageViewer = document.querySelector('[data-image-viewer="true"]');
+  var imageViewerImage = document.querySelector('[data-image-viewer-image="true"]');
+  var imageViewerClose = document.querySelector('[data-image-viewer-close="true"]');
+
+  function closeImageViewer() {
+    if (!imageViewer || imageViewer.hidden) return;
+    imageViewer.hidden = true;
+    imageViewer.setAttribute("aria-hidden", "true");
+    if (imageViewerImage) {
+      imageViewerImage.removeAttribute("src");
+    }
+    document.body.classList.remove("image-viewer-open");
+  }
+
+  function openImageViewer(src) {
+    if (!imageViewer || !imageViewerImage || !src) return;
+    imageViewerImage.setAttribute("src", src);
+    imageViewer.hidden = false;
+    imageViewer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("image-viewer-open");
+  }
+
+  document.querySelectorAll('[data-image-viewer-open="true"]').forEach(function(button) {
+    button.addEventListener("click", function() {
+      var src = button.getAttribute("data-image-viewer-src");
+      if (!src) return;
+      openImageViewer(src);
+    });
+  });
+
+  if (imageViewer) {
+    imageViewer.addEventListener("click", function(event) {
+      if (event.target === imageViewer) {
+        closeImageViewer();
+      }
+    });
+  }
+  if (imageViewerClose) {
+    imageViewerClose.addEventListener("click", closeImageViewer);
+  }
+  document.addEventListener("keydown", function(event) {
+    if (event.key === "Escape") {
+      closeImageViewer();
+    }
+  });
 
   var WAVEFORM_BAR_COUNT = 48;
   var WAVEFORM_MIN_HEIGHT = 0.08;
