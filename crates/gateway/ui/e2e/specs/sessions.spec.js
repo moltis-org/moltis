@@ -271,12 +271,7 @@ test.describe("Session management", () => {
 		await expect(page.locator('.theme-btn[data-theme-val="light"]')).toBeVisible();
 		await expect(page.locator('.theme-btn[data-theme-val="dark"]')).toBeVisible();
 		await expect(page.locator("script[nonce]")).toHaveCount(2);
-		const shareTime = page.locator(".share-time");
-		await expect(shareTime).toBeVisible();
-		await expect
-			.poll(async () => await shareTime.textContent(), { timeout: 5_000 })
-			.toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-		await expect(shareTime).not.toContainText("ago");
+		await expect(page.locator(".share-time")).toHaveCount(0);
 		const imageViewer = page.locator('[data-image-viewer="true"]');
 		await expect(imageViewer).toHaveCount(1);
 		await expect(imageViewer).toHaveAttribute("aria-hidden", "true");
