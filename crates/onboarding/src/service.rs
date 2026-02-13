@@ -414,7 +414,6 @@ mod tests {
         moltis_config::clear_data_dir();
     }
 
-
     #[test]
     fn cancel_wizard() {
         let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
