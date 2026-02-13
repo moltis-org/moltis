@@ -4,7 +4,7 @@
 import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
 import { renderAudioPlayer, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
-import { bumpSessionCount, setSessionReplying } from "./sessions.js";
+import { bumpSessionCount, seedSessionPreviewFromUserText, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
 var micBtn = null;
@@ -265,6 +265,7 @@ function sendTranscribedMessage(text, audioFilename) {
 		chatParams.model = selectedModel;
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
+	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((sendRes) => {
 		if (sendRes && !sendRes.ok && sendRes.error) {

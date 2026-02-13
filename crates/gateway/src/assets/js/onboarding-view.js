@@ -13,7 +13,12 @@ import { sendRpc } from "./helpers.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { isModelServiceNotConfigured, testModel, validateProviderKey } from "./provider-validation.js";
+import {
+	humanizeProbeError,
+	isModelServiceNotConfigured,
+	testModel,
+	validateProviderKey,
+} from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
 import { connectWs } from "./ws-connect.js";
@@ -424,11 +429,12 @@ function AuthStep({ onNext, skippable }) {
 // ── Identity step ───────────────────────────────────────────
 
 function IdentityStep({ onNext, onBack }) {
-	var [userName, setUserName] = useState("");
-	var [name, setName] = useState("Moltis");
-	var [emoji, setEmoji] = useState("\u{1f916}");
-	var [creature, setCreature] = useState("");
-	var [vibe, setVibe] = useState("");
+	var identity = getGon("identity") || {};
+	var [userName, setUserName] = useState(identity.user_name || "");
+	var [name, setName] = useState(identity.name || "Moltis");
+	var [emoji, setEmoji] = useState(identity.emoji || "\u{1f916}");
+	var [creature, setCreature] = useState(identity.creature || "");
+	var [vibe, setVibe] = useState(identity.vibe || "");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -513,6 +519,21 @@ function IdentityStep({ onNext, onBack }) {
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
 var BYOM_PROVIDERS = ["openrouter", "venice"];
 
+function ModelSelectCard({ model, selected, probe, onToggle }) {
+	return html`<div class="model-card ${selected ? "selected" : ""}" onClick=${onToggle}>
+		<div class="flex items-center justify-between">
+			<span class="text-sm font-medium text-[var(--text)]">${model.displayName}</span>
+			<div class="flex gap-2">
+				${model.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
+				${probe === "probing" ? html`<span class="tier-badge">Probing\u2026</span>` : null}
+				${probe && probe !== "ok" && probe !== "probing" ? html`<span class="provider-item-badge warning" title=${probe.error || ""}>Unsupported</span>` : null}
+			</div>
+		</div>
+		<div class="text-xs text-[var(--muted)] mt-1 font-mono">${model.id}</div>
+		${model.createdAt ? html`<time class="text-xs text-[var(--muted)] mt-0.5 opacity-60 block" data-epoch-ms=${model.createdAt * 1000} data-format="year-month"></time>` : null}
+	</div>`;
+}
+
 // ── Provider row for multi-provider onboarding ──────────────
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config forms for api-key, oauth, and local flows
@@ -521,8 +542,8 @@ function OnboardingProviderRow({
 	configuring,
 	phase,
 	providerModels,
-	selectedModel,
-	modelTestError,
+	selectedModels,
+	probeResults,
 	modelSearch,
 	setModelSearch,
 	oauthProvider,
@@ -539,18 +560,20 @@ function OnboardingProviderRow({
 	model,
 	setModel,
 	saving,
+	savingModels,
 	error,
 	validationResult,
 	onStartConfigure,
 	onCancelConfigure,
 	onSaveKey,
-	onSelectModel,
+	onToggleModel,
+	onSaveModels,
 	onCancelOAuth,
 	onConfigureLocalModel,
 	onCancelLocal,
 }) {
 	var isApiKeyForm = configuring === provider.name && (phase === "form" || phase === "validating");
-	var isModelSelect = configuring === provider.name && (phase === "selectModel" || phase === "testingModel");
+	var isModelSelect = configuring === provider.name && phase === "selectModel";
 	var isOAuth = oauthProvider === provider.name;
 	var isLocal = localProvider === provider.name;
 	var isExpanded = isApiKeyForm || isModelSelect || isOAuth || isLocal;
@@ -619,7 +642,7 @@ function OnboardingProviderRow({
 					<input type="password" class="provider-key-input w-full"
 						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+						placeholder=${provider.keyOptional ? "(optional)" : "sk-..."} />
 					${
 						keyHelp
 							? html`<div class="text-xs text-[var(--muted)] mt-1">
@@ -649,7 +672,7 @@ function OnboardingProviderRow({
 						<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
 						<input type="text" class="provider-key-input w-full"
 							value=${model} onInput=${(e) => setModel(e.target.value)}
-							placeholder=${provider.name === "ollama" ? "llama3" : "model-id"} />
+							placeholder="model-id" />
 					</div>`
 						: null
 				}
@@ -664,7 +687,8 @@ function OnboardingProviderRow({
 		${
 			isModelSelect
 				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
-				<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+				<div class="text-xs font-medium text-[var(--text-strong)]">Select preferred models</div>
+				<div class="text-xs text-[var(--muted)]">Selected models appear first in the session model selector.</div>
 				${
 					(providerModels || []).length > 5
 						? html`<input type="text" class="provider-key-input w-full text-xs"
@@ -673,31 +697,24 @@ function OnboardingProviderRow({
 							onInput=${(e) => setModelSearch(e.target.value)} />`
 						: null
 				}
-				<div class="flex flex-col gap-2 max-h-56 overflow-y-auto">
+				<div class="flex flex-col gap-1 max-h-56 overflow-y-auto">
 					${
 						filteredModels.length === 0
 							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
 							: filteredModels.map(
-									(m) => html`<div key=${m.id}
-									class="model-card ${selectedModel === m.id ? "selected" : ""}"
-									onClick=${() => {
-										if (phase !== "testingModel") onSelectModel(m.id);
-									}}>
-									<div class="flex items-center justify-between">
-										<span class="text-sm font-medium text-[var(--text)]">${m.displayName}</span>
-										<div class="flex gap-2">
-											${m.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
-											${phase === "testingModel" && selectedModel === m.id ? html`<span class="tier-badge">Testing\u2026</span>` : null}
-										</div>
-									</div>
-									<div class="text-xs text-[var(--muted)] mt-1 font-mono">${m.id}</div>
-								</div>`,
+									(m) => html`<${ModelSelectCard} key=${m.id} model=${m}
+										selected=${selectedModels.has(m.id)}
+										probe=${probeResults.get(m.id)}
+										onToggle=${() => onToggleModel(m.id)} />`,
 								)
 					}
 				</div>
-				${modelTestError ? html`<${ErrorPanel} message=${modelTestError} />` : null}
+				<div class="text-xs text-[var(--muted)]">${selectedModels.size === 0 ? "No models selected" : `${selectedModels.size} model${selectedModels.size > 1 ? "s" : ""} selected`}</div>
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
-				<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelConfigure}>Cancel</button>
+				<div class="flex items-center gap-2 mt-1">
+					<button type="button" class="provider-btn provider-btn-sm" disabled=${selectedModels.size === 0 || savingModels} onClick=${onSaveModels}>${savingModels ? "Saving\u2026" : "Save"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${savingModels}>Cancel</button>
+				</div>
 			</div>`
 				: null
 		}
@@ -796,6 +813,34 @@ function sortProviders(list) {
 	return list;
 }
 
+function normalizeProviderToken(value) {
+	return String(value || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "");
+}
+
+function modelBelongsToProvider(providerName, model) {
+	var needle = normalizeProviderToken(providerName);
+	if (!needle) return false;
+	var modelProvider = normalizeProviderToken(model?.provider);
+	if (modelProvider?.includes(needle)) {
+		return true;
+	}
+	var modelId = String(model?.id || "");
+	var modelPrefix = normalizeProviderToken(modelId.split("::")[0]);
+	return modelPrefix === needle;
+}
+
+function toModelSelectorRow(modelRow) {
+	return {
+		id: modelRow.id,
+		displayName: modelRow.displayName || modelRow.id,
+		provider: modelRow.provider,
+		supportsTools: modelRow.supportsTools,
+		createdAt: modelRow.createdAt || 0,
+	};
+}
+
 function ProviderStep({ onNext, onBack }) {
 	var [providers, setProviders] = useState([]);
 	var [loading, setLoading] = useState(true);
@@ -806,15 +851,16 @@ function ProviderStep({ onNext, onBack }) {
 	var [oauthProvider, setOauthProvider] = useState(null);
 	var [localProvider, setLocalProvider] = useState(null);
 
-	// Phase: "form" | "validating" | "selectModel" | "testingModel"
+	// Phase: "form" | "validating" | "selectModel"
 	var [phase, setPhase] = useState("form");
 	var [providerModels, setProviderModels] = useState([]);
-	var [selectedModel, setSelectedModel] = useState(null);
-	var [modelTestError, setModelTestError] = useState(null);
+	var [selectedModels, setSelectedModels] = useState(new Set());
+	var [probeResults, setProbeResults] = useState(new Map());
 	var [modelSearch, setModelSearch] = useState("");
+	var [savingModels, setSavingModels] = useState(false);
 
-	// Track when model selection originated from OAuth (provider name or null)
-	var [oauthModelSelect, setOauthModelSelect] = useState(null);
+	// Track provider whose credentials already exist and only model selection is needed.
+	var [modelSelectProvider, setModelSelectProvider] = useState(null);
 
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
@@ -888,12 +934,13 @@ function ProviderStep({ onNext, onBack }) {
 		setConfiguring(null);
 		setOauthProvider(null);
 		setLocalProvider(null);
-		setOauthModelSelect(null);
+		setModelSelectProvider(null);
 		setPhase("form");
 		setProviderModels([]);
-		setSelectedModel(null);
-		setModelTestError(null);
+		setSelectedModels(new Set());
+		setProbeResults(new Map());
 		setModelSearch("");
+		setSavingModels(false);
 		setApiKey("");
 		setEndpoint("");
 		setModel("");
@@ -907,14 +954,42 @@ function ProviderStep({ onNext, onBack }) {
 		}
 	}
 
-	function onStartConfigure(name) {
+	async function loadModelsForProvider(providerName) {
+		var modelsRes = await sendRpc("models.list", {});
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		return allModels.filter((m) => modelBelongsToProvider(providerName, m)).map(toModelSelectorRow);
+	}
+
+	async function openModelSelectForConfiguredApiProvider(provider) {
+		if (provider.authType !== "api-key" || !provider.configured) return false;
+		var existingModels = await loadModelsForProvider(provider.name);
+		if (existingModels.length === 0) return false;
+
+		// Pre-select already-saved preferred models.
+		var saved = new Set();
+		if (provider.models) {
+			for (var sm of provider.models) saved.add(sm);
+		}
+
+		setModelSelectProvider(provider.name);
+		setConfiguring(provider.name);
+		setProviderModels(existingModels);
+		setSelectedModels(saved);
+		setPhase("selectModel");
+		return true;
+	}
+
+	async function onStartConfigure(name) {
 		closeAll();
 		var p = providers.find((pr) => pr.name === name);
 		if (!p) return;
 		if (p.authType === "api-key") {
 			setEndpoint(p.baseUrl || "");
 			setModel(p.model || "");
+			if (await openModelSelectForConfiguredApiProvider(p)) return;
 			setConfiguring(name);
+			setPhase("form");
+			return;
 		} else if (p.authType === "oauth") {
 			startOAuth(p);
 		} else if (p.authType === "local") {
@@ -928,7 +1003,7 @@ function ProviderStep({ onNext, onBack }) {
 		e.preventDefault();
 		var p = providers.find((pr) => pr.name === configuring);
 		if (!p) return;
-		if (!apiKey.trim() && p.name !== "ollama") {
+		if (!(apiKey.trim() || p.keyOptional)) {
 			setError("API key is required.");
 			return;
 		}
@@ -939,7 +1014,7 @@ function ProviderStep({ onNext, onBack }) {
 		setError(null);
 		setPhase("validating");
 
-		var keyVal = apiKey.trim() || "ollama";
+		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 
@@ -955,7 +1030,7 @@ function ProviderStep({ onNext, onBack }) {
 				// BYOM providers: we already tested the specific model during validation,
 				// so save immediately without showing the model selector.
 				if (BYOM_PROVIDERS.includes(p.name)) {
-					return saveAndFinish(p.name, keyVal, endpointVal, modelVal);
+					return saveAndFinishByom(p.name, keyVal, endpointVal, modelVal);
 				}
 
 				// Regular providers: show the model selector.
@@ -968,52 +1043,112 @@ function ProviderStep({ onNext, onBack }) {
 			});
 	}
 
-	function onSelectModel(modelId) {
-		setSelectedModel(modelId);
-		setModelTestError(null);
-		setPhase("testingModel");
-
-		if (oauthModelSelect) {
-			// OAuth flow: credentials already saved, just test + save model preference.
-			testModel(modelId).then((testResult) => {
-				if (!testResult.ok) {
-					setPhase("selectModel");
-					setModelTestError(testResult.error || "Model test failed. Try another model.");
-					return;
+	function probeModelAsync(modelId) {
+		setProbeResults((prev) => {
+			var next = new Map(prev);
+			next.set(modelId, "probing");
+			return next;
+		});
+		testModel(modelId).then((result) => {
+			setProbeResults((prev) => {
+				var next = new Map(prev);
+				if (isModelServiceNotConfigured(result.error || "")) {
+					next.delete(modelId);
+				} else {
+					next.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") });
 				}
-				sendRpc("providers.save_model", { provider: oauthModelSelect, model: modelId }).then(() => {
-					localStorage.setItem("moltis-model", modelId);
-					setValidationResults((prev) => ({ ...prev, [oauthModelSelect]: { ok: true } }));
-					setOauthModelSelect(null);
-					setConfiguring(null);
-					setPhase("form");
-					setProviderModels([]);
-					setSelectedModel(null);
-					setModelTestError(null);
-					setModelSearch("");
-					setError(null);
-					refreshProviders();
-				});
+				return next;
 			});
-			return;
-		}
-
-		var p = providers.find((pr) => pr.name === configuring);
-		if (!p) return;
-
-		// Save credentials first so the model is available in the live registry.
-		var keyVal = apiKey.trim() || "ollama";
-		var endpointVal = endpoint.trim() || null;
-		var modelVal = model.trim() || null;
-
-		saveAndFinish(p.name, keyVal, endpointVal, modelVal, modelId);
+		});
 	}
 
-	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
-		var effectiveModelVal = providerName === "ollama" && selectedModelId ? selectedModelId : modelVal;
+	function onToggleModel(modelId) {
+		setSelectedModels((prev) => {
+			var next = new Set(prev);
+			if (next.has(modelId)) {
+				next.delete(modelId);
+			} else {
+				next.add(modelId);
+				probeModelAsync(modelId);
+			}
+			return next;
+		});
+	}
+
+	function buildSaveKeyPayload(providerName, modelIds) {
+		var p = providers.find((pr) => pr.name === providerName);
+		if (!p) return null;
+		var keyVal = apiKey.trim() || p.name;
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+		var effectiveModelVal = p.keyOptional && modelIds.length > 0 ? modelIds[0] : modelVal;
 		var payload = { provider: providerName, apiKey: keyVal };
 		if (endpointVal) payload.baseUrl = endpointVal;
 		if (effectiveModelVal) payload.model = effectiveModelVal;
+		return payload;
+	}
+
+	async function saveProviderKeyIfNeeded(providerName, modelIds) {
+		if (modelSelectProvider) return true;
+		var payload = buildSaveKeyPayload(providerName, modelIds);
+		if (!payload) return false;
+		var res = await sendRpc("providers.save_key", payload);
+		if (!res?.ok) {
+			setPhase("form");
+			setError(res?.error?.message || "Failed to save credentials.");
+			return false;
+		}
+		return true;
+	}
+
+	async function onSaveSelectedModels() {
+		var providerName = modelSelectProvider || configuring;
+		if (!providerName) return false;
+		var modelIds = Array.from(selectedModels);
+
+		setSavingModels(true);
+		setError(null);
+
+		try {
+			if (!(await saveProviderKeyIfNeeded(providerName, modelIds))) {
+				setSavingModels(false);
+				return false;
+			}
+			var res = await sendRpc("providers.save_models", { provider: providerName, models: modelIds });
+			if (!res?.ok) {
+				setSavingModels(false);
+				setError(res?.error?.message || "Failed to save model preferences.");
+				return false;
+			}
+			if (modelIds.length > 0) {
+				localStorage.setItem("moltis-model", modelIds[0]);
+			}
+			setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+			closeAll();
+			refreshProviders();
+			return true;
+		} catch (err) {
+			setSavingModels(false);
+			setError(err?.message || "Failed to save credentials.");
+			return false;
+		}
+	}
+
+	async function onContinue() {
+		var hasPendingModelSelection =
+			phase === "selectModel" && (configuring || modelSelectProvider) && selectedModels.size > 0;
+		if (hasPendingModelSelection) {
+			var saved = await onSaveSelectedModels();
+			if (!saved) return;
+		}
+		onNext();
+	}
+
+	// BYOM-only save path (no model selector shown for these providers).
+	function saveAndFinishByom(providerName, keyVal, endpointVal, modelVal) {
+		var payload = { provider: providerName, apiKey: keyVal };
+		if (endpointVal) payload.baseUrl = endpointVal;
+		if (modelVal) payload.model = modelVal;
 
 		sendRpc("providers.save_key", payload)
 			.then(async (res) => {
@@ -1023,34 +1158,25 @@ function ProviderStep({ onNext, onBack }) {
 					return;
 				}
 
-				// If a specific model was selected, test it from the live registry.
-				if (selectedModelId) {
-					var testResult = await testModel(selectedModelId);
+				// Test the specific model from the live registry.
+				if (modelVal) {
+					var testResult = await testModel(modelVal);
 					var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
 					if (!(testResult.ok || modelServiceUnavailable)) {
-						// Model test failed — let user pick another.
-						setPhase("selectModel");
-						setModelTestError(testResult.error || "Model test failed. Try another model.");
+						setPhase("form");
+						setError(testResult.error || "Model test failed. Check your model ID.");
 						return;
 					}
-					// For Ollama we persisted the selected model in save_key so probing works immediately.
-					if (providerName !== "ollama") {
-						await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
-					}
-					if (modelServiceUnavailable) {
-						console.warn("models.test unavailable during onboarding, saved selected model without probe");
-					}
-					// Store chosen model in localStorage for the UI.
-					localStorage.setItem("moltis-model", selectedModelId);
+					await sendRpc("providers.save_models", { provider: providerName, models: [modelVal] });
+					localStorage.setItem("moltis-model", modelVal);
 				}
 
-				// Success — close the form and update state.
 				setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
 				setConfiguring(null);
 				setPhase("form");
 				setProviderModels([]);
-				setSelectedModel(null);
-				setModelTestError(null);
+				setSelectedModels(new Set());
+				setProbeResults(new Map());
 				setModelSearch("");
 				setApiKey("");
 				setEndpoint("");
@@ -1092,25 +1218,16 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	async function onOAuthAuthenticated(providerName) {
-		var modelsRes = await sendRpc("models.list", {});
-		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var needle = providerName.replace(/-/g, "").toLowerCase();
-		var provModels = allModels.filter((m) => m.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+		var provModels = await loadModelsForProvider(providerName);
 
 		setOauthProvider(null);
 		setOauthInfo(null);
 
 		if (provModels.length > 0) {
-			setOauthModelSelect(providerName);
+			setModelSelectProvider(providerName);
 			setConfiguring(providerName);
-			setProviderModels(
-				provModels.map((m) => ({
-					id: m.id,
-					displayName: m.displayName || m.id,
-					provider: m.provider,
-					supportsTools: m.supportsTools,
-				})),
-			);
+			setProviderModels(provModels);
+			setSelectedModels(new Set());
 			setPhase("selectModel");
 		} else {
 			sendRpc("models.detect_supported", {
@@ -1230,8 +1347,8 @@ function ProviderStep({ onNext, onBack }) {
 				configuring=${configuring}
 				phase=${configuring === p.name ? phase : "form"}
 				providerModels=${configuring === p.name ? providerModels : []}
-				selectedModel=${configuring === p.name ? selectedModel : null}
-				modelTestError=${configuring === p.name ? modelTestError : null}
+				selectedModels=${configuring === p.name ? selectedModels : new Set()}
+				probeResults=${configuring === p.name ? probeResults : new Map()}
 				modelSearch=${configuring === p.name ? modelSearch : ""}
 				setModelSearch=${setModelSearch}
 				oauthProvider=${oauthProvider}
@@ -1248,12 +1365,14 @@ function ProviderStep({ onNext, onBack }) {
 				model=${model}
 				setModel=${setModel}
 				saving=${saving}
+				savingModels=${savingModels}
 				error=${configuring === p.name || oauthProvider === p.name || localProvider === p.name ? error : null}
 				validationResult=${validationResults[p.name] || null}
 				onStartConfigure=${onStartConfigure}
 				onCancelConfigure=${closeAll}
 				onSaveKey=${onSaveKey}
-				onSelectModel=${onSelectModel}
+				onToggleModel=${onToggleModel}
+				onSaveModels=${onSaveSelectedModels}
 				onCancelOAuth=${cancelOAuth}
 				onConfigureLocalModel=${configureLocalModel}
 				onCancelLocal=${cancelLocal}
@@ -1263,7 +1382,7 @@ function ProviderStep({ onNext, onBack }) {
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
+			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;

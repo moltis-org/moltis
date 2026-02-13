@@ -28,30 +28,26 @@ impl LiveOnboardingService {
         Ok(())
     }
 
-    /// Check whether the config file already has onboarding data.
+    /// Check whether onboarding has been completed.
+    ///
+    /// Returns `true` when the `.onboarded` sentinel file exists in the data
+    /// directory (written after the wizard finishes) **or** the
+    /// `SKIP_ONBOARDING` environment variable is set to a non-empty value.
+    /// Pre-existing identity/user data alone no longer auto-skips.
     fn is_already_onboarded(&self) -> bool {
-        let mut identity_name: Option<String> = None;
-        let mut user_name: Option<String> = None;
-
-        if self.config_path.exists()
-            && let Ok(cfg) = moltis_config::loader::load_config(&self.config_path)
+        if std::env::var("SKIP_ONBOARDING")
+            .ok()
+            .is_some_and(|v| !v.is_empty())
         {
-            identity_name = cfg.identity.name;
-            user_name = cfg.user.name;
+            return true;
         }
+        onboarded_sentinel().exists()
+    }
 
-        if let Some(file_identity) = moltis_config::load_identity()
-            && file_identity.name.is_some()
-        {
-            identity_name = file_identity.name;
-        }
-        if let Some(file_user) = moltis_config::load_user()
-            && file_user.name.is_some()
-        {
-            user_name = file_user.name;
-        }
-
-        identity_name.is_some() && user_name.is_some()
+    /// Mark onboarding as complete by writing the sentinel file.
+    fn mark_onboarded(&self) {
+        let path = onboarded_sentinel();
+        let _ = std::fs::write(&path, "");
     }
 
     /// Start the wizard. Returns current step info.
@@ -111,6 +107,7 @@ impl LiveOnboardingService {
             if let Err(e) = moltis_config::save_user(&ws.user) {
                 return Err(format!("failed to save USER.md: {e}"));
             }
+            self.mark_onboarded();
 
             let resp = json!({
                 "step": "done",
@@ -213,6 +210,11 @@ impl LiveOnboardingService {
         moltis_config::save_identity(&identity)?;
         moltis_config::save_user(&user)?;
 
+        // Mark onboarding complete once both names are present.
+        if identity.name.is_some() && user.name.is_some() {
+            self.mark_onboarded();
+        }
+
         Ok(json!({
             "name": identity.name,
             "emoji": identity.emoji,
@@ -272,6 +274,11 @@ impl LiveOnboardingService {
         id.soul = moltis_config::load_soul();
         id
     }
+}
+
+/// Path to the `.onboarded` sentinel file in the data directory.
+fn onboarded_sentinel() -> std::path::PathBuf {
+    moltis_config::data_dir().join(".onboarded")
 }
 
 fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {
@@ -375,20 +382,38 @@ mod tests {
     }
 
     #[test]
-    fn already_onboarded() {
+    fn config_data_alone_does_not_skip_onboarding() {
         let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         moltis_config::set_data_dir(dir.path().to_path_buf());
         let config_path = dir.path().join("moltis.toml");
-        // Write a config with identity and user
+        // Write a config with identity and user — but no sentinel file.
         let mut f = std::fs::File::create(&config_path).unwrap();
         writeln!(f, "[identity]\nname = \"Rex\"\n\n[user]\nname = \"Alice\"").unwrap();
+
+        let svc = LiveOnboardingService::new(config_path);
+        // Should NOT be onboarded — data alone isn't enough.
+        let resp = svc.wizard_start(false);
+        assert_eq!(resp["onboarded"], false);
+        assert_eq!(resp["step"], "welcome");
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn sentinel_file_marks_onboarded() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let config_path = dir.path().join("moltis.toml");
+        // Write sentinel file.
+        std::fs::write(dir.path().join(".onboarded"), "").unwrap();
 
         let svc = LiveOnboardingService::new(config_path);
         let resp = svc.wizard_start(false);
         assert_eq!(resp["onboarded"], true);
         moltis_config::clear_data_dir();
     }
+
 
     #[test]
     fn cancel_wizard() {

@@ -129,6 +129,7 @@ const WRITE_METHODS: &[&str] = &[
     "models.test",
     "providers.save_key",
     "providers.save_model",
+    "providers.save_models",
     "providers.validate_key",
     "providers.remove_key",
     "providers.oauth.start",
@@ -3207,6 +3208,36 @@ impl MethodRegistry {
                         .save_model(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "providers.save_models",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let provider_name = ctx
+                        .params
+                        .get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+
+                    let result = ctx
+                        .state
+                        .services
+                        .provider_setup
+                        .save_models(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // Kick off background support probing after saving preferred models.
+                    let model_service = Arc::clone(&ctx.state.services.model);
+                    tokio::spawn(async move {
+                        let _ = model_service
+                            .detect_supported(model_probe_params(provider_name.as_deref()))
+                            .await;
+                    });
+
+                    Ok(result)
                 })
             }),
         );

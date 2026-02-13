@@ -226,6 +226,12 @@
   letter-spacing: 0.02em;
 }
 
+.model-dropdown-divider {
+  height: 1px;
+  margin: 4px 10px;
+  background: var(--border);
+}
+
 .model-dropdown-empty {
   color: var(--muted);
   padding: 8px 10px;

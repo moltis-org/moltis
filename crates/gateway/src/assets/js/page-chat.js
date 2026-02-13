@@ -16,7 +16,13 @@ import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { bumpSessionCount, clearActiveSession, setSessionReplying, switchSession } from "./sessions.js";
+import {
+	bumpSessionCount,
+	clearActiveSession,
+	seedSessionPreviewFromUserText,
+	setSessionReplying,
+	switchSession,
+} from "./sessions.js";
 import * as S from "./state.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
@@ -732,6 +738,7 @@ function sendChat() {
 		setSessionModel(S.activeSessionKey, selectedModel);
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
+	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
 		if (res?.payload?.queued) {

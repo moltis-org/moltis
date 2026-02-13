@@ -28,6 +28,16 @@ import { projectStore } from "./stores/project-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
 
+var SESSION_PREVIEW_MAX_CHARS = 200;
+
+function truncateSessionPreview(text) {
+	var trimmed = (text || "").trim();
+	if (!trimmed) return "";
+	var chars = Array.from(trimmed);
+	if (chars.length <= SESSION_PREVIEW_MAX_CHARS) return trimmed;
+	return `${chars.slice(0, SESSION_PREVIEW_MAX_CHARS).join("")}…`;
+}
+
 // ── Fetch & render ──────────────────────────────────────────
 
 export function fetchSessions() {
@@ -138,6 +148,26 @@ export function bumpSessionCount(key, increment) {
 		if (key === S.activeSessionKey) {
 			entry.lastSeenMessageCount = entry.messageCount;
 		}
+	}
+}
+
+/** Set first-message preview optimistically so sidebar updates without reload. */
+export function seedSessionPreviewFromUserText(key, text) {
+	var preview = truncateSessionPreview(text);
+	if (!preview) return;
+	var now = Date.now();
+
+	var session = sessionStore.getByKey(key);
+	if (session && !session.preview) {
+		session.preview = preview;
+		session.updatedAt = now;
+		session.dataVersion.value++;
+	}
+
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry && !entry.preview) {
+		entry.preview = preview;
+		entry.updatedAt = now;
 	}
 }
 

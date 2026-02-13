@@ -61,7 +61,13 @@ module.exports = defineConfig({
 	projects: [
 		{
 			name: "default",
-			testIgnore: [/auth\.spec/, /onboarding\.spec/, /onboarding-auth\.spec/, /onboarding-anthropic\.spec/],
+			testIgnore: [
+				/auth\.spec/,
+				/onboarding\.spec/,
+				/onboarding-openai\.spec/,
+				/onboarding-auth\.spec/,
+				/onboarding-anthropic\.spec/,
+			],
 		},
 		{
 			name: "auth",
@@ -70,7 +76,7 @@ module.exports = defineConfig({
 		},
 		{
 			name: "onboarding",
-			testMatch: /onboarding\.spec/,
+			testMatch: /onboarding(?:-openai)?\.spec/,
 			use: {
 				baseURL: onboardingBaseURL,
 			},

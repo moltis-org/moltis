@@ -861,6 +861,7 @@ impl LocalLlmService for LiveLocalLlmService {
                             id: model_id_clone.clone(),
                             provider: "local-llm".into(),
                             display_name,
+                            created_at: None,
                         },
                         provider,
                     );
