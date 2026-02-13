@@ -673,6 +673,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
 
