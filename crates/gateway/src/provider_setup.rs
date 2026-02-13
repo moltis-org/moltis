@@ -1752,9 +1752,10 @@ impl ProviderSetupService for LiveProviderSetupService {
         }
 
         if probe_succeeded {
-            // Build model list for the frontend.
+            // Build model list for the frontend, excluding non-chat models.
             let model_list: Vec<serde_json::Value> = models
                 .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
                 .map(|m| {
                     let supports_tools =
                         temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());

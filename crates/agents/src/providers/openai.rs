@@ -129,6 +129,12 @@ fn is_likely_model_id(model_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
+/// Delegates to the shared [`super::is_chat_capable_model`] for filtering
+/// non-chat models during discovery.
+fn is_chat_capable_model(model_id: &str) -> bool {
+    super::is_chat_capable_model(model_id)
+}
+
 fn parse_model_entry(entry: &serde_json::Value) -> Option<super::DiscoveredModel> {
     let obj = entry.as_object()?;
     let model_id = obj
@@ -181,6 +187,7 @@ fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel
     let mut seen = HashSet::new();
     for entry in candidates {
         if let Some(model) = parse_model_entry(entry)
+            && is_chat_capable_model(&model.id)
             && seen.insert(model.id.clone())
         {
             models.push(model);
@@ -386,7 +393,7 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        super::supports_tools_for_model(&self.model)
     }
 
     fn context_window(&self) -> u32 {
@@ -931,15 +938,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_models_payload_keeps_all_valid_model_ids() {
+    fn parse_models_payload_keeps_chat_capable_models() {
         let payload = serde_json::json!({
             "data": [
                 { "id": "gpt-5.2" },
                 { "id": "gpt-5.2-2025-12-11" },
                 { "id": "gpt-image-1" },
+                { "id": "gpt-image-1-mini" },
+                { "id": "chatgpt-image-latest" },
+                { "id": "gpt-audio" },
                 { "id": "o4-mini-deep-research" },
                 { "id": "kimi-k2.5" },
                 { "id": "moonshot-v1-8k" },
+                { "id": "dall-e-3" },
+                { "id": "tts-1-hd" },
+                { "id": "gpt-4o-mini-tts" },
+                { "id": "whisper-1" },
+                { "id": "text-embedding-3-large" },
+                { "id": "omni-moderation-latest" },
+                { "id": "gpt-4o-audio-preview" },
+                { "id": "gpt-4o-realtime-preview" },
+                { "id": "gpt-4o-mini-transcribe" },
                 { "id": "has spaces" },
                 { "id": "" }
             ]
@@ -947,11 +966,11 @@ mod tests {
 
         let models = parse_models_payload(&payload);
         let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
-        // All valid IDs pass; only empty/whitespace IDs are rejected
+        // Only chat-capable models pass; non-chat (image, TTS, whisper,
+        // embedding, moderation, audio, realtime, transcribe) are excluded.
         assert_eq!(ids, vec![
             "gpt-5.2",
             "gpt-5.2-2025-12-11",
-            "gpt-image-1",
             "o4-mini-deep-research",
             "kimi-k2.5",
             "moonshot-v1-8k",
@@ -1083,5 +1102,43 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             body
         ));
+    }
+
+    #[test]
+    fn is_chat_capable_model_filters_non_chat_families() {
+        // Chat-capable models pass
+        assert!(is_chat_capable_model("gpt-5.2"));
+        assert!(is_chat_capable_model("gpt-4o-mini"));
+        assert!(is_chat_capable_model("o3"));
+        assert!(is_chat_capable_model("o4-mini"));
+        assert!(is_chat_capable_model("chatgpt-4o-latest"));
+        assert!(is_chat_capable_model("babbage-002"));
+        assert!(is_chat_capable_model("davinci-002"));
+
+        // Non-chat models are rejected
+        assert!(!is_chat_capable_model("dall-e-3"));
+        assert!(!is_chat_capable_model("dall-e-2"));
+        assert!(!is_chat_capable_model("gpt-image-1"));
+        assert!(!is_chat_capable_model("gpt-image-1-mini"));
+        assert!(!is_chat_capable_model("chatgpt-image-latest"));
+        assert!(!is_chat_capable_model("gpt-audio"));
+        assert!(!is_chat_capable_model("tts-1"));
+        assert!(!is_chat_capable_model("tts-1-hd"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
+        assert!(!is_chat_capable_model("whisper-1"));
+        assert!(!is_chat_capable_model("text-embedding-3-large"));
+        assert!(!is_chat_capable_model("text-embedding-ada-002"));
+        assert!(!is_chat_capable_model("omni-moderation-latest"));
+        assert!(!is_chat_capable_model("omni-moderation-2024-09-26"));
+        assert!(!is_chat_capable_model("moderation-latest"));
+        assert!(!is_chat_capable_model("sora"));
+
+        // Audio/realtime/transcribe variants
+        assert!(!is_chat_capable_model("gpt-4o-audio-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-audio-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-realtime-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-realtime"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
     }
 }

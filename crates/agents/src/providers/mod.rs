@@ -347,6 +347,71 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
     200_000
 }
 
+/// Returns `false` for model IDs that are clearly not chat-completion models
+/// (image generators, TTS, speech-to-text, embeddings, moderation, etc.).
+///
+/// Provider APIs like OpenAI's `/v1/models` return every model in the account.
+/// Since no capability metadata is exposed we filter by well-known prefixes and
+/// patterns. This is applied both at discovery time and at display time so that
+/// non-chat models never appear in the UI.
+pub fn is_chat_capable_model(model_id: &str) -> bool {
+    let id = raw_model_id(model_id);
+    const NON_CHAT_PREFIXES: &[&str] = &[
+        "dall-e",
+        "gpt-image",
+        "chatgpt-image",
+        "gpt-audio",
+        "tts-",
+        "whisper",
+        "text-embedding",
+        "omni-moderation",
+        "moderation-",
+        "sora",
+    ];
+    for prefix in NON_CHAT_PREFIXES {
+        if id.starts_with(prefix) {
+            return false;
+        }
+    }
+    // TTS / audio-only / realtime / transcription variants
+    if id.contains("-tts") || id.contains("-audio-") || id.ends_with("-audio") {
+        return false;
+    }
+    if id.contains("-realtime-") || id.ends_with("-realtime") {
+        return false;
+    }
+    if id.contains("-transcribe") {
+        return false;
+    }
+    true
+}
+
+/// Check if a model supports tool/function calling.
+///
+/// Most modern chat models support tools, but legacy completions-only models
+/// (e.g. `babbage-002`, `davinci-002`) and non-chat models do not.
+/// This is checked per-model rather than per-provider so that providers
+/// exposing mixed catalogs report accurate tool support.
+pub fn supports_tools_for_model(model_id: &str) -> bool {
+    let id = raw_model_id(model_id);
+    // Legacy completions-only models — no tool support
+    if id.starts_with("babbage") || id.starts_with("davinci") {
+        return false;
+    }
+    // Non-chat model families — never support tools
+    if id.starts_with("dall-e")
+        || id.starts_with("gpt-image")
+        || id.starts_with("tts-")
+        || id.starts_with("whisper")
+        || id.starts_with("text-embedding")
+        || id.starts_with("omni-moderation")
+    {
+        return false;
+    }
+    // Default: assume tool support for modern chat models
+    true
+}
+
 /// Check if a model supports vision (image inputs).
 ///
 /// Vision-capable models can process images in tool results and user messages.
@@ -593,6 +658,12 @@ impl ProviderRegistry {
     fn has_provider_model(&self, provider: &str, model_id: &str) -> bool {
         self.providers
             .contains_key(&namespaced_model_id(provider, model_id))
+    }
+
+    /// Check if the raw (un-namespaced) model ID is registered under any provider.
+    fn has_model_any_provider(&self, model_id: &str) -> bool {
+        let raw = raw_model_id(model_id);
+        self.models.iter().any(|m| raw_model_id(&m.id) == raw)
     }
 
     fn resolve_registry_model_id(
@@ -865,7 +936,7 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get(provider_name).and_then(|e| e.alias.clone());
             let genai_provider_name = alias.unwrap_or_else(|| format!("genai/{provider_name}"));
-            if self.has_provider_model(&genai_provider_name, &model_id) {
+            if self.has_model_any_provider(&model_id) {
                 continue;
             }
 
@@ -910,7 +981,7 @@ impl ProviderRegistry {
         // Get alias if configured (for metrics differentiation).
         let alias = config.get("openai").and_then(|e| e.alias.clone());
         let provider_label = alias.clone().unwrap_or_else(|| "async-openai".into());
-        if self.has_provider_model(&provider_label, &model_id) {
+        if self.has_model_any_provider(&model_id) {
             return;
         }
 
@@ -1573,6 +1644,73 @@ mod tests {
             "mistral".into(),
         );
         assert!(!mistral.supports_vision());
+    }
+
+    #[test]
+    fn is_chat_capable_filters_non_chat_models() {
+        // Chat-capable models pass
+        assert!(super::is_chat_capable_model("gpt-5.2"));
+        assert!(super::is_chat_capable_model("gpt-4o"));
+        assert!(super::is_chat_capable_model("o4-mini"));
+        assert!(super::is_chat_capable_model("chatgpt-4o-latest"));
+
+        // Non-chat models are rejected
+        assert!(!super::is_chat_capable_model("dall-e-3"));
+        assert!(!super::is_chat_capable_model("gpt-image-1-mini"));
+        assert!(!super::is_chat_capable_model("chatgpt-image-latest"));
+        assert!(!super::is_chat_capable_model("gpt-audio"));
+        assert!(!super::is_chat_capable_model("tts-1"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
+        assert!(!super::is_chat_capable_model("gpt-4o-audio-preview"));
+        assert!(!super::is_chat_capable_model("gpt-4o-realtime-preview"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-transcribe"));
+        assert!(!super::is_chat_capable_model("sora"));
+
+        // Works with namespaced model IDs too
+        assert!(super::is_chat_capable_model("openai::gpt-5.2"));
+        assert!(!super::is_chat_capable_model("openai::dall-e-3"));
+        assert!(!super::is_chat_capable_model("openai::gpt-image-1-mini"));
+        assert!(!super::is_chat_capable_model("openai::gpt-4o-mini-tts"));
+    }
+
+    #[test]
+    fn supports_tools_for_chat_models() {
+        // Modern chat models support tools
+        assert!(super::supports_tools_for_model("gpt-5.2"));
+        assert!(super::supports_tools_for_model("gpt-4o"));
+        assert!(super::supports_tools_for_model("gpt-4o-mini"));
+        assert!(super::supports_tools_for_model("o3"));
+        assert!(super::supports_tools_for_model("o4-mini"));
+        assert!(super::supports_tools_for_model("chatgpt-4o-latest"));
+        assert!(super::supports_tools_for_model("claude-sonnet-4-20250514"));
+        assert!(super::supports_tools_for_model("gemini-2.0-flash"));
+        assert!(super::supports_tools_for_model("codestral-latest"));
+    }
+
+    #[test]
+    fn supports_tools_false_for_legacy_and_non_chat_models() {
+        // Legacy completions-only models
+        assert!(!super::supports_tools_for_model("babbage-002"));
+        assert!(!super::supports_tools_for_model("davinci-002"));
+
+        // Non-chat model families
+        assert!(!super::supports_tools_for_model("dall-e-3"));
+        assert!(!super::supports_tools_for_model("gpt-image-1"));
+        assert!(!super::supports_tools_for_model("tts-1"));
+        assert!(!super::supports_tools_for_model("tts-1-hd"));
+        assert!(!super::supports_tools_for_model("whisper-1"));
+        assert!(!super::supports_tools_for_model("text-embedding-3-large"));
+        assert!(!super::supports_tools_for_model("omni-moderation-latest"));
+    }
+
+    #[test]
+    fn provider_supports_tools_uses_model_lookup() {
+        let gpt = openai::OpenAiProvider::new(secret("k"), "gpt-5.2".into(), "u".into());
+        assert!(gpt.supports_tools());
+
+        let babbage = openai::OpenAiProvider::new(secret("k"), "babbage-002".into(), "u".into());
+        assert!(!babbage.supports_tools());
     }
 
     #[test]

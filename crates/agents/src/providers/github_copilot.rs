@@ -444,7 +444,7 @@ impl LlmProvider for GitHubCopilotProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        super::supports_tools_for_model(&self.model)
     }
 
     async fn complete(

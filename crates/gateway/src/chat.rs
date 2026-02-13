@@ -1049,6 +1049,7 @@ impl ModelService for LiveModelService {
             &order,
             reg.list_models()
                 .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
@@ -1079,7 +1080,12 @@ impl ModelService for LiveModelService {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
         let order = self.priority_order().await;
-        let prioritized = Self::prioritize_models(&order, reg.list_models().iter());
+        let prioritized = Self::prioritize_models(
+            &order,
+            reg.list_models()
+                .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
+        );
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1534,8 +1540,7 @@ impl ModelService for LiveModelService {
                 "modelId": model_id,
             })),
             Ok(Err(err)) => {
-                let error_obj =
-                    crate::chat_error::parse_chat_error(&err, Some(provider.name()));
+                let error_obj = crate::chat_error::parse_chat_error(&err, Some(provider.name()));
                 let detail = error_obj
                     .get("detail")
                     .and_then(|v| v.as_str())
@@ -5768,11 +5773,9 @@ mod tests {
             created_at: None,
         };
 
-        let order = LiveModelService::build_priority_order(
-            &["gpt-5.2".into(), "claude-opus-4-5".into()],
-        );
-        let ordered =
-            LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
+        let order =
+            LiveModelService::build_priority_order(&["gpt-5.2".into(), "claude-opus-4-5".into()]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -5799,11 +5802,9 @@ mod tests {
             created_at: None,
         };
 
-        let order = LiveModelService::build_priority_order(
-            &["gpt 5.2".into(), "claude-sonnet-4.5".into()],
-        );
-        let ordered =
-            LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
+        let order =
+            LiveModelService::build_priority_order(&["gpt 5.2".into(), "claude-sonnet-4.5".into()]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -6054,16 +6055,25 @@ mod tests {
         let gpt = arr.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
         assert_eq!(gpt["createdAt"], 1700000000);
 
-        let babbage = arr.iter().find(|m| m["id"] == "openai::babbage-002").unwrap();
+        let babbage = arr
+            .iter()
+            .find(|m| m["id"] == "openai::babbage-002")
+            .unwrap();
         assert_eq!(babbage["createdAt"], 1600000000);
 
-        let claude = arr.iter().find(|m| m["id"] == "anthropic::claude-opus").unwrap();
+        let claude = arr
+            .iter()
+            .find(|m| m["id"] == "anthropic::claude-opus")
+            .unwrap();
         assert!(claude["createdAt"].is_null());
 
         // Also verify list_all includes createdAt.
         let result_all = service.list_all().await.unwrap();
         let arr_all = result_all.as_array().unwrap();
-        let gpt_all = arr_all.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
+        let gpt_all = arr_all
+            .iter()
+            .find(|m| m["id"] == "openai::gpt-5.3")
+            .unwrap();
         assert_eq!(gpt_all["createdAt"], 1700000000);
     }
 
