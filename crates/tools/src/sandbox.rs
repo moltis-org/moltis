@@ -2257,10 +2257,14 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(
-            args,
-            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
-        );
+        assert_eq!(args, vec![
+            "--memory",
+            "256M",
+            "--cpus",
+            "0.5",
+            "--pids-limit",
+            "50"
+        ]);
     }
 
     #[test]
@@ -2807,30 +2811,28 @@ mod tests {
 
     #[test]
     fn test_host_package_name_candidates_t64_to_base() {
-        assert_eq!(
-            host_package_name_candidates("libgtk-3-0t64"),
-            vec!["libgtk-3-0t64".to_string(), "libgtk-3-0".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("libgtk-3-0t64"), vec![
+            "libgtk-3-0t64".to_string(),
+            "libgtk-3-0".to_string()
+        ]);
     }
 
     #[test]
     fn test_host_package_name_candidates_base_to_t64_for_soname() {
-        assert_eq!(
-            host_package_name_candidates("libcups2"),
-            vec!["libcups2".to_string(), "libcups2t64".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("libcups2"), vec![
+            "libcups2".to_string(),
+            "libcups2t64".to_string()
+        ]);
     }
 
     #[test]
     fn test_host_package_name_candidates_non_library_stays_single() {
-        assert_eq!(
-            host_package_name_candidates("curl"),
-            vec!["curl".to_string()]
-        );
-        assert_eq!(
-            host_package_name_candidates("libreoffice-core"),
-            vec!["libreoffice-core".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("curl"), vec![
+            "curl".to_string()
+        ]);
+        assert_eq!(host_package_name_candidates("libreoffice-core"), vec![
+            "libreoffice-core".to_string()
+        ]);
     }
 
     #[tokio::test]

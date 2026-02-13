@@ -683,14 +683,11 @@ mod tests {
             "https://api.moonshot.ai/v1".to_string(),
             "moonshot".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -706,14 +703,11 @@ mod tests {
             "gpt-4o".to_string(),
             "https://api.openai.com/v1".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -733,14 +727,11 @@ mod tests {
         );
         let messages = vec![
             ChatMessage::user("run uname"),
-            ChatMessage::assistant_with_tools(
-                None,
-                vec![ToolCall {
-                    id: "exec:0".into(),
-                    name: "exec".into(),
-                    arguments: serde_json::json!({ "command": "uname -a" }),
-                }],
-            ),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "exec:0".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }]),
             ChatMessage::tool("exec:0", "Linux host 6.0"),
         ];
 
@@ -973,19 +964,16 @@ mod tests {
 
         let models = parse_models_payload(&payload);
         let ids: Vec<String> = models.into_iter().map(|(id, _)| id).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "gpt-5.2",
-                "gpt-5.2-chat-latest",
-                "gpt-5.2-pro",
-                "gpt-5.2-codex",
-                "gpt-4o-mini",
-                "o1",
-                "o1-pro",
-                "o3",
-            ]
-        );
+        assert_eq!(ids, vec![
+            "gpt-5.2",
+            "gpt-5.2-chat-latest",
+            "gpt-5.2-pro",
+            "gpt-5.2-codex",
+            "gpt-4o-mini",
+            "o1",
+            "o1-pro",
+            "o3",
+        ]);
     }
 
     #[test]

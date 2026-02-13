@@ -6020,12 +6020,10 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(registry)),
-            disabled,
-            vec![],
-            vec!["opus".into()],
-        );
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
+                "opus".into(),
+            ]);
 
         // list() should only contain opus.
         let result = service.list().await.unwrap();
@@ -6067,12 +6065,10 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(registry)),
-            disabled,
-            vec![],
-            vec!["opus".into()],
-        );
+        let service =
+            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
+                "opus".into(),
+            ]);
 
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
