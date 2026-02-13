@@ -117,6 +117,45 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("main session preview updates after clear on first message without reload", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+
+		const chatInput = page.locator("#chatInput");
+		await expect(chatInput).toBeVisible();
+		await expect(chatInput).toBeEnabled();
+
+		await chatInput.fill("/clear");
+		await chatInput.press("Enter");
+
+		await expect
+			.poll(
+				() =>
+					page.evaluate(() => {
+						const store = window.__moltis_stores?.sessionStore;
+						const main = store?.getByKey?.("main");
+						if (!main) return null;
+						return {
+							messageCount: main.messageCount || 0,
+							preview: main.preview || "",
+						};
+					}),
+				{ timeout: 10_000 },
+			)
+			.toEqual({ messageCount: 0, preview: "" });
+
+		const firstMessage = "sidebar preview should update immediately";
+		await chatInput.fill(firstMessage);
+		await chatInput.press("Enter");
+
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"] .session-preview')).toContainText(
+			firstMessage,
+		);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("session search filters the list", async ({ page }) => {
 		await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
