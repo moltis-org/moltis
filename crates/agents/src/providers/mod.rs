@@ -216,16 +216,6 @@ const ANTHROPIC_MODELS: &[(&str, &str)] = &[
     ("claude-3-haiku-20240307", "Claude 3 Haiku"),
 ];
 
-/// Known OpenAI models (model_id, display_name).
-const OPENAI_MODELS: &[(&str, &str)] = &[
-    ("gpt-4o", "GPT-4o"),
-    ("gpt-4o-mini", "GPT-4o Mini"),
-    ("gpt-4-turbo", "GPT-4 Turbo"),
-    ("o3", "o3"),
-    ("o3-mini", "o3-mini"),
-    ("o4-mini", "o4-mini"),
-];
-
 /// Known Mistral models.
 const MISTRAL_MODELS: &[(&str, &str)] = &[
     ("mistral-large-latest", "Mistral Large"),
@@ -1035,10 +1025,12 @@ impl ProviderRegistry {
             let alias = config.get("openai").and_then(|e| e.alias.clone());
             let provider_label = alias.clone().unwrap_or_else(|| "openai".into());
 
+            let openai_models = openai::available_models(&key, &base_url);
+
             if let Some(model_id) = config.get("openai").and_then(|e| e.model.as_deref()) {
                 let model_id = configured_model_for_provider("openai", model_id);
                 if !self.has_provider_model(&provider_label, model_id) {
-                    let display = OPENAI_MODELS
+                    let display = openai_models
                         .iter()
                         .find(|(id, _)| *id == model_id)
                         .map(|(_, name)| name.to_string())
@@ -1059,21 +1051,21 @@ impl ProviderRegistry {
                     );
                 }
             } else {
-                for &(model_id, display_name) in OPENAI_MODELS {
-                    if self.has_provider_model(&provider_label, model_id) {
+                for (model_id, display_name) in openai_models {
+                    if self.has_provider_model(&provider_label, &model_id) {
                         continue;
                     }
                     let provider = Arc::new(openai::OpenAiProvider::new_with_name(
                         key.clone(),
-                        model_id.into(),
+                        model_id.clone(),
                         base_url.clone(),
                         provider_label.clone(),
                     ));
                     self.register(
                         ModelInfo {
-                            id: model_id.into(),
+                            id: model_id,
                             provider: provider_label.clone(),
-                            display_name: display_name.into(),
+                            display_name,
                         },
                         provider,
                     );
@@ -1419,7 +1411,7 @@ mod tests {
     #[test]
     fn model_lists_not_empty() {
         assert!(!ANTHROPIC_MODELS.is_empty());
-        assert!(!OPENAI_MODELS.is_empty());
+        assert!(!openai::default_model_catalog().is_empty());
         assert!(!MISTRAL_MODELS.is_empty());
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
@@ -1428,9 +1420,18 @@ mod tests {
 
     #[test]
     fn model_lists_have_unique_ids() {
+        let openai_models = openai::default_model_catalog();
+        let mut openai_ids: Vec<&str> = openai_models.iter().map(|(id, _)| id.as_str()).collect();
+        openai_ids.sort();
+        openai_ids.dedup();
+        assert_eq!(
+            openai_ids.len(),
+            openai_models.len(),
+            "duplicate OpenAI model IDs found"
+        );
+
         for models in [
             ANTHROPIC_MODELS,
-            OPENAI_MODELS,
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
             MINIMAX_MODELS,

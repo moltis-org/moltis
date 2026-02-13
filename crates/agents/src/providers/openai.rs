@@ -1,4 +1,9 @@
-use std::pin::Pin;
+use std::{
+    collections::{HashMap, HashSet},
+    pin::Pin,
+    sync::mpsc,
+    time::Duration,
+};
 
 use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
 
@@ -18,6 +23,327 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_name: String,
     client: reqwest::Client,
+}
+
+const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
+
+const OPENAI_MODEL_EXCLUDED_FRAGMENTS: &[&str] = &[
+    "audio",
+    "realtime",
+    "image",
+    "search",
+    "transcribe",
+    "tts",
+    "moderation",
+    "embedding",
+    "whisper",
+    "deep-research",
+];
+
+const DEFAULT_OPENAI_MODELS: &[(&str, &str)] = &[
+    ("gpt-5.2", "GPT-5.2"),
+    ("gpt-5.1", "GPT-5.1"),
+    ("gpt-5", "GPT-5"),
+    ("gpt-5-mini", "GPT-5 Mini"),
+    ("gpt-5-nano", "GPT-5 Nano"),
+    ("gpt-4.1", "GPT-4.1"),
+    ("gpt-4.1-mini", "GPT-4.1 Mini"),
+    ("gpt-4.1-nano", "GPT-4.1 Nano"),
+    ("gpt-4o", "GPT-4o"),
+    ("gpt-4o-mini", "GPT-4o Mini"),
+    ("gpt-4-turbo", "GPT-4 Turbo"),
+    ("chatgpt-4o-latest", "ChatGPT-4o Latest"),
+    ("o4-mini", "o4-mini"),
+    ("o3", "o3"),
+    ("o3-mini", "o3-mini"),
+];
+
+#[must_use]
+pub fn default_model_catalog() -> Vec<(String, String)> {
+    DEFAULT_OPENAI_MODELS
+        .iter()
+        .map(|(id, name)| (id.to_string(), name.to_string()))
+        .collect()
+}
+
+fn title_case_chunk(chunk: &str) -> String {
+    if chunk.is_empty() {
+        return String::new();
+    }
+    let mut chars = chunk.chars();
+    match chars.next() {
+        Some(first) => {
+            let mut out = String::new();
+            out.push(first.to_ascii_uppercase());
+            out.push_str(chars.as_str());
+            out
+        },
+        None => String::new(),
+    }
+}
+
+fn format_gpt_display_name(model_id: &str) -> String {
+    let Some(rest) = model_id.strip_prefix("gpt-") else {
+        return model_id.to_string();
+    };
+    let mut parts = rest.split('-');
+    let Some(base) = parts.next() else {
+        return "GPT".to_string();
+    };
+    let mut out = format!("GPT-{base}");
+    for part in parts {
+        out.push(' ');
+        out.push_str(&title_case_chunk(part));
+    }
+    out
+}
+
+fn format_chatgpt_display_name(model_id: &str) -> String {
+    let Some(rest) = model_id.strip_prefix("chatgpt-") else {
+        return model_id.to_string();
+    };
+    let mut parts = rest.split('-');
+    let Some(base) = parts.next() else {
+        return "ChatGPT".to_string();
+    };
+    let mut out = format!("ChatGPT-{base}");
+    for part in parts {
+        out.push(' ');
+        out.push_str(&title_case_chunk(part));
+    }
+    out
+}
+
+fn formatted_model_name(model_id: &str) -> String {
+    if model_id.starts_with("gpt-") {
+        return format_gpt_display_name(model_id);
+    }
+    if model_id.starts_with("chatgpt-") {
+        return format_chatgpt_display_name(model_id);
+    }
+    model_id.to_string()
+}
+
+fn normalize_display_name(model_id: &str, display_name: Option<&str>) -> String {
+    let normalized = display_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(model_id);
+    if normalized == model_id {
+        return formatted_model_name(model_id);
+    }
+    normalized.to_string()
+}
+
+fn is_likely_model_id(model_id: &str) -> bool {
+    if model_id.is_empty() || model_id.len() > 160 {
+        return false;
+    }
+    if model_id.chars().any(char::is_whitespace) {
+        return false;
+    }
+    model_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+}
+
+fn is_reasoning_family_model_id(model_id: &str) -> bool {
+    let mut chars = model_id.chars();
+    matches!(chars.next(), Some('o'))
+        && matches!(chars.next(), Some(second) if second.is_ascii_digit())
+}
+
+fn has_date_suffix(model_id: &str) -> bool {
+    let parts: Vec<&str> = model_id.split('-').collect();
+    if parts.len() < 3 {
+        return false;
+    }
+    let year = parts[parts.len() - 3];
+    let month = parts[parts.len() - 2];
+    let day = parts[parts.len() - 1];
+    year.len() == 4
+        && month.len() == 2
+        && day.len() == 2
+        && year.chars().all(|ch| ch.is_ascii_digit())
+        && month.chars().all(|ch| ch.is_ascii_digit())
+        && day.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_supported_chat_model_id(model_id: &str) -> bool {
+    let lower = model_id.to_ascii_lowercase();
+    let starts_with_supported_family = lower.starts_with("gpt-")
+        || lower.starts_with("chatgpt-")
+        || is_reasoning_family_model_id(&lower);
+    if !starts_with_supported_family {
+        return false;
+    }
+    if has_date_suffix(&lower) {
+        return false;
+    }
+    !OPENAI_MODEL_EXCLUDED_FRAGMENTS
+        .iter()
+        .any(|fragment| lower.contains(fragment))
+}
+
+fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
+    let obj = entry.as_object()?;
+    let model_id = obj
+        .get("id")
+        .or_else(|| obj.get("slug"))
+        .or_else(|| obj.get("model"))
+        .and_then(serde_json::Value::as_str)?;
+
+    if !is_likely_model_id(model_id) || !is_supported_chat_model_id(model_id) {
+        return None;
+    }
+
+    let display_name = obj
+        .get("display_name")
+        .or_else(|| obj.get("displayName"))
+        .or_else(|| obj.get("name"))
+        .or_else(|| obj.get("title"))
+        .and_then(serde_json::Value::as_str);
+
+    Some((
+        model_id.to_string(),
+        normalize_display_name(model_id, display_name),
+    ))
+}
+
+fn collect_candidate_arrays<'a>(
+    value: &'a serde_json::Value,
+    out: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(items) => out.extend(items),
+        serde_json::Value::Object(map) => {
+            for key in ["models", "data", "items", "results", "available"] {
+                if let Some(nested) = map.get(key) {
+                    collect_candidate_arrays(nested, out);
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+fn parse_models_payload(value: &serde_json::Value) -> Vec<(String, String)> {
+    let mut candidates = Vec::new();
+    collect_candidate_arrays(value, &mut candidates);
+
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in candidates {
+        if let Some((id, display_name)) = parse_model_entry(entry)
+            && seen.insert(id.clone())
+        {
+            models.push((id, display_name));
+        }
+    }
+    models
+}
+
+fn models_endpoint(base_url: &str) -> String {
+    format!(
+        "{}{OPENAI_MODELS_ENDPOINT_PATH}",
+        base_url.trim_end_matches('/')
+    )
+}
+
+async fn fetch_models_from_api(
+    api_key: secrecy::Secret<String>,
+    base_url: String,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()?;
+    let response = client
+        .get(models_endpoint(&base_url))
+        .header(
+            "Authorization",
+            format!("Bearer {}", api_key.expose_secret()),
+        )
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("openai models API error HTTP {status}");
+    }
+    let payload: serde_json::Value = serde_json::from_str(&body)?;
+    let models = parse_models_payload(&payload);
+    if models.is_empty() {
+        anyhow::bail!("openai models API returned no chat models");
+    }
+    Ok(models)
+}
+
+fn fetch_models_blocking(
+    api_key: secrecy::Secret<String>,
+    base_url: String,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| rt.block_on(fetch_models_from_api(api_key, base_url)));
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|err| anyhow::anyhow!("openai model discovery worker failed: {err}"))?
+}
+
+pub fn live_models(
+    api_key: &secrecy::Secret<String>,
+    base_url: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let models = fetch_models_blocking(api_key.clone(), base_url.to_string())?;
+    debug!(model_count = models.len(), "loaded openai live models");
+    Ok(models)
+}
+
+fn merge_with_fallback(
+    discovered: Vec<(String, String)>,
+    fallback: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut discovered_by_id: HashMap<String, String> = discovered.into_iter().collect();
+    let mut merged = Vec::new();
+
+    for (id, fallback_display) in fallback {
+        let display_name = discovered_by_id.remove(&id).unwrap_or(fallback_display);
+        merged.push((id, display_name));
+    }
+
+    let mut remaining: Vec<(String, String)> = discovered_by_id.into_iter().collect();
+    remaining.sort_by(|left, right| left.0.cmp(&right.0));
+    merged.extend(remaining);
+    merged
+}
+
+#[must_use]
+pub fn available_models(
+    api_key: &secrecy::Secret<String>,
+    base_url: &str,
+) -> Vec<(String, String)> {
+    let fallback = default_model_catalog();
+    if cfg!(test) {
+        return fallback;
+    }
+
+    let discovered = match live_models(api_key, base_url) {
+        Ok(models) => models,
+        Err(err) => {
+            warn!(error = %err, base_url = %base_url, "failed to fetch openai models, using fallback catalog");
+            return fallback;
+        },
+    };
+
+    let merged = merge_with_fallback(discovered, fallback);
+    debug!(model_count = merged.len(), "loaded openai models catalog");
+    merged
 }
 
 impl OpenAiProvider {
@@ -632,5 +958,46 @@ mod tests {
 
         assert_eq!(text_deltas.join(""), "Let me help.");
         assert_eq!(tool_starts, vec!["my_tool"]);
+    }
+
+    #[test]
+    fn parse_models_payload_filters_non_chat_and_snapshot_models() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "gpt-5.2" },
+                { "id": "gpt-5.2-2025-12-11" },
+                { "id": "gpt-image-1" },
+                { "id": "gpt-4o-mini" },
+                { "id": "o4-mini-deep-research" },
+                { "id": "o3" }
+            ]
+        });
+
+        let models = parse_models_payload(&payload);
+        let ids: Vec<String> = models.into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["gpt-5.2", "gpt-4o-mini", "o3"]);
+    }
+
+    #[test]
+    fn merge_with_fallback_preserves_fallback_order_then_appends_new_models() {
+        let discovered = vec![
+            ("gpt-5.2".to_string(), "GPT-5.2".to_string()),
+            ("zeta-model".to_string(), "Zeta".to_string()),
+            ("alpha-model".to_string(), "Alpha".to_string()),
+        ];
+        let fallback = vec![
+            ("gpt-5.2".to_string(), "fallback".to_string()),
+            ("gpt-4o".to_string(), "GPT-4o".to_string()),
+        ];
+
+        let merged = merge_with_fallback(discovered, fallback);
+        let ids: Vec<String> = merged.into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["gpt-5.2", "gpt-4o", "alpha-model", "zeta-model"]);
+    }
+
+    #[test]
+    fn default_catalog_includes_gpt_5_2() {
+        let defaults = default_model_catalog();
+        assert!(defaults.iter().any(|(id, _)| id == "gpt-5.2"));
     }
 }
