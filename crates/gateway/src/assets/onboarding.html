@@ -9,6 +9,7 @@
 <link rel="icon" type="image/png" sizes="96x96" href="{{ asset_prefix }}icons/icon-96.png">
 <link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
 <meta name="build-ts" content="{{ build_ts }}">
+<script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
 <script nonce="{{ nonce }}" type="importmap">
 {
   "imports": {

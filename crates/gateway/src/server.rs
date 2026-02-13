@@ -4025,6 +4025,7 @@ struct OnboardingHtmlTemplate<'a> {
     asset_prefix: &'a str,
     nonce: &'a str,
     page_title: &'a str,
+    gon_json: &'a str,
 }
 
 #[cfg(feature = "web-ui")]
@@ -4151,20 +4152,15 @@ async fn render_spa_template(
             }
         },
         SpaTemplate::Onboarding => {
-            let identity = gateway
-                .services
-                .onboarding
-                .identity_get()
-                .await
-                .ok()
-                .and_then(|v| serde_json::from_value(v).ok())
-                .unwrap_or_default();
-            let page_title = format!("{} onboarding", identity_name(&identity));
+            let gon = build_gon_data(gateway).await;
+            let gon_json = script_safe_json(&gon);
+            let page_title = format!("{} onboarding", identity_name(&gon.identity));
             let template = OnboardingHtmlTemplate {
                 build_ts: &build_ts,
                 asset_prefix: &asset_prefix,
                 nonce: &nonce,
                 page_title: &page_title,
+                gon_json: &gon_json,
             };
             match template.render() {
                 Ok(html) => html,
@@ -5701,6 +5697,7 @@ mod tests {
             asset_prefix: "/assets/v/test/",
             nonce: "nonce-123",
             page_title: "sparky onboarding",
+            gon_json: "{\"identity\":{\"name\":\"moltis\"},\"voice_enabled\":true}",
         };
         let html = match template.render() {
             Ok(html) => html,
@@ -5717,6 +5714,9 @@ mod tests {
         assert!(!html.contains("/assets/v/test/js/app.js"));
         assert!(!html.contains("/manifest.json"));
         assert!(html.contains("<script nonce=\"nonce-123\">"));
+        assert!(html.contains(
+            "<script nonce=\"nonce-123\">window.__MOLTIS__={\"identity\":{\"name\":\"moltis\"},\"voice_enabled\":true};</script>"
+        ));
         assert!(html.contains("<script nonce=\"nonce-123\" type=\"importmap\">"));
         assert!(html.contains(
             "<script nonce=\"nonce-123\" type=\"module\" src=\"/assets/v/test/js/onboarding-app.js\">"
@@ -6155,11 +6155,15 @@ mod tests {
             asset_prefix: "/assets/v/test/",
             nonce,
             page_title: "moltis onboarding",
+            gon_json: "{}",
         };
         let onboarding_html = match onboarding_template.render() {
             Ok(html) => html,
             Err(e) => panic!("failed to render onboarding template: {e}"),
         };
+        assert!(onboarding_html.contains(&format!(
+            "<script nonce=\"{nonce}\">window.__MOLTIS__={{}};</script>"
+        )));
         assert!(onboarding_html.contains(&format!(
             "<script nonce=\"{nonce}\" type=\"module\" src=\"/assets/v/test/js/onboarding-app.js\"></script>"
         )));
