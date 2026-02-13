@@ -288,6 +288,20 @@ main {
   line-height: 1.55;
   color: var(--text);
 }
+.msg-tool-content {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
 .msg-image-wrap {
   margin: 0 0 10px;
 }
@@ -606,7 +620,11 @@ main {
             </div>
           {% endif %}
           {% if !message.content.is_empty() %}
-            <div class="msg-content">{{ message.content }}</div>
+            {% if message.role_class == "tool" %}
+              <pre class="msg-content msg-tool-content">{{ message.content }}</pre>
+            {% else %}
+              <div class="msg-content">{{ message.content }}</div>
+            {% endif %}
           {% endif %}
           {% match message.footer %}
             {% when Some with (footer) %}
