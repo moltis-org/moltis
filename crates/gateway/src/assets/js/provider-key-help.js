@@ -58,9 +58,9 @@ var KEY_SOURCE_BY_PROVIDER = {
 export function providerApiKeyHelp(provider) {
 	if (!provider || provider.authType !== "api-key") return null;
 
-	if (provider.name === "ollama") {
+	if (provider.keyOptional) {
 		return {
-			text: "API key is optional for local Ollama. Leave blank unless your gateway requires one.",
+			text: `API key is optional for ${provider.displayName}. Leave blank unless your gateway requires one.`,
 		};
 	}
 

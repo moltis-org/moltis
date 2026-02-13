@@ -93,24 +93,90 @@ fn session_key_to_filename(key: &str) -> String {
     divan::black_box(moltis_sessions::store::SessionStore::key_to_filename(key))
 }
 
-#[divan::bench]
-fn session_store_list_empty(bencher: divan::Bencher) {
-    let dir = tempfile::tempdir().unwrap();
-    let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
-
-    bencher.bench_local(|| divan::black_box(store.list_keys()));
+fn build_sanitize_input(payload_bytes: usize) -> String {
+    let image_blob = "A".repeat(payload_bytes);
+    let hex_blob = "deadbeef".repeat(payload_bytes / 8);
+    format!("before data:image/png;base64,{image_blob} middle {hex_blob} after")
 }
 
-#[divan::bench(args = [10, 100, 1000])]
-fn session_store_list(bencher: divan::Bencher, n: usize) {
-    let dir = tempfile::tempdir().unwrap();
-    for i in 0..n {
-        let path = dir.path().join(format!("session-{i}.jsonl"));
-        std::fs::write(&path, "{}").unwrap();
-    }
-    let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+#[divan::bench(args = [10_000, 100_000, 1_000_000])]
+fn sanitize_tool_result(bencher: divan::Bencher, payload_bytes: usize) {
+    let input = build_sanitize_input(payload_bytes);
+    bencher.bench_local(|| {
+        divan::black_box(moltis_agents::runner::sanitize_tool_result(&input, 50_000))
+    });
+}
 
-    bencher.bench_local(|| divan::black_box(store.list_keys()));
+#[divan::bench(args = [10_000, 100_000, 1_000_000])]
+fn tool_result_to_content_vision(bencher: divan::Bencher, payload_bytes: usize) {
+    let input = build_sanitize_input(payload_bytes);
+    bencher.bench_local(|| {
+        divan::black_box(moltis_agents::runner::tool_result_to_content(
+            &input, 50_000, true,
+        ))
+    });
+}
+
+fn build_persisted_messages(n: usize) -> Vec<serde_json::Value> {
+    let mut values = Vec::with_capacity(n + 1);
+    values.push(serde_json::json!({
+        "role": "system",
+        "content": "You are a helpful assistant."
+    }));
+
+    for i in 0..n {
+        match i % 6 {
+            0 => values.push(serde_json::json!({
+                "role": "user",
+                "content": format!("How do I fix issue #{i}?"),
+            })),
+            1 => values.push(serde_json::json!({
+                "role": "assistant",
+                "content": format!("Try step {}", i % 5),
+            })),
+            2 => values.push(serde_json::json!({
+                "role": "assistant",
+                "content": format!("Calling tool {i}"),
+                "tool_calls": [{
+                    "id": format!("tool_{i}"),
+                    "type": "function",
+                    "function": {
+                        "name": "web.search",
+                        "arguments": r#"{"q":"moltis release notes"}"#,
+                    }
+                }],
+            })),
+            3 => values.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": format!("tool_{i}"),
+                "content": {"ok": true, "items": i},
+            })),
+            4 => values.push(serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Please inspect this screenshot"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAAA"},
+                    }
+                ],
+            })),
+            _ => values.push(serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": format!("tool_{i}"),
+                "content": {"success": true},
+            })),
+        }
+    }
+
+    values
+}
+
+#[divan::bench(args = [50, 500, 2000])]
+fn values_to_chat_messages(bencher: divan::Bencher, n: usize) {
+    let values = build_persisted_messages(n);
+    bencher
+        .bench_local(|| divan::black_box(moltis_agents::model::values_to_chat_messages(&values)));
 }
 
 // ── Env substitution ────────────────────────────────────────────────────────

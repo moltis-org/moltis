@@ -70,9 +70,9 @@ export class Session {
 		if (serverCount >= this.messageCount) {
 			this.messageCount = serverCount;
 			this.lastSeenMessageCount = serverData.lastSeenMessageCount || 0;
+			this.preview = serverData.preview || "";
+			this.updatedAt = serverData.updatedAt || 0;
 		}
-		this.preview = serverData.preview || "";
-		this.updatedAt = serverData.updatedAt || 0;
 		this.createdAt = serverData.createdAt || 0;
 		this.worktree_branch = serverData.worktree_branch || "";
 		this.sandbox_enabled = serverData.sandbox_enabled;
