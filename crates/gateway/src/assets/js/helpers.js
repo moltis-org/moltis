@@ -341,6 +341,28 @@ export function warmAudioPlayback() {
  * @param {string} audioSrc - audio URL (HTTP or data URI)
  * @param {boolean} [autoplay=false] - start playback immediately
  */
+// Track the most recently played audio element so spacebar can toggle it.
+var _activeAudio = null;
+
+function isEditableTarget(el) {
+	if (!el) return false;
+	var tag = el.tagName;
+	if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+	return el.isContentEditable;
+}
+
+document.addEventListener("keydown", (e) => {
+	if (e.key !== " " || e.repeat) return;
+	if (isEditableTarget(e.target)) return;
+	if (!_activeAudio) return;
+	e.preventDefault();
+	if (_activeAudio.paused) {
+		_activeAudio.play().catch(() => undefined);
+	} else {
+		_activeAudio.pause();
+	}
+});
+
 export function renderAudioPlayer(container, audioSrc, autoplay) {
 	var wrap = document.createElement("div");
 	wrap.className = "waveform-player mt-2";
@@ -422,6 +444,7 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 	}
 
 	audio.addEventListener("play", () => {
+		_activeAudio = audio;
 		playBtn.replaceChildren(createPauseSvg());
 		prevPlayed = -1;
 		rafId = requestAnimationFrame(tick);
@@ -433,6 +456,7 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 	});
 
 	audio.addEventListener("ended", () => {
+		if (_activeAudio === audio) _activeAudio = null;
 		playBtn.replaceChildren(createPlaySvg());
 		cancelAnimationFrame(rafId);
 		for (var b of bars) b.classList.remove("played");

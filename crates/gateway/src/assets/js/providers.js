@@ -6,7 +6,12 @@ import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { isModelServiceNotConfigured, testModel, validateProviderKey } from "./provider-validation.js";
+import {
+	humanizeProbeError,
+	isModelServiceNotConfigured,
+	testModel,
+	validateProviderKey,
+} from "./provider-validation.js";
 import * as S from "./state.js";
 
 var _els = null;
@@ -653,6 +658,24 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 
 	var selectedIds = new Set(savedModels);
 
+	// Track per-model probe state: "probing" | "ok" | { error: string }
+	var probeResults = new Map();
+
+	function probeModel(modelId) {
+		if (probeResults.has(modelId)) return;
+		probeResults.set(modelId, "probing");
+		renderCards(searchInp?.value.trim() || null);
+		testModel(modelId).then((result) => {
+			if (isModelServiceNotConfigured(result.error || "")) {
+				// Model service not ready — don't flag as broken.
+				probeResults.delete(modelId);
+			} else {
+				probeResults.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") });
+			}
+			renderCards(searchInp?.value.trim() || null);
+		});
+	}
+
 	var wrapper = document.createElement("div");
 	wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
 
@@ -701,6 +724,7 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 		});
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: card rendering with probe badges
 	function renderCards(filter) {
 		list.textContent = "";
 		var filtered = models;
@@ -738,6 +762,19 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 				toolsBadge.textContent = "Tools";
 				badges.appendChild(toolsBadge);
 			}
+			var probe = probeResults.get(mdl.id);
+			if (probe === "probing") {
+				var probeBadge = document.createElement("span");
+				probeBadge.className = "tier-badge";
+				probeBadge.textContent = "Probing\u2026";
+				badges.appendChild(probeBadge);
+			} else if (probe && probe !== "ok") {
+				var unsupBadge = document.createElement("span");
+				unsupBadge.className = "provider-item-badge warning";
+				unsupBadge.textContent = "Unsupported";
+				unsupBadge.title = probe.error || "";
+				badges.appendChild(unsupBadge);
+			}
 			header.appendChild(badges);
 			card.appendChild(header);
 
@@ -746,6 +783,14 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 			idLine.textContent = mdl.id;
 			card.appendChild(idLine);
 
+			if (mdl.createdAt) {
+				var dateLine = document.createElement("time");
+				dateLine.className = "text-xs text-[var(--muted)] mt-0.5 opacity-60 block";
+				dateLine.setAttribute("data-epoch-ms", String(mdl.createdAt * 1000));
+				dateLine.setAttribute("data-format", "year-month");
+				card.appendChild(dateLine);
+			}
+
 			// Closure to capture mdl
 			((modelId) => {
 				card.addEventListener("click", () => {
@@ -753,6 +798,7 @@ function showMultiModelSelector(providerName, providerDisplayName, models, saved
 						selectedIds.delete(modelId);
 					} else {
 						selectedIds.add(modelId);
+						probeModel(modelId);
 					}
 					renderCards(searchInp?.value.trim() || null);
 					updateStatus();

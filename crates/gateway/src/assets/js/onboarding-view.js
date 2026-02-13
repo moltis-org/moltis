@@ -692,6 +692,7 @@ function OnboardingProviderRow({
 										</div>
 									</div>
 									<div class="text-xs text-[var(--muted)] mt-1 font-mono">${m.id}</div>
+									${m.createdAt ? html`<time class="text-xs text-[var(--muted)] mt-0.5 opacity-60 block" data-epoch-ms=${m.createdAt * 1000} data-format="year-month"></time>` : null}
 								</div>`,
 								)
 					}
@@ -821,6 +822,7 @@ function toModelSelectorRow(modelRow) {
 		displayName: modelRow.displayName || modelRow.id,
 		provider: modelRow.provider,
 		supportsTools: modelRow.supportsTools,
+		createdAt: modelRow.createdAt || 0,
 	};
 }
 
