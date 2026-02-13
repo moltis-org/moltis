@@ -75,7 +75,7 @@ test.describe("Onboarding OpenAI provider", () => {
 
 		await openaiRow.getByRole("button", { name: "Choose Model", exact: true }).click();
 
-		await expect(openaiRow.getByText("Select a model", { exact: true })).toBeVisible({ timeout: 45_000 });
+		await expect(openaiRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
 		await expect(openaiRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
 		await expect(openaiRow.locator("input[type='password']")).toHaveCount(0);
 

@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Preferred Models" button per provider that opens a multi-select modal.
   Selected models are pinned at the top of the session model dropdown.
   New `providers.save_models` RPC accepts multiple model IDs at once.
+- **Multi-select model picker in onboarding**: The onboarding provider step now
+  uses a multi-select model picker matching the Settings LLMs page. Toggle
+  models on/off, see per-model probe status badges, and batch-save with a
+  single Save button. Previously-saved preferred models are pre-selected when
+  re-opening the model selector.
 
 ### Changed
 
