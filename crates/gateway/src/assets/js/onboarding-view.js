@@ -1103,7 +1103,7 @@ function ProviderStep({ onNext, onBack }) {
 
 	async function onSaveSelectedModels() {
 		var providerName = modelSelectProvider || configuring;
-		if (!providerName) return;
+		if (!providerName) return false;
 		var modelIds = Array.from(selectedModels);
 
 		setSavingModels(true);
@@ -1112,13 +1112,13 @@ function ProviderStep({ onNext, onBack }) {
 		try {
 			if (!(await saveProviderKeyIfNeeded(providerName, modelIds))) {
 				setSavingModels(false);
-				return;
+				return false;
 			}
 			var res = await sendRpc("providers.save_models", { provider: providerName, models: modelIds });
 			if (!res?.ok) {
 				setSavingModels(false);
 				setError(res?.error?.message || "Failed to save model preferences.");
-				return;
+				return false;
 			}
 			if (modelIds.length > 0) {
 				localStorage.setItem("moltis-model", modelIds[0]);
@@ -1126,10 +1126,22 @@ function ProviderStep({ onNext, onBack }) {
 			setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
 			closeAll();
 			refreshProviders();
+			return true;
 		} catch (err) {
 			setSavingModels(false);
 			setError(err?.message || "Failed to save credentials.");
+			return false;
 		}
+	}
+
+	async function onContinue() {
+		var hasPendingModelSelection =
+			phase === "selectModel" && (configuring || modelSelectProvider) && selectedModels.size > 0;
+		if (hasPendingModelSelection) {
+			var saved = await onSaveSelectedModels();
+			if (!saved) return;
+		}
+		onNext();
 	}
 
 	// BYOM-only save path (no model selector shown for these providers).
@@ -1370,7 +1382,7 @@ function ProviderStep({ onNext, onBack }) {
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
 		<div class="flex items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
+			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;

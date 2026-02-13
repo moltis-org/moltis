@@ -81,4 +81,58 @@ test.describe("Onboarding OpenAI provider", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("continue saves selected OpenAI models during onboarding", async ({ page }) => {
+		test.setTimeout(120_000);
+		const pageErrors = watchPageErrors(page);
+
+		await page.goto("/onboarding");
+		await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toMatch(/^\/(?:onboarding|chats\/.+)$/);
+
+		if (/^\/chats\//.test(new URL(page.url()).pathname)) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		await moveToLlmStep(page);
+		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
+		await expect(page.getByText("Detected LLM providers", { exact: true })).toBeVisible();
+
+		const openaiRow = page
+			.locator(".onboarding-card .rounded-md.border")
+			.filter({ has: page.getByText("OpenAI", { exact: true }) })
+			.filter({ has: page.getByText("API Key", { exact: true }) })
+			.first();
+
+		await expect(openaiRow).toBeVisible();
+		await openaiRow.getByRole("button", { name: "Choose Model", exact: true }).click();
+		await expect(openaiRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
+		const firstModelCard = openaiRow.locator(".model-card").first();
+		await expect(firstModelCard).toBeVisible({ timeout: 45_000 });
+		const selectedModelId = (await firstModelCard.locator(".font-mono").first().textContent())?.trim() || "";
+		expect(selectedModelId).not.toBe("");
+
+		await firstModelCard.click();
+		await expect(firstModelCard).toHaveClass(/selected/);
+
+		await page.getByRole("button", { name: "Continue", exact: true }).click();
+		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).not.toBeVisible({ timeout: 45_000 });
+
+		await page.getByRole("button", { name: "Back", exact: true }).first().click();
+		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
+
+		const openaiRowAfterContinue = page
+			.locator(".onboarding-card .rounded-md.border")
+			.filter({ has: page.getByText("OpenAI", { exact: true }) })
+			.filter({ has: page.getByText("API Key", { exact: true }) })
+			.first();
+
+		await expect(openaiRowAfterContinue).toBeVisible();
+		await openaiRowAfterContinue.getByRole("button", { name: "Choose Model", exact: true }).click();
+		const persistedCard = openaiRowAfterContinue.locator(".model-card").filter({ hasText: selectedModelId }).first();
+		await expect(persistedCard).toBeVisible({ timeout: 45_000 });
+		await expect(persistedCard).toHaveClass(/selected/);
+
+		expect(pageErrors).toEqual([]);
+	});
 });
