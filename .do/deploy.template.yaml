@@ -10,7 +10,7 @@ spec:
         registry_type: GHCR
         registry: ghcr.io
         repository: moltis-org/moltis
-        tag: "0.8.21"
+        tag: "0.8.22"
       instance_count: 1
       instance_size_slug: basic-xxs
       http_port: 8080
