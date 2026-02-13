@@ -6248,7 +6248,7 @@ mod tests {
             role_label: "🤖 Moltis".to_string(),
             content: "Audio response".to_string(),
             audio_data_url: Some("data:audio/ogg;base64,T2dnUw==".to_string()),
-            image_data_url: None,
+            image_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
             map_link_google: Some(
                 "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery".to_string(),
             ),
@@ -6288,6 +6288,8 @@ mod tests {
         assert!(html.contains("data-audio-src=\"data:audio/ogg;base64,T2dnUw==\""));
         assert!(html.contains("waveform-player"));
         assert!(html.contains("data:audio/ogg;base64,T2dnUw=="));
+        assert!(html.contains("width=\"600\""));
+        assert!(html.contains("height=\"400\""));
         assert!(html.contains("class=\"msg-map-link-icon\""));
         assert!(html.contains("src=\"/assets/icons/map-google-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-apple-maps.svg\""));

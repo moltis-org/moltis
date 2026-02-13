@@ -458,7 +458,11 @@ main {
             {% when Some with (image_data_url) %}
               <figure class="msg-image-wrap">
                 <a class="msg-image-link" href="{{ image_data_url }}" target="_blank" rel="noopener noreferrer">
-                  <img class="msg-image" src="{{ image_data_url }}" alt="Shared media">
+                  {% if message.map_link_google.is_some() || message.map_link_apple.is_some() || message.map_link_openstreetmap.is_some() %}
+                    <img class="msg-image" src="{{ image_data_url }}" alt="Shared media" width="600" height="400" decoding="async">
+                  {% else %}
+                    <img class="msg-image" src="{{ image_data_url }}" alt="Shared media" decoding="async">
+                  {% endif %}
                 </a>
               </figure>
             {% when None %}
@@ -552,38 +556,26 @@ main {
     });
   });
 
-  var SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  var relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  var absoluteFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
   var fullFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" });
 
-  function relativeFromNow(epochMs) {
-    var deltaSeconds = Math.round((epochMs - Date.now()) / 1000);
-    var absSeconds = Math.abs(deltaSeconds);
-    var units = [
-      [365 * 24 * 60 * 60, "year"],
-      [30 * 24 * 60 * 60, "month"],
-      [7 * 24 * 60 * 60, "week"],
-      [24 * 60 * 60, "day"],
-      [60 * 60, "hour"],
-      [60, "minute"],
-      [1, "second"],
-    ];
-    for (var i = 0; i < units.length; i++) {
-      var unitSeconds = units[i][0];
-      var unitName = units[i][1];
-      if (absSeconds >= unitSeconds || unitName === "second") {
-        return relativeFormatter.format(Math.round(deltaSeconds / unitSeconds), unitName);
-      }
-    }
-    return "just now";
+  function pad2(value) {
+    return String(value).padStart(2, "0");
   }
 
   function formatTime(epochMs) {
-    var diff = Date.now() - epochMs;
-    if (diff >= 0 && diff < 30_000) return "just now";
-    if (diff >= 0 && diff < SEVEN_DAYS_MS) return relativeFromNow(epochMs);
-    return absoluteFormatter.format(new Date(epochMs));
+    var date = new Date(epochMs);
+    if (!Number.isFinite(date.getTime())) return "";
+    return (
+      String(date.getFullYear()) +
+      "-" +
+      pad2(date.getMonth() + 1) +
+      "-" +
+      pad2(date.getDate()) +
+      " " +
+      pad2(date.getHours()) +
+      ":" +
+      pad2(date.getMinutes())
+    );
   }
 
   function hydrateTimes() {
@@ -596,7 +588,6 @@ main {
   }
 
   hydrateTimes();
-  window.setInterval(hydrateTimes, 60_000);
 
   var WAVEFORM_BAR_COUNT = 48;
   var WAVEFORM_MIN_HEIGHT = 0.08;
