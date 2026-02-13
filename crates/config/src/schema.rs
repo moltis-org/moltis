@@ -999,8 +999,10 @@ pub struct ChatConfig {
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
     /// Optional allowlist of patterns to filter which models are shown.
-    /// Each pattern is matched case-insensitively as a substring against model
-    /// IDs and display names. An empty list (the default) means show all models.
+    /// Patterns without digits are matched case-insensitively as substrings.
+    /// Patterns with digits use exact-or-suffix matching, so `gpt 5.2` matches
+    /// `openai::gpt-5.2` but not `openai::gpt-5.2-chat-latest`.
+    /// An empty list (the default) means show all models.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_models: Vec<String>,
 }

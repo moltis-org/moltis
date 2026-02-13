@@ -216,8 +216,25 @@ fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
 
 /// Returns `true` if the model matches the allowlist patterns.
 /// An empty pattern list means all models are allowed.
-/// Matching is case-insensitive substring against the full model ID, raw model
-/// ID, and display name.
+/// Matching is case-insensitive against the full model ID, raw model ID, and
+/// display name:
+/// - patterns with digits use exact-or-suffix matching (boundary aware)
+/// - patterns without digits use substring matching
+///
+/// This keeps precise model pins like "gpt 5.2" from matching variants such as
+/// "gpt-5.2-chat-latest", while still allowing broad buckets like "mini".
+fn allowlist_pattern_matches_key(pattern: &str, key: &str) -> bool {
+    if pattern.chars().any(|ch| ch.is_ascii_digit()) {
+        if key == pattern {
+            return true;
+        }
+        return key
+            .strip_suffix(pattern)
+            .is_some_and(|prefix| prefix.ends_with(' '));
+    }
+    key.contains(pattern)
+}
+
 pub(crate) fn model_matches_allowlist(
     model: &moltis_agents::providers::ModelInfo,
     patterns: &[String],
@@ -232,7 +249,9 @@ pub(crate) fn model_matches_allowlist(
     let raw = normalize_model_key(raw_model_id(&model.id));
     let display = normalize_model_key(&model.display_name);
     patterns.iter().any(|p| {
-        full.contains(p.as_str()) || raw.contains(p.as_str()) || display.contains(p.as_str())
+        allowlist_pattern_matches_key(p, &full)
+            || allowlist_pattern_matches_key(p, &raw)
+            || allowlist_pattern_matches_key(p, &display)
     })
 }
 
@@ -5833,6 +5852,36 @@ mod tests {
         assert!(model_matches_allowlist(&m, &patterns));
 
         let patterns = vec![normalize_model_key("gpt-5-2")];
+        assert!(model_matches_allowlist(&m, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_numeric_pattern_does_not_match_extended_variants() {
+        let exact = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2".into(),
+        };
+        let extended = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2-chat-latest".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2 Chat Latest".into(),
+        };
+        let patterns = vec![normalize_model_key("gpt 5.2")];
+
+        assert!(model_matches_allowlist(&exact, &patterns));
+        assert!(!model_matches_allowlist(&extended, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_numeric_pattern_matches_provider_prefixed_models() {
+        let m = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-sonnet-4-5".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Sonnet 4.5".into(),
+        };
+        let patterns = vec![normalize_model_key("sonnet 4.5")];
+
         assert!(model_matches_allowlist(&m, &patterns));
     }
 

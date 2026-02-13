@@ -40,23 +40,7 @@ const OPENAI_MODEL_EXCLUDED_FRAGMENTS: &[&str] = &[
     "deep-research",
 ];
 
-const DEFAULT_OPENAI_MODELS: &[(&str, &str)] = &[
-    ("gpt-5.2", "GPT-5.2"),
-    ("gpt-5.1", "GPT-5.1"),
-    ("gpt-5", "GPT-5"),
-    ("gpt-5-mini", "GPT-5 Mini"),
-    ("gpt-5-nano", "GPT-5 Nano"),
-    ("gpt-4.1", "GPT-4.1"),
-    ("gpt-4.1-mini", "GPT-4.1 Mini"),
-    ("gpt-4.1-nano", "GPT-4.1 Nano"),
-    ("gpt-4o", "GPT-4o"),
-    ("gpt-4o-mini", "GPT-4o Mini"),
-    ("gpt-4-turbo", "GPT-4 Turbo"),
-    ("chatgpt-4o-latest", "ChatGPT-4o Latest"),
-    ("o4-mini", "o4-mini"),
-    ("o3", "o3"),
-    ("o3-mini", "o3-mini"),
-];
+const DEFAULT_OPENAI_MODELS: &[(&str, &str)] = &[("gpt-5.3", "GPT-5.3"), ("gpt-5.2", "GPT-5.2")];
 
 #[must_use]
 pub fn default_model_catalog() -> Vec<(String, String)> {
@@ -966,16 +950,30 @@ mod tests {
             "data": [
                 { "id": "gpt-5.2" },
                 { "id": "gpt-5.2-2025-12-11" },
+                { "id": "gpt-5.2-chat-latest" },
+                { "id": "gpt-5.2-pro" },
+                { "id": "gpt-5.2-codex" },
                 { "id": "gpt-image-1" },
                 { "id": "gpt-4o-mini" },
                 { "id": "o4-mini-deep-research" },
+                { "id": "o1" },
+                { "id": "o1-pro" },
                 { "id": "o3" }
             ]
         });
 
         let models = parse_models_payload(&payload);
         let ids: Vec<String> = models.into_iter().map(|(id, _)| id).collect();
-        assert_eq!(ids, vec!["gpt-5.2", "gpt-4o-mini", "o3"]);
+        assert_eq!(ids, vec![
+            "gpt-5.2",
+            "gpt-5.2-chat-latest",
+            "gpt-5.2-pro",
+            "gpt-5.2-codex",
+            "gpt-4o-mini",
+            "o1",
+            "o1-pro",
+            "o3",
+        ]);
     }
 
     #[test]
@@ -999,5 +997,12 @@ mod tests {
     fn default_catalog_includes_gpt_5_2() {
         let defaults = default_model_catalog();
         assert!(defaults.iter().any(|(id, _)| id == "gpt-5.2"));
+    }
+
+    #[test]
+    fn default_catalog_excludes_legacy_openai_fallback_entries() {
+        let defaults = default_model_catalog();
+        assert!(!defaults.iter().any(|(id, _)| id == "chatgpt-4o-latest"));
+        assert!(!defaults.iter().any(|(id, _)| id == "gpt-4-turbo"));
     }
 }
