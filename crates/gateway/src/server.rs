@@ -359,6 +359,33 @@ fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }
 
+/// Inject `[env]` config vars into the process environment.
+///
+/// Called early in startup before any provider discovery. Existing env vars
+/// are NOT overwritten so `docker -e` / host env always wins.
+///
+/// # Safety
+/// Uses `std::env::set_var` which is `unsafe` on Rust 1.84+. At this point
+/// in startup we are effectively single-threaded (before tokio spawns).
+#[allow(unsafe_code)]
+fn inject_config_env(env: &std::collections::HashMap<String, String>) {
+    for (key, value) in env {
+        if std::env::var(key).is_ok() {
+            debug!(key, "config [env] key already set in environment, skipping");
+        } else {
+            // SAFETY: single-threaded at this point in startup — no concurrent
+            // threads that could read env vars while we mutate.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            info!(
+                key,
+                "injected config [env] variable into process environment"
+            );
+        }
+    }
+}
+
 async fn ollama_has_model(base_url: &str, model: &str) -> bool {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let response = match reqwest::Client::new().get(url).send().await {
@@ -862,6 +889,13 @@ pub async fn start_gateway(
         config.tls.enabled = false;
     }
 
+    // Inject [env] config vars into process environment.
+    // This makes them available to std::env::var() for provider discovery,
+    // search APIs, embedding services, etc. — matching daemon behavior.
+    // Process env vars take precedence (no overwrite) so `docker -e` or
+    // host env still wins.
+    inject_config_env(&config.env);
+
     let base_provider_config = config.providers.clone();
 
     // Merge any previously saved API keys into the provider config so they
@@ -1115,6 +1149,15 @@ pub async fn start_gateway(
             .await
             .expect("failed to init credential store"),
     );
+
+    // Inject Settings UI env vars (stored in SQLite) into the process
+    // environment so they are available to std::env::var() for web_search,
+    // web_fetch, embeddings, provider discovery, etc. — not just sandbox
+    // commands. Process env and config [env] take precedence (no overwrite).
+    if let Ok(db_env_vars) = credential_store.get_all_env_values().await {
+        let db_map: std::collections::HashMap<String, String> = db_env_vars.into_iter().collect();
+        inject_config_env(&db_map);
+    }
 
     // Initialize WebAuthn state for passkey support.
     // RP ID: explicit env > PaaS env (DO, Render, Fly, Railway) > "localhost"
@@ -5412,7 +5455,7 @@ pub(crate) async fn discover_and_build_hooks(
     (Some(Arc::new(registry)), info_list)
 }
 
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 #[cfg(test)]
 mod tests {
     use {super::*, std::collections::HashSet};
@@ -6191,5 +6234,32 @@ mod tests {
         assert!(csp.contains("frame-ancestors 'none'"));
         assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("connect-src 'self' ws: wss:"));
+    }
+
+    #[test]
+    fn inject_config_env_sets_new_vars() {
+        let unique_key = format!("MOLTIS_TEST_ENV_{}", std::process::id());
+        let env = std::collections::HashMap::from([(unique_key.clone(), "test-value".into())]);
+        inject_config_env(&env);
+        assert_eq!(std::env::var(&unique_key).unwrap(), "test-value");
+        // Clean up.
+        unsafe { std::env::remove_var(&unique_key) };
+    }
+
+    #[test]
+    fn inject_config_env_does_not_overwrite_existing() {
+        let unique_key = format!("MOLTIS_TEST_NOWRITE_{}", std::process::id());
+        // Pre-set the variable.
+        unsafe { std::env::set_var(&unique_key, "original") };
+        let env =
+            std::collections::HashMap::from([(unique_key.clone(), "should-not-appear".into())]);
+        inject_config_env(&env);
+        assert_eq!(
+            std::env::var(&unique_key).unwrap(),
+            "original",
+            "inject_config_env must not overwrite existing env vars"
+        );
+        // Clean up.
+        unsafe { std::env::remove_var(&unique_key) };
     }
 }

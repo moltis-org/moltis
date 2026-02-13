@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Config `[env]` section**: environment variables defined in `[env]` in
+  `moltis.toml` are injected into the Moltis process at startup. This makes
+  API keys (Brave, OpenRouter, etc.) available to features that read from
+  `std::env::var()`. Process env vars (`docker -e`, host env) take precedence.
+  Closes #107.
+
+### Fixed
+
+- **Settings UI env vars now available process-wide**: environment variables
+  set via Settings > Environment were previously only injected into sandbox
+  commands. They are now also injected into the Moltis process at startup,
+  making them available to web search, embeddings, and provider API calls.
+
 ## [0.8.14] - 2026-02-11
 
 ### Security
