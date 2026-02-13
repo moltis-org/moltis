@@ -421,6 +421,36 @@ async fn to_shared_message(
         | SharedMessageRole::System
         | SharedMessageRole::Notice => None,
     };
+    let tool_name = match role {
+        SharedMessageRole::ToolResult => msg
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let tool_command = match role {
+        SharedMessageRole::ToolResult => {
+            if tool_name.as_deref() == Some("exec") {
+                msg.get("arguments")
+                    .and_then(|v| v.get("command"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(ToOwned::to_owned)
+            } else {
+                None
+            }
+        },
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
 
     if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
         return None;
@@ -449,6 +479,8 @@ async fn to_shared_message(
         image_data_url: None,
         map_links,
         tool_success,
+        tool_name,
+        tool_command,
         created_at,
         model,
         provider,
@@ -1510,6 +1542,8 @@ mod tests {
 
         assert!(matches!(shared.role, SharedMessageRole::ToolResult));
         assert_eq!(shared.tool_success, Some(true));
+        assert_eq!(shared.tool_name.as_deref(), Some("show_map"));
+        assert!(shared.tool_command.is_none());
         assert!(shared.audio_data_url.is_none());
         assert!(shared.image_data_url.is_none());
         let image = shared.image.expect("shared image variants");
@@ -1539,6 +1573,35 @@ mod tests {
         assert!(!text.contains("(truncated)"));
         assert!(!text.ends_with('…'));
         assert!(text.len() > 1_800);
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_exec_command_for_tool_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "exec",
+            "arguments": {
+                "command": "curl -s https://example.com"
+            },
+            "success": true,
+            "result": {
+                "stdout": "{\"ok\":true}",
+                "stderr": "",
+                "exit_code": 0,
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared exec tool result");
+        assert_eq!(shared.tool_name.as_deref(), Some("exec"));
+        assert_eq!(
+            shared.tool_command.as_deref(),
+            Some("curl -s https://example.com")
+        );
+        assert!(shared.content.contains("{\"ok\":true}"));
     }
 
     // --- Browser service integration tests ---

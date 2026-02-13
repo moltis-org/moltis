@@ -4179,6 +4179,24 @@ fn map_share_message_views(
                 | crate::share_store::SharedMessageRole::System
                 | crate::share_store::SharedMessageRole::Notice => (None, None, None),
             };
+            let (is_exec_card, exec_card_class, exec_command) = match msg.role {
+                crate::share_store::SharedMessageRole::ToolResult => {
+                    if msg.tool_name.as_deref() == Some("exec") {
+                        let card_class = match msg.tool_success {
+                            Some(true) => Some("exec-ok"),
+                            Some(false) => Some("exec-err"),
+                            None => None,
+                        };
+                        (true, card_class, msg.tool_command.clone())
+                    } else {
+                        (false, None, None)
+                    }
+                },
+                crate::share_store::SharedMessageRole::User
+                | crate::share_store::SharedMessageRole::Assistant
+                | crate::share_store::SharedMessageRole::System
+                | crate::share_store::SharedMessageRole::Notice => (false, None, None),
+            };
             let (
                 image_preview_data_url,
                 image_link_data_url,
@@ -4232,6 +4250,9 @@ fn map_share_message_views(
                 tool_state_class,
                 tool_state_label,
                 tool_state_badge_class,
+                is_exec_card,
+                exec_card_class,
+                exec_command,
                 map_link_google: msg
                     .map_links
                     .as_ref()
@@ -4495,6 +4516,9 @@ struct ShareMessageView {
     tool_state_class: Option<&'static str>,
     tool_state_label: Option<&'static str>,
     tool_state_badge_class: Option<&'static str>,
+    is_exec_card: bool,
+    exec_card_class: Option<&'static str>,
+    exec_command: Option<String>,
     map_link_google: Option<String>,
     map_link_apple: Option<String>,
     map_link_openstreetmap: Option<String>,
@@ -6336,6 +6360,9 @@ mod tests {
             tool_state_class: None,
             tool_state_label: None,
             tool_state_badge_class: None,
+            is_exec_card: false,
+            exec_card_class: None,
+            exec_command: None,
             map_link_google: Some(
                 "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery".to_string(),
             ),
@@ -6408,6 +6435,8 @@ mod tests {
                     image_data_url: None,
                     map_links: None,
                     tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
                     created_at: Some(1_770_966_601_000),
                     model: None,
                     provider: None,
@@ -6420,6 +6449,8 @@ mod tests {
                     image_data_url: None,
                     map_links: None,
                     tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
                     created_at: Some(1_770_966_602_000),
                     model: None,
                     provider: None,
@@ -6432,6 +6463,8 @@ mod tests {
                     image_data_url: None,
                     map_links: None,
                     tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
                     created_at: Some(1_770_966_603_000),
                     model: None,
                     provider: None,
@@ -6444,6 +6477,8 @@ mod tests {
                     image_data_url: None,
                     map_links: None,
                     tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
                     created_at: Some(1_770_966_604_000),
                     model: Some("gpt-5.2".to_string()),
                     provider: Some("openai-codex".to_string()),
@@ -6493,6 +6528,8 @@ mod tests {
                     openstreetmap: None,
                 }),
                 tool_success: Some(true),
+                tool_name: Some("show_map".to_string()),
+                tool_command: None,
                 created_at: Some(1_770_966_604_000),
                 model: None,
                 provider: None,
@@ -6516,9 +6553,52 @@ mod tests {
         assert_eq!(views[0].tool_state_class, Some("msg-tool-success"));
         assert_eq!(views[0].tool_state_label, Some("Success"));
         assert_eq!(views[0].tool_state_badge_class, Some("ok"));
+        assert!(!views[0].is_exec_card);
+        assert!(views[0].exec_card_class.is_none());
+        assert!(views[0].exec_command.is_none());
         assert!(views[0].map_link_google.is_some());
         assert!(views[0].map_link_apple.is_some());
         assert!(views[0].map_link_openstreetmap.is_none());
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn map_share_message_views_marks_exec_tool_cards() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            user_name: Some("Fabien".to_owned()),
+            emoji: Some("🤖".to_owned()),
+            ..Default::default()
+        };
+        let snapshot = crate::share_store::ShareSnapshot {
+            session_key: "main".to_string(),
+            session_label: Some("main".to_string()),
+            cutoff_message_count: 1,
+            created_at: 1_770_966_600_000,
+            messages: vec![crate::share_store::SharedMessage {
+                role: crate::share_store::SharedMessageRole::ToolResult,
+                content: "{\n  \"ok\": true\n}".to_string(),
+                audio_data_url: None,
+                image: None,
+                image_data_url: None,
+                map_links: None,
+                tool_success: Some(false),
+                tool_name: Some("exec".to_string()),
+                tool_command: Some("curl -s https://example.com".to_string()),
+                created_at: Some(1_770_966_604_000),
+                model: None,
+                provider: None,
+            }],
+        };
+
+        let views = map_share_message_views(&snapshot, &identity);
+        assert_eq!(views.len(), 1);
+        assert!(views[0].is_exec_card);
+        assert_eq!(views[0].exec_card_class, Some("exec-err"));
+        assert_eq!(
+            views[0].exec_command.as_deref(),
+            Some("curl -s https://example.com")
+        );
     }
 
     #[cfg(feature = "web-ui")]

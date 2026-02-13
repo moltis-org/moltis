@@ -89,6 +89,10 @@ pub struct SharedMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_success: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

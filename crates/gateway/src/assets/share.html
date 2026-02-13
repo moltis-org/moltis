@@ -302,6 +302,49 @@ main {
   border-radius: 8px;
   background: var(--surface2);
 }
+.msg.exec-card {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 6px;
+  max-width: min(88%, 760px);
+  padding: 8px 12px;
+}
+.msg.exec-card.exec-ok {
+  border-color: var(--border);
+}
+.msg.exec-card.exec-err {
+  border-color: var(--danger);
+}
+.exec-prompt {
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.exec-prompt-char {
+  color: var(--accent);
+  user-select: none;
+  font-weight: 600;
+}
+.msg.exec-card.exec-err .exec-prompt-char {
+  color: var(--danger);
+}
+.exec-output {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  max-height: 280px;
+  overflow: auto;
+}
 .msg-image-wrap {
   margin: 0 0 10px;
 }
@@ -529,7 +572,7 @@ main {
       <div class="empty">This shared snapshot has no displayable messages.</div>
     {% else %}
       {% for message in messages %}
-        <article class="msg msg-{{ message.role_class }}{% match message.tool_state_class %}{% when Some with (tool_state_class) %} {{ tool_state_class }}{% when None %}{% endmatch %}">
+        <article class="msg msg-{{ message.role_class }}{% if message.is_exec_card %} exec-card{% match message.exec_card_class %}{% when Some with (exec_card_class) %} {{ exec_card_class }}{% when None %}{% endmatch %}{% else %}{% match message.tool_state_class %}{% when Some with (tool_state_class) %} {{ tool_state_class }}{% when None %}{% endmatch %}{% endif %}">
           <div class="msg-head">
             <div class="msg-role-wrap">
               <div class="msg-role">{{ message.role_label }}</div>
@@ -620,7 +663,17 @@ main {
             </div>
           {% endif %}
           {% if !message.content.is_empty() %}
-            {% if message.role_class == "tool" %}
+            {% if message.is_exec_card %}
+              {% match message.exec_command %}
+                {% when Some with (exec_command) %}
+                  <div class="exec-prompt">
+                    <span class="exec-prompt-char">$</span>
+                    <span data-cmd="">{{ exec_command }}</span>
+                  </div>
+                {% when None %}
+              {% endmatch %}
+              <pre class="exec-output">{{ message.content }}</pre>
+            {% elif message.role_class == "tool" %}
               <pre class="msg-content msg-tool-content">{{ message.content }}</pre>
             {% else %}
               <div class="msg-content">{{ message.content }}</div>
