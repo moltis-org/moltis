@@ -188,6 +188,12 @@ export function shareVisibilityDialog() {
 		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
 		hint.textContent = "A snapshot is frozen at this point, later chat messages stay private.";
 
+		var warning = document.createElement("p");
+		warning.style.cssText =
+			"font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45";
+		warning.textContent =
+			"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.";
+
 		var publicBtn = document.createElement("button");
 		publicBtn.className = "provider-item";
 		publicBtn.type = "button";
@@ -233,6 +239,7 @@ export function shareVisibilityDialog() {
 		document.addEventListener("keydown", onKeydown);
 
 		body.appendChild(hint);
+		body.appendChild(warning);
 		body.appendChild(publicBtn);
 		body.appendChild(privateBtn);
 		header.appendChild(title);

@@ -184,6 +184,11 @@ test.describe("Session management", () => {
 
 		await page.locator('button[title="Share snapshot"]').click();
 		await expect(page.locator(".provider-modal-backdrop")).toBeVisible();
+		await expect(
+			page.getByText(
+				"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.",
+			),
+		).toBeVisible();
 		await page.locator('[data-share-visibility="public"]').click();
 
 		await expect

@@ -698,7 +698,9 @@ main {
   <button class="share-image-viewer-close" type="button" data-image-viewer-close="true" aria-label="Close image viewer">×</button>
   <img class="share-image-viewer-image" data-image-viewer-image="true" alt="Shared media full size">
 </div>
-<script nonce="{{ nonce }}">
+<script type="module" nonce="{{ nonce }}">
+import { DateTime } from "/assets/js/vendor/luxon.mjs";
+
 !function() {
   function resolveTheme(theme) {
     if (theme === "system") {
@@ -741,34 +743,14 @@ main {
     });
   });
 
-  var fullFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" });
-
-  function pad2(value) {
-    return String(value).padStart(2, "0");
-  }
-
-  function formatTime(epochMs) {
-    var date = new Date(epochMs);
-    if (!Number.isFinite(date.getTime())) return "";
-    return (
-      String(date.getFullYear()) +
-      "-" +
-      pad2(date.getMonth() + 1) +
-      "-" +
-      pad2(date.getDate()) +
-      " " +
-      pad2(date.getHours()) +
-      ":" +
-      pad2(date.getMinutes())
-    );
-  }
-
   function hydrateTimes() {
     document.querySelectorAll("time[data-epoch-ms]").forEach(function(el) {
       var epochMs = Number(el.getAttribute("data-epoch-ms"));
       if (!Number.isFinite(epochMs)) return;
-      el.textContent = formatTime(epochMs);
-      el.title = fullFormatter.format(new Date(epochMs));
+      var dt = DateTime.fromMillis(epochMs);
+      if (!dt.isValid) return;
+      el.textContent = dt.toFormat("yyyy-LL-dd HH:mm");
+      el.title = dt.toLocaleString(DateTime.DATETIME_FULL);
     });
   }
 

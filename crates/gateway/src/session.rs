@@ -29,6 +29,7 @@ const SHARE_BOUNDARY_NOTICE: &str =
     "This session until here has been shared. Later messages are not included in the shared link.";
 const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
 const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
+const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
 
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
@@ -296,6 +297,229 @@ fn sanitize_share_url(url: &str) -> Option<String> {
     }
 }
 
+fn is_assignment_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'"' | b'\'' | b'$')
+}
+
+fn is_assignment_value_delimiter(byte: u8) -> bool {
+    byte.is_ascii_whitespace()
+        || matches!(byte, b'&' | b',' | b';' | b')' | b']' | b'}' | b'"' | b'\'')
+}
+
+fn normalize_assignment_key(key: &str) -> String {
+    key.trim()
+        .trim_matches(|ch| ch == '"' || ch == '\'')
+        .trim_start_matches('$')
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+}
+
+fn is_env_var_key(key: &str) -> bool {
+    let trimmed = key
+        .trim()
+        .trim_matches(|ch| ch == '"' || ch == '\'')
+        .trim_start_matches('$');
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_uppercase()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+}
+
+fn is_sensitive_assignment_key(key: &str) -> bool {
+    let normalized = normalize_assignment_key(key);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let compact: String = normalized
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect();
+    if compact.is_empty() {
+        return false;
+    }
+
+    matches!(compact.as_str(), "authorization" | "proxyauthorization")
+        || compact.ends_with("apikey")
+        || compact.ends_with("token")
+        || compact.ends_with("secret")
+        || compact.ends_with("password")
+        || compact.ends_with("passwd")
+}
+
+fn should_redact_assignment_key(key: &str) -> bool {
+    is_sensitive_assignment_key(key) || is_env_var_key(key)
+}
+
+fn starts_with_ignore_ascii_case(text: &str, start: usize, pattern: &str) -> bool {
+    let end = start.saturating_add(pattern.len());
+    text.get(start..end)
+        .is_some_and(|value| value.eq_ignore_ascii_case(pattern))
+}
+
+fn assignment_key_bounds(text: &str, separator_idx: usize) -> Option<(usize, usize)> {
+    if separator_idx == 0 || separator_idx >= text.len() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut key_end = separator_idx;
+    while key_end > 0 && bytes[key_end - 1].is_ascii_whitespace() {
+        key_end -= 1;
+    }
+    if key_end == 0 {
+        return None;
+    }
+
+    let mut key_start = key_end;
+    while key_start > 0 && is_assignment_key_byte(bytes[key_start - 1]) {
+        key_start -= 1;
+    }
+    (key_start < key_end).then_some((key_start, key_end))
+}
+
+fn assignment_value_bounds(text: &str, separator_idx: usize, key: &str) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    if separator_idx >= bytes.len() {
+        return None;
+    }
+
+    let mut value_start = separator_idx + 1;
+    while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
+        value_start += 1;
+    }
+    if value_start >= bytes.len() {
+        return None;
+    }
+
+    let normalized_key = normalize_assignment_key(key);
+    let mut quoted = None;
+    let mut redact_start = value_start;
+    if matches!(bytes[value_start], b'"' | b'\'') {
+        quoted = Some(bytes[value_start]);
+        redact_start = value_start + 1;
+    }
+    if redact_start >= bytes.len() {
+        return None;
+    }
+
+    if matches!(
+        normalized_key.as_str(),
+        "authorization" | "proxyauthorization"
+    ) && starts_with_ignore_ascii_case(text, redact_start, "bearer ")
+    {
+        redact_start += "bearer ".len();
+    }
+    if redact_start >= bytes.len() {
+        return None;
+    }
+
+    let mut value_end = redact_start;
+    if let Some(quote_byte) = quoted {
+        while value_end < bytes.len() && bytes[value_end] != quote_byte {
+            value_end += 1;
+        }
+    } else {
+        while value_end < bytes.len() && !is_assignment_value_delimiter(bytes[value_end]) {
+            value_end += 1;
+        }
+    }
+    (value_end > redact_start).then_some((redact_start, value_end))
+}
+
+fn redact_assignment_values(text: &str) -> String {
+    let mut redacted = text.to_string();
+    let mut idx = 0usize;
+
+    while idx < redacted.len() {
+        let next_separator = redacted.as_bytes()[idx..]
+            .iter()
+            .position(|byte| matches!(byte, b'=' | b':'))
+            .map(|offset| idx + offset);
+        let Some(separator_idx) = next_separator else {
+            break;
+        };
+
+        let Some((key_start, key_end)) = assignment_key_bounds(&redacted, separator_idx) else {
+            idx = separator_idx + 1;
+            continue;
+        };
+        let key = redacted[key_start..key_end].trim();
+        if !should_redact_assignment_key(key) {
+            idx = separator_idx + 1;
+            continue;
+        }
+
+        let Some((value_start, value_end)) = assignment_value_bounds(&redacted, separator_idx, key)
+        else {
+            idx = separator_idx + 1;
+            continue;
+        };
+        if redacted[value_start..value_end].trim().is_empty()
+            || &redacted[value_start..value_end] == SHARE_REDACTED_VALUE
+        {
+            idx = separator_idx + 1;
+            continue;
+        }
+
+        redacted.replace_range(value_start..value_end, SHARE_REDACTED_VALUE);
+        idx = value_start + SHARE_REDACTED_VALUE.len();
+    }
+
+    redacted
+}
+
+fn find_case_insensitive(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    if from >= haystack.len() {
+        return None;
+    }
+    let needle_lower = needle.to_ascii_lowercase();
+    let haystack_lower = haystack[from..].to_ascii_lowercase();
+    haystack_lower
+        .find(&needle_lower)
+        .map(|offset| from + offset)
+}
+
+fn redact_bearer_tokens(text: &str) -> String {
+    let mut redacted = text.to_string();
+    let mut idx = 0usize;
+    let needle = "bearer ";
+
+    while let Some(start) = find_case_insensitive(&redacted, needle, idx) {
+        let token_start = start + needle.len();
+        if token_start >= redacted.len() {
+            break;
+        }
+        if start > 0 && redacted.as_bytes()[start - 1].is_ascii_alphanumeric() {
+            idx = token_start;
+            continue;
+        }
+
+        let bytes = redacted.as_bytes();
+        let mut token_end = token_start;
+        while token_end < bytes.len() && !is_assignment_value_delimiter(bytes[token_end]) {
+            token_end += 1;
+        }
+        if token_end <= token_start || &redacted[token_start..token_end] == SHARE_REDACTED_VALUE {
+            idx = token_end.saturating_add(1);
+            continue;
+        }
+
+        redacted.replace_range(token_start..token_end, SHARE_REDACTED_VALUE);
+        idx = token_start + SHARE_REDACTED_VALUE.len();
+    }
+
+    redacted
+}
+
+fn redact_share_secret_values(text: &str) -> String {
+    let with_assignments = redact_assignment_values(text);
+    redact_bearer_tokens(&with_assignments)
+}
+
 fn tool_result_map_links_for_share(msg: &Value) -> Option<SharedMapLinks> {
     let map_links = msg
         .get("result")
@@ -331,7 +555,7 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|label| !label.is_empty())
     {
-        sections.push(label.to_string());
+        sections.push(redact_share_secret_values(label));
     }
     if let Some(stdout) = result
         .and_then(|v| v.get("stdout"))
@@ -339,7 +563,7 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|stdout| !stdout.is_empty())
     {
-        sections.push(stdout.to_string());
+        sections.push(redact_share_secret_values(stdout));
     }
     if let Some(stderr) = result
         .and_then(|v| v.get("stderr"))
@@ -347,7 +571,7 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|stderr| !stderr.is_empty())
     {
-        sections.push(format!("stderr:\n{stderr}"));
+        sections.push(format!("stderr:\n{}", redact_share_secret_values(stderr)));
     }
     if let Some(error) = msg
         .get("error")
@@ -355,7 +579,7 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|error| !error.is_empty())
     {
-        sections.push(format!("error: {error}"));
+        sections.push(format!("error: {}", redact_share_secret_values(error)));
     }
     if let Some(exit_code) = result
         .and_then(|v| v.get("exit_code"))
@@ -441,7 +665,7 @@ async fn to_shared_message(
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|v| !v.is_empty())
-                    .map(ToOwned::to_owned)
+                    .map(redact_share_secret_values)
             } else {
                 None
             }
@@ -1575,6 +1799,39 @@ mod tests {
         assert!(text.len() > 1_800);
     }
 
+    #[test]
+    fn redact_share_secret_values_masks_env_vars_and_api_tokens() {
+        let input = "OPENAI_API_KEY=sk-openai BRAVE_API_KEY=brave-secret Authorization: Bearer bearer-secret https://api.example.com/search?q=test&api_key=url-secret";
+        let redacted = redact_share_secret_values(input);
+
+        assert!(!redacted.contains("sk-openai"));
+        assert!(!redacted.contains("brave-secret"));
+        assert!(!redacted.contains("bearer-secret"));
+        assert!(!redacted.contains("url-secret"));
+        assert!(redacted.contains("OPENAI_API_KEY=[REDACTED]"));
+        assert!(redacted.contains("BRAVE_API_KEY=[REDACTED]"));
+        assert!(redacted.contains("Bearer [REDACTED]"));
+    }
+
+    #[test]
+    fn tool_result_text_for_share_redacts_sensitive_values() {
+        let msg = serde_json::json!({
+            "role": "tool_result",
+            "result": {
+                "stdout": "{\"apiKey\":\"llm-secret\",\"voice_api_key\":\"voice-secret\"}\nOPENAI_API_KEY=env-secret",
+                "stderr": "Authorization: Bearer bearer-secret\nx-api-key: header-secret",
+            }
+        });
+
+        let text = tool_result_text_for_share(&msg).unwrap_or_default();
+        assert!(!text.contains("llm-secret"));
+        assert!(!text.contains("voice-secret"));
+        assert!(!text.contains("env-secret"));
+        assert!(!text.contains("bearer-secret"));
+        assert!(!text.contains("header-secret"));
+        assert!(text.contains(SHARE_REDACTED_VALUE));
+    }
+
     #[tokio::test]
     async fn to_shared_message_includes_exec_command_for_tool_result() {
         let dir = tempfile::tempdir().unwrap();
@@ -1602,6 +1859,40 @@ mod tests {
             Some("curl -s https://example.com")
         );
         assert!(shared.content.contains("{\"ok\":true}"));
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_redacts_exec_command_and_output_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "exec",
+            "arguments": {
+                "command": "OPENAI_API_KEY=sk-openai curl -s -H 'Authorization: Bearer bearer-secret' 'https://api.example.com?q=test&api_key=url-secret'"
+            },
+            "success": true,
+            "result": {
+                "stdout": "{\"api_key\":\"stdout-secret\"}",
+                "stderr": "ELEVENLABS_API_KEY=voice-secret",
+                "exit_code": 0,
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared exec tool result");
+
+        assert_eq!(shared.tool_name.as_deref(), Some("exec"));
+        let command = shared.tool_command.unwrap_or_default();
+        assert!(!command.contains("sk-openai"));
+        assert!(!command.contains("bearer-secret"));
+        assert!(!command.contains("url-secret"));
+        assert!(command.contains(SHARE_REDACTED_VALUE));
+
+        assert!(!shared.content.contains("stdout-secret"));
+        assert!(!shared.content.contains("voice-secret"));
+        assert!(shared.content.contains(SHARE_REDACTED_VALUE));
     }
 
     // --- Browser service integration tests ---

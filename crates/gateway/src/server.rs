@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use askama::Template;
 #[cfg(feature = "web-ui")]
 use base64::Engine as _;
+#[cfg(feature = "web-ui")]
+use chrono::{Local, TimeZone, Utc};
 
 #[cfg(feature = "web-ui")]
 use axum::response::{Html, Redirect};
@@ -4055,44 +4057,15 @@ fn build_session_share_meta(
 
 #[cfg(feature = "web-ui")]
 fn human_share_time(ts_ms: u64) -> String {
-    let total_seconds_u64 = ts_ms / 1_000;
-    let total_seconds = total_seconds_u64.min(i64::MAX as u64) as i64;
-    let days = total_seconds.div_euclid(86_400);
-    let seconds_in_day = total_seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_unix_days(days);
-    let hour = seconds_in_day / 3_600;
-    let minute = (seconds_in_day % 3_600) / 60;
-    let second = seconds_in_day % 60;
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
-}
-
-#[cfg(feature = "web-ui")]
-fn civil_from_unix_days(days_since_unix: i64) -> (i32, u8, u8) {
-    // Date conversion based on Howard Hinnant's civil-from-days algorithm.
-    let z = days_since_unix + 719_468;
-    let era = if z >= 0 {
-        z
-    } else {
-        z - 146_096
-    } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp
-        + if mp < 10 {
-            3
-        } else {
-            -9
-        };
-    year += if month <= 2 {
-        1
-    } else {
-        0
-    };
-    (year as i32, month as u8, day as u8)
+    let millis = ts_ms.min(i64::MAX as u64) as i64;
+    Utc.timestamp_millis_opt(millis)
+        .single()
+        .map(|utc| {
+            utc.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "1970-01-01 00:00".to_string())
 }
 
 #[cfg(feature = "web-ui")]
@@ -4408,7 +4381,7 @@ async fn share_page_handler(
     }
     let csp = format!(
         "default-src 'none'; \
-         script-src 'nonce-{nonce}'; \
+         script-src 'self' 'nonce-{nonce}'; \
          style-src 'unsafe-inline'; \
          img-src 'self' data: https://www.moltis.org; \
          media-src 'self' data:; \
@@ -6283,9 +6256,14 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
-    fn human_share_time_formats_full_utc_timestamp() {
-        assert_eq!(human_share_time(0), "1970-01-01 00:00:00 UTC");
-        assert_eq!(human_share_time(1_000), "1970-01-01 00:00:01 UTC");
+    fn human_share_time_formats_local_minute_timestamp() {
+        let formatted = human_share_time(1_000);
+        assert_eq!(formatted.len(), 16);
+        assert_eq!(formatted.chars().nth(4), Some('-'));
+        assert_eq!(formatted.chars().nth(7), Some('-'));
+        assert_eq!(formatted.chars().nth(10), Some(' '));
+        assert_eq!(formatted.chars().nth(13), Some(':'));
+        assert!(!formatted.contains("UTC"));
     }
 
     #[cfg(feature = "web-ui")]
