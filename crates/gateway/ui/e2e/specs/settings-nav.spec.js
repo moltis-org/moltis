@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { expectPageContentMounted, navigateAndWait, watchPageErrors } = require("../helpers");
+const { expectPageContentMounted, navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 async function spoofSafari(page) {
 	await page.addInitScript(() => {
@@ -179,6 +179,23 @@ test.describe("Settings navigation", () => {
 	test("provider page renders from settings", async ({ page }) => {
 		await navigateAndWait(page, "/settings/providers");
 		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
+	});
+
+	test("channels add telegram token field is treated as a password", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		const addButton = page.getByRole("button", { name: "+ Add Telegram Bot", exact: true });
+		await expect(addButton).toBeVisible();
+		await addButton.click();
+
+		await expect(page.getByRole("heading", { name: "Add Telegram Bot", exact: true })).toBeVisible();
+		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+		await expect(tokenInput).toHaveAttribute("type", "password");
+		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("sidebar groups and order match product layout", async ({ page }) => {

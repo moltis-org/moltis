@@ -109,7 +109,7 @@ tls = [
   "dep:tokio-rustls",
 ]
 voice = ["dep:moltis-voice"]
-web-ui = ["dep:askama", "dep:include_dir"]
+web-ui = ["dep:askama", "dep:chrono", "dep:include_dir"]
 
 [dev-dependencies]
 reqwest           = { workspace = true }

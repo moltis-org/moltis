@@ -5,6 +5,101 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Multi-select preferred models per provider**: The LLMs page now has a
+  "Preferred Models" button per provider that opens a multi-select modal.
+  Selected models are pinned at the top of the session model dropdown.
+  New `providers.save_models` RPC accepts multiple model IDs at once.
+- **Multi-select model picker in onboarding**: The onboarding provider step now
+  uses a multi-select model picker matching the Settings LLMs page. Toggle
+  models on/off, see per-model probe status badges, and batch-save with a
+  single Save button. Previously-saved preferred models are pre-selected when
+  re-opening the model selector.
+
+### Changed
+
+- **Model discovery uses `DiscoveredModel` struct**: Replaced `(String, String)`
+  tuples with a typed `DiscoveredModel` struct across all providers (OpenAI,
+  GitHub Copilot, OpenAI Codex). The struct carries an optional `created_at`
+  timestamp from the `/v1/models` API, enabling discovered models to be sorted
+  newest-first. Preferred/configured models remain pinned at the top.
+- **Removed OpenAI-specific model name filtering from discovery**: The
+  `/v1/models` response is no longer filtered by OpenAI naming conventions
+  (`gpt-*`, `o1`, etc.). All valid model IDs from any provider are now
+  accepted. This fixes model discovery for third-party providers like
+  Moonshot whose model IDs don't follow OpenAI naming.
+- **Disabled automatic model probe at startup**: The background chat
+  completion probe that checked which models are supported is now
+  triggered on-demand by the web UI instead of running automatically
+  2 seconds after startup. With dynamic model discovery, the startup
+  probe was expensive and noisy (non-chat models like image, audio,
+  and video would log spurious warnings).
+- **Model test uses streaming for faster feedback**: The "Testing..."
+  probe when selecting a model now uses streaming and returns on the
+  first token instead of waiting for a full non-streaming response.
+  Timeout reduced from 20s to 10s.
+- **Chosen models merge with config-defined priority**: Models selected
+  via the UI are prepended to the saved models list and merged with
+  config-defined preferred models, so both sources contribute to
+  ordering.
+- **Dynamic cross-provider priority list**: The model dropdown priority
+  is now a shared `Arc<RwLock<Vec<String>>>` updated at runtime when
+  models are saved, instead of a static `HashMap` built once at startup.
+- **Replaced hardcoded Ollama checks with `keyOptional` metadata**: JS
+  files no longer check `provider.name === "ollama"` for behavior.
+  Instead, the backend exposes a `keyOptional` field on provider
+  metadata, making the UI provider-agnostic.
+
+## [0.8.14] - 2026-02-11
+
+### Security
+
+- **Disconnect all WS clients on credential change**: WebSocket connections
+  opened before auth setup are now disconnected when credentials change
+  (password set/changed, passkey registered during setup, auth reset, last
+  credential removed). An `auth.credentials_changed` event notifies browsers
+  to redirect to `/login`. Existing sessions are also invalidated on password
+  change for defense-in-depth.
+
+### Fixed
+
+- **Onboarding test for SOUL.md clear behavior**: Fixed `identity_update_partial`
+  test to match the new empty-file behavior from v0.8.13.
+
+## [0.8.13] - 2026-02-11
+
+### Added
+
+- **Auto-create SOUL.md on first run**: `SOUL.md` is now seeded with the
+  default soul text when the file doesn't exist, mirroring how `moltis.toml`
+  is auto-created. If deleted, it re-seeds on next load.
+
+### Fixed
+
+- **SOUL.md clear via settings**: Clearing the soul textarea in settings no
+  longer re-creates the default on the next load. An explicit clear now writes
+  an empty file to distinguish "user cleared soul" from "file never existed".
+- **Onboarding WS connection timing**: Deferred WebSocket connection until
+  authentication completes, preventing connection failures during onboarding.
+
+### Changed
+
+- **Passkey auth preselection**: Onboarding now preselects the passkey
+  authentication method when a passkey is already registered.
+- **Moonshot provider**: Added Moonshot to the default offered providers list.
+
+## [0.8.12] - 2026-02-11
+
+### Fixed
+
+- **E2E test CI stability**: `NoopChatService::clear()` now returns Ok instead
+  of an error when no LLM providers are configured, fixing 5 e2e test failures
+  in CI environments. Hardened websocket, chat-input, and onboarding-auth e2e
+  tests against startup race conditions and flaky selectors.
+
 ## [0.8.8] - 2026-02-11
 
 ### Changed

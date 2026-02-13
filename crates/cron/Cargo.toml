@@ -25,6 +25,7 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
+rstest   = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

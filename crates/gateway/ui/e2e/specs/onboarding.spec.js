@@ -68,6 +68,23 @@ async function moveToLlmStep(page) {
 test.describe("Onboarding wizard", () => {
 	test.describe.configure({ mode: "serial" });
 
+	test("onboarding gon includes voice_enabled flag", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+
+		await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toMatch(/^\/(?:onboarding|chats\/.+)$/);
+
+		const pathname = new URL(page.url()).pathname;
+		if (/^\/chats\//.test(pathname)) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		const voiceEnabledType = await page.evaluate(() => typeof window.__MOLTIS__?.voice_enabled);
+		expect(voiceEnabledType).toBe("boolean");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("redirects to /onboarding on first run", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
@@ -187,8 +204,10 @@ test.describe("Onboarding wizard", () => {
 		await expect(channelHeading).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("autocomplete", "off");
 		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
-		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("autocomplete", "off");
-		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("name", "telegram_bot_token");
+		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+		await expect(tokenInput).toHaveAttribute("type", "password");
+		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
 		expect(pageErrors).toEqual([]);
 	});
 

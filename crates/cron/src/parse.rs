@@ -56,51 +56,27 @@ pub fn parse_absolute_time_ms(input: &str) -> Result<u64> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn test_parse_seconds() {
-        assert_eq!(parse_duration_ms("30s").unwrap(), 30_000);
+    #[rstest]
+    #[case("30s", 30_000)]
+    #[case("5m", 300_000)]
+    #[case("2h", 7_200_000)]
+    #[case("1d", 86_400_000)]
+    #[case("  10m  ", 600_000)]
+    fn test_parse_duration_ok(#[case] input: &str, #[case] expected: u64) {
+        assert_eq!(parse_duration_ms(input).unwrap(), expected);
     }
 
-    #[test]
-    fn test_parse_minutes() {
-        assert_eq!(parse_duration_ms("5m").unwrap(), 300_000);
-    }
-
-    #[test]
-    fn test_parse_hours() {
-        assert_eq!(parse_duration_ms("2h").unwrap(), 7_200_000);
-    }
-
-    #[test]
-    fn test_parse_days() {
-        assert_eq!(parse_duration_ms("1d").unwrap(), 86_400_000);
-    }
-
-    #[test]
-    fn test_parse_with_whitespace() {
-        assert_eq!(parse_duration_ms("  10m  ").unwrap(), 600_000);
-    }
-
-    #[test]
-    fn test_parse_empty() {
-        assert!(parse_duration_ms("").is_err());
-    }
-
-    #[test]
-    fn test_parse_no_suffix() {
-        assert!(parse_duration_ms("100").is_err());
-    }
-
-    #[test]
-    fn test_parse_zero() {
-        assert!(parse_duration_ms("0s").is_err());
-    }
-
-    #[test]
-    fn test_parse_bad_suffix() {
-        assert!(parse_duration_ms("10x").is_err());
+    #[rstest]
+    #[case("")]
+    #[case("100")]
+    #[case("0s")]
+    #[case("10x")]
+    fn test_parse_duration_err(#[case] input: &str) {
+        assert!(parse_duration_ms(input).is_err());
     }
 
     #[test]

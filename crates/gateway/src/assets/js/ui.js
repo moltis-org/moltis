@@ -156,6 +156,225 @@ export function confirmDialog(message) {
 	});
 }
 
+/**
+ * Vanilla-JS share visibility picker using the standard provider modal style.
+ * Returns "public", "private", or null when cancelled.
+ */
+export function shareVisibilityDialog() {
+	return new Promise((resolve) => {
+		var backdrop = document.createElement("div");
+		backdrop.className = "provider-modal-backdrop";
+
+		var box = document.createElement("div");
+		box.className = "provider-modal";
+		box.style.width = "460px";
+
+		var header = document.createElement("div");
+		header.className = "provider-modal-header";
+
+		var title = document.createElement("div");
+		title.className = "provider-item-name";
+		title.textContent = "Share session snapshot";
+
+		var cancelTopBtn = document.createElement("button");
+		cancelTopBtn.className = "provider-btn provider-btn-secondary provider-btn-sm";
+		cancelTopBtn.textContent = "Cancel";
+
+		var body = document.createElement("div");
+		body.className = "provider-modal-body";
+		body.style.gap = "10px";
+
+		var hint = document.createElement("p");
+		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
+		hint.textContent = "A snapshot is frozen at this point, later chat messages stay private.";
+
+		var warning = document.createElement("p");
+		warning.style.cssText =
+			"font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45";
+		warning.textContent =
+			"We do best-effort redaction for API keys and tokens in shared tool output, but always review before sharing.";
+
+		var publicBtn = document.createElement("button");
+		publicBtn.className = "provider-item";
+		publicBtn.type = "button";
+		publicBtn.setAttribute("data-share-visibility", "public");
+		var publicName = document.createElement("div");
+		publicName.className = "provider-item-name";
+		publicName.textContent = "Public link";
+		var publicBadge = document.createElement("span");
+		publicBadge.className = "provider-item-badge configured";
+		publicBadge.textContent = "Open";
+		publicBtn.appendChild(publicName);
+		publicBtn.appendChild(publicBadge);
+
+		var privateBtn = document.createElement("button");
+		privateBtn.className = "provider-item";
+		privateBtn.type = "button";
+		privateBtn.setAttribute("data-share-visibility", "private");
+		var privateName = document.createElement("div");
+		privateName.className = "provider-item-name";
+		privateName.textContent = "Private link";
+		var privateBadge = document.createElement("span");
+		privateBadge.className = "provider-item-badge api-key";
+		privateBadge.textContent = "Key required";
+		privateBtn.appendChild(privateName);
+		privateBtn.appendChild(privateBadge);
+
+		function close(value) {
+			document.removeEventListener("keydown", onKeydown);
+			backdrop.remove();
+			resolve(value);
+		}
+
+		function onKeydown(e) {
+			if (e.key === "Escape") close(null);
+		}
+
+		publicBtn.addEventListener("click", () => close("public"));
+		privateBtn.addEventListener("click", () => close("private"));
+		cancelTopBtn.addEventListener("click", () => close(null));
+		backdrop.addEventListener("click", (e) => {
+			if (e.target === backdrop) close(null);
+		});
+		document.addEventListener("keydown", onKeydown);
+
+		body.appendChild(hint);
+		body.appendChild(warning);
+		body.appendChild(publicBtn);
+		body.appendChild(privateBtn);
+		header.appendChild(title);
+		header.appendChild(cancelTopBtn);
+		box.appendChild(header);
+		box.appendChild(body);
+		backdrop.appendChild(box);
+		document.body.appendChild(backdrop);
+
+		publicBtn.focus();
+	});
+}
+
+/**
+ * Styled share-link dialog used when auto-copy is unavailable.
+ * Returns "copied" when copy succeeded, otherwise null on close/dismiss.
+ */
+export function shareLinkDialog(url, visibility) {
+	return new Promise((resolve) => {
+		var backdrop = document.createElement("div");
+		backdrop.className = "provider-modal-backdrop";
+		backdrop.setAttribute("data-share-link-modal", "true");
+
+		var box = document.createElement("div");
+		box.className = "provider-modal";
+		box.style.width = "560px";
+
+		var header = document.createElement("div");
+		header.className = "provider-modal-header";
+
+		var title = document.createElement("div");
+		title.className = "provider-item-name";
+		title.textContent = "Share link ready";
+
+		var closeTopBtn = document.createElement("button");
+		closeTopBtn.className = "provider-btn provider-btn-secondary";
+		closeTopBtn.textContent = "Close";
+		closeTopBtn.setAttribute("data-share-link-close", "true");
+
+		var body = document.createElement("div");
+		body.className = "provider-modal-body";
+		body.style.gap = "10px";
+
+		var hint = document.createElement("p");
+		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
+		hint.textContent =
+			visibility === "private"
+				? "This is a private share link with an embedded key. Send it only to trusted people."
+				: "This snapshot is frozen at this point in time.";
+
+		var input = document.createElement("input");
+		input.className = "provider-key-input";
+		input.readOnly = true;
+		input.value = url;
+		input.setAttribute("data-share-link-input", "true");
+		input.addEventListener("focus", () => input.select());
+		input.addEventListener("click", () => input.select());
+
+		var btnRow = document.createElement("div");
+		btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap";
+
+		var openBtn = document.createElement("button");
+		openBtn.className = "provider-btn provider-btn-secondary";
+		openBtn.textContent = "Open link";
+		openBtn.setAttribute("data-share-link-open", "true");
+
+		var copyBtn = document.createElement("button");
+		copyBtn.className = "provider-btn";
+		copyBtn.textContent = "Copy link";
+		copyBtn.setAttribute("data-share-link-copy", "true");
+
+		function close(value) {
+			document.removeEventListener("keydown", onKeydown);
+			backdrop.remove();
+			resolve(value);
+		}
+
+		function onKeydown(e) {
+			if (e.key === "Escape") close(null);
+		}
+
+		async function copyLink() {
+			try {
+				if (navigator.clipboard?.writeText) {
+					await navigator.clipboard.writeText(url);
+					showToast("Share link copied", "success");
+					close("copied");
+					return;
+				}
+			} catch (_err) {
+				// Clipboard permissions can fail. Fall through to manual copy fallback.
+			}
+			input.focus();
+			input.select();
+			var copied = false;
+			try {
+				copied = document.execCommand("copy");
+			} catch (_err) {
+				copied = false;
+			}
+			if (copied) {
+				showToast("Share link copied", "success");
+				close("copied");
+				return;
+			}
+			showToast("Copy failed. Copy the link manually.", "error");
+		}
+
+		copyBtn.addEventListener("click", () => {
+			void copyLink();
+		});
+		openBtn.addEventListener("click", () => {
+			window.open(url, "_blank", "noopener,noreferrer");
+		});
+		closeTopBtn.addEventListener("click", () => close(null));
+		backdrop.addEventListener("click", (e) => {
+			if (e.target === backdrop) close(null);
+		});
+		document.addEventListener("keydown", onKeydown);
+
+		btnRow.appendChild(openBtn);
+		btnRow.appendChild(copyBtn);
+		header.appendChild(title);
+		header.appendChild(closeTopBtn);
+		body.appendChild(hint);
+		body.appendChild(input);
+		body.appendChild(btnRow);
+		box.appendChild(header);
+		box.appendChild(body);
+		backdrop.appendChild(box);
+		document.body.appendChild(backdrop);
+		copyBtn.focus();
+	});
+}
+
 // ── Model select dropdown (Preact, reuses .model-combo CSS) ──
 export function ModelSelect({ models, value, onChange, placeholder }) {
 	var [open, setOpen] = useState(false);

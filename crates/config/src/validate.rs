@@ -112,7 +112,8 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("api_key", Leaf),
             ("base_url", Leaf),
-            ("model", Leaf),
+            ("models", Leaf),
+            ("fetch_models", Leaf),
             ("alias", Leaf),
         ]))
     };
@@ -1200,7 +1201,7 @@ port = 8080
 
 [providers.anthropic]
 enabled = true
-model = "claude-sonnet-4-20250514"
+models = ["claude-sonnet-4-20250514"]
 
 [auth]
 disabled = false

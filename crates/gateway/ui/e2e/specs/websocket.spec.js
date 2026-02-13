@@ -1,21 +1,46 @@
 const { expect, test } = require("@playwright/test");
 const { waitForWsConnected, watchPageErrors } = require("../helpers");
 
+function isRetryableRpcError(message) {
+	if (typeof message !== "string") return false;
+	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+}
+
 async function sendRpcFromPage(page, method, params) {
-	return await page.evaluate(
-		async ({ methodName, methodParams }) => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			if (!appScript) throw new Error("app module script not found");
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var helpers = await import(`${prefix}js/helpers.js`);
-			return helpers.sendRpc(methodName, methodParams);
-		},
-		{
-			methodName: method,
-			methodParams: params,
-		},
-	);
+	let lastResponse = null;
+	for (let attempt = 0; attempt < 40; attempt++) {
+		if (attempt > 0) {
+			await waitForWsConnected(page);
+			await page.waitForTimeout(100);
+		}
+		lastResponse = await page
+			.evaluate(
+				async ({ methodName, methodParams }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) throw new Error("app module script not found");
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var helpers = await import(`${prefix}js/helpers.js`);
+					return helpers.sendRpc(methodName, methodParams);
+				},
+				{
+					methodName: method,
+					methodParams: params,
+				},
+			)
+			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
+
+		if (lastResponse?.ok) return lastResponse;
+		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
+	}
+
+	return lastResponse;
+}
+
+async function expectRpcOk(page, method, params) {
+	const response = await sendRpcFromPage(page, method, params);
+	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
+	return response;
 }
 
 test.describe("WebSocket connection lifecycle", () => {
@@ -68,15 +93,14 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolOutput = "Linux moltis-moltis-sandbox-main 6.12.28 #1 SMP Tue May 20 15:19:05 UTC 2025 aarch64 GNU/Linux";
 		const finalText =
 			"The command executed successfully. The output shows:\n- Kernel name: Linux\n- Hostname: moltis-moltis-sandbox-main\n\n" +
 			toolOutput;
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -87,7 +111,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -96,7 +120,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -123,11 +147,10 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolCallId = "reorder-exec-1";
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -139,7 +162,7 @@ test.describe("WebSocket connection lifecycle", () => {
 			},
 		});
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -163,11 +186,10 @@ test.describe("WebSocket connection lifecycle", () => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
 
-		const clear = await sendRpcFromPage(page, "chat.clear", {});
-		expect(clear?.ok).toBeTruthy();
+		await expectRpcOk(page, "chat.clear", {});
 
 		const toolCallId = "stale-exec-1";
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -180,7 +202,7 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toBeVisible();
 
-		await sendRpcFromPage(page, "system-event", {
+		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
 				sessionKey: "main",
@@ -196,5 +218,84 @@ test.describe("WebSocket connection lifecycle", () => {
 		await expect(page.locator(`#tool-${toolCallId} .exec-status`)).toHaveCount(0);
 		await expect(page.locator(`#tool-${toolCallId}`)).toHaveClass(/exec-ok/);
 		expect(pageErrors).toEqual([]);
+	});
+
+	test("map links render branded svg icons", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		await expectRpcOk(page, "chat.clear", {});
+
+		const toolCallId = "map-links-icons-1";
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				toolCallId,
+				toolName: "show_map",
+				arguments: { label: "Tartine Bakery" },
+			},
+		});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_end",
+				toolCallId,
+				toolName: "show_map",
+				success: true,
+				result: {
+					label: "Tartine Bakery",
+					map_links: {
+						google_maps: "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery&center=37.7615,-122.4241",
+						apple_maps: "https://maps.apple.com/?ll=37.7615,-122.4241&q=Tartine+Bakery&z=15",
+						openstreetmap:
+							"https://www.openstreetmap.org/search?query=Tartine+Bakery&mlat=37.7615&mlon=-122.4241#map=15/37.7615/-122.4241",
+					},
+				},
+			},
+		});
+
+		const card = page.locator(`#tool-${toolCallId}`);
+		await expect(card).toBeVisible();
+		await expect(card.locator("img.map-service-icon")).toHaveCount(3);
+		await expect(card.locator('a:has-text("Google Maps") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-google-maps\.svg$/,
+		);
+		await expect(card.locator('a:has-text("Apple Maps") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-apple-maps\.svg$/,
+		);
+		await expect(card.locator('a:has-text("OpenStreetMap") img.map-service-icon')).toHaveAttribute(
+			"src",
+			/\/assets\/v\/[^/]+\/icons\/map-openstreetmap\.svg$/,
+		);
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("auth.credentials_changed event redirects through /login", async ({ page }) => {
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		var loginNavigation = page.waitForRequest(
+			(request) => request.isNavigationRequest() && new URL(request.url()).pathname === "/login",
+			{ timeout: 10_000 },
+		);
+
+		// Inject the auth.credentials_changed event via system-event RPC.
+		await sendRpcFromPage(page, "system-event", {
+			event: "auth.credentials_changed",
+			payload: { reason: "test_disconnect" },
+		});
+
+		// The event handler should trigger a navigation to /login.
+		await loginNavigation;
+
+		// In local no-password mode, /login immediately routes back to chat.
+		await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:login|chats\/.+)$/);
 	});
 });

@@ -278,21 +278,18 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn bold() {
-        assert_eq!(markdown_to_telegram_html("**hello**"), "<b>hello</b>");
-    }
-
-    #[test]
-    fn italic() {
-        assert_eq!(markdown_to_telegram_html("*hello*"), "<i>hello</i>");
-    }
-
-    #[test]
-    fn inline_code() {
-        assert_eq!(markdown_to_telegram_html("`code`"), "<code>code</code>");
+    #[rstest]
+    #[case("**hello**", "<b>hello</b>")]
+    #[case("*hello*", "<i>hello</i>")]
+    #[case("`code`", "<code>code</code>")]
+    #[case("~~old~~", "<s>old</s>")]
+    #[case("<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;")]
+    fn markdown_inline(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(markdown_to_telegram_html(input), expected);
     }
 
     #[test]
@@ -305,23 +302,10 @@ mod tests {
     }
 
     #[test]
-    fn strikethrough() {
-        assert_eq!(markdown_to_telegram_html("~~old~~"), "<s>old</s>");
-    }
-
-    #[test]
     fn link() {
         assert_eq!(
             markdown_to_telegram_html("[click](https://example.com)"),
             "<a href=\"https://example.com\">click</a>"
-        );
-    }
-
-    #[test]
-    fn html_escaping() {
-        assert_eq!(
-            markdown_to_telegram_html("<script>alert(1)</script>"),
-            "&lt;script&gt;alert(1)&lt;/script&gt;"
         );
     }
 

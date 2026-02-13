@@ -7,7 +7,7 @@ use {
         prelude::*,
         types::{ChatAction, ChatId, InputFile, MessageId, ParseMode, ReplyParameters},
     },
-    tracing::debug,
+    tracing::{debug, info},
 };
 
 use {
@@ -76,6 +76,14 @@ impl ChannelOutbound for TelegramOutbound {
 
         let html = markdown::markdown_to_telegram_html(text);
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text send start"
+        );
 
         for (i, chunk) in chunks.iter().enumerate() {
             let mut req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
@@ -88,6 +96,14 @@ impl ChannelOutbound for TelegramOutbound {
             req.await?;
         }
 
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text sent"
+        );
         Ok(())
     }
 
@@ -111,6 +127,15 @@ impl ChannelOutbound for TelegramOutbound {
         // Append the pre-formatted suffix (e.g. activity logbook) to the last chunk.
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
         let last_idx = chunks.len().saturating_sub(1);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix send start"
+        );
 
         for (i, chunk) in chunks.iter().enumerate() {
             let content = if i == last_idx {
@@ -133,6 +158,15 @@ impl ChannelOutbound for TelegramOutbound {
                         .parse_mode(ParseMode::Html)
                         .disable_notification(true)
                         .await?;
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        text_len = text.len(),
+                        suffix_len = suffix_html.len(),
+                        chunk_count = chunks.len(),
+                        "telegram outbound text+suffix sent (separate suffix message)"
+                    );
                     return Ok(());
                 }
             } else {
@@ -149,6 +183,15 @@ impl ChannelOutbound for TelegramOutbound {
             req.await?;
         }
 
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            suffix_len = suffix_html.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound text+suffix sent"
+        );
         Ok(())
     }
 
@@ -172,6 +215,14 @@ impl ChannelOutbound for TelegramOutbound {
 
         let html = markdown::markdown_to_telegram_html(text);
         let chunks = markdown::chunk_message(&html, TELEGRAM_MAX_MESSAGE_LEN);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound silent text send start"
+        );
 
         for (i, chunk) in chunks.iter().enumerate() {
             let mut req = bot
@@ -186,6 +237,14 @@ impl ChannelOutbound for TelegramOutbound {
             req.await?;
         }
 
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            text_len = text.len(),
+            chunk_count = chunks.len(),
+            "telegram outbound silent text sent"
+        );
         Ok(())
     }
 
@@ -199,6 +258,20 @@ impl ChannelOutbound for TelegramOutbound {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
         let rp = self.reply_params(account_id, reply_to);
+        let media_mime = payload
+            .media
+            .as_ref()
+            .map(|m| m.mime_type.as_str())
+            .unwrap_or("none");
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            has_media = payload.media.is_some(),
+            media_mime,
+            caption_len = payload.text.len(),
+            "telegram outbound media send start"
+        );
 
         if let Some(ref media) = payload.media {
             // Handle base64 data URIs (e.g., "data:image/png;base64,...")
@@ -240,7 +313,17 @@ impl ChannelOutbound for TelegramOutbound {
                     }
 
                     match req.await {
-                        Ok(_) => return Ok(()),
+                        Ok(_) => {
+                            info!(
+                                account_id,
+                                chat_id = to,
+                                reply_to = ?reply_to,
+                                media_mime = %media.mime_type,
+                                caption_len = payload.text.len(),
+                                "telegram outbound media sent as photo"
+                            );
+                            return Ok(());
+                        },
                         Err(e) => {
                             let err_str = e.to_string();
                             // Retry as document if photo dimensions are invalid
@@ -257,6 +340,14 @@ impl ChannelOutbound for TelegramOutbound {
                                     req = req.caption(&payload.text);
                                 }
                                 req.await?;
+                                info!(
+                                    account_id,
+                                    chat_id = to,
+                                    reply_to = ?reply_to,
+                                    media_mime = %media.mime_type,
+                                    caption_len = payload.text.len(),
+                                    "telegram outbound media sent as document fallback"
+                                );
                                 return Ok(());
                             }
                             return Err(e.into());
@@ -272,6 +363,14 @@ impl ChannelOutbound for TelegramOutbound {
                         req = req.caption(&payload.text);
                     }
                     req.await?;
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        media_mime = %media.mime_type,
+                        caption_len = payload.text.len(),
+                        "telegram outbound media sent as voice"
+                    );
                 } else if media.mime_type.starts_with("audio/") {
                     let input = InputFile::memory(bytes).file_name("audio.mp3");
                     let mut req = bot.send_audio(chat_id, input);
@@ -279,6 +378,14 @@ impl ChannelOutbound for TelegramOutbound {
                         req = req.caption(&payload.text);
                     }
                     req.await?;
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        media_mime = %media.mime_type,
+                        caption_len = payload.text.len(),
+                        "telegram outbound media sent as audio"
+                    );
                 } else {
                     let input = InputFile::memory(bytes).file_name(filename);
                     let mut req = bot.send_document(chat_id, input);
@@ -286,6 +393,14 @@ impl ChannelOutbound for TelegramOutbound {
                         req = req.caption(&payload.text);
                     }
                     req.await?;
+                    info!(
+                        account_id,
+                        chat_id = to,
+                        reply_to = ?reply_to,
+                        media_mime = %media.mime_type,
+                        caption_len = payload.text.len(),
+                        "telegram outbound media sent as document"
+                    );
                 }
             } else {
                 // URL-based media
@@ -298,6 +413,14 @@ impl ChannelOutbound for TelegramOutbound {
                             req = req.caption(&payload.text);
                         }
                         req.await?;
+                        info!(
+                            account_id,
+                            chat_id = to,
+                            reply_to = ?reply_to,
+                            media_mime = %media.mime_type,
+                            caption_len = payload.text.len(),
+                            "telegram outbound URL media sent as photo"
+                        );
                     },
                     "audio/ogg" => {
                         let mut req = bot.send_voice(chat_id, input);
@@ -305,6 +428,14 @@ impl ChannelOutbound for TelegramOutbound {
                             req = req.caption(&payload.text);
                         }
                         req.await?;
+                        info!(
+                            account_id,
+                            chat_id = to,
+                            reply_to = ?reply_to,
+                            media_mime = %media.mime_type,
+                            caption_len = payload.text.len(),
+                            "telegram outbound URL media sent as voice"
+                        );
                     },
                     t if t.starts_with("audio/") => {
                         let mut req = bot.send_audio(chat_id, input);
@@ -312,6 +443,14 @@ impl ChannelOutbound for TelegramOutbound {
                             req = req.caption(&payload.text);
                         }
                         req.await?;
+                        info!(
+                            account_id,
+                            chat_id = to,
+                            reply_to = ?reply_to,
+                            media_mime = %media.mime_type,
+                            caption_len = payload.text.len(),
+                            "telegram outbound URL media sent as audio"
+                        );
                     },
                     _ => {
                         let mut req = bot.send_document(chat_id, input);
@@ -319,6 +458,14 @@ impl ChannelOutbound for TelegramOutbound {
                             req = req.caption(&payload.text);
                         }
                         req.await?;
+                        info!(
+                            account_id,
+                            chat_id = to,
+                            reply_to = ?reply_to,
+                            media_mime = %media.mime_type,
+                            caption_len = payload.text.len(),
+                            "telegram outbound URL media sent as document"
+                        );
                     },
                 }
             }
@@ -342,6 +489,15 @@ impl ChannelOutbound for TelegramOutbound {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
         let rp = self.reply_params(account_id, reply_to);
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            latitude,
+            longitude,
+            has_title = title.is_some(),
+            "telegram outbound location send start"
+        );
 
         if let Some(name) = title {
             // Venue shows the place name in the chat bubble.
@@ -359,6 +515,15 @@ impl ChannelOutbound for TelegramOutbound {
             req.await?;
         }
 
+        info!(
+            account_id,
+            chat_id = to,
+            reply_to = ?reply_to,
+            latitude,
+            longitude,
+            has_title = title.is_some(),
+            "telegram outbound location sent"
+        );
         Ok(())
     }
 }

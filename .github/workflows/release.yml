@@ -115,7 +115,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
-      - run: cargo test
+      - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --profile ci
 
   e2e:
     name: E2E Tests
@@ -551,7 +554,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - uses: snapcore/action-build@b391f430cb2650fd359ed4d2cfe88b2c481800e0 # v1
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: build-snap
 
       - name: Sign with Sigstore and generate checksums
@@ -669,6 +672,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Resolve release version
+        id: release_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Cargo workspace version to release version
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
@@ -1004,3 +1022,85 @@ jobs:
           fi
           git commit -m "moltis ${VERSION}"
           git push
+
+  update-deploy-tags:
+    needs: merge-docker
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Update deploy template tags
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          ref: main
+
+      - name: Update image tags in deploy templates
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "Updating deploy templates to version ${VERSION}"
+
+          # DigitalOcean App Platform
+          sed -i "s/tag: \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
+
+          # Render
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
+
+          # Fly.io
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
+
+          # Check if any files changed
+          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml; then
+            echo "No deploy template changes needed"
+            exit 0
+          fi
+
+          # Commit via GitHub API so the commit is signed/verified
+          REPO="${{ github.repository }}"
+          MAIN_SHA=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
+          BASE_TREE=$(gh api "repos/${REPO}/git/commits/${MAIN_SHA}" --jq '.tree.sha')
+
+          # Create blobs for each updated file
+          DO_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 .do/deploy.template.yaml)" \
+            -f encoding=base64 --jq '.sha')
+          RENDER_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 render.yaml)" \
+            -f encoding=base64 --jq '.sha')
+          FLY_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 fly.toml)" \
+            -f encoding=base64 --jq '.sha')
+
+          # Create a new tree with the updated files (JSON input for proper array structure)
+          TREE_SHA=$(jq -n \
+            --arg base "$BASE_TREE" \
+            --arg do_sha "$DO_BLOB" \
+            --arg render_sha "$RENDER_BLOB" \
+            --arg fly_sha "$FLY_BLOB" \
+            '{
+              base_tree: $base,
+              tree: [
+                {path: ".do/deploy.template.yaml", mode: "100644", type: "blob", sha: $do_sha},
+                {path: "render.yaml", mode: "100644", type: "blob", sha: $render_sha},
+                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha}
+              ]
+            }' | gh api "repos/${REPO}/git/trees" --input - --jq '.sha')
+
+          # Create a signed commit
+          COMMIT_SHA=$(jq -n \
+            --arg msg "chore: update deploy templates to ${VERSION}" \
+            --arg tree "$TREE_SHA" \
+            --arg parent "$MAIN_SHA" \
+            '{message: $msg, tree: $tree, parents: [$parent]}' \
+            | gh api "repos/${REPO}/git/commits" --input - --jq '.sha')
+
+          # Update main to point to the new commit
+          gh api "repos/${REPO}/git/refs/heads/main" \
+            -X PATCH -f sha="${COMMIT_SHA}"
+
+          echo "Updated deploy templates to ${VERSION} (commit ${COMMIT_SHA})"

@@ -998,9 +998,9 @@ pub struct ChatConfig {
     pub message_queue_mode: MessageQueueMode,
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
-    /// Optional allowlist of patterns to filter which models are shown.
-    /// Each pattern is matched case-insensitively as a substring against model
-    /// IDs and display names. An empty list (the default) means show all models.
+    /// Legacy model allowlist. Kept for backward compatibility.
+    /// Model visibility is provider-driven (`providers.<name>.models` +
+    /// live discovery), so this field is currently ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_models: Vec<String>,
 }
@@ -1478,8 +1478,9 @@ pub struct OAuthProviderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProvidersConfig {
-    /// Optional allowlist of providers offered in web UI pickers (onboarding and
-    /// "add provider" modal). Empty means show all known providers.
+    /// Optional allowlist of enabled providers. This also controls which
+    /// providers are offered in web UI pickers (onboarding and "add provider"
+    /// modal). Empty means all providers are enabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offered: Vec<String>,
 
@@ -1512,8 +1513,14 @@ pub struct ProviderEntry {
     /// Override the base URL.
     pub base_url: Option<String>,
 
-    /// Default model ID for this provider.
-    pub model: Option<String>,
+    /// Preferred model IDs for this provider.
+    /// These are shown first in model pickers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+
+    /// Whether to fetch provider model catalogs dynamically when available.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub fetch_models: bool,
 
     /// Optional alias for this provider instance.
     ///
@@ -1530,7 +1537,8 @@ impl std::fmt::Debug for ProviderEntry {
             .field("enabled", &self.enabled)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("base_url", &self.base_url)
-            .field("model", &self.model)
+            .field("models", &self.models)
+            .field("fetch_models", &self.fetch_models)
             .field("alias", &self.alias)
             .finish()
     }
@@ -1542,7 +1550,8 @@ impl Default for ProviderEntry {
             enabled: true,
             api_key: None,
             base_url: None,
-            model: None,
+            models: Vec::new(),
+            fetch_models: true,
             alias: None,
         }
     }
@@ -1568,15 +1577,61 @@ where
     Ok(opt.map(Secret::new))
 }
 
+const fn is_true(value: &bool) -> bool {
+    *value
+}
+
 impl ProvidersConfig {
+    fn normalize_provider_name(value: &str) -> String {
+        value.trim().to_ascii_lowercase()
+    }
+
+    fn provider_name_matches(left: &str, right: &str) -> bool {
+        if left == right {
+            return true;
+        }
+        matches!(
+            (left, right),
+            ("local", "local-llm") | ("local-llm", "local")
+        )
+    }
+
+    fn is_offered(&self, name: &str) -> bool {
+        if self.offered.is_empty() {
+            return true;
+        }
+        let normalized = Self::normalize_provider_name(name);
+        self.offered.iter().any(|entry| {
+            let offered = Self::normalize_provider_name(entry);
+            Self::provider_name_matches(&offered, &normalized)
+        })
+    }
+
+    fn provider_entry(&self, name: &str) -> Option<&ProviderEntry> {
+        match name {
+            "local" => self
+                .providers
+                .get("local")
+                .or_else(|| self.providers.get("local-llm")),
+            "local-llm" => self
+                .providers
+                .get("local-llm")
+                .or_else(|| self.providers.get("local")),
+            _ => self.providers.get(name),
+        }
+    }
+
     /// Check if a provider is enabled (defaults to true if not configured).
     pub fn is_enabled(&self, name: &str) -> bool {
-        self.providers.get(name).is_none_or(|e| e.enabled)
+        if !self.is_offered(name) {
+            return false;
+        }
+        self.provider_entry(name).is_none_or(|e| e.enabled)
     }
 
     /// Get the configured entry for a provider, if any.
     pub fn get(&self, name: &str) -> Option<&ProviderEntry> {
-        self.providers.get(name)
+        self.provider_entry(name)
     }
 }
 
@@ -1634,5 +1689,74 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn providers_config_local_alias_maps_local_llm_to_local() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert("local-llm".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+
+        assert!(!config.is_enabled("local"));
+        assert!(!config.is_enabled("local-llm"));
+        assert!(config.get("local").is_some());
+    }
+
+    #[test]
+    fn providers_config_local_alias_prefers_exact_key() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert("local".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+        config.providers.insert("local-llm".into(), ProviderEntry {
+            enabled: true,
+            ..ProviderEntry::default()
+        });
+
+        assert!(!config.is_enabled("local"));
+        assert!(config.is_enabled("local-llm"));
+    }
+
+    #[test]
+    fn providers_config_offered_controls_enablement() {
+        let config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        assert!(config.is_enabled("openai"));
+        assert!(!config.is_enabled("anthropic"));
+    }
+
+    #[test]
+    fn providers_config_offered_handles_local_alias() {
+        let config = ProvidersConfig {
+            offered: vec!["local-llm".into()],
+            ..ProvidersConfig::default()
+        };
+        assert!(config.is_enabled("local"));
+        assert!(config.is_enabled("local-llm"));
+    }
+
+    #[test]
+    fn providers_config_enabled_flag_still_applies_with_offered_allowlist() {
+        let mut config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        config.providers.insert("openai".into(), ProviderEntry {
+            enabled: false,
+            ..ProviderEntry::default()
+        });
+        assert!(!config.is_enabled("openai"));
+    }
+
+    #[test]
+    fn provider_entry_defaults_fetch_models_enabled() {
+        let entry = ProviderEntry::default();
+        assert!(entry.fetch_models);
+        assert!(entry.models.is_empty());
     }
 }

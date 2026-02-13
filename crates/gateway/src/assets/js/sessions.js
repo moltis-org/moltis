@@ -28,6 +28,16 @@ import { projectStore } from "./stores/project-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
 
+var SESSION_PREVIEW_MAX_CHARS = 200;
+
+function truncateSessionPreview(text) {
+	var trimmed = (text || "").trim();
+	if (!trimmed) return "";
+	var chars = Array.from(trimmed);
+	if (chars.length <= SESSION_PREVIEW_MAX_CHARS) return trimmed;
+	return `${chars.slice(0, SESSION_PREVIEW_MAX_CHARS).join("")}…`;
+}
+
 // ── Fetch & render ──────────────────────────────────────────
 
 export function fetchSessions() {
@@ -138,6 +148,26 @@ export function bumpSessionCount(key, increment) {
 		if (key === S.activeSessionKey) {
 			entry.lastSeenMessageCount = entry.messageCount;
 		}
+	}
+}
+
+/** Set first-message preview optimistically so sidebar updates without reload. */
+export function seedSessionPreviewFromUserText(key, text) {
+	var preview = truncateSessionPreview(text);
+	if (!preview) return;
+	var now = Date.now();
+
+	var session = sessionStore.getByKey(key);
+	if (session && !session.preview) {
+		session.preview = preview;
+		session.updatedAt = now;
+		session.dataVersion.value++;
+	}
+
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry && !entry.preview) {
+		entry.preview = preview;
+		entry.updatedAt = now;
 	}
 }
 
@@ -253,14 +283,47 @@ function parseMultimodalContent(blocks) {
 }
 
 function renderHistoryUserMessage(msg) {
-	var el;
+	var text = "";
+	var images = [];
 	if (Array.isArray(msg.content)) {
 		var parsed = parseMultimodalContent(msg.content);
-		var text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
-		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", parsed.images);
+		text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
+		images = parsed.images;
 	} else {
-		var userContent = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
-		el = chatAddMsg("user", renderMarkdown(userContent), true);
+		text = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
+	}
+
+	var el;
+	if (msg.audio) {
+		el = chatAddMsg("user", "", true);
+		if (el) {
+			var filename = msg.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(el, audioSrc);
+			if (text) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown escapes user input before formatting tags.
+				textWrap.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
+				el.appendChild(textWrap);
+			}
+			if (images.length > 0) {
+				var thumbRow = document.createElement("div");
+				thumbRow.className = "msg-image-row";
+				for (var img of images) {
+					var thumb = document.createElement("img");
+					thumb.className = "msg-image-thumb";
+					thumb.src = img.dataUrl;
+					thumb.alt = img.name;
+					thumbRow.appendChild(thumb);
+				}
+				el.appendChild(thumbRow);
+			}
+		}
+	} else if (images.length > 0) {
+		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
+	} else {
+		el = chatAddMsg("user", renderMarkdown(text), true);
 	}
 	if (el && msg.channel) appendChannelFooter(el, msg.channel);
 	return el;
@@ -534,6 +597,8 @@ export function switchSession(key, searchContext, projectId) {
 					msgEls.push(renderHistoryUserMessage(msg));
 				} else if (msg.role === "assistant") {
 					msgEls.push(renderHistoryAssistantMessage(msg));
+				} else if (msg.role === "notice") {
+					msgEls.push(chatAddMsg("system", renderMarkdown(msg.content || ""), true));
 				} else if (msg.role === "tool_result") {
 					msgEls.push(renderHistoryToolResult(msg));
 				} else {

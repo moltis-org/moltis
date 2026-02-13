@@ -918,6 +918,15 @@ The Build Packages workflow derives artifact versions from the tag when running
 on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
 packaging metadata consistency, and future non-tag runs.
 
+**Deploy template versions.** Deploy templates (`.do/deploy.template.yaml`,
+`render.yaml`, `fly.toml`) pin explicit image versions instead of `latest`
+because cloud platforms cache image tags. These files are **updated
+automatically** by the `update-deploy-tags` job in the release workflow —
+after the Docker image is pushed to GHCR, CI updates the templates on `main`
+with the new version. This avoids a downtime window where templates reference
+a version that hasn't been built yet. **Do not manually update these tags**
+as part of the release commit.
+
 **Cargo.lock must stay in sync.** After changing dependencies or merging
 `main`, run `cargo fetch` (without `--locked`) to sync the lockfile without
 upgrading existing dependency versions, then commit the result. Verify with

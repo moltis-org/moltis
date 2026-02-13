@@ -43,7 +43,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.8.8"
+version      = "0.8.15"
 
 [workspace.dependencies]
 # Async runtime
@@ -142,6 +142,7 @@ dirs-next             = "2"
 flate2                = "1"
 include_dir           = "0.7"
 notify-debouncer-full = "0.7"
+rstest                = "0.25"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"

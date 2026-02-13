@@ -30,9 +30,6 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 # macOS / Linux via Homebrew
 brew install moltis-org/tap/moltis
 
-# Pre-built binary via cargo-binstall (no compilation)
-cargo binstall moltis
-
 # Docker (multi-arch: amd64/arm64)
 docker pull ghcr.io/moltis-org/moltis:latest
 
@@ -197,7 +194,7 @@ Deploy the pre-built Docker image to your favorite cloud provider:
 | Provider | Deploy |
 |----------|--------|
 | DigitalOcean | [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main) |
-| Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/moltis-org/moltis) |
+<!-- | Render | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/moltis-org/moltis) | -->
 <!-- TODO: Railway deploy does not work yet
 | Railway | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?repo=moltis-org/moltis) |
 -->
@@ -507,7 +504,7 @@ Moltis is organized as a Cargo workspace with the following crates:
 
 ## Star History
 
-<!-- [![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=Date)](https://star-history.com/#moltis-org/moltis&Date) -->
+[![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=Date)](https://star-history.com/#moltis-org/moltis&Date)
 
 ## License
 

@@ -41,6 +41,14 @@ async fn start_auth_server_impl(
     localhost_only: bool,
     behind_proxy: bool,
 ) -> (SocketAddr, Arc<CredentialStore>, Arc<GatewayState>) {
+    // Isolate each test process with its own config/data directory so
+    // concurrent nextest processes don't race on shared config files.
+    let tmp = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(tmp.path().to_path_buf());
+    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    // Leak the TempDir so it outlives the test (cleaned up on process exit).
+    std::mem::forget(tmp);
+
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     let auth_config = moltis_config::AuthConfig::default();
     let cred_store = Arc::new(
@@ -91,6 +99,11 @@ async fn start_auth_server_impl(
 
 /// Start a test server without a credential store (no auth).
 async fn start_noauth_server() -> SocketAddr {
+    let tmp = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(tmp.path().to_path_buf());
+    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    std::mem::forget(tmp);
+
     let resolved_auth = auth::resolve_auth(None, None);
     let services = GatewayServices::noop();
     let state = GatewayState::new(resolved_auth, services);

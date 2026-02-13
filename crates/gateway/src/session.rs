@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use {
     async_trait::async_trait,
+    base64::{Engine, engine::general_purpose},
     serde_json::Value,
     tracing::{info, warn},
 };
@@ -10,12 +11,25 @@ use {
     moltis_common::hooks::HookRegistry,
     moltis_projects::ProjectStore,
     moltis_sessions::{
-        metadata::SqliteSessionMetadata, state_store::SessionStateStore, store::SessionStore,
+        message::PersistedMessage, metadata::SqliteSessionMetadata, state_store::SessionStateStore,
+        store::SessionStore,
     },
     moltis_tools::sandbox::SandboxRouter,
 };
 
-use crate::services::{ServiceResult, SessionService};
+use crate::{
+    services::{ServiceResult, SessionService},
+    share_store::{
+        ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
+        SharedMapLinks, SharedMessage, SharedMessageRole,
+    },
+};
+
+const SHARE_BOUNDARY_NOTICE: &str =
+    "This session until here has been shared. Later messages are not included in the shared link.";
+const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
+const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
+const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
 
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
@@ -107,10 +121,601 @@ fn extract_preview(history: &[Value]) -> Option<String> {
     Some(truncate_preview(&combined, MAX))
 }
 
+fn value_u64(msg: &Value, key: &str) -> Option<u64> {
+    msg.get(key).and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_i64().and_then(|n| (n >= 0).then_some(n as u64)))
+    })
+}
+
+fn message_text_for_share(msg: &Value) -> Option<String> {
+    if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+        let trimmed = s.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+
+    let blocks = msg.get("content").and_then(|v| v.as_array())?;
+    let joined = blocks
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+                block.get("text").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed = joined.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn media_filename(path: &str) -> Option<&str> {
+    let filename = path.rsplit('/').next()?.trim();
+    (!filename.is_empty()).then_some(filename)
+}
+
+fn audio_mime_type(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().unwrap_or_default() {
+        "ogg" | "opus" => "audio/ogg",
+        "webm" => "audio/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "aac" => "audio/aac",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
+        _ => "application/octet-stream",
+    }
+}
+
+fn image_mime_type(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().unwrap_or_default() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" | "svgz" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+fn sniff_image_mime(bytes: &[u8], fallback: &str) -> String {
+    if bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "image/png".to_string();
+    }
+    if bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "image/jpeg".to_string();
+    }
+    if bytes.len() >= 6 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+        return "image/gif".to_string();
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return "image/webp".to_string();
+    }
+    fallback.to_string()
+}
+
+fn build_image_data_url(mime: &str, bytes: &[u8]) -> String {
+    let encoded = general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{encoded}")
+}
+
+fn parse_base64_image_data_url(data_url: &str) -> Option<(String, Vec<u8>)> {
+    let (meta, body) = data_url.split_once(',')?;
+    if !meta.starts_with("data:image/") || !meta.contains(";base64") {
+        return None;
+    }
+    let mime = meta
+        .trim_start_matches("data:")
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let decoded = general_purpose::STANDARD.decode(body.trim()).ok()?;
+    Some((mime, decoded))
+}
+
+async fn message_audio_data_url_for_share(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<String> {
+    let audio_path = msg.get("audio").and_then(|v| v.as_str())?;
+    let filename = media_filename(audio_path)?;
+    let bytes = store.read_media(session_key, filename).await.ok()?;
+    let encoded = general_purpose::STANDARD.encode(bytes);
+    Some(format!(
+        "data:{};base64,{}",
+        audio_mime_type(filename),
+        encoded
+    ))
+}
+
+async fn tool_result_image_for_share(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<SharedImageSet> {
+    let screenshot = msg
+        .get("result")
+        .and_then(|v| v.get("screenshot"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)?;
+    let (full_mime, full_bytes) = if screenshot.starts_with("data:image/") {
+        parse_base64_image_data_url(screenshot)?
+    } else {
+        let filename = media_filename(screenshot)?;
+        let bytes = store.read_media(session_key, filename).await.ok()?;
+        (image_mime_type(filename).to_string(), bytes)
+    };
+
+    let full_meta = moltis_media::image_ops::get_image_metadata(&full_bytes).ok()?;
+    let full_asset = SharedImageAsset {
+        data_url: build_image_data_url(&full_mime, &full_bytes),
+        width: full_meta.width,
+        height: full_meta.height,
+    };
+
+    let needs_preview_resize = full_meta.width > SHARE_PREVIEW_MAX_IMAGE_WIDTH
+        || full_meta.height > SHARE_PREVIEW_MAX_IMAGE_HEIGHT;
+    let preview_bytes = if needs_preview_resize {
+        moltis_media::image_ops::resize_image(
+            &full_bytes,
+            SHARE_PREVIEW_MAX_IMAGE_WIDTH,
+            SHARE_PREVIEW_MAX_IMAGE_HEIGHT,
+        )
+        .unwrap_or_else(|_| full_bytes.clone())
+    } else {
+        full_bytes.clone()
+    };
+    let preview_meta = moltis_media::image_ops::get_image_metadata(&preview_bytes).ok()?;
+    let preview_mime = sniff_image_mime(&preview_bytes, &full_mime);
+    let preview_asset = SharedImageAsset {
+        data_url: build_image_data_url(&preview_mime, &preview_bytes),
+        width: preview_meta.width,
+        height: preview_meta.height,
+    };
+    let full = if preview_asset.data_url == full_asset.data_url {
+        None
+    } else {
+        Some(full_asset)
+    };
+
+    Some(SharedImageSet {
+        preview: preview_asset,
+        full,
+    })
+}
+
+fn sanitize_share_url(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    match parsed.scheme() {
+        "http" | "https" => Some(parsed.into()),
+        _ => None,
+    }
+}
+
+fn is_assignment_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'"' | b'\'' | b'$')
+}
+
+fn is_assignment_value_delimiter(byte: u8) -> bool {
+    byte.is_ascii_whitespace()
+        || matches!(byte, b'&' | b',' | b';' | b')' | b']' | b'}' | b'"' | b'\'')
+}
+
+fn normalize_assignment_key(key: &str) -> String {
+    key.trim()
+        .trim_matches(|ch| ch == '"' || ch == '\'')
+        .trim_start_matches('$')
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+}
+
+fn is_env_var_key(key: &str) -> bool {
+    let trimmed = key
+        .trim()
+        .trim_matches(|ch| ch == '"' || ch == '\'')
+        .trim_start_matches('$');
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_uppercase()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+}
+
+fn is_sensitive_assignment_key(key: &str) -> bool {
+    let normalized = normalize_assignment_key(key);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let compact: String = normalized
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect();
+    if compact.is_empty() {
+        return false;
+    }
+
+    matches!(compact.as_str(), "authorization" | "proxyauthorization")
+        || compact.ends_with("apikey")
+        || compact.ends_with("token")
+        || compact.ends_with("secret")
+        || compact.ends_with("password")
+        || compact.ends_with("passwd")
+}
+
+fn should_redact_assignment_key(key: &str) -> bool {
+    is_sensitive_assignment_key(key) || is_env_var_key(key)
+}
+
+fn starts_with_ignore_ascii_case(text: &str, start: usize, pattern: &str) -> bool {
+    let end = start.saturating_add(pattern.len());
+    text.get(start..end)
+        .is_some_and(|value| value.eq_ignore_ascii_case(pattern))
+}
+
+fn assignment_key_bounds(text: &str, separator_idx: usize) -> Option<(usize, usize)> {
+    if separator_idx == 0 || separator_idx >= text.len() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut key_end = separator_idx;
+    while key_end > 0 && bytes[key_end - 1].is_ascii_whitespace() {
+        key_end -= 1;
+    }
+    if key_end == 0 {
+        return None;
+    }
+
+    let mut key_start = key_end;
+    while key_start > 0 && is_assignment_key_byte(bytes[key_start - 1]) {
+        key_start -= 1;
+    }
+    (key_start < key_end).then_some((key_start, key_end))
+}
+
+fn assignment_value_bounds(text: &str, separator_idx: usize, key: &str) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    if separator_idx >= bytes.len() {
+        return None;
+    }
+
+    let mut value_start = separator_idx + 1;
+    while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
+        value_start += 1;
+    }
+    if value_start >= bytes.len() {
+        return None;
+    }
+
+    let normalized_key = normalize_assignment_key(key);
+    let mut quoted = None;
+    let mut redact_start = value_start;
+    if matches!(bytes[value_start], b'"' | b'\'') {
+        quoted = Some(bytes[value_start]);
+        redact_start = value_start + 1;
+    }
+    if redact_start >= bytes.len() {
+        return None;
+    }
+
+    if matches!(
+        normalized_key.as_str(),
+        "authorization" | "proxyauthorization"
+    ) && starts_with_ignore_ascii_case(text, redact_start, "bearer ")
+    {
+        redact_start += "bearer ".len();
+    }
+    if redact_start >= bytes.len() {
+        return None;
+    }
+
+    let mut value_end = redact_start;
+    if let Some(quote_byte) = quoted {
+        while value_end < bytes.len() && bytes[value_end] != quote_byte {
+            value_end += 1;
+        }
+    } else {
+        while value_end < bytes.len() && !is_assignment_value_delimiter(bytes[value_end]) {
+            value_end += 1;
+        }
+    }
+    (value_end > redact_start).then_some((redact_start, value_end))
+}
+
+fn redact_assignment_values(text: &str) -> String {
+    let mut redacted = text.to_string();
+    let mut idx = 0usize;
+
+    while idx < redacted.len() {
+        let next_separator = redacted.as_bytes()[idx..]
+            .iter()
+            .position(|byte| matches!(byte, b'=' | b':'))
+            .map(|offset| idx + offset);
+        let Some(separator_idx) = next_separator else {
+            break;
+        };
+
+        let Some((key_start, key_end)) = assignment_key_bounds(&redacted, separator_idx) else {
+            idx = separator_idx + 1;
+            continue;
+        };
+        let key = redacted[key_start..key_end].trim();
+        if !should_redact_assignment_key(key) {
+            idx = separator_idx + 1;
+            continue;
+        }
+
+        let Some((value_start, value_end)) = assignment_value_bounds(&redacted, separator_idx, key)
+        else {
+            idx = separator_idx + 1;
+            continue;
+        };
+        if redacted[value_start..value_end].trim().is_empty()
+            || &redacted[value_start..value_end] == SHARE_REDACTED_VALUE
+        {
+            idx = separator_idx + 1;
+            continue;
+        }
+
+        redacted.replace_range(value_start..value_end, SHARE_REDACTED_VALUE);
+        idx = value_start + SHARE_REDACTED_VALUE.len();
+    }
+
+    redacted
+}
+
+fn find_case_insensitive(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    if from >= haystack.len() {
+        return None;
+    }
+    let needle_lower = needle.to_ascii_lowercase();
+    let haystack_lower = haystack[from..].to_ascii_lowercase();
+    haystack_lower
+        .find(&needle_lower)
+        .map(|offset| from + offset)
+}
+
+fn redact_bearer_tokens(text: &str) -> String {
+    let mut redacted = text.to_string();
+    let mut idx = 0usize;
+    let needle = "bearer ";
+
+    while let Some(start) = find_case_insensitive(&redacted, needle, idx) {
+        let token_start = start + needle.len();
+        if token_start >= redacted.len() {
+            break;
+        }
+        if start > 0 && redacted.as_bytes()[start - 1].is_ascii_alphanumeric() {
+            idx = token_start;
+            continue;
+        }
+
+        let bytes = redacted.as_bytes();
+        let mut token_end = token_start;
+        while token_end < bytes.len() && !is_assignment_value_delimiter(bytes[token_end]) {
+            token_end += 1;
+        }
+        if token_end <= token_start || &redacted[token_start..token_end] == SHARE_REDACTED_VALUE {
+            idx = token_end.saturating_add(1);
+            continue;
+        }
+
+        redacted.replace_range(token_start..token_end, SHARE_REDACTED_VALUE);
+        idx = token_start + SHARE_REDACTED_VALUE.len();
+    }
+
+    redacted
+}
+
+fn redact_share_secret_values(text: &str) -> String {
+    let with_assignments = redact_assignment_values(text);
+    redact_bearer_tokens(&with_assignments)
+}
+
+fn tool_result_map_links_for_share(msg: &Value) -> Option<SharedMapLinks> {
+    let map_links = msg
+        .get("result")
+        .and_then(|v| v.get("map_links"))
+        .and_then(|v| v.as_object())?;
+
+    let links = SharedMapLinks {
+        apple_maps: map_links
+            .get("apple_maps")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+        google_maps: map_links
+            .get("google_maps")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+        openstreetmap: map_links
+            .get("openstreetmap")
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_share_url),
+    };
+
+    (links.apple_maps.is_some() || links.google_maps.is_some() || links.openstreetmap.is_some())
+        .then_some(links)
+}
+
+fn tool_result_text_for_share(msg: &Value) -> Option<String> {
+    let result = msg.get("result");
+    let mut sections = Vec::new();
+
+    if let Some(label) = result
+        .and_then(|v| v.get("label"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        sections.push(redact_share_secret_values(label));
+    }
+    if let Some(stdout) = result
+        .and_then(|v| v.get("stdout"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|stdout| !stdout.is_empty())
+    {
+        sections.push(redact_share_secret_values(stdout));
+    }
+    if let Some(stderr) = result
+        .and_then(|v| v.get("stderr"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|stderr| !stderr.is_empty())
+    {
+        sections.push(format!("stderr:\n{}", redact_share_secret_values(stderr)));
+    }
+    if let Some(error) = msg
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+    {
+        sections.push(format!("error: {}", redact_share_secret_values(error)));
+    }
+    if let Some(exit_code) = result
+        .and_then(|v| v.get("exit_code"))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
+        })
+        .filter(|exit_code| *exit_code != 0)
+    {
+        sections.push(format!("exit {exit_code}"));
+    }
+
+    let content = sections.join("\n\n");
+    let trimmed = content.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+async fn to_shared_message(
+    msg: &Value,
+    session_key: &str,
+    store: &SessionStore,
+) -> Option<SharedMessage> {
+    let role = match msg.get("role").and_then(|v| v.as_str()) {
+        Some("user") => SharedMessageRole::User,
+        Some("assistant") => SharedMessageRole::Assistant,
+        Some("tool_result") => SharedMessageRole::ToolResult,
+        _ => return None,
+    };
+
+    let content = match role {
+        SharedMessageRole::ToolResult => tool_result_text_for_share(msg).unwrap_or_default(),
+        SharedMessageRole::User | SharedMessageRole::Assistant => {
+            message_text_for_share(msg).unwrap_or_default()
+        },
+        SharedMessageRole::System | SharedMessageRole::Notice => String::new(),
+    };
+    let audio_data_url = match role {
+        SharedMessageRole::User | SharedMessageRole::Assistant => {
+            message_audio_data_url_for_share(msg, session_key, store).await
+        },
+        SharedMessageRole::ToolResult | SharedMessageRole::System | SharedMessageRole::Notice => {
+            None
+        },
+    };
+    let image = match role {
+        SharedMessageRole::ToolResult => tool_result_image_for_share(msg, session_key, store).await,
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let map_links = match role {
+        SharedMessageRole::ToolResult => tool_result_map_links_for_share(msg),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let tool_success = match role {
+        SharedMessageRole::ToolResult => msg.get("success").and_then(|v| v.as_bool()),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let tool_name = match role {
+        SharedMessageRole::ToolResult => msg
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned),
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+    let tool_command = match role {
+        SharedMessageRole::ToolResult => {
+            if tool_name.as_deref() == Some("exec") {
+                msg.get("arguments")
+                    .and_then(|v| v.get("command"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(redact_share_secret_values)
+            } else {
+                None
+            }
+        },
+        SharedMessageRole::User
+        | SharedMessageRole::Assistant
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
+
+    if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
+        return None;
+    }
+    let created_at = value_u64(msg, "created_at");
+    let model = if role == SharedMessageRole::Assistant {
+        msg.get("model")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+    } else {
+        None
+    };
+    let provider = if role == SharedMessageRole::Assistant {
+        msg.get("provider")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+    } else {
+        None
+    };
+
+    Some(SharedMessage {
+        role,
+        content,
+        audio_data_url,
+        image,
+        image_data_url: None,
+        map_links,
+        tool_success,
+        tool_name,
+        tool_command,
+        created_at,
+        model,
+        provider,
+    })
+}
+
 /// Live session service backed by JSONL store + SQLite metadata.
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
     metadata: Arc<SqliteSessionMetadata>,
+    share_store: Option<Arc<ShareStore>>,
     sandbox_router: Option<Arc<SandboxRouter>>,
     project_store: Option<Arc<dyn ProjectStore>>,
     hook_registry: Option<Arc<HookRegistry>>,
@@ -123,6 +728,7 @@ impl LiveSessionService {
         Self {
             store,
             metadata,
+            share_store: None,
             sandbox_router: None,
             project_store: None,
             hook_registry: None,
@@ -133,6 +739,11 @@ impl LiveSessionService {
 
     pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
         self.sandbox_router = Some(router);
+        self
+    }
+
+    pub fn with_share_store(mut self, store: Arc<ShareStore>) -> Self {
+        self.share_store = Some(store);
         self
     }
 
@@ -389,6 +1000,151 @@ impl SessionService for LiveSessionService {
             "mcpDisabled": entry.mcp_disabled,
             "version": entry.version,
         }))
+    }
+
+    async fn share_create(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+
+        let visibility = params
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<ShareVisibility>().ok())
+            .unwrap_or(ShareVisibility::Public);
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let entry = self
+            .metadata
+            .get(key)
+            .await
+            .ok_or_else(|| format!("session '{key}' not found"))?;
+        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+
+        let snapshot = ShareSnapshot {
+            session_key: key.to_string(),
+            session_label: entry.label.clone(),
+            cutoff_message_count: history.len() as u32,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            messages: {
+                let mut shared_messages = Vec::new();
+                for msg in &history {
+                    if let Some(shared) = to_shared_message(msg, key, self.store.as_ref()).await {
+                        shared_messages.push(shared);
+                    }
+                }
+                shared_messages
+            },
+        };
+        let snapshot_json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+
+        let created = share_store
+            .create_or_replace(
+                key,
+                visibility,
+                snapshot_json,
+                snapshot.cutoff_message_count,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Persist a UI-only notice in the source session so users can see
+        // the exact cutoff marker without affecting future LLM context.
+        let boundary_notice = PersistedMessage::Notice {
+            content: SHARE_BOUNDARY_NOTICE.to_string(),
+            created_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            ),
+        };
+        if let Err(e) = self.store.append(key, &boundary_notice.to_value()).await {
+            warn!(
+                session_key = key,
+                share_id = created.share.id,
+                error = %e,
+                "failed to persist share boundary notice; revoking share"
+            );
+            let _ = share_store.revoke(&created.share.id).await;
+            return Err(format!("failed to persist share boundary notice: {e}"));
+        }
+        match self.store.count(key).await {
+            Ok(message_count) => {
+                self.metadata.touch(key, message_count).await;
+            },
+            Err(e) => {
+                warn!(session_key = key, error = %e, "failed to update session message count");
+            },
+        }
+
+        Ok(serde_json::json!({
+            "id": created.share.id,
+            "sessionKey": created.share.session_key,
+            "visibility": created.share.visibility.as_str(),
+            "path": format!("/share/{}", created.share.id),
+            "createdAt": created.share.created_at,
+            "views": created.share.views,
+            "snapshotMessageCount": created.share.snapshot_message_count,
+            "accessKey": created.access_key,
+            "notice": SHARE_BOUNDARY_NOTICE,
+        }))
+    }
+
+    async fn share_list(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let shares = share_store
+            .list_for_session(key)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let items: Vec<Value> = shares
+            .into_iter()
+            .map(|share| {
+                serde_json::json!({
+                    "id": share.id,
+                    "sessionKey": share.session_key,
+                    "visibility": share.visibility.as_str(),
+                    "path": format!("/share/{}", share.id),
+                    "views": share.views,
+                    "createdAt": share.created_at,
+                    "revokedAt": share.revoked_at,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!(items))
+    }
+
+    async fn share_revoke(&self, params: Value) -> ServiceResult {
+        let id = params
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'id' parameter".to_string())?;
+
+        let share_store = self
+            .share_store
+            .as_ref()
+            .ok_or_else(|| "session share store not configured".to_string())?;
+
+        let revoked = share_store.revoke(id).await.map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "revoked": revoked }))
     }
 
     async fn reset(&self, params: Value) -> ServiceResult {
@@ -851,6 +1607,292 @@ mod tests {
         let result = extract_preview(&history).expect("should produce preview");
         assert!(result.ends_with('…'));
         assert!(result.len() <= 204);
+    }
+
+    #[test]
+    fn media_filename_extracts_last_segment() {
+        assert_eq!(media_filename("media/main/voice.ogg"), Some("voice.ogg"));
+        assert_eq!(media_filename("voice.ogg"), Some("voice.ogg"));
+        assert_eq!(media_filename(""), None);
+    }
+
+    #[test]
+    fn audio_mime_type_maps_known_extensions() {
+        assert_eq!(audio_mime_type("voice.ogg"), "audio/ogg");
+        assert_eq!(audio_mime_type("voice.webm"), "audio/webm");
+        assert_eq!(audio_mime_type("voice.mp3"), "audio/mpeg");
+        assert_eq!(audio_mime_type("voice.unknown"), "application/octet-stream");
+    }
+
+    #[test]
+    fn image_mime_type_maps_known_extensions() {
+        assert_eq!(image_mime_type("map.png"), "image/png");
+        assert_eq!(image_mime_type("map.jpeg"), "image/jpeg");
+        assert_eq!(image_mime_type("map.webp"), "image/webp");
+        assert_eq!(image_mime_type("map.unknown"), "application/octet-stream");
+    }
+
+    #[test]
+    fn sanitize_share_url_rejects_unsafe_schemes() {
+        assert_eq!(
+            sanitize_share_url("https://maps.apple.com/?q=test"),
+            Some("https://maps.apple.com/?q=test".to_string())
+        );
+        assert_eq!(sanitize_share_url("javascript:alert(1)"), None);
+        assert_eq!(sanitize_share_url("data:text/html,test"), None);
+    }
+
+    #[tokio::test]
+    async fn message_audio_data_url_for_share_reads_media_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let bytes = b"OggSfake".to_vec();
+        store
+            .save_media("main", "voice.ogg", &bytes)
+            .await
+            .expect("save media");
+
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "audio": "media/main/voice.ogg",
+        });
+
+        let data_url = message_audio_data_url_for_share(&msg, "main", &store).await;
+        assert!(data_url.is_some());
+        assert!(
+            data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:audio/ogg;base64,")
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_skips_system_and_notice_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+
+        let system_msg = serde_json::json!({
+            "role": "system",
+            "content": "system info",
+        });
+        let notice_msg = serde_json::json!({
+            "role": "notice",
+            "content": "share boundary",
+        });
+        let assistant_msg = serde_json::json!({
+            "role": "assistant",
+            "content": "hello",
+        });
+
+        assert!(
+            to_shared_message(&system_msg, "main", &store)
+                .await
+                .is_none()
+        );
+        assert!(
+            to_shared_message(&notice_msg, "main", &store)
+                .await
+                .is_none()
+        );
+        assert!(
+            to_shared_message(&assistant_msg, "main", &store)
+                .await
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_user_audio_without_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        store
+            .save_media("main", "voice-input.webm", b"RIFFfake")
+            .await
+            .expect("save media");
+
+        let user_audio_msg = serde_json::json!({
+            "role": "user",
+            "content": "",
+            "audio": "media/main/voice-input.webm",
+        });
+
+        let shared = to_shared_message(&user_audio_msg, "main", &store)
+            .await
+            .expect("shared message");
+
+        assert!(matches!(shared.role, SharedMessageRole::User));
+        assert!(shared.content.is_empty());
+        assert!(
+            shared
+                .audio_data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:audio/webm;base64,")
+        );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tiny_png = general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=")
+            .unwrap();
+        store
+            .save_media("main", "call-map.png", &tiny_png)
+            .await
+            .expect("save media");
+
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "show_map",
+            "success": true,
+            "created_at": 1_770_966_725_000_u64,
+            "result": {
+                "label": "Tartine Bakery",
+                "screenshot": "media/main/call-map.png",
+                "map_links": {
+                    "google_maps": "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery",
+                    "apple_maps": "javascript:alert(1)",
+                    "openstreetmap": "https://www.openstreetmap.org/search?query=Tartine+Bakery",
+                },
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared tool_result message");
+
+        assert!(matches!(shared.role, SharedMessageRole::ToolResult));
+        assert_eq!(shared.tool_success, Some(true));
+        assert_eq!(shared.tool_name.as_deref(), Some("show_map"));
+        assert!(shared.tool_command.is_none());
+        assert!(shared.audio_data_url.is_none());
+        assert!(shared.image_data_url.is_none());
+        let image = shared.image.expect("shared image variants");
+        assert!(image.preview.data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(image.preview.width, 1);
+        assert_eq!(image.preview.height, 1);
+        assert!(image.full.is_none());
+        let map_links = shared.map_links.expect("map links");
+        assert!(map_links.google_maps.is_some());
+        assert!(map_links.openstreetmap.is_some());
+        assert!(map_links.apple_maps.is_none());
+        assert!(shared.content.contains("Tartine Bakery"));
+    }
+
+    #[test]
+    fn tool_result_text_for_share_preserves_full_stdout() {
+        let large_stdout = format!("{{\"items\":[\"{}\"]}}", "x".repeat(2_000));
+        let msg = serde_json::json!({
+            "role": "tool_result",
+            "result": {
+                "stdout": large_stdout
+            }
+        });
+
+        let text = tool_result_text_for_share(&msg).expect("tool text should exist");
+        assert!(text.contains("\"items\""));
+        assert!(!text.contains("(truncated)"));
+        assert!(!text.ends_with('…'));
+        assert!(text.len() > 1_800);
+    }
+
+    #[test]
+    fn redact_share_secret_values_masks_env_vars_and_api_tokens() {
+        let input = "OPENAI_API_KEY=sk-openai BRAVE_API_KEY=brave-secret Authorization: Bearer bearer-secret https://api.example.com/search?q=test&api_key=url-secret";
+        let redacted = redact_share_secret_values(input);
+
+        assert!(!redacted.contains("sk-openai"));
+        assert!(!redacted.contains("brave-secret"));
+        assert!(!redacted.contains("bearer-secret"));
+        assert!(!redacted.contains("url-secret"));
+        assert!(redacted.contains("OPENAI_API_KEY=[REDACTED]"));
+        assert!(redacted.contains("BRAVE_API_KEY=[REDACTED]"));
+        assert!(redacted.contains("Bearer [REDACTED]"));
+    }
+
+    #[test]
+    fn tool_result_text_for_share_redacts_sensitive_values() {
+        let msg = serde_json::json!({
+            "role": "tool_result",
+            "result": {
+                "stdout": "{\"apiKey\":\"llm-secret\",\"voice_api_key\":\"voice-secret\"}\nOPENAI_API_KEY=env-secret",
+                "stderr": "Authorization: Bearer bearer-secret\nx-api-key: header-secret",
+            }
+        });
+
+        let text = tool_result_text_for_share(&msg).unwrap_or_default();
+        assert!(!text.contains("llm-secret"));
+        assert!(!text.contains("voice-secret"));
+        assert!(!text.contains("env-secret"));
+        assert!(!text.contains("bearer-secret"));
+        assert!(!text.contains("header-secret"));
+        assert!(text.contains(SHARE_REDACTED_VALUE));
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_exec_command_for_tool_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "exec",
+            "arguments": {
+                "command": "curl -s https://example.com"
+            },
+            "success": true,
+            "result": {
+                "stdout": "{\"ok\":true}",
+                "stderr": "",
+                "exit_code": 0,
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared exec tool result");
+        assert_eq!(shared.tool_name.as_deref(), Some("exec"));
+        assert_eq!(
+            shared.tool_command.as_deref(),
+            Some("curl -s https://example.com")
+        );
+        assert!(shared.content.contains("{\"ok\":true}"));
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_redacts_exec_command_and_output_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tool_msg = serde_json::json!({
+            "role": "tool_result",
+            "tool_name": "exec",
+            "arguments": {
+                "command": "OPENAI_API_KEY=sk-openai curl -s -H 'Authorization: Bearer bearer-secret' 'https://api.example.com?q=test&api_key=url-secret'"
+            },
+            "success": true,
+            "result": {
+                "stdout": "{\"api_key\":\"stdout-secret\"}",
+                "stderr": "ELEVENLABS_API_KEY=voice-secret",
+                "exit_code": 0,
+            },
+        });
+
+        let shared = to_shared_message(&tool_msg, "main", &store)
+            .await
+            .expect("shared exec tool result");
+
+        assert_eq!(shared.tool_name.as_deref(), Some("exec"));
+        let command = shared.tool_command.unwrap_or_default();
+        assert!(!command.contains("sk-openai"));
+        assert!(!command.contains("bearer-secret"));
+        assert!(!command.contains("url-secret"));
+        assert!(command.contains(SHARE_REDACTED_VALUE));
+
+        assert!(!shared.content.contains("stdout-secret"));
+        assert!(!shared.content.contains("voice-secret"));
+        assert!(shared.content.contains(SHARE_REDACTED_VALUE));
     }
 
     // --- Browser service integration tests ---
