@@ -314,10 +314,15 @@ function AddChannelModal() {
         <div class="text-xs text-[var(--muted)]">3. Copy the bot token (looks like 123456:ABC-DEF...) and paste it below</div>
         <div class="text-xs text-[var(--muted)] channel-help" style="margin-top:2px;">See the <a href="https://core.telegram.org/bots/tutorial" target="_blank" class="text-[var(--accent)]" style="text-decoration:underline;">Telegram Bot Tutorial</a> for more details.</div>
       </div>
-      <label class="text-xs text-[var(--muted)]">Bot username</label>
-      <input data-field="accountId" type="text" placeholder="e.g. my_assistant_bot" style=${inputStyle} />
-      <label class="text-xs text-[var(--muted)]">Bot Token (from @BotFather)</label>
-      <input data-field="token" type="password" placeholder="123456:ABC-DEF..." style=${inputStyle} />
+	      <label class="text-xs text-[var(--muted)]">Bot username</label>
+	      <input data-field="accountId" type="text" placeholder="e.g. my_assistant_bot" style=${inputStyle} />
+	      <label class="text-xs text-[var(--muted)]">Bot Token (from @BotFather)</label>
+	      <input data-field="token" type="password" placeholder="123456:ABC-DEF..." style=${inputStyle}
+	        autocomplete="new-password"
+	        autocapitalize="none"
+	        autocorrect="off"
+	        spellcheck="false"
+	        name="telegram_bot_token" />
       <label class="text-xs text-[var(--muted)]">DM Policy</label>
       <select data-field="dmPolicy" style=${selectStyle}>
         <option value="open">Open (anyone)</option>

@@ -1915,16 +1915,16 @@ function ChannelStep({ onNext, onBack }) {
 						name="telegram_bot_username"
 						autofocus />
 				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${token} onInput=${(e) => setToken(e.target.value)}
-						placeholder="123456:ABC-DEF..."
-						autocomplete="off"
-						autocapitalize="none"
-						autocorrect="off"
-						spellcheck="false"
-						name="telegram_bot_token" />
+					<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+						<input type="password" class="provider-key-input w-full"
+							value=${token} onInput=${(e) => setToken(e.target.value)}
+							placeholder="123456:ABC-DEF..."
+							autocomplete="new-password"
+							autocapitalize="none"
+							autocorrect="off"
+							spellcheck="false"
+							name="telegram_bot_token" />
 				</div>
 				<div>
 					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>

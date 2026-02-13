@@ -187,8 +187,10 @@ test.describe("Onboarding wizard", () => {
 		await expect(channelHeading).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("autocomplete", "off");
 		await expect(page.getByPlaceholder("e.g. my_assistant_bot")).toHaveAttribute("name", "telegram_bot_username");
-		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("autocomplete", "off");
-		await expect(page.getByPlaceholder("123456:ABC-DEF...")).toHaveAttribute("name", "telegram_bot_token");
+		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+		await expect(tokenInput).toHaveAttribute("type", "password");
+		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
 		expect(pageErrors).toEqual([]);
 	});
 
