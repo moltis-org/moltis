@@ -504,7 +504,7 @@ Moltis is organized as a Cargo workspace with the following crates:
 
 ## Star History
 
-<!-- [![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=Date)](https://star-history.com/#moltis-org/moltis&Date) -->
+[![Star History Chart](https://api.star-history.com/svg?repos=moltis-org/moltis&type=Date)](https://star-history.com/#moltis-org/moltis&Date)
 
 ## License
 
