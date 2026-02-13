@@ -287,22 +287,24 @@ main {
   flex-shrink: 0;
 }
 .msg-audio {
-  width: 100%;
+  width: min(100%, 320px);
+  min-height: 50px;
   margin-bottom: 10px;
 }
 .msg-audio-fallback {
-  width: 100%;
+  width: min(100%, 320px);
   margin-bottom: 10px;
 }
 .waveform-player {
   display: flex;
+  width: 100%;
+  min-height: 50px;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  max-width: 320px;
 }
 .waveform-play-btn {
   flex-shrink: 0;
