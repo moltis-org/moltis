@@ -207,6 +207,7 @@ fn normalize_provider_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+#[allow(dead_code)]
 fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
     matches!(
         normalize_provider_key(provider_name).as_str(),
@@ -223,6 +224,7 @@ fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
 ///
 /// This keeps precise model pins like "gpt 5.2" from matching variants such as
 /// "gpt-5.2-chat-latest", while still allowing broad buckets like "mini".
+#[allow(dead_code)]
 fn allowlist_pattern_matches_key(pattern: &str, key: &str) -> bool {
     if pattern.chars().any(|ch| ch.is_ascii_digit()) {
         if key == pattern {
@@ -235,6 +237,7 @@ fn allowlist_pattern_matches_key(pattern: &str, key: &str) -> bool {
     key.contains(pattern)
 }
 
+#[allow(dead_code)]
 pub(crate) fn model_matches_allowlist(
     model: &moltis_agents::providers::ModelInfo,
     patterns: &[String],
@@ -255,6 +258,7 @@ pub(crate) fn model_matches_allowlist(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn model_matches_allowlist_with_provider(
     model: &moltis_agents::providers::ModelInfo,
     provider_name: Option<&str>,
@@ -946,7 +950,6 @@ pub struct LiveModelService {
     state: Arc<OnceCell<Arc<GatewayState>>>,
     detect_gate: Arc<Semaphore>,
     priority_order: HashMap<String, usize>,
-    allowed_models: Vec<String>,
 }
 
 impl LiveModelService {
@@ -954,7 +957,6 @@ impl LiveModelService {
         providers: Arc<RwLock<ProviderRegistry>>,
         disabled: Arc<RwLock<DisabledModelsStore>>,
         priority_models: Vec<String>,
-        allowed_models: Vec<String>,
     ) -> Self {
         let mut priority_order = HashMap::new();
         for (idx, model) in priority_models.into_iter().enumerate() {
@@ -963,18 +965,12 @@ impl LiveModelService {
                 let _ = priority_order.entry(key).or_insert(idx);
             }
         }
-        let allowed_models: Vec<String> = allowed_models
-            .into_iter()
-            .map(|p| normalize_model_key(&p))
-            .filter(|p| !p.is_empty())
-            .collect();
         Self {
             providers,
             disabled,
             state: Arc::new(OnceCell::new()),
             detect_gate: Arc::new(Semaphore::new(1)),
             priority_order,
-            allowed_models,
         }
     }
 
@@ -1034,15 +1030,7 @@ impl ModelService for LiveModelService {
             reg.list_models()
                 .iter()
                 .filter(|m| !disabled.is_disabled(&m.id))
-                .filter(|m| disabled.unsupported_info(&m.id).is_none())
-                .filter(|m| {
-                    let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
-                    model_matches_allowlist_with_provider(
-                        m,
-                        provider_name.as_deref(),
-                        &self.allowed_models,
-                    )
-                }),
+                .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
         let models: Vec<_> = prioritized
             .iter()
@@ -1067,10 +1055,7 @@ impl ModelService for LiveModelService {
     async fn list_all(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(reg.list_models().iter().filter(|m| {
-            let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
-            model_matches_allowlist_with_provider(m, provider_name.as_deref(), &self.allowed_models)
-        }));
+        let prioritized = self.prioritize_models(reg.list_models().iter());
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -5731,7 +5716,6 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec!["gpt-5.2".into(), "claude-opus-4-5".into()],
-            vec![],
         );
 
         let m1 = moltis_agents::providers::ModelInfo {
@@ -5764,7 +5748,6 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec!["gpt 5.2".into(), "claude-sonnet-4.5".into()],
-            vec![],
         );
 
         let m1 = moltis_agents::providers::ModelInfo {
@@ -5920,7 +5903,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_models_filters_list_and_list_all() {
+    async fn list_and_list_all_return_all_registered_models() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
@@ -5957,26 +5940,19 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
-                "opus".into(),
-            ]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
-        // list() should only contain opus.
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+        assert_eq!(arr.len(), 3);
 
-        // list_all() should also only contain opus.
         let result = service.list_all().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+        assert_eq!(arr.len(), 3);
     }
 
     #[tokio::test]
-    async fn allowed_models_keeps_ollama_when_provider_is_aliased() {
+    async fn list_includes_ollama_when_provider_is_aliased() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
@@ -6002,20 +5978,23 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
-                "opus".into(),
-            ]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr.iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("local-ai::llama3.1:8b"))
+        );
 
         let result = service.list_all().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr.iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("local-ai::llama3.1:8b"))
+        );
     }
 
     #[test]
@@ -6101,8 +6080,7 @@ mod tests {
             store.disable("unit-test-provider::unit-test-model");
         }
 
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
         let all = service
             .list_all()
@@ -6159,7 +6137,6 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec![],
-            vec![],
         );
         let result = service.test(serde_json::json!({})).await;
         assert!(result.is_err());
@@ -6173,7 +6150,6 @@ mod tests {
                 &moltis_config::schema::ProvidersConfig::default(),
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec![],
             vec![],
         );
         let result = service
@@ -6204,7 +6180,6 @@ mod tests {
         let service = LiveModelService::new(
             Arc::new(RwLock::new(registry)),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec![],
             vec![],
         );
         let result = service

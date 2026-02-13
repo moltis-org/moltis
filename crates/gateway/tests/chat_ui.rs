@@ -224,7 +224,6 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
             Arc::clone(&registry),
             Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
             Vec::new(),
-            Vec::new(),
         )));
     }
 

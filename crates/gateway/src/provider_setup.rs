@@ -25,7 +25,7 @@ use crate::services::{ProviderSetupService, ServiceResult};
 
 // ── Key store ──────────────────────────────────────────────────────────────
 
-/// Per-provider stored configuration (API key, base URL, model).
+/// Per-provider stored configuration (API key, base URL, preferred models).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderConfig {
@@ -33,8 +33,73 @@ pub(crate) struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    #[serde(
+        default,
+        alias = "model",
+        deserialize_with = "deserialize_provider_models",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub models: Vec<String>,
+}
+
+fn deserialize_provider_models<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    let normalized = match value {
+        serde_json::Value::Null => Vec::new(),
+        serde_json::Value::String(model) => vec![model],
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .filter_map(|value| value.as_str().map(ToString::to_string))
+            .collect(),
+        _ => {
+            return Err(serde::de::Error::custom(
+                "models must be a string or string array",
+            ));
+        },
+    };
+
+    Ok(normalize_model_list(normalized))
+}
+
+fn normalize_model_list(models: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let normalized = trimmed.to_string();
+        if out.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+fn parse_models_param(params: &Value) -> Vec<String> {
+    let from_array = params
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let mut models = normalize_model_list(from_array);
+    if models.is_empty()
+        && let Some(model) = params.get("model").and_then(Value::as_str)
+    {
+        models = normalize_model_list([model.to_string()]);
+    }
+    models
 }
 
 /// File-based provider config storage at `~/.config/moltis/provider_keys.json`.
@@ -89,7 +154,7 @@ impl KeyStore {
                     (k, ProviderConfig {
                         api_key: Some(v),
                         base_url: None,
-                        model: None,
+                        models: Vec::new(),
                     })
                 })
                 .collect();
@@ -168,7 +233,7 @@ impl KeyStore {
             provider,
             Some(api_key.to_string()),
             None, // preserve existing base_url
-            None, // preserve existing model
+            None, // preserve existing models
         )
     }
 
@@ -178,7 +243,7 @@ impl KeyStore {
         provider: &str,
         api_key: Option<String>,
         base_url: Option<String>,
-        model: Option<String>,
+        models: Option<Vec<String>>,
     ) -> Result<(), String> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
@@ -195,12 +260,8 @@ impl KeyStore {
                 Some(url)
             };
         }
-        if let Some(m) = model {
-            entry.model = if m.is_empty() {
-                None
-            } else {
-                Some(m)
-            };
+        if let Some(models) = models {
+            entry.models = normalize_model_list(models);
         }
 
         Self::save_all_configs_to_path(&guard.path, &configs)
@@ -234,11 +295,8 @@ pub(crate) fn config_with_saved_keys(
             {
                 dst.base_url = Some(base_url);
             }
-            if dst.model.is_none()
-                && let Some(model) = entry.model
-                && !model.trim().is_empty()
-            {
-                dst.model = Some(model);
+            if dst.models.is_empty() && !entry.models.is_empty() {
+                dst.models = normalize_model_list(entry.models);
             }
         }
     }
@@ -259,8 +317,8 @@ pub(crate) fn config_with_saved_keys(
         if saved.base_url.is_some() {
             entry.base_url = saved.base_url;
         }
-        if saved.model.is_some() {
-            entry.model = saved.model;
+        if !saved.models.is_empty() {
+            entry.models = saved.models;
         }
     }
 
@@ -284,11 +342,8 @@ pub(crate) fn config_with_saved_keys(
             entry.base_url = Some(url);
         }
 
-        // Only override model if config doesn't already have one.
-        if let Some(model) = saved.model
-            && entry.model.is_none()
-        {
-            entry.model = Some(model);
+        if !saved.models.is_empty() && entry.models.is_empty() {
+            entry.models = normalize_model_list(saved.models);
         }
     }
 
@@ -303,12 +358,10 @@ pub(crate) fn config_with_saved_keys(
                 .map(|m| m.model_id.clone())
                 .collect();
 
-            // Also set the first model as the default for backward compatibility
+            // Keep provider models in sync so model pickers can prioritize these.
             let entry = config.providers.entry("local".into()).or_default();
-            if entry.model.is_none()
-                && let Some(first_model) = local_config.models.first()
-            {
-                entry.model = Some(first_model.model_id.clone());
+            if entry.models.is_empty() {
+                entry.models = normalize_model_list(config.local_models.clone());
             }
         }
     }
@@ -708,10 +761,7 @@ pub(crate) fn has_explicit_provider_settings(config: &ProvidersConfig) -> bool {
             .api_key
             .as_ref()
             .is_some_and(|k| !k.expose_secret().trim().is_empty())
-            || entry
-                .model
-                .as_deref()
-                .is_some_and(|model| !model.trim().is_empty())
+            || entry.models.iter().any(|model| !model.trim().is_empty())
             || entry
                 .base_url
                 .as_deref()
@@ -837,8 +887,6 @@ pub struct LiveProviderSetupService {
     /// When set, local-only providers (local-llm, ollama) are hidden from
     /// the available list because they cannot run on cloud VMs.
     deploy_platform: Option<String>,
-    /// Normalized allowlist patterns for filtering models (lowercase, non-empty).
-    allowed_models: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -853,13 +901,7 @@ impl LiveProviderSetupService {
         registry: Arc<RwLock<ProviderRegistry>>,
         config: ProvidersConfig,
         deploy_platform: Option<String>,
-        allowed_models: Vec<String>,
     ) -> Self {
-        let allowed_models: Vec<String> = allowed_models
-            .into_iter()
-            .map(|p| crate::chat::normalize_model_key(&p))
-            .filter(|p| !p.is_empty())
-            .collect();
         Self {
             registry,
             config: Arc::new(Mutex::new(config)),
@@ -867,7 +909,6 @@ impl LiveProviderSetupService {
             key_store: KeyStore::new(),
             pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
-            allowed_models,
         }
     }
 
@@ -891,12 +932,9 @@ impl LiveProviderSetupService {
         provider: &KnownProvider,
         active_config: &ProvidersConfig,
     ) -> bool {
-        // Explicitly disabled providers should not show as configured even if
-        // auto-detected credentials exist in home directories.
-        if active_config
-            .get(provider.name)
-            .is_some_and(|entry| !entry.enabled)
-        {
+        // Disabled providers (by offered allowlist or explicit enabled=false)
+        // should not show as configured even if credentials are auto-detected.
+        if !active_config.is_enabled(provider.name) {
             return false;
         }
 
@@ -1142,10 +1180,13 @@ impl ProviderSetupService for LiveProviderSetupService {
                     return None;
                 }
 
-                // Get saved config for this provider (baseUrl, model)
+                // Get saved config for this provider (baseUrl, preferred models)
                 let saved_config = self.key_store.load_config(provider.name);
                 let base_url = saved_config.as_ref().and_then(|c| c.base_url.clone());
-                let model = saved_config.as_ref().and_then(|c| c.model.clone());
+                let models = saved_config
+                    .map(|c| normalize_model_list(c.models))
+                    .unwrap_or_default();
+                let model = models.first().cloned();
 
                 Some((
                     offered_rank.get(&normalized_name).copied(),
@@ -1157,6 +1198,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                         "configured": configured,
                         "defaultBaseUrl": provider.default_base_url,
                         "baseUrl": base_url,
+                        "models": models,
                         "model": model,
                         "requiresModel": provider.requires_model,
                     }),
@@ -1216,7 +1258,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         // API key is optional for some providers (e.g., Ollama)
         let api_key = params.get("apiKey").and_then(|v| v.as_str());
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
-        let model = params.get("model").and_then(|v| v.as_str());
+        let models = parse_models_param(&params);
 
         // Validate provider name - allow both api-key and local providers
         let known = known_providers();
@@ -1243,7 +1285,7 @@ impl ProviderSetupService for LiveProviderSetupService {
             provider_name,
             api_key.map(String::from),
             normalized_base_url,
-            model.map(String::from),
+            (!models.is_empty()).then_some(models),
         )?;
         set_provider_enabled_in_config(provider_name, true)?;
         self.set_provider_enabled_in_memory(provider_name, true);
@@ -1523,7 +1565,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         let api_key = params.get("apiKey").and_then(|v| v.as_str());
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
-        let model = params.get("model").and_then(|v| v.as_str());
+        let preferred_models = parse_models_param(&params);
 
         // Validate provider name exists.
         let known = known_providers();
@@ -1537,7 +1579,7 @@ impl ProviderSetupService for LiveProviderSetupService {
             return Err("missing 'apiKey' parameter".to_string());
         }
 
-        let model_value = model.filter(|s| !s.trim().is_empty());
+        let selected_model = preferred_models.first().map(String::as_str);
         let base_url_value = base_url.filter(|s| !s.trim().is_empty());
 
         // Ollama supports native model discovery through /api/tags.
@@ -1562,7 +1604,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                 }));
             }
 
-            if let Some(requested_model) = model_value {
+            if let Some(requested_model) = selected_model {
                 let requested_model = normalize_ollama_model_id(requested_model.trim());
                 let installed = discovered_models
                     .iter()
@@ -1597,7 +1639,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                 enabled: true,
                 api_key: api_key.map(|k| Secret::new(k.to_string())),
                 base_url: normalized_base_url,
-                model: model_value.map(String::from),
+                models: preferred_models,
                 ..Default::default()
             },
         );
@@ -1605,20 +1647,12 @@ impl ProviderSetupService for LiveProviderSetupService {
         // Build a temporary registry from the temp config.
         let temp_registry = ProviderRegistry::from_env_with_config(&temp_config);
 
-        // Filter models for this provider and by allowlist.
+        // Filter models for this provider.
         let models: Vec<_> = temp_registry
             .list_models()
             .iter()
             .filter(|m| {
                 normalize_provider_name(&m.provider) == normalize_provider_name(provider_name)
-            })
-            .filter(|m| {
-                let runtime_provider_name = temp_registry.get(&m.id).map(|p| p.name().to_string());
-                crate::chat::model_matches_allowlist_with_provider(
-                    m,
-                    runtime_provider_name.as_deref(),
-                    &self.allowed_models,
-                )
             })
             .cloned()
             .collect();
@@ -1710,7 +1744,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         }
 
         self.key_store
-            .save_config(provider_name, None, None, Some(model.to_string()))?;
+            .save_config(provider_name, None, None, Some(vec![model.to_string()]))?;
 
         info!(
             provider = provider_name,
@@ -1916,7 +1950,7 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -1926,7 +1960,7 @@ mod tests {
             config.base_url.as_deref(),
             Some("https://custom.api.com/v1")
         );
-        assert_eq!(config.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(config.models, vec!["gpt-4o"]);
     }
 
     #[test]
@@ -1940,13 +1974,13 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
-        // Update only the model, preserve others
+        // Update only models, preserve others
         store
-            .save_config("openai", None, None, Some("gpt-4o-mini".into()))
+            .save_config("openai", None, None, Some(vec!["gpt-4o-mini".into()]))
             .unwrap();
 
         let config = store.load_config("openai").unwrap();
@@ -1955,7 +1989,7 @@ mod tests {
             config.base_url.as_deref(),
             Some("https://custom.api.com/v1")
         ); // preserved
-        assert_eq!(config.model.as_deref(), Some("gpt-4o-mini")); // updated
+        assert_eq!(config.models, vec!["gpt-4o-mini"]); // updated
     }
 
     #[test]
@@ -1968,7 +2002,7 @@ mod tests {
                 "anthropic",
                 Some("sk-anthropic".into()),
                 Some("https://api.anthropic.com".into()),
-                Some("claude-sonnet-4".into()),
+                Some(vec!["claude-sonnet-4".into()]),
             )
             .unwrap();
 
@@ -1977,13 +2011,13 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://api.openai.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
-        // Update only OpenAI model, Anthropic should remain unchanged.
+        // Update only OpenAI models, Anthropic should remain unchanged.
         store
-            .save_config("openai", None, None, Some("gpt-5".into()))
+            .save_config("openai", None, None, Some(vec!["gpt-5".into()]))
             .unwrap();
 
         let anthropic = store.load_config("anthropic").unwrap();
@@ -1992,7 +2026,7 @@ mod tests {
             anthropic.base_url.as_deref(),
             Some("https://api.anthropic.com")
         );
-        assert_eq!(anthropic.model.as_deref(), Some("claude-sonnet-4"));
+        assert_eq!(anthropic.models, vec!["claude-sonnet-4"]);
 
         let openai = store.load_config("openai").unwrap();
         assert_eq!(openai.api_key.as_deref(), Some("sk-openai"));
@@ -2000,7 +2034,7 @@ mod tests {
             openai.base_url.as_deref(),
             Some("https://api.openai.com/v1")
         );
-        assert_eq!(openai.model.as_deref(), Some("gpt-5"));
+        assert_eq!(openai.models, vec!["gpt-5"]);
     }
 
     #[test]
@@ -2009,20 +2043,17 @@ mod tests {
         let store = KeyStore::with_path(dir.path().join("keys.json"));
 
         let mut handles = Vec::new();
-        for (provider, key, model) in [
-            ("openai", "sk-openai", "gpt-5"),
-            ("anthropic", "sk-anthropic", "claude-sonnet-4"),
+        for (provider, key, models) in [
+            ("openai", "sk-openai", vec!["gpt-5".to_string()]),
+            ("anthropic", "sk-anthropic", vec![
+                "claude-sonnet-4".to_string(),
+            ]),
         ] {
             let store = store.clone();
             handles.push(std::thread::spawn(move || {
                 for _ in 0..100 {
                     store
-                        .save_config(
-                            provider,
-                            Some(key.to_string()),
-                            None,
-                            Some(model.to_string()),
-                        )
+                        .save_config(provider, Some(key.to_string()), None, Some(models.clone()))
                         .unwrap();
                 }
             }));
@@ -2048,7 +2079,7 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -2060,7 +2091,7 @@ mod tests {
         let config = store.load_config("openai").unwrap();
         assert_eq!(config.api_key.as_deref(), Some("sk-openai")); // preserved
         assert!(config.base_url.is_none()); // cleared
-        assert_eq!(config.model.as_deref(), Some("gpt-4o")); // preserved
+        assert_eq!(config.models, vec!["gpt-4o"]); // preserved
     }
 
     #[test]
@@ -2081,14 +2112,14 @@ mod tests {
         let config = store.load_config("anthropic").unwrap();
         assert_eq!(config.api_key.as_deref(), Some("sk-old-key"));
         assert!(config.base_url.is_none());
-        assert!(config.model.is_none());
+        assert!(config.models.is_empty());
 
         // load() should still work
         assert_eq!(store.load("openai").unwrap(), "sk-openai-old");
     }
 
     #[test]
-    fn config_with_saved_keys_merges_base_url_and_model() {
+    fn config_with_saved_keys_merges_base_url_and_models() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::with_path(dir.path().join("keys.json"));
         store
@@ -2096,7 +2127,7 @@ mod tests {
                 "openai",
                 Some("sk-saved".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -2108,7 +2139,7 @@ mod tests {
             Some("sk-saved")
         );
         assert_eq!(entry.base_url.as_deref(), Some("https://custom.api.com/v1"));
-        assert_eq!(entry.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(entry.models, vec!["gpt-4o"]);
     }
 
     #[tokio::test]
@@ -2116,7 +2147,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .remove_key(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -2128,7 +2159,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         assert!(svc.remove_key(serde_json::json!({})).await.is_err());
     }
 
@@ -2137,7 +2168,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let provider = known_providers()
             .into_iter()
             .find(|p| p.name == "openai-codex")
@@ -2202,7 +2233,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
         assert!(!arr.is_empty());
@@ -2227,7 +2258,7 @@ mod tests {
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        let svc = LiveProviderSetupService::new(registry, config, None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, config, None);
 
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -2255,7 +2286,7 @@ mod tests {
             offered: vec!["github-copilot".into(), "openai".into(), "anthropic".into()],
             ..ProvidersConfig::default()
         };
-        let svc = LiveProviderSetupService::new(registry, config, None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, config, None);
         let result = svc.available().await.unwrap();
         let arr = result
             .as_array()
@@ -2285,7 +2316,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn available_orders_configured_provider_after_offered() {
+    async fn available_hides_configured_provider_outside_offered() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
@@ -2297,7 +2328,7 @@ mod tests {
             api_key: Some(Secret::new("sk-test".into())),
             ..Default::default()
         });
-        let svc = LiveProviderSetupService::new(registry, config, None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, config, None);
         let result = svc.available().await.unwrap();
         let arr = result
             .as_array()
@@ -2311,15 +2342,12 @@ mod tests {
             .iter()
             .position(|name| *name == "openai")
             .expect("openai should be present");
-        let anthropic_idx = names
-            .iter()
-            .position(|name| *name == "anthropic")
-            .expect("anthropic should be present");
 
         assert!(
-            openai_idx < anthropic_idx,
-            "configured providers outside offered should appear after offered providers, got: {names:?}"
+            !names.contains(&"anthropic"),
+            "providers outside offered should be hidden even when configured, got: {names:?}"
         );
+        assert_eq!(openai_idx, 0);
     }
 
     #[tokio::test]
@@ -2327,7 +2355,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2369,7 +2397,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .save_key(serde_json::json!({"provider": "nonexistent", "apiKey": "test"}))
             .await;
@@ -2381,7 +2409,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         assert!(svc.save_key(serde_json::json!({})).await.is_err());
         assert!(
             svc.save_key(serde_json::json!({"provider": "anthropic"}))
@@ -2395,7 +2423,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .oauth_start(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -2407,7 +2435,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let redirect_uri = "https://example.com/auth/callback";
 
         let result = svc
@@ -2443,7 +2471,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .oauth_status(serde_json::json!({"provider": "openai-codex"}))
             .await
@@ -2534,8 +2562,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let _svc =
-            LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let _svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
         // All new API-key providers should be accepted by save_key
         let providers = known_providers();
@@ -2566,7 +2593,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2602,7 +2629,6 @@ mod tests {
             registry,
             ProvidersConfig::default(),
             Some("flyio".to_string()),
-            vec![],
         );
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -2638,7 +2664,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2671,7 +2697,7 @@ mod tests {
 
         let mut model_only = ProvidersConfig::default();
         model_only.providers.insert("ollama".into(), ProviderEntry {
-            model: Some("llama3".into()),
+            models: vec!["llama3".into()],
             ..Default::default()
         });
         assert!(has_explicit_provider_settings(&model_only));
@@ -2682,7 +2708,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({"provider": "nonexistent", "apiKey": "sk-test"}))
             .await;
@@ -2695,7 +2721,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.validate_key(serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("missing 'provider'"));
@@ -2706,7 +2732,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({"provider": "anthropic"}))
             .await;
@@ -2719,7 +2745,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         // Ollama doesn't require an API key, so this should not error on missing apiKey.
         // It will likely return valid=false due to connection issues, but it should not
         // reject with a "missing apiKey" error.
@@ -2757,7 +2783,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({
                 "provider": "ollama",
@@ -2809,7 +2835,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({
                 "provider": "ollama",
@@ -2870,7 +2896,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({
                 "provider": "ollama",

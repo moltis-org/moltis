@@ -79,11 +79,12 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   enabled   - Whether to use this provider (default: true)
 #   api_key   - API key (or use env var like ANTHROPIC_API_KEY)
 #   base_url  - Override API endpoint
-#   model     - Default model for this provider
+#   models    - Preferred models shown first (optional)
+#   fetch_models - Discover models from provider API when available (default: true)
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moonshot"] # Providers shown in onboarding/picker UI ([] = show all)
+offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moonshot"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
@@ -94,7 +95,8 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # [providers.anthropic]
 # enabled = true
 # api_key = "sk-ant-..."                      # Or set ANTHROPIC_API_KEY env var
-# model = "claude-sonnet-4-20250514"          # Default model
+# models = ["claude-sonnet-4-5-20250929"]     # Optional preferred models
+# fetch_models = true                          # Set false to skip remote discovery
 # base_url = "https://api.anthropic.com"     # API endpoint
 # alias = "anthropic"                         # Custom name for metrics
 
@@ -102,7 +104,8 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # [providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# model = "gpt-4o"                            # Default model
+# models = ["gpt-5.2", "gpt-5.2-chat-latest"] # Optional preferred models
+# fetch_models = true
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
 
@@ -110,21 +113,21 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # [providers.gemini]
 # enabled = true
 # api_key = "..."                             # Or set GOOGLE_API_KEY env var
-# model = "gemini-2.0-flash"
+# models = ["gemini-2.0-flash"]
 # alias = "gemini"
 
 # ── Groq ──────────────────────────────────────────────────────
 # [providers.groq]
 # enabled = true
 # api_key = "..."                             # Or set GROQ_API_KEY env var
-# model = "llama-3.3-70b-versatile"
+# models = ["llama-3.3-70b-versatile"]
 # alias = "groq"
 
 # ── DeepSeek ──────────────────────────────────────────────────
 # [providers.deepseek]
 # enabled = true
 # api_key = "..."                             # Or set DEEPSEEK_API_KEY env var
-# model = "deepseek-chat"
+# models = ["deepseek-chat"]
 # base_url = "https://api.deepseek.com"
 # alias = "deepseek"
 
@@ -132,23 +135,30 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # [providers.xai]
 # enabled = true
 # api_key = "..."                             # Or set XAI_API_KEY env var
-# model = "grok-3-mini"
+# models = ["grok-3-mini"]
 # alias = "xai"
 
 # ── OpenRouter (multi-provider gateway) ───────────────────────
 # [providers.openrouter]
 # enabled = true
 # api_key = "..."                             # Or set OPENROUTER_API_KEY env var
-# model = "anthropic/claude-3.5-sonnet"       # Any model on OpenRouter
+# models = ["anthropic/claude-3.5-sonnet"]    # Any model IDs on OpenRouter
 # base_url = "https://openrouter.ai/api/v1"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────
 # [providers.moonshot]
 # enabled = true
 # api_key = "..."                             # Or set MOONSHOT_API_KEY env var
-# model = "kimi-k2.5"
+# models = ["kimi-k2.5"]
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
+
+[providers.ollama]
+# base_url = "http://localhost:11434"
+# models = ["llama3.2", "qwen2.5:7b"]         # Optional preferred models; installed models are discovered dynamically
+
+[providers.local-llm]
+# models = ["qwen2.5-coder-7b-q4_k_m"]        # Optional; configure local models in onboarding
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHAT SETTINGS
@@ -159,10 +169,7 @@ message_queue_mode = "followup"   # How to handle messages during an active agen
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
 # priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
-# allowed_models = ["opus", "gpt 5.2", "gemini-3"]  # Optional: no-digit patterns are substring matches; digit patterns (e.g. gpt 5.2) are exact/suffix matches
-# recent + popular patterns: "gpt 5.2", "sonnet 4.5", "gemini 3", "kimi-k2.5", "minimax m2.1", "glm 4.7"
-# value-focused patterns: "haiku", "mini", "nano", "flash", "kimi-k2.5", "minimax m2.1", "glm 4.7"
-allowed_models = ["gpt 5.2", "sonnet 4.5", "haiku", "mini", "flash", "kimi-k2.5", "minimax m2.1", "glm 4.7"]
+# allowed_models = ["gpt 5.2"]  # Legacy field (currently ignored).
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
