@@ -175,7 +175,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             os: ubuntu-24.04-arm
@@ -252,7 +252,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
             os: ubuntu-24.04-arm
@@ -329,7 +329,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
             os: ubuntu-24.04-arm
@@ -418,7 +418,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             appimagetool_arch: x86_64
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
@@ -583,7 +583,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
 
