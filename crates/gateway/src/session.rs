@@ -29,6 +29,9 @@ const SHARE_BOUNDARY_NOTICE: &str =
     "This session until here has been shared. Later messages are not included in the shared link.";
 const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
 const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
+const SHARE_TOOL_STDOUT_MAX_CHARS: usize = 900;
+const SHARE_TOOL_STDERR_MAX_CHARS: usize = 600;
+const SHARE_TOOL_TEXT_MAX_CHARS: usize = 1_500;
 
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
@@ -325,6 +328,14 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
     let result = msg.get("result");
     let mut sections = Vec::new();
 
+    let truncate_tool_section = |value: &str, max_chars: usize| {
+        if value.len() <= max_chars {
+            (value.to_string(), false)
+        } else {
+            (truncate_preview(value, max_chars), true)
+        }
+    };
+
     if let Some(label) = result
         .and_then(|v| v.get("label"))
         .and_then(|v| v.as_str())
@@ -339,7 +350,13 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|stdout| !stdout.is_empty())
     {
-        sections.push(stdout.to_string());
+        let (stdout_text, was_truncated) =
+            truncate_tool_section(stdout, SHARE_TOOL_STDOUT_MAX_CHARS);
+        if was_truncated {
+            sections.push(format!("stdout (truncated):\n{stdout_text}"));
+        } else {
+            sections.push(stdout_text);
+        }
     }
     if let Some(stderr) = result
         .and_then(|v| v.get("stderr"))
@@ -347,7 +364,13 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|stderr| !stderr.is_empty())
     {
-        sections.push(format!("stderr:\n{stderr}"));
+        let (stderr_text, was_truncated) =
+            truncate_tool_section(stderr, SHARE_TOOL_STDERR_MAX_CHARS);
+        if was_truncated {
+            sections.push(format!("stderr (truncated):\n{stderr_text}"));
+        } else {
+            sections.push(format!("stderr:\n{stderr_text}"));
+        }
     }
     if let Some(error) = msg
         .get("error")
@@ -370,7 +393,10 @@ fn tool_result_text_for_share(msg: &Value) -> Option<String> {
 
     let content = sections.join("\n\n");
     let trimmed = content.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_preview(trimmed, SHARE_TOOL_TEXT_MAX_CHARS))
 }
 
 async fn to_shared_message(
@@ -1522,6 +1548,25 @@ mod tests {
         assert!(map_links.openstreetmap.is_some());
         assert!(map_links.apple_maps.is_none());
         assert!(shared.content.contains("Tartine Bakery"));
+    }
+
+    #[test]
+    fn tool_result_text_for_share_truncates_large_stdout() {
+        let large_stdout = format!(
+            "{{\"items\":[\"{}\"]}}",
+            "x".repeat(SHARE_TOOL_STDOUT_MAX_CHARS + 500)
+        );
+        let msg = serde_json::json!({
+            "role": "tool_result",
+            "result": {
+                "stdout": large_stdout
+            }
+        });
+
+        let text = tool_result_text_for_share(&msg).expect("tool text should exist");
+        assert!(text.contains("stdout (truncated):"));
+        assert!(text.ends_with('…'));
+        assert!(text.len() <= SHARE_TOOL_TEXT_MAX_CHARS + 4);
     }
 
     // --- Browser service integration tests ---
