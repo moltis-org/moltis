@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 #[cfg(feature = "web-ui")]
 use askama::Template;
+#[cfg(feature = "web-ui")]
+use base64::Engine as _;
 
 #[cfg(feature = "web-ui")]
 use axum::response::{Html, Redirect};
@@ -4119,6 +4121,19 @@ fn share_assistant_label(identity: &moltis_config::ResolvedIdentity) -> String {
 }
 
 #[cfg(feature = "web-ui")]
+fn image_dimensions_from_data_url(data_url: &str) -> Option<(u32, u32)> {
+    let (meta, body) = data_url.split_once(',')?;
+    if !meta.starts_with("data:image/") || !meta.contains(";base64") {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(body.trim())
+        .ok()?;
+    let metadata = moltis_media::image_ops::get_image_metadata(&bytes).ok()?;
+    Some((metadata.width, metadata.height))
+}
+
+#[cfg(feature = "web-ui")]
 fn map_share_message_views(
     snapshot: &crate::share_store::ShareSnapshot,
     identity: &moltis_config::ResolvedIdentity,
@@ -4153,12 +4168,56 @@ fn map_share_message_views(
                 | crate::share_store::SharedMessageRole::System
                 | crate::share_store::SharedMessageRole::Notice => None,
             };
+            let (
+                image_preview_data_url,
+                image_link_data_url,
+                image_preview_width,
+                image_preview_height,
+                image_has_dimensions,
+            ) = if let Some(image) = msg.image.as_ref() {
+                let preview = &image.preview;
+                let link = image
+                    .full
+                    .as_ref()
+                    .map_or_else(|| preview.data_url.clone(), |full| full.data_url.clone());
+                (
+                    Some(preview.data_url.clone()),
+                    Some(link),
+                    preview.width,
+                    preview.height,
+                    true,
+                )
+            } else if let Some(legacy_data_url) = msg.image_data_url.clone() {
+                if let Some((width, height)) = image_dimensions_from_data_url(&legacy_data_url) {
+                    (
+                        Some(legacy_data_url.clone()),
+                        Some(legacy_data_url),
+                        width,
+                        height,
+                        true,
+                    )
+                } else {
+                    (
+                        Some(legacy_data_url.clone()),
+                        Some(legacy_data_url),
+                        0,
+                        0,
+                        false,
+                    )
+                }
+            } else {
+                (None, None, 0, 0, false)
+            };
             Some(ShareMessageView {
                 role_class,
                 role_label,
                 content: msg.content.clone(),
                 audio_data_url: msg.audio_data_url.clone(),
-                image_data_url: msg.image_data_url.clone(),
+                image_preview_data_url,
+                image_link_data_url,
+                image_preview_width,
+                image_preview_height,
+                image_has_dimensions,
                 map_link_google: msg
                     .map_links
                     .as_ref()
@@ -4414,7 +4473,11 @@ struct ShareMessageView {
     role_label: String,
     content: String,
     audio_data_url: Option<String>,
-    image_data_url: Option<String>,
+    image_preview_data_url: Option<String>,
+    image_link_data_url: Option<String>,
+    image_preview_width: u32,
+    image_preview_height: u32,
+    image_has_dimensions: bool,
     map_link_google: Option<String>,
     map_link_apple: Option<String>,
     map_link_openstreetmap: Option<String>,
@@ -6248,7 +6311,11 @@ mod tests {
             role_label: "🤖 Moltis".to_string(),
             content: "Audio response".to_string(),
             audio_data_url: Some("data:audio/ogg;base64,T2dnUw==".to_string()),
-            image_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+            image_preview_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+            image_link_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+            image_preview_width: 600,
+            image_preview_height: 400,
+            image_has_dimensions: true,
             map_link_google: Some(
                 "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery".to_string(),
             ),
@@ -6315,6 +6382,7 @@ mod tests {
                     role: crate::share_store::SharedMessageRole::User,
                     content: "hi".to_string(),
                     audio_data_url: None,
+                    image: None,
                     image_data_url: None,
                     map_links: None,
                     created_at: Some(1_770_966_601_000),
@@ -6325,6 +6393,7 @@ mod tests {
                     role: crate::share_store::SharedMessageRole::System,
                     content: "system warning".to_string(),
                     audio_data_url: None,
+                    image: None,
                     image_data_url: None,
                     map_links: None,
                     created_at: Some(1_770_966_602_000),
@@ -6335,6 +6404,7 @@ mod tests {
                     role: crate::share_store::SharedMessageRole::Notice,
                     content: "share boundary".to_string(),
                     audio_data_url: None,
+                    image: None,
                     image_data_url: None,
                     map_links: None,
                     created_at: Some(1_770_966_603_000),
@@ -6345,6 +6415,7 @@ mod tests {
                     role: crate::share_store::SharedMessageRole::Assistant,
                     content: "hello".to_string(),
                     audio_data_url: None,
+                    image: None,
                     image_data_url: None,
                     map_links: None,
                     created_at: Some(1_770_966_604_000),
@@ -6378,7 +6449,15 @@ mod tests {
                 role: crate::share_store::SharedMessageRole::ToolResult,
                 content: "Tartine Bakery".to_string(),
                 audio_data_url: None,
-                image_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
+                image: Some(crate::share_store::SharedImageSet {
+                    preview: crate::share_store::SharedImageAsset {
+                        data_url: "data:image/png;base64,ZmFrZQ==".to_string(),
+                        width: 600,
+                        height: 400,
+                    },
+                    full: None,
+                }),
+                image_data_url: None,
                 map_links: Some(crate::share_store::SharedMapLinks {
                     apple_maps: Some("https://maps.apple.com/?q=Tartine+Bakery".to_string()),
                     google_maps: Some(
@@ -6399,11 +6478,14 @@ mod tests {
         assert_eq!(views[0].role_label, "Tool");
         assert!(
             views[0]
-                .image_data_url
+                .image_preview_data_url
                 .as_deref()
                 .unwrap_or_default()
                 .starts_with("data:image/png;base64,")
         );
+        assert_eq!(views[0].image_preview_width, 600);
+        assert_eq!(views[0].image_preview_height, 400);
+        assert!(views[0].image_has_dimensions);
         assert!(views[0].map_link_google.is_some());
         assert!(views[0].map_link_apple.is_some());
         assert!(views[0].map_link_openstreetmap.is_none());

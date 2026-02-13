@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use {
     async_trait::async_trait,
-    base64::Engine,
+    base64::{Engine, engine::general_purpose},
     serde_json::Value,
     tracing::{info, warn},
 };
@@ -20,13 +20,15 @@ use {
 use crate::{
     services::{ServiceResult, SessionService},
     share_store::{
-        ShareSnapshot, ShareStore, ShareVisibility, SharedMapLinks, SharedMessage,
-        SharedMessageRole,
+        ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
+        SharedMapLinks, SharedMessage, SharedMessageRole,
     },
 };
 
 const SHARE_BOUNDARY_NOTICE: &str =
     "This session until here has been shared. Later messages are not included in the shared link.";
+const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
+const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
 
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
@@ -177,6 +179,43 @@ fn image_mime_type(filename: &str) -> &'static str {
     }
 }
 
+fn sniff_image_mime(bytes: &[u8], fallback: &str) -> String {
+    if bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "image/png".to_string();
+    }
+    if bytes.len() >= 3 && bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "image/jpeg".to_string();
+    }
+    if bytes.len() >= 6 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+        return "image/gif".to_string();
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return "image/webp".to_string();
+    }
+    fallback.to_string()
+}
+
+fn build_image_data_url(mime: &str, bytes: &[u8]) -> String {
+    let encoded = general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{encoded}")
+}
+
+fn parse_base64_image_data_url(data_url: &str) -> Option<(String, Vec<u8>)> {
+    let (meta, body) = data_url.split_once(',')?;
+    if !meta.starts_with("data:image/") || !meta.contains(";base64") {
+        return None;
+    }
+    let mime = meta
+        .trim_start_matches("data:")
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let decoded = general_purpose::STANDARD.decode(body.trim()).ok()?;
+    Some((mime, decoded))
+}
+
 async fn message_audio_data_url_for_share(
     msg: &Value,
     session_key: &str,
@@ -185,7 +224,7 @@ async fn message_audio_data_url_for_share(
     let audio_path = msg.get("audio").and_then(|v| v.as_str())?;
     let filename = media_filename(audio_path)?;
     let bytes = store.read_media(session_key, filename).await.ok()?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let encoded = general_purpose::STANDARD.encode(bytes);
     Some(format!(
         "data:{};base64,{}",
         audio_mime_type(filename),
@@ -193,27 +232,60 @@ async fn message_audio_data_url_for_share(
     ))
 }
 
-async fn tool_result_image_data_url_for_share(
+async fn tool_result_image_for_share(
     msg: &Value,
     session_key: &str,
     store: &SessionStore,
-) -> Option<String> {
+) -> Option<SharedImageSet> {
     let screenshot = msg
         .get("result")
         .and_then(|v| v.get("screenshot"))
         .and_then(|v| v.as_str())
         .map(str::trim)?;
-    if screenshot.starts_with("data:image/") {
-        return Some(screenshot.to_string());
-    }
-    let filename = media_filename(screenshot)?;
-    let bytes = store.read_media(session_key, filename).await.ok()?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Some(format!(
-        "data:{};base64,{}",
-        image_mime_type(filename),
-        encoded
-    ))
+    let (full_mime, full_bytes) = if screenshot.starts_with("data:image/") {
+        parse_base64_image_data_url(screenshot)?
+    } else {
+        let filename = media_filename(screenshot)?;
+        let bytes = store.read_media(session_key, filename).await.ok()?;
+        (image_mime_type(filename).to_string(), bytes)
+    };
+
+    let full_meta = moltis_media::image_ops::get_image_metadata(&full_bytes).ok()?;
+    let full_asset = SharedImageAsset {
+        data_url: build_image_data_url(&full_mime, &full_bytes),
+        width: full_meta.width,
+        height: full_meta.height,
+    };
+
+    let needs_preview_resize = full_meta.width > SHARE_PREVIEW_MAX_IMAGE_WIDTH
+        || full_meta.height > SHARE_PREVIEW_MAX_IMAGE_HEIGHT;
+    let preview_bytes = if needs_preview_resize {
+        moltis_media::image_ops::resize_image(
+            &full_bytes,
+            SHARE_PREVIEW_MAX_IMAGE_WIDTH,
+            SHARE_PREVIEW_MAX_IMAGE_HEIGHT,
+        )
+        .unwrap_or_else(|_| full_bytes.clone())
+    } else {
+        full_bytes.clone()
+    };
+    let preview_meta = moltis_media::image_ops::get_image_metadata(&preview_bytes).ok()?;
+    let preview_mime = sniff_image_mime(&preview_bytes, &full_mime);
+    let preview_asset = SharedImageAsset {
+        data_url: build_image_data_url(&preview_mime, &preview_bytes),
+        width: preview_meta.width,
+        height: preview_meta.height,
+    };
+    let full = if preview_asset.data_url == full_asset.data_url {
+        None
+    } else {
+        Some(full_asset)
+    };
+
+    Some(SharedImageSet {
+        preview: preview_asset,
+        full,
+    })
 }
 
 fn sanitize_share_url(url: &str) -> Option<String> {
@@ -328,10 +400,8 @@ async fn to_shared_message(
             None
         },
     };
-    let image_data_url = match role {
-        SharedMessageRole::ToolResult => {
-            tool_result_image_data_url_for_share(msg, session_key, store).await
-        },
+    let image = match role {
+        SharedMessageRole::ToolResult => tool_result_image_for_share(msg, session_key, store).await,
         SharedMessageRole::User
         | SharedMessageRole::Assistant
         | SharedMessageRole::System
@@ -345,11 +415,7 @@ async fn to_shared_message(
         | SharedMessageRole::Notice => None,
     };
 
-    if content.is_empty()
-        && audio_data_url.is_none()
-        && image_data_url.is_none()
-        && map_links.is_none()
-    {
+    if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
         return None;
     }
     let created_at = value_u64(msg, "created_at");
@@ -372,7 +438,8 @@ async fn to_shared_message(
         role,
         content,
         audio_data_url,
-        image_data_url,
+        image,
+        image_data_url: None,
         map_links,
         created_at,
         model,
@@ -1405,8 +1472,11 @@ mod tests {
     async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
         let dir = tempfile::tempdir().unwrap();
         let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let tiny_png = general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=")
+            .unwrap();
         store
-            .save_media("main", "call-map.png", b"\x89PNGfake")
+            .save_media("main", "call-map.png", &tiny_png)
             .await
             .expect("save media");
 
@@ -1432,13 +1502,12 @@ mod tests {
 
         assert!(matches!(shared.role, SharedMessageRole::ToolResult));
         assert!(shared.audio_data_url.is_none());
-        assert!(
-            shared
-                .image_data_url
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(shared.image_data_url.is_none());
+        let image = shared.image.expect("shared image variants");
+        assert!(image.preview.data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(image.preview.width, 1);
+        assert_eq!(image.preview.height, 1);
+        assert!(image.full.is_none());
         let map_links = shared.map_links.expect("map links");
         assert!(map_links.google_maps.is_some());
         assert!(map_links.openstreetmap.is_some());

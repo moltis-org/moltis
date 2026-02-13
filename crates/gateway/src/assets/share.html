@@ -454,16 +454,20 @@ main {
               </noscript>
             {% when None %}
           {% endmatch %}
-          {% match message.image_data_url %}
-            {% when Some with (image_data_url) %}
+          {% match message.image_preview_data_url %}
+            {% when Some with (image_preview_data_url) %}
               <figure class="msg-image-wrap">
-                <a class="msg-image-link" href="{{ image_data_url }}" target="_blank" rel="noopener noreferrer">
-                  {% if message.map_link_google.is_some() || message.map_link_apple.is_some() || message.map_link_openstreetmap.is_some() %}
-                    <img class="msg-image" src="{{ image_data_url }}" alt="Shared media" width="600" height="400" decoding="async">
-                  {% else %}
-                    <img class="msg-image" src="{{ image_data_url }}" alt="Shared media" decoding="async">
-                  {% endif %}
-                </a>
+                {% match message.image_link_data_url %}
+                  {% when Some with (image_link_data_url) %}
+                    <a class="msg-image-link" href="{{ image_link_data_url }}" target="_blank" rel="noopener noreferrer">
+                      {% if message.image_has_dimensions %}
+                        <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" width="{{ message.image_preview_width }}" height="{{ message.image_preview_height }}" decoding="async">
+                      {% else %}
+                        <img class="msg-image" src="{{ image_preview_data_url }}" alt="Shared media" decoding="async">
+                      {% endif %}
+                    </a>
+                  {% when None %}
+                {% endmatch %}
               </figure>
             {% when None %}
           {% endmatch %}

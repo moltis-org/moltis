@@ -58,11 +58,30 @@ pub struct SharedMapLinks {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SharedImageAsset {
+    pub data_url: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedImageSet {
+    pub preview: SharedImageAsset,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<SharedImageAsset>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SharedMessage {
     pub role: SharedMessageRole,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_data_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<SharedImageSet>,
+    // Backward compatibility for snapshots created before image variants existed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_data_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
