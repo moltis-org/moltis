@@ -1007,3 +1007,84 @@ jobs:
           fi
           git commit -m "moltis ${VERSION}"
           git push
+
+  update-deploy-tags:
+    needs: merge-docker
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Update deploy template tags
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+
+      - name: Update image tags in deploy templates
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          echo "Updating deploy templates to version ${VERSION}"
+
+          # DigitalOcean App Platform
+          sed -i "s/tag: \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
+
+          # Render
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
+
+          # Fly.io
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
+
+          # Check if any files changed
+          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml; then
+            echo "No deploy template changes needed"
+            exit 0
+          fi
+
+          # Commit via GitHub API so the commit is signed/verified
+          REPO="${{ github.repository }}"
+          MAIN_SHA=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
+          BASE_TREE=$(gh api "repos/${REPO}/git/commits/${MAIN_SHA}" --jq '.tree.sha')
+
+          # Create blobs for each updated file
+          DO_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 .do/deploy.template.yaml)" \
+            -f encoding=base64 --jq '.sha')
+          RENDER_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 render.yaml)" \
+            -f encoding=base64 --jq '.sha')
+          FLY_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 fly.toml)" \
+            -f encoding=base64 --jq '.sha')
+
+          # Create a new tree with the updated files (JSON input for proper array structure)
+          TREE_SHA=$(jq -n \
+            --arg base "$BASE_TREE" \
+            --arg do_sha "$DO_BLOB" \
+            --arg render_sha "$RENDER_BLOB" \
+            --arg fly_sha "$FLY_BLOB" \
+            '{
+              base_tree: $base,
+              tree: [
+                {path: ".do/deploy.template.yaml", mode: "100644", type: "blob", sha: $do_sha},
+                {path: "render.yaml", mode: "100644", type: "blob", sha: $render_sha},
+                {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha}
+              ]
+            }' | gh api "repos/${REPO}/git/trees" --input - --jq '.sha')
+
+          # Create a signed commit
+          COMMIT_SHA=$(jq -n \
+            --arg msg "chore: update deploy templates to ${VERSION}" \
+            --arg tree "$TREE_SHA" \
+            --arg parent "$MAIN_SHA" \
+            '{message: $msg, tree: $tree, parents: [$parent]}' \
+            | gh api "repos/${REPO}/git/commits" --input - --jq '.sha')
+
+          # Update main to point to the new commit
+          gh api "repos/${REPO}/git/refs/heads/main" \
+            -X PATCH -f sha="${COMMIT_SHA}"
+
+          echo "Updated deploy templates to ${VERSION} (commit ${COMMIT_SHA})"
