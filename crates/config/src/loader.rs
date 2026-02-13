@@ -4,7 +4,7 @@ use std::{
     sync::Mutex,
 };
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
@@ -127,12 +127,25 @@ pub fn discover_and_load() -> MoltisConfig {
             },
         }
     } else {
-        debug!("no config file found, writing default config with random port");
+        let default_path = find_or_default_config_path();
+        debug!(
+            path = %default_path.display(),
+            "no config file found, writing default config with random port"
+        );
         let mut config = MoltisConfig::default();
         // Generate a unique port for this installation
         config.server.port = generate_random_port();
-        if let Err(e) = write_default_config(&config) {
-            warn!(error = %e, "failed to write default config file");
+        if let Err(e) = write_default_config(&default_path, &config) {
+            warn!(
+                path = %default_path.display(),
+                error = %e,
+                "failed to write default config file, continuing with in-memory defaults"
+            );
+        } else {
+            info!(
+                path = %default_path.display(),
+                "wrote default config template"
+            );
         }
         return apply_env_overrides(config);
     }
@@ -790,8 +803,7 @@ fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
 /// Uses a comprehensive template with all options documented.
-fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
-    let path = find_or_default_config_path();
+fn write_default_config(path: &Path, config: &MoltisConfig) -> anyhow::Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -800,7 +812,7 @@ fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
     }
     // Use the documented template instead of plain serialization
     let toml_str = crate::template::default_config_template(config.server.port);
-    std::fs::write(&path, &toml_str)?;
+    std::fs::write(path, &toml_str)?;
     debug!(path = %path.display(), "wrote default config file with template");
     Ok(())
 }
@@ -1122,6 +1134,36 @@ mod tests {
             "expected variation in generated ports, got {:?}",
             ports
         );
+    }
+
+    #[test]
+    fn write_default_config_writes_template_to_requested_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("moltis.toml");
+        let mut config = MoltisConfig::default();
+        config.server.port = 23456;
+
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read generated config");
+        assert!(
+            raw.contains("port = 23456"),
+            "generated template should include selected server port"
+        );
+    }
+
+    #[test]
+    fn write_default_config_does_not_overwrite_existing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(&path, "existing = true\n").expect("seed config");
+
+        let mut config = MoltisConfig::default();
+        config.server.port = 34567;
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read seeded config");
+        assert_eq!(raw, "existing = true\n");
     }
 
     #[test]

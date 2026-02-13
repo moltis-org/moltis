@@ -914,9 +914,14 @@ and anyone who already pulled that version. Always move forward.
 exact release version (without the `v` prefix). Example: tag `v0.2.0` requires
 `version = "0.2.0"` in `Cargo.toml`.
 
-The Build Packages workflow derives artifact versions from the tag when running
-on tagged pushes, but `Cargo.toml` must still be kept in sync for local builds,
-packaging metadata consistency, and future non-tag runs.
+Use `./scripts/prepare-release.sh <version> [YYYY-MM-DD]` for release prep.
+It bumps `Cargo.toml`, rotates `CHANGELOG.md` (`[Unreleased]` -> released
+version with date), inserts a fresh empty `[Unreleased]` template, and syncs
+`Cargo.lock`.
+
+The Build Packages workflow validates that tag version and
+`[workspace.package].version` match exactly; tagged releases fail fast on
+mismatch.
 
 **Deploy template versions.** Deploy templates (`.do/deploy.template.yaml`,
 `render.yaml`, `fly.toml`) pin explicit image versions instead of `latest`

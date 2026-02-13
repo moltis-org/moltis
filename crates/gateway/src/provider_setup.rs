@@ -10,7 +10,7 @@ use {
     async_trait::async_trait,
     serde_json::Value,
     tokio::sync::RwLock,
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use {
@@ -134,11 +134,24 @@ impl KeyStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn path(&self) -> PathBuf {
+        self.lock().path.clone()
+    }
+
     /// Load all provider configs. Handles migration from old format (string values).
     fn load_all_configs_from_path(path: &PathBuf) -> HashMap<String, ProviderConfig> {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => return HashMap::new(),
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "failed to read provider key store"
+                    );
+                }
+                return HashMap::new();
+            },
         };
 
         // Try parsing as new format first
@@ -151,15 +164,22 @@ impl KeyStore {
             return old_format
                 .into_iter()
                 .map(|(k, v)| {
-                    (k, ProviderConfig {
-                        api_key: Some(v),
-                        base_url: None,
-                        models: Vec::new(),
-                    })
+                    (
+                        k,
+                        ProviderConfig {
+                            api_key: Some(v),
+                            base_url: None,
+                            models: Vec::new(),
+                        },
+                    )
                 })
                 .collect();
         }
 
+        warn!(
+            path = %path.display(),
+            "provider key store is invalid JSON and will be ignored"
+        );
         HashMap::new()
     }
 
@@ -174,9 +194,19 @@ impl KeyStore {
         configs: &HashMap<String, ProviderConfig>,
     ) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                warn!(
+                    path = %parent.display(),
+                    error = %error,
+                    "failed to create provider key store directory"
+                );
+                error.to_string()
+            })?;
         }
-        let data = serde_json::to_string_pretty(configs).map_err(|e| e.to_string())?;
+        let data = serde_json::to_string_pretty(configs).map_err(|error| {
+            warn!(error = %error, "failed to serialize provider key store");
+            error.to_string()
+        })?;
 
         // Write atomically via temp file + rename so readers never observe
         // partially-written JSON.
@@ -185,14 +215,29 @@ impl KeyStore {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let temp_path = path.with_extension(format!("json.tmp.{nanos}"));
-        std::fs::write(&temp_path, &data).map_err(|e| e.to_string())?;
+        std::fs::write(&temp_path, &data).map_err(|error| {
+            warn!(
+                path = %temp_path.display(),
+                error = %error,
+                "failed to write provider key store temp file"
+            );
+            error.to_string()
+        })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
         }
 
-        std::fs::rename(&temp_path, path).map_err(|e| e.to_string())?;
+        std::fs::rename(&temp_path, path).map_err(|error| {
+            warn!(
+                temp_path = %temp_path.display(),
+                path = %path.display(),
+                error = %error,
+                "failed to atomically replace provider key store"
+            );
+            error.to_string()
+        })?;
 
         Ok(())
     }
@@ -1314,13 +1359,35 @@ impl ProviderSetupService for LiveProviderSetupService {
             base_url.map(String::from)
         };
 
+        let key_store_path = self.key_store.path();
+        info!(
+            provider = provider_name,
+            has_api_key = api_key.is_some(),
+            has_base_url = normalized_base_url
+                .as_ref()
+                .is_some_and(|url| !url.trim().is_empty()),
+            models = models.len(),
+            key_store_path = %key_store_path.display(),
+            "saving provider config"
+        );
+
         // Persist full config to disk
-        self.key_store.save_config(
-            provider_name,
-            api_key.map(String::from),
-            normalized_base_url,
-            (!models.is_empty()).then_some(models),
-        )?;
+        self.key_store
+            .save_config(
+                provider_name,
+                api_key.map(String::from),
+                normalized_base_url,
+                (!models.is_empty()).then_some(models),
+            )
+            .map_err(|error| {
+                warn!(
+                    provider = provider_name,
+                    key_store_path = %key_store_path.display(),
+                    error = %error,
+                    "failed to persist provider config"
+                );
+                error
+            })?;
         set_provider_enabled_in_config(provider_name, true)?;
         self.set_provider_enabled_in_memory(provider_name, true);
 
@@ -2070,6 +2137,24 @@ mod tests {
     }
 
     #[test]
+    fn key_store_path_reports_backing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.json");
+        let store = KeyStore::with_path(path.clone());
+        assert_eq!(store.path(), path);
+    }
+
+    #[test]
+    fn key_store_invalid_json_returns_empty_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.json");
+        std::fs::write(&path, "{ invalid json").unwrap();
+
+        let store = KeyStore::with_path(path);
+        assert!(store.load_all_configs().is_empty());
+    }
+
+    #[test]
     fn key_store_remove() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::with_path(dir.path().join("keys.json"));
@@ -2190,9 +2275,11 @@ mod tests {
         let mut handles = Vec::new();
         for (provider, key, models) in [
             ("openai", "sk-openai", vec!["gpt-5".to_string()]),
-            ("anthropic", "sk-anthropic", vec![
-                "claude-sonnet-4".to_string(),
-            ]),
+            (
+                "anthropic",
+                "sk-anthropic",
+                vec!["claude-sonnet-4".to_string()],
+            ),
         ] {
             let store = store.clone();
             handles.push(std::thread::spawn(move || {
@@ -2320,12 +2407,13 @@ mod tests {
             .expect("openai-codex should exist");
 
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("openai-codex".into(), ProviderEntry {
+        config.providers.insert(
+            "openai-codex".into(),
+            ProviderEntry {
                 enabled: false,
                 ..Default::default()
-            });
+            },
+        );
 
         assert!(!svc.is_provider_configured(&provider, &config));
     }
@@ -2352,10 +2440,13 @@ mod tests {
         store.save("anthropic", "sk-saved").unwrap();
 
         let mut base = ProvidersConfig::default();
-        base.providers.insert("anthropic".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-config".into())),
-            ..Default::default()
-        });
+        base.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-config".into())),
+                ..Default::default()
+            },
+        );
         let merged = config_with_saved_keys(&base, &store);
         let entry = merged.get("anthropic").unwrap();
         // Config key takes precedence over saved key.
@@ -2469,10 +2560,13 @@ mod tests {
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        config.providers.insert("anthropic".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-test".into())),
-            ..Default::default()
-        });
+        config.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
         let svc = LiveProviderSetupService::new(registry, config, None);
         let result = svc.available().await.unwrap();
         let arr = result
@@ -2637,11 +2731,14 @@ mod tests {
             Some(&home)
         ));
 
-        home.save("github-copilot", &OAuthTokens {
-            access_token: Secret::new("home-token".to_string()),
-            refresh_token: None,
-            expires_at: None,
-        })
+        home.save(
+            "github-copilot",
+            &OAuthTokens {
+                access_token: Secret::new("home-token".to_string()),
+                refresh_token: None,
+                expires_at: None,
+            },
+        )
         .expect("save home token");
 
         assert!(has_oauth_tokens_for_provider(
@@ -2834,17 +2931,23 @@ mod tests {
         let mut empty = ProvidersConfig::default();
         assert!(!has_explicit_provider_settings(&empty));
 
-        empty.providers.insert("openai".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-test".into())),
-            ..Default::default()
-        });
+        empty.providers.insert(
+            "openai".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&empty));
 
         let mut model_only = ProvidersConfig::default();
-        model_only.providers.insert("ollama".into(), ProviderEntry {
-            models: vec!["llama3".into()],
-            ..Default::default()
-        });
+        model_only.providers.insert(
+            "ollama".into(),
+            ProviderEntry {
+                models: vec!["llama3".into()],
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&model_only));
     }
 

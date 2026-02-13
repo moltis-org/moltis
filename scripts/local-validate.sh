@@ -149,6 +149,15 @@ test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo nextest run --all-features}"
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/gateway/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo llvm-cov --workspace --all-features --html}"
 
+strip_all_features_flag() {
+  local cmd="$1"
+  cmd="${cmd// --all-features / }"
+  cmd="${cmd// --all-features/}"
+  cmd="${cmd//--all-features /}"
+  cmd="${cmd//--all-features/}"
+  printf '%s' "$cmd"
+}
+
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
     lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings"
@@ -159,7 +168,10 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
     coverage_cmd="cargo llvm-cov --workspace --html"
   fi
-  echo "Detected macOS without nvcc; using non-CUDA local defaults (no --all-features)." >&2
+  lint_cmd="$(strip_all_features_flag "$lint_cmd")"
+  test_cmd="$(strip_all_features_flag "$test_cmd")"
+  coverage_cmd="$(strip_all_features_flag "$coverage_cmd")"
+  echo "Detected macOS without nvcc; forcing non-CUDA local validation commands (no --all-features)." >&2
   echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
 fi
 

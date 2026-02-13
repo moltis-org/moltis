@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.23] - 2026-02-13
+
+
+### Added
+
 - **Multi-select preferred models per provider**: The LLMs page now has a
   "Preferred Models" button per provider that opens a multi-select modal.
   Selected models are pinned at the top of the session model dropdown.

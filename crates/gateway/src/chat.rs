@@ -1067,6 +1067,119 @@ impl LiveModelService {
     }
 }
 
+fn normalize_model_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn model_id_provider(model_id: &str) -> Option<&str> {
+    model_id.split_once("::").map(|(provider, _)| provider)
+}
+
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    if a.is_empty() {
+        return b.chars().count();
+    }
+    if b.is_empty() {
+        return a.chars().count();
+    }
+
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_chars: Vec<char> = a.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0; b_chars.len() + 1];
+
+    for (i, a_ch) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, b_ch) in b_chars.iter().enumerate() {
+            let cost = usize::from(a_ch != b_ch);
+            let deletion = prev[j + 1] + 1;
+            let insertion = curr[j] + 1;
+            let substitution = prev[j] + cost;
+            curr[j + 1] = deletion.min(insertion).min(substitution);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[b_chars.len()]
+}
+
+fn suggest_model_ids(
+    requested_model_id: &str,
+    available_model_ids: &[String],
+    limit: usize,
+) -> Vec<String> {
+    if requested_model_id.trim().is_empty() || available_model_ids.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let requested_provider = model_id_provider(requested_model_id).map(str::to_ascii_lowercase);
+    let requested_raw = raw_model_id(requested_model_id);
+    let requested_norm = normalize_model_lookup_key(requested_model_id);
+    let requested_raw_norm = normalize_model_lookup_key(requested_raw);
+
+    let mut ranked: Vec<(String, bool, usize, usize, usize)> = available_model_ids
+        .iter()
+        .filter_map(|candidate| {
+            let candidate_provider = model_id_provider(candidate).map(str::to_ascii_lowercase);
+            let provider_match = requested_provider
+                .as_deref()
+                .zip(candidate_provider.as_deref())
+                .is_some_and(|(left, right)| left == right);
+
+            let candidate_raw = raw_model_id(candidate);
+            let candidate_norm = normalize_model_lookup_key(candidate);
+            let candidate_raw_norm = normalize_model_lookup_key(candidate_raw);
+
+            let raw_distance = levenshtein_distance(&requested_raw_norm, &candidate_raw_norm);
+            let full_distance = levenshtein_distance(&requested_norm, &candidate_norm);
+            let contains = requested_raw_norm.contains(&candidate_raw_norm)
+                || candidate_raw_norm.contains(&requested_raw_norm)
+                || requested_norm.contains(&candidate_norm)
+                || candidate_norm.contains(&requested_norm);
+
+            // Keep nearest neighbors and strong substring matches. This trims
+            // unrelated model IDs from suggestion logs/responses.
+            let distance_cap = requested_raw_norm
+                .len()
+                .max(candidate_raw_norm.len())
+                .max(3)
+                / 2
+                + 2;
+            if !contains && raw_distance > distance_cap {
+                return None;
+            }
+
+            Some((
+                candidate.clone(),
+                provider_match,
+                raw_distance,
+                full_distance,
+                requested_raw_norm.len().abs_diff(candidate_raw_norm.len()),
+            ))
+        })
+        .collect();
+
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1) // provider match first
+            .then(left.2.cmp(&right.2)) // nearest raw model id
+            .then(left.3.cmp(&right.3)) // nearest full model id
+            .then(left.4.cmp(&right.4)) // similar length
+            .then(left.0.cmp(&right.0))
+    });
+
+    ranked
+        .into_iter()
+        .map(|(id, _, _, _, _)| id)
+        .take(limit)
+        .collect()
+}
+
 #[async_trait]
 impl ModelService for LiveModelService {
     async fn list(&self) -> ServiceResult {
@@ -1081,6 +1194,8 @@ impl ModelService for LiveModelService {
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(model_count = model_ids.len(), model_ids = ?model_ids, "models.list response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1113,6 +1228,12 @@ impl ModelService for LiveModelService {
             reg.list_models()
                 .iter()
                 .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
+        );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(
+            model_count = model_ids.len(),
+            model_ids = ?model_ids,
+            "models.list_all response"
         );
         let models: Vec<_> = prioritized
             .iter()
@@ -1536,8 +1657,26 @@ impl ModelService for LiveModelService {
 
         let provider = {
             let reg = self.providers.read().await;
-            reg.get(model_id)
-                .ok_or_else(|| format!("unknown model: {model_id}"))?
+            if let Some(provider) = reg.get(model_id) {
+                provider
+            } else {
+                let available_model_ids: Vec<String> =
+                    reg.list_models().iter().map(|m| m.id.clone()).collect();
+                let suggestions = suggest_model_ids(model_id, &available_model_ids, 5);
+                warn!(
+                    model_id,
+                    available_model_count = available_model_ids.len(),
+                    available_model_ids = ?available_model_ids,
+                    suggested_model_ids = ?suggestions,
+                    "models.test received unknown model id"
+                );
+                let suggestion_hint = if suggestions.is_empty() {
+                    String::new()
+                } else {
+                    format!(". did you mean: {}", suggestions.join(", "))
+                };
+                return Err(format!("unknown model: {model_id}{suggestion_hint}"));
+            }
         };
 
         // Use streaming and return as soon as the first token arrives.
@@ -6356,6 +6495,74 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown model"));
+    }
+
+    #[tokio::test]
+    async fn model_test_unknown_model_includes_suggestion() {
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5.2-codex".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5.2 Codex".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5.2-codex".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5".to_string(),
+            }),
+        );
+
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service
+            .test(serde_json::json!({"modelId": "openai::gpt-5.2"}))
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("unknown model: openai::gpt-5.2"));
+        assert!(error.contains("did you mean"));
+        assert!(error.contains("openai::gpt-5.2-codex"));
+    }
+
+    #[test]
+    fn suggest_model_ids_prefers_provider_and_similarity() {
+        let available = vec![
+            "openai::gpt-5.2-codex".to_string(),
+            "openai::gpt-5".to_string(),
+            "openai-codex::gpt-5.2-codex".to_string(),
+            "anthropic::claude-sonnet-4".to_string(),
+        ];
+
+        let suggestions = suggest_model_ids("openai::gpt-5.2", &available, 3);
+
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|id| id == "openai::gpt-5.2-codex"),
+            "close provider-prefixed match should be included"
+        );
+        assert!(
+            suggestions
+                .iter()
+                .all(|id| id != "anthropic::claude-sonnet-4"),
+            "unrelated models should not be suggested"
+        );
     }
 
     #[tokio::test]

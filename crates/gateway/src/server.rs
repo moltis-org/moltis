@@ -1,4 +1,7 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashSet, fs::OpenOptions, io::Write, net::SocketAddr, path::Path as FsPath,
+    sync::Arc,
+};
 
 use secrecy::ExposeSecret;
 
@@ -140,11 +143,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -258,13 +264,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -368,6 +375,34 @@ fn sandbox_container_prefix(instance_slug: &str) -> String {
 
 fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
+}
+
+fn log_startup_model_inventory(reg: &ProviderRegistry) {
+    let mut model_ids: Vec<String> = reg.list_models().iter().map(|m| m.id.clone()).collect();
+    model_ids.sort();
+    info!(
+        model_count = model_ids.len(),
+        model_ids = ?model_ids,
+        "startup model inventory"
+    );
+
+    let mut by_provider: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for model in reg.list_models() {
+        by_provider
+            .entry(model.provider.clone())
+            .or_default()
+            .push(model.id.clone());
+    }
+    for (provider, provider_models) in &mut by_provider {
+        provider_models.sort();
+        info!(
+            provider = %provider,
+            model_count = provider_models.len(),
+            model_ids = ?provider_models,
+            "startup provider model inventory"
+        );
+    }
 }
 
 async fn ollama_has_model(base_url: &str, model: &str) -> bool {
@@ -837,6 +872,161 @@ pub fn build_gateway_app(
     router.with_state(app_state)
 }
 
+fn env_var_or_unset(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "<unset>".to_string())
+}
+
+fn log_path_diagnostics(kind: &str, path: &FsPath) {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            info!(
+                kind,
+                path = %path.display(),
+                exists = true,
+                is_dir = metadata.is_dir(),
+                readonly = metadata.permissions().readonly(),
+                size_bytes = metadata.len(),
+                "startup path diagnostics"
+            );
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            info!(kind, path = %path.display(), exists = false, "startup path missing");
+        },
+        Err(error) => {
+            warn!(
+                kind,
+                path = %path.display(),
+                error = %error,
+                "failed to inspect startup path"
+            );
+        },
+    }
+}
+
+fn log_directory_write_probe(dir: &FsPath) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let probe_path = dir.join(format!(
+        ".moltis-write-check-{}-{nanos}.tmp",
+        std::process::id()
+    ));
+
+    match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&probe_path)
+    {
+        Ok(mut file) => {
+            if let Err(error) = file.write_all(b"probe") {
+                warn!(
+                    path = %probe_path.display(),
+                    error = %error,
+                    "startup write probe could not write to config directory"
+                );
+            } else {
+                info!(
+                    path = %probe_path.display(),
+                    "startup write probe succeeded for config directory"
+                );
+            }
+            if let Err(error) = std::fs::remove_file(&probe_path) {
+                warn!(
+                    path = %probe_path.display(),
+                    error = %error,
+                    "failed to clean up startup write probe file"
+                );
+            }
+        },
+        Err(error) => {
+            warn!(
+                path = %probe_path.display(),
+                error = %error,
+                "startup write probe failed for config directory"
+            );
+        },
+    }
+}
+
+fn log_startup_config_storage_diagnostics() {
+    let config_dir =
+        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    let discovered_config = moltis_config::loader::find_config_file();
+    let expected_config = moltis_config::find_or_default_config_path();
+    let provider_keys_path = config_dir.join("provider_keys.json");
+
+    let discovered_display = discovered_config
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    info!(
+        user = %env_var_or_unset("USER"),
+        home = %env_var_or_unset("HOME"),
+        config_dir = %config_dir.display(),
+        discovered_config = %discovered_display,
+        expected_config = %expected_config.display(),
+        provider_keys_path = %provider_keys_path.display(),
+        "startup configuration storage diagnostics"
+    );
+
+    log_path_diagnostics("config-dir", &config_dir);
+    log_directory_write_probe(&config_dir);
+
+    if let Some(path) = discovered_config {
+        log_path_diagnostics("config-file", &path);
+    } else if expected_config.exists() {
+        info!(
+            path = %expected_config.display(),
+            "default config file exists even though discovery did not report a named config"
+        );
+        log_path_diagnostics("config-file", &expected_config);
+    } else {
+        warn!(
+            path = %expected_config.display(),
+            "no config file detected on startup; Moltis is running with in-memory defaults until config is persisted"
+        );
+    }
+
+    if provider_keys_path.exists() {
+        log_path_diagnostics("provider-keys", &provider_keys_path);
+        match std::fs::read_to_string(&provider_keys_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(_) => {
+                    info!(
+                        path = %provider_keys_path.display(),
+                        bytes = content.len(),
+                        "provider key store file is readable JSON"
+                    );
+                },
+                Err(error) => {
+                    warn!(
+                        path = %provider_keys_path.display(),
+                        error = %error,
+                        "provider key store file contains invalid JSON"
+                    );
+                },
+            },
+            Err(error) => {
+                warn!(
+                    path = %provider_keys_path.display(),
+                    error = %error,
+                    "provider key store file exists but is not readable"
+                );
+            },
+        }
+    } else {
+        info!(
+            path = %provider_keys_path.display(),
+            "provider key store file not found yet; it will be created after the first providers.save_key"
+        );
+    }
+}
+
 /// Start the gateway HTTP + WebSocket server.
 #[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
 pub async fn start_gateway(
@@ -900,10 +1090,18 @@ pub async fn start_gateway(
     ));
     let (provider_summary, providers_available_at_startup) = {
         let reg = registry.read().await;
+        log_startup_model_inventory(&reg);
         (reg.provider_summary(), !reg.is_empty())
     };
     if !providers_available_at_startup {
+        let config_path = moltis_config::find_or_default_config_path();
+        let provider_keys_path = moltis_config::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".moltis"))
+            .join("provider_keys.json");
         warn!(
+            provider_summary = %provider_summary,
+            config_path = %config_path.display(),
+            provider_keys_path = %provider_keys_path.display(),
             "no LLM providers at startup; model/chat services remain active and will pick up providers after credentials are saved"
         );
     }
@@ -1046,16 +1244,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -1094,6 +1293,7 @@ pub async fn start_gateway(
             config_dir.display()
         )
     });
+    log_startup_config_storage_diagnostics();
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
@@ -2878,10 +3078,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -2944,12 +3149,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
