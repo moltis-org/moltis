@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.29] - 2026-02-14
+
+
+### Added
+
 - **Memory bootstrap**: inject `MEMORY.md` content directly into the system
   prompt (truncated at 20,000 chars) so the agent always has core memory
   available without needing to call `memory_search` first. Matches OpenClaw's
