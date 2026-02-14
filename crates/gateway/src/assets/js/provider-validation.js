@@ -81,17 +81,6 @@ export async function validateProviderKey(provider, apiKey, baseUrl, model) {
 }
 
 /**
- * Persist provider credentials.
- * Kept as a shared helper so onboarding/settings flows can use the same payload shape.
- */
-export function saveProviderKey(provider, apiKey, baseUrl, model) {
-	var payload = { provider, apiKey };
-	if (baseUrl) payload.baseUrl = baseUrl;
-	if (model) payload.model = model;
-	return sendRpc("providers.save_key", payload);
-}
-
-/**
  * Test a single model from the live registry.
  * Returns { ok, error? }.
  */

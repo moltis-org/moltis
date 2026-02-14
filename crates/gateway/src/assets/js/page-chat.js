@@ -727,6 +727,9 @@ function sendChat() {
 	S.setChatHistoryDraft("");
 	S.chatInput.value = "";
 	chatAutoResize();
+	if (window.innerWidth < 768) {
+		S.chatInput.blur();
+	}
 
 	S.setChatSeq(S.chatSeq + 1);
 	var msg = buildChatMessage(text, S.chatSeq);
@@ -827,9 +830,10 @@ var chatPageHTML =
 	'<span class="icon icon-md icon-lock" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxLabel">sandboxed</span>' +
 	"</button>" +
-	'<button id="mobileControlsBtn" class="mobile-controls-btn text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="More controls">' +
-	'<span class="icon icon-md icon-menu-dots-horizontal" style="flex-shrink:0;"></span>' +
+	'<button id="mobileControlsBtn" class="mobile-controls-btn text-xs transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;" title="More controls">' +
+	'<span class="icon icon-lg icon-menu-dots-horizontal" style="flex-shrink:0;"></span>' +
 	"</button>" +
+	'<div class="mobile-toolbar-break mobile-toolbar-extra" aria-hidden="true"></div>' +
 	'<div class="mobile-toolbar-extra mobile-toolbar-extra-block" style="position:relative;display:inline-block">' +
 	'<button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Sandbox image">' +
 	'<span class="icon icon-md icon-cube" style="flex-shrink:0;"></span>' +

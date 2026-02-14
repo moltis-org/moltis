@@ -2,8 +2,14 @@
 
 /* Horizontal 3-dot icon for compact mobile controls */
 .icon-menu-dots-horizontal {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1' fill='black'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1' fill='black'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1.65' fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1.65' fill='black'/%3E%3C/svg%3E");
+}
+
+/* Slightly bolder burger glyph used in the mobile header button. */
+.icon-burger-mobile {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='2.3' stroke-linecap='round' d='M4 7h16M4 12h16M4 17h16'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='2.3' stroke-linecap='round' d='M4 7h16M4 12h16M4 17h16'/%3E%3C/svg%3E");
 }
 
 /* ── Provider Modal ── */

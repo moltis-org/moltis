@@ -108,6 +108,12 @@ var sections = [
 		icon: html`<span class="icon icon-cron"></span>`,
 		page: true,
 	},
+	{
+		id: "heartbeat",
+		label: "Heartbeat",
+		icon: html`<span class="icon icon-heart"></span>`,
+		page: true,
+	},
 	{ group: "Security" },
 	{
 		id: "security",
@@ -182,8 +188,7 @@ var sections = [
 ];
 
 function getVisibleSections() {
-	var voiceEnabled = gon.get("voice_enabled");
-	return sections.filter((s) => s.group || s.id !== "voice" || voiceEnabled);
+	return sections;
 }
 
 /** Return only items with an id (no group headings). */
@@ -3234,6 +3239,10 @@ var pageSectionHandlers = {
 		init: (container) => initCrons(container, null, { syncRoute: false }),
 		teardown: teardownCrons,
 	},
+	heartbeat: {
+		init: (container) => initCrons(container, "heartbeat", { syncRoute: false }),
+		teardown: teardownCrons,
+	},
 	providers: { init: initProviders, teardown: teardownProviders },
 	channels: { init: initChannels, teardown: teardownChannels },
 	mcp: { init: initMcp, teardown: teardownMcp },
@@ -3273,46 +3282,62 @@ function SettingsPage() {
 	var ps = pageSectionHandlers[section];
 	var mobile = isMobileViewport();
 	var showSidebar = !mobile || mobileSidebarVisible.value;
+	var showContent = !(mobile && showSidebar);
 	var mobileSectionsLabel = showSidebar ? "Hide Sections" : "Sections";
 
 	return html`<div class="settings-layout ${mobile && !showSidebar ? "settings-layout-mobile-collapsed" : ""}">
 		${showSidebar ? html`<${SettingsSidebar} />` : null}
-		<div class="settings-content-wrap">
-			${
-				mobile
-					? html`<div class="settings-mobile-controls">
-						<button
-							class="settings-mobile-chat-btn"
-							type="button"
-							onClick=${() => navigate(routes.chats)}
-						>
-							<span class="icon icon-chat"></span>
-							<span>Back to Chats</span>
-						</button>
-						<button
-							class="settings-mobile-menu-btn"
-							type="button"
-							onClick=${() => {
-								mobileSidebarVisible.value = !mobileSidebarVisible.value;
-								rerender();
-							}}
-						>
-							<span class="icon icon-burger"></span>
-							<span>${mobileSectionsLabel}</span>
-						</button>
+		${
+			showContent
+				? html`<div class="settings-content-wrap">
+					${
+						mobile
+							? html`<div class="settings-mobile-controls">
+								<button
+									class="settings-mobile-chat-btn"
+									type="button"
+									onClick=${() => navigate(routes.chats)}
+								>
+									<span class="icon icon-chat"></span>
+									<span>Back to Chats</span>
+								</button>
+								<button
+									class="settings-mobile-menu-btn"
+									type="button"
+									onClick=${() => {
+										mobileSidebarVisible.value = !mobileSidebarVisible.value;
+										rerender();
+									}}
+								>
+									<span class="icon icon-burger"></span>
+									<span>${mobileSectionsLabel}</span>
+								</button>
+							</div>`
+							: null
+					}
+					${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
+					${section === "identity" ? html`<${IdentitySection} />` : null}
+					${section === "memory" ? html`<${MemorySection} />` : null}
+					${section === "environment" ? html`<${EnvironmentSection} />` : null}
+						${section === "security" ? html`<${SecuritySection} />` : null}
+						${section === "tailscale" ? html`<${TailscaleSection} />` : null}
+						${
+							section === "voice"
+								? gon.get("voice_enabled") === true
+									? html`<${VoiceSection} />`
+									: html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
+										<h2 class="text-base font-medium text-[var(--text-strong)]">Voice</h2>
+										<div class="text-xs text-[var(--muted)] max-w-form">
+											Voice settings are unavailable in this build. Start a binary with the voice feature enabled to configure STT/TTS providers.
+										</div>
+									</div>`
+								: null
+						}
+						${section === "notifications" ? html`<${NotificationsSection} />` : null}
+						${section === "config" ? html`<${ConfigSection} />` : null}
 					</div>`
-					: null
-			}
-			${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
-			${section === "identity" ? html`<${IdentitySection} />` : null}
-			${section === "memory" ? html`<${MemorySection} />` : null}
-			${section === "environment" ? html`<${EnvironmentSection} />` : null}
-			${section === "security" ? html`<${SecuritySection} />` : null}
-			${section === "tailscale" ? html`<${TailscaleSection} />` : null}
-			${section === "voice" ? html`<${VoiceSection} />` : null}
-			${section === "notifications" ? html`<${NotificationsSection} />` : null}
-			${section === "config" ? html`<${ConfigSection} />` : null}
-		</div>
+				: null
+		}
 	</div>`;
 }
 

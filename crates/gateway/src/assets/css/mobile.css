@@ -184,8 +184,8 @@ body {
 
 @media (max-width: 767px) {
   header {
-    padding-left: calc(12px + var(--safe-left));
-    padding-right: calc(12px + var(--safe-right));
+    padding-left: calc(6px + var(--safe-left));
+    padding-right: calc(6px + var(--safe-right));
   }
 
   /* Hide bot name on mobile, keep emoji only */
@@ -214,8 +214,9 @@ body {
     border: 1px solid var(--border);
     background: var(--surface2);
     color: var(--muted);
-    width: 34px;
-    height: 34px;
+    width: 42px;
+    height: 30px;
+    min-height: 0;
     padding: 0;
     align-items: center;
     justify-content: center;
@@ -248,7 +249,7 @@ body {
   .mobile-menu-panel {
     position: fixed;
     top: calc(var(--safe-top) + 48px);
-    right: calc(12px + var(--safe-right));
+    right: calc(6px + var(--safe-right));
     z-index: 93;
     min-width: 160px;
     background: var(--surface);
@@ -329,8 +330,8 @@ body {
     column-gap: 6px;
     row-gap: 6px;
     min-width: 0;
-    padding-left: var(--safe-left) !important;
-    padding-right: var(--safe-right) !important;
+    padding-left: calc(6px + var(--safe-left)) !important;
+    padding-right: calc(6px + var(--safe-right)) !important;
     border-radius: 0 !important;
   }
 
@@ -345,6 +346,7 @@ body {
   .chat-toolbar #modelCombo {
     flex: 1 1 auto;
     min-width: 0;
+    order: 1;
   }
 
   .chat-toolbar #modelComboBtn {
@@ -354,24 +356,36 @@ body {
   }
 
   .chat-input-row {
-    padding-left: var(--safe-left) !important;
-    padding-right: var(--safe-right) !important;
+    padding-left: calc(6px + var(--safe-left)) !important;
+    padding-right: calc(6px + var(--safe-right)) !important;
     border-radius: 0 !important;
   }
 
   .mobile-controls-btn {
     margin-left: auto;
-    width: 34px;
-    height: 34px;
-    padding: 0 !important;
+    order: 2;
+    width: 38px;
+    height: 30px;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
     justify-content: center;
+    align-items: center;
     display: inline-flex !important;
+  }
+
+  .mobile-controls-btn .icon-menu-dots-horizontal {
+    width: 18px;
+    height: 18px;
   }
 
   .mobile-controls-btn.active {
     color: var(--accent) !important;
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--border)) !important;
-    background: var(--accent-subtle) !important;
+    border: none !important;
+    background: transparent !important;
   }
 
   .chat-toolbar .mobile-toolbar-extra {
@@ -380,10 +394,24 @@ body {
 
   .chat-toolbar.mobile-expanded .mobile-toolbar-extra {
     display: inline-flex !important;
+    order: 4;
+    flex: 0 0 auto;
   }
 
   .chat-toolbar.mobile-expanded .mobile-toolbar-extra.mobile-toolbar-extra-block {
     display: inline-block !important;
+    order: 4;
+    flex: 0 0 auto;
+  }
+
+  .chat-toolbar.mobile-expanded .mobile-toolbar-break {
+    display: block !important;
+    order: 3;
+    width: 100%;
+    flex: 0 0 100%;
+    height: 0;
+    margin: 0;
+    padding: 0;
   }
 
   .chat-toolbar .mobile-toolbar-hide {
@@ -403,6 +431,7 @@ body {
 @media (max-width: 767px) {
   .settings-layout {
     flex-direction: column;
+    min-height: 0;
   }
 
   .settings-layout.settings-layout-mobile-collapsed .settings-sidebar {
@@ -462,7 +491,9 @@ body {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .settings-sidebar-nav {
@@ -470,6 +501,10 @@ body {
     flex-wrap: wrap;
     gap: 4px;
     padding: 8px;
+    align-content: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(8px + var(--safe-bottom));
   }
 
   .settings-group-label {

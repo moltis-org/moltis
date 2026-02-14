@@ -303,14 +303,44 @@ export function formatAudioDuration(seconds) {
 }
 
 function createPlaySvg() {
-	var el = document.createElement("span");
-	el.className = "icon icon-play";
+	var NS = "http://www.w3.org/2000/svg";
+	var el = document.createElementNS(NS, "svg");
+	el.setAttribute("viewBox", "0 0 24 24");
+	el.setAttribute("aria-hidden", "true");
+	el.setAttribute("focusable", "false");
+	el.setAttribute("fill", "currentColor");
+	el.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+	var path = document.createElementNS(NS, "path");
+	path.setAttribute("d", "M8 5v14l11-7z");
+	el.appendChild(path);
 	return el;
 }
 
 function createPauseSvg() {
-	var el = document.createElement("span");
-	el.className = "icon icon-pause";
+	var NS = "http://www.w3.org/2000/svg";
+	var el = document.createElementNS(NS, "svg");
+	el.setAttribute("viewBox", "0 0 24 24");
+	el.setAttribute("aria-hidden", "true");
+	el.setAttribute("focusable", "false");
+	el.setAttribute("fill", "currentColor");
+	el.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+	var left = document.createElementNS(NS, "rect");
+	left.setAttribute("x", "6");
+	left.setAttribute("y", "4");
+	left.setAttribute("width", "4");
+	left.setAttribute("height", "16");
+	left.setAttribute("rx", "1");
+	el.appendChild(left);
+
+	var right = document.createElementNS(NS, "rect");
+	right.setAttribute("x", "14");
+	right.setAttribute("y", "4");
+	right.setAttribute("width", "4");
+	right.setAttribute("height", "16");
+	right.setAttribute("rx", "1");
+	el.appendChild(right);
 	return el;
 }
 
