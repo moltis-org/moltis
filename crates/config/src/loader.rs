@@ -1203,11 +1203,16 @@ name = "Rex"
         )
         .expect("write seed config");
 
-        let mut config = load_config(&path).expect("load seed config");
+        // Use parse_config directly to avoid env-override pollution
+        // (e.g. MOLTIS_IDENTITY__NAME in the process environment).
+        let raw = std::fs::read_to_string(&path).expect("read seed");
+        let mut config: MoltisConfig = parse_config(&raw, &path).expect("parse seed config");
         config.identity.name = None;
+
         save_config_to_path(&path, &config).expect("save config");
 
-        let reloaded = load_config(&path).expect("reload config");
+        let saved = std::fs::read_to_string(&path).expect("read saved file");
+        let reloaded: MoltisConfig = parse_config(&saved, &path).expect("reload config");
         assert!(
             reloaded.identity.name.is_none(),
             "identity.name should be removed when cleared"
