@@ -87,7 +87,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moonshot"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
-#   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
+#   "mistral", "openrouter", "zai", "cerebras", "minimax", "moonshot",
 #   "venice", "ollama", "local-llm", "openai-codex", "github-copilot",
 #   "kimi-code"
 
@@ -108,6 +108,15 @@ models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # fetch_models = true
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
+
+# ── Z.AI (OpenAI-compatible) ──────────────────────────────────
+# [providers.zai]
+# enabled = true
+# api_key = "${ZAI_API_KEY}"
+# base_url = "https://api.z.ai/api/paas/v4"  # Use /api/coding/paas/v4 for Coding Plan
+# models = ["glm-4.7"]
+# fetch_models = false
+# alias = "zai"
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]

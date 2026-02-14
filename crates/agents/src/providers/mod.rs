@@ -487,6 +487,14 @@ const MINIMAX_MODELS: &[(&str, &str)] = &[("MiniMax-M2.1", "MiniMax M2.1")];
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
 
+/// Known Z.AI models (subset; configure full list via `providers.zai.models`).
+const ZAI_MODELS: &[(&str, &str)] = &[
+    ("glm-4.7", "GLM 4.7"),
+    ("glm-4.6", "GLM 4.6"),
+    ("glm-4.5", "GLM 4.5"),
+    ("glm-4.5-air", "GLM 4.5 Air"),
+];
+
 /// OpenAI-compatible provider definition for table-driven registration.
 struct OpenAiCompatDef {
     config_name: &'static str,
@@ -510,6 +518,13 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
         models: &[],
+    },
+    OpenAiCompatDef {
+        config_name: "zai",
+        env_key: "ZAI_API_KEY",
+        env_base_url_key: "ZAI_BASE_URL",
+        default_base_url: "https://api.z.ai/api/paas/v4",
+        models: ZAI_MODELS,
     },
     OpenAiCompatDef {
         config_name: "cerebras",

@@ -97,6 +97,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "minimax",
     "moonshot",
     "venice",
+    "zai",
     "ollama",
 ];
 
@@ -1669,6 +1670,9 @@ unknwon = "value"
 enabled = true
 
 [providers.openai]
+enabled = true
+
+[providers.zai]
 enabled = true
 
 [providers.ollama]
