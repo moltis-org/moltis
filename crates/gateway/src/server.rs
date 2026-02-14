@@ -1353,27 +1353,26 @@ pub async fn start_gateway(
         let mut any_ok = false;
 
         // Helper: try to add one RP ID with its origin + extras to the registry.
-        let mut try_add =
-            |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
-                let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
-                    tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
-                    return;
-                };
-                match crate::auth_webauthn::WebAuthnState::new(rp_id, &origin_url, extras) {
-                    Ok(wa) => {
-                        info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
-                        registry.add(rp_id.to_owned(), wa);
-                        any_ok = true;
-                    },
-                    Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
-                }
+        let mut try_add = |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
+            let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
+                tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
+                return;
             };
+            match crate::auth_webauthn::WebAuthnState::new(rp_id, &origin_url, extras) {
+                Ok(wa) => {
+                    info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
+                    registry.add(rp_id.to_owned(), wa);
+                    any_ok = true;
+                },
+                Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
+            }
+        };
 
         if let Some(ref rp_id) = explicit_rp_id {
             // PaaS: single explicit RP ID.
-            let origin = explicit_origin.clone().unwrap_or_else(|| {
-                format!("https://{rp_id}")
-            });
+            let origin = explicit_origin
+                .clone()
+                .unwrap_or_else(|| format!("https://{rp_id}"));
             try_add(rp_id, &origin, &[]);
         } else {
             // Local: register localhost + moltis.localhost as extras.
@@ -1396,15 +1395,13 @@ pub async fn start_gateway(
                     } else {
                         format!("{hn_str}.local")
                     };
-                    let local_origin =
-                        format!("{default_scheme}://{local_name}:{port}");
+                    let local_origin = format!("{default_scheme}://{local_name}:{port}");
                     try_add(&local_name, &local_origin, &[]);
 
                     // bare hostname as RP ID (direct LAN access)
                     let bare = hn_str.strip_suffix(".local").unwrap_or(&hn_str);
                     if bare != local_name {
-                        let bare_origin =
-                            format!("{default_scheme}://{bare}:{port}");
+                        let bare_origin = format!("{default_scheme}://{bare}:{port}");
                         try_add(bare, &bare_origin, &[]);
                     }
                 }

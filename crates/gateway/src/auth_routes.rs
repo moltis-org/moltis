@@ -2,14 +2,16 @@ use std::{net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
-use axum::{
-    Json,
-    extract::{ConnectInfo, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{delete, get, post},
+use {
+    axum::{
+        Json,
+        extract::{ConnectInfo, State},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{delete, get, post},
+    },
+    axum_extra::extract::Host,
 };
-use axum_extra::extract::Host;
 
 use crate::{
     auth::CredentialStore,
@@ -502,7 +504,11 @@ async fn passkey_register_begin_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -536,7 +542,11 @@ async fn passkey_register_finish_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
@@ -576,7 +586,11 @@ async fn passkey_auth_begin_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkeys = match crate::auth_webauthn::load_passkeys(&state.credential_store).await {
@@ -610,7 +624,11 @@ async fn passkey_auth_finish_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     match wa.finish_authentication(&body.challenge_id, &body.credential) {
@@ -652,7 +670,11 @@ async fn setup_passkey_register_begin_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -701,7 +723,11 @@ async fn setup_passkey_register_finish_handler(
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
     };
     let Some(wa) = host_to_webauthn(&host, registry) else {
-        return (StatusCode::BAD_REQUEST, "no passkey config for this hostname").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
