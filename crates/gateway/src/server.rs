@@ -2905,9 +2905,7 @@ pub async fn start_gateway(
     }
     // Display setup code if one was generated.
     if let Some(ref code) = setup_code_display {
-        lines.push(format!(
-            "setup code: {code} (enter this in the browser to set your password)"
-        ));
+        lines.extend(startup_setup_code_lines(code));
     }
     #[cfg(feature = "tls")]
     if tls_active {
@@ -3742,6 +3740,15 @@ fn startup_passkey_origin_lines(origins: &[String]) -> Vec<String> {
         .iter()
         .map(|origin| format!("passkey origin: {origin}"))
         .collect()
+}
+
+fn startup_setup_code_lines(code: &str) -> Vec<String> {
+    vec![
+        String::new(),
+        format!("setup code: {code}"),
+        "enter this code to set your password or register a passkey".to_string(),
+        String::new(),
+    ]
 }
 
 /// Check whether a WebSocket `Origin` header matches the request `Host`.
@@ -6946,6 +6953,17 @@ mod tests {
         assert_eq!(lines, vec![
             "passkey origin: https://localhost:49494",
             "passkey origin: https://m4max.local:49494",
+        ]);
+    }
+
+    #[test]
+    fn startup_setup_code_lines_adds_spacers() {
+        let lines = startup_setup_code_lines("493413");
+        assert_eq!(lines, vec![
+            "",
+            "setup code: 493413",
+            "enter this code to set your password or register a passkey",
+            "",
         ]);
     }
 
