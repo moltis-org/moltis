@@ -9,6 +9,7 @@ import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 // Moved page init/teardown imports
 import { initChannels, teardownChannels } from "./page-channels.js";
 import { initCrons, teardownCrons } from "./page-crons.js";
@@ -28,6 +29,14 @@ import { connected } from "./signals.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
 import { Modal } from "./ui.js";
+import {
+	decodeBase64Safe,
+	fetchVoiceProviders,
+	saveVoiceKey,
+	testTts,
+	toggleVoiceProvider,
+	transcribeAudio,
+} from "./voice-utils.js";
 
 var identity = signal(null);
 var loading = signal(true);
@@ -272,23 +281,16 @@ function IdentitySection() {
 
 	function onSave(e) {
 		e.preventDefault();
-		if (!(name.trim() || userName.trim())) {
-			setError("Agent name and your name are required.");
-			return;
-		}
-		if (!name.trim()) {
-			setError("Agent name is required.");
-			return;
-		}
-		if (!userName.trim()) {
-			setError("Your name is required.");
+		var v = validateIdentityFields(name, userName);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
 		setSaving(true);
 		setSaved(false);
 
-		sendRpc("agent.identity.update", {
+		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
 			creature: creature.trim() || "",
@@ -316,7 +318,7 @@ function IdentitySection() {
 		setError(null);
 		setSaved(false);
 		setEmojiSaving(true);
-		sendRpc("agent.identity.update", { emoji: nextEmoji.trim() || "" }).then((res) => {
+		updateIdentity({ emoji: nextEmoji.trim() || "" }).then((res) => {
 			setEmojiSaving(false);
 			if (res?.ok) {
 				identity.value = res.payload;
@@ -354,7 +356,7 @@ function IdentitySection() {
 
 		var payload = {};
 		payload[field] = trimmed;
-		sendRpc("agent.identity.update", payload).then((res) => {
+		updateIdentity(payload).then((res) => {
 			if (field === "name") {
 				setNameSaving(false);
 			} else {
@@ -1297,21 +1299,6 @@ function bufToB64(buf) {
 	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function decodeBase64Safe(input) {
-	if (!input) return new Uint8Array();
-	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-	while (normalized.length % 4) normalized += "=";
-	var binary = "";
-	try {
-		binary = atob(normalized);
-	} catch (_err) {
-		throw new Error("Invalid base64 audio payload");
-	}
-	var bytes = new Uint8Array(binary.length);
-	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return bytes;
-}
-
 // ── Configuration section ─────────────────────────────────────
 
 function ConfigSection() {
@@ -1942,7 +1929,7 @@ function VoiceSection() {
 			setVoiceLoading(true);
 			rerender();
 		}
-		Promise.all([sendRpc("voice.providers.all", {}), sendRpc("voice.config.voxtral_requirements", {})])
+		Promise.all([fetchVoiceProviders(), sendRpc("voice.config.voxtral_requirements", {})])
 			.then(([providers, voxtral]) => {
 				if (providers?.ok) setAllProviders(providers.payload || { tts: [], stt: [] });
 				if (voxtral?.ok) setVoxtralReqs(voxtral.payload);
@@ -1965,7 +1952,7 @@ function VoiceSection() {
 		setSavingProvider(provider.id);
 		rerender();
 
-		sendRpc("voice.provider.toggle", { provider: provider.id, enabled, type: providerType })
+		toggleVoiceProvider(provider.id, enabled, providerType)
 			.then((res) => {
 				setSavingProvider(null);
 				if (res?.ok) {
@@ -2024,10 +2011,7 @@ function VoiceSection() {
 				var user = id?.user_name || "friend";
 				var bot = id?.name || "Moltis";
 				var ttsText = await fetchPhrase("settings", user, bot);
-				var res = await sendRpc("tts.convert", {
-					text: ttsText,
-					provider: providerId,
-				});
+				var res = await testTts(ttsText, providerId);
 				if (res?.ok && res.payload?.audio) {
 					// Decode base64 audio and play it
 					var bytes = decodeBase64Safe(res.payload.audio);
@@ -2092,14 +2076,7 @@ function VoiceSection() {
 					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 
 					try {
-						var resp = await fetch(
-							`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true&provider=${encodeURIComponent(providerId)}`,
-							{
-								method: "POST",
-								headers: { "Content-Type": audioBlob.type || "audio/webm" },
-								body: audioBlob,
-							},
-						);
+						var resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
 						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
 							var sttRes = await resp.json();
@@ -2434,16 +2411,22 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 		setError("");
 		setSaving(true);
 
-		var settingsPayload = {
-			provider: selectedProvider,
-			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
-			voiceId: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
-			model: supportsTtsVoiceSettings ? modelValue.trim() || undefined : undefined,
-			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
-		};
+		var voiceOpts = supportsTtsVoiceSettings
+			? {
+					voice: voiceValue.trim() || undefined,
+					model: modelValue.trim() || undefined,
+					languageCode: languageCodeValue.trim() || undefined,
+				}
+			: undefined;
 		var req = hasApiKey
-			? sendRpc("voice.config.save_key", { ...settingsPayload, api_key: apiKey.trim() })
-			: sendRpc("voice.config.save_settings", settingsPayload);
+			? saveVoiceKey(selectedProvider, apiKey.trim(), voiceOpts)
+			: sendRpc("voice.config.save_settings", {
+					provider: selectedProvider,
+					voice: voiceOpts?.voice,
+					voiceId: voiceOpts?.voice,
+					model: voiceOpts?.model,
+					languageCode: voiceOpts?.languageCode,
+				});
 		req
 			.then((res) => {
 				setSaving(false);

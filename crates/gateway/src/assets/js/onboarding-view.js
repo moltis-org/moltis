@@ -7,20 +7,32 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
+	saveProviderKey,
 	testModel,
 	validateProviderKey,
 } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
+import {
+	decodeBase64Safe,
+	fetchVoiceProviders,
+	saveVoiceKey,
+	testTts,
+	toggleVoiceProvider,
+	transcribeAudio,
+	VOICE_COUNTERPART_IDS,
+} from "./voice-utils.js";
 import { connectWs } from "./ws-connect.js";
 
 var wsStarted = false;
@@ -440,17 +452,14 @@ function IdentityStep({ onNext, onBack }) {
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!userName.trim()) {
-			setError("Your name is required.");
-			return;
-		}
-		if (!name.trim()) {
-			setError("Agent name is required.");
+		var v = validateIdentityFields(name, userName);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
 		setSaving(true);
-		sendRpc("agent.identity.update", {
+		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
 			creature: creature.trim() || "",
@@ -1033,16 +1042,9 @@ function ProviderStep({ onNext, onBack }) {
 					return saveAndFinishByom(p.name, keyVal, endpointVal, modelVal);
 				}
 
-				// Keep onboarding behavior aligned with Settings>LLM:
-				// persist credentials before opening model selection so probes
+				// Persist credentials before opening model selection so probes
 				// and follow-up actions use an initialized provider registry.
-				var savePayload = buildSaveKeyPayload(p.name, []);
-				if (!savePayload) {
-					setPhase("form");
-					setError("Failed to build provider credentials payload.");
-					return;
-				}
-				var saveRes = await sendRpc("providers.save_key", savePayload);
+				var saveRes = await saveProviderKey(p.name, keyVal, endpointVal, modelVal);
 				if (!saveRes?.ok) {
 					setPhase("form");
 					setError(saveRes?.error?.message || "Failed to save credentials.");
@@ -1091,24 +1093,21 @@ function ProviderStep({ onNext, onBack }) {
 		});
 	}
 
-	function buildSaveKeyPayload(providerName, modelIds) {
+	function resolveCredentials(providerName, modelIds) {
 		var p = providers.find((pr) => pr.name === providerName);
 		if (!p) return null;
 		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 		var effectiveModelVal = p.keyOptional && modelIds.length > 0 ? modelIds[0] : modelVal;
-		var payload = { provider: providerName, apiKey: keyVal };
-		if (endpointVal) payload.baseUrl = endpointVal;
-		if (effectiveModelVal) payload.model = effectiveModelVal;
-		return payload;
+		return { keyVal, endpointVal, modelVal: effectiveModelVal };
 	}
 
 	async function saveProviderKeyIfNeeded(providerName, modelIds) {
 		if (modelSelectProvider) return true;
-		var payload = buildSaveKeyPayload(providerName, modelIds);
-		if (!payload) return false;
-		var res = await sendRpc("providers.save_key", payload);
+		var creds = resolveCredentials(providerName, modelIds);
+		if (!creds) return false;
+		var res = await saveProviderKey(providerName, creds.keyVal, creds.endpointVal, creds.modelVal);
 		if (!res?.ok) {
 			setPhase("form");
 			setError(res?.error?.message || "Failed to save credentials.");
@@ -1162,11 +1161,7 @@ function ProviderStep({ onNext, onBack }) {
 
 	// BYOM-only save path (no model selector shown for these providers).
 	function saveAndFinishByom(providerName, keyVal, endpointVal, modelVal) {
-		var payload = { provider: providerName, apiKey: keyVal };
-		if (endpointVal) payload.baseUrl = endpointVal;
-		if (modelVal) payload.model = modelVal;
-
-		sendRpc("providers.save_key", payload)
+		saveProviderKey(providerName, keyVal, endpointVal, modelVal)
 			.then(async (res) => {
 				if (!res?.ok) {
 					setPhase("form");
@@ -1406,21 +1401,6 @@ function ProviderStep({ onNext, onBack }) {
 
 // ── Voice helpers ────────────────────────────────────────────
 
-function decodeBase64Safe(input) {
-	if (!input) return new Uint8Array();
-	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-	while (normalized.length % 4) normalized += "=";
-	var binary = "";
-	try {
-		binary = atob(normalized);
-	} catch (_err) {
-		throw new Error("Invalid base64 audio payload");
-	}
-	var bytes = new Uint8Array(binary.length);
-	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return bytes;
-}
-
 // ── Voice provider row for onboarding ────────────────────────
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider row renders inline config form and test state
@@ -1570,7 +1550,7 @@ function VoiceStep({ onNext, onBack }) {
 	var [enableSaving, setEnableSaving] = useState(false);
 
 	function fetchProviders() {
-		return sendRpc("voice.providers.all", {}).then((res) => {
+		return fetchVoiceProviders().then((res) => {
 			if (res?.ok) {
 				setAllProviders(res.payload || { tts: [], stt: [] });
 			}
@@ -1584,7 +1564,7 @@ function VoiceStep({ onNext, onBack }) {
 
 		function load() {
 			if (cancelled) return;
-			sendRpc("voice.providers.all", {}).then((res) => {
+			fetchVoiceProviders().then((res) => {
 				if (cancelled) return;
 				if (res?.ok) {
 					setAllProviders(res.payload || { tts: [], stt: [] });
@@ -1624,8 +1604,8 @@ function VoiceStep({ onNext, onBack }) {
 		var firstStt = allProviders.stt.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var firstTts = allProviders.tts.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var toggles = [];
-		if (firstStt) toggles.push(sendRpc("voice.provider.toggle", { provider: firstStt.id, enabled: true, type: "stt" }));
-		if (firstTts) toggles.push(sendRpc("voice.provider.toggle", { provider: firstTts.id, enabled: true, type: "tts" }));
+		if (firstStt) toggles.push(toggleVoiceProvider(firstStt.id, true, "stt"));
+		if (firstTts) toggles.push(toggleVoiceProvider(firstTts.id, true, "tts"));
 		if (toggles.length === 0) {
 			setEnableSaving(false);
 			return;
@@ -1662,18 +1642,12 @@ function VoiceStep({ onNext, onBack }) {
 		setError(null);
 		setSaving(true);
 		var providerId = configuring;
-		sendRpc("voice.config.save_key", { provider: providerId, api_key: apiKey.trim() }).then(async (res) => {
+		saveVoiceKey(providerId, apiKey.trim()).then(async (res) => {
 			if (res?.ok) {
 				// Auto-enable in onboarding: toggle on for each type this provider appears in.
 				// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
 				// so also check the counterpart ID.
-				var COUNTERPART_IDS = {
-					elevenlabs: "elevenlabs-stt",
-					"elevenlabs-stt": "elevenlabs",
-					"google-tts": "google",
-					google: "google-tts",
-				};
-				var counterId = COUNTERPART_IDS[providerId];
+				var counterId = VOICE_COUNTERPART_IDS[providerId];
 				var toggles = [];
 				var sttMatch =
 					allProviders.stt.find((p) => p.id === providerId) ||
@@ -1682,10 +1656,10 @@ function VoiceStep({ onNext, onBack }) {
 					allProviders.tts.find((p) => p.id === providerId) ||
 					(counterId && allProviders.tts.find((p) => p.id === counterId));
 				if (sttMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: sttMatch.id, enabled: true, type: "stt" }));
+					toggles.push(toggleVoiceProvider(sttMatch.id, true, "stt"));
 				}
 				if (ttsMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: ttsMatch.id, enabled: true, type: "tts" }));
+					toggles.push(toggleVoiceProvider(ttsMatch.id, true, "tts"));
 				}
 				await Promise.all(toggles);
 				setSaving(false);
@@ -1720,7 +1694,7 @@ function VoiceStep({ onNext, onBack }) {
 		// Auto-enable the provider if it's available but not yet enabled
 		var prov = (type === "stt" ? allProviders.stt : allProviders.tts).find((p) => p.id === providerId);
 		if (prov?.available && !prov?.enabled) {
-			var toggleRes = await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type });
+			var toggleRes = await toggleVoiceProvider(providerId, true, type);
 			if (!toggleRes?.ok) {
 				setVoiceTestResults((prev) => ({
 					...prev,
@@ -1730,20 +1704,12 @@ function VoiceStep({ onNext, onBack }) {
 				return;
 			}
 			// ElevenLabs/Google share API keys — enable the counterpart too.
-			// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
-			// so map to the counterpart ID before looking it up.
 			var counterType = type === "stt" ? "tts" : "stt";
 			var counterList = type === "stt" ? allProviders.tts : allProviders.stt;
-			var COUNTERPART_IDS = {
-				elevenlabs: "elevenlabs-stt",
-				"elevenlabs-stt": "elevenlabs",
-				"google-tts": "google",
-				google: "google-tts",
-			};
-			var counterId = COUNTERPART_IDS[providerId] || providerId;
+			var counterId = VOICE_COUNTERPART_IDS[providerId] || providerId;
 			var counterProv = counterList.find((p) => p.id === counterId);
 			if (counterProv?.available && !counterProv?.enabled) {
-				await sendRpc("voice.provider.toggle", { provider: counterId, enabled: true, type: counterType });
+				await toggleVoiceProvider(counterId, true, counterType);
 			}
 			// Refresh provider list in background
 			fetchProviders();
@@ -1755,10 +1721,7 @@ function VoiceStep({ onNext, onBack }) {
 				var user = identity?.user_name || "friend";
 				var bot = identity?.name || "Moltis";
 				var ttsText = await fetchPhrase("onboarding", user, bot);
-				var res = await sendRpc("tts.convert", {
-					text: ttsText,
-					provider: providerId,
-				});
+				var res = await testTts(ttsText, providerId);
 				if (res?.ok && res.payload?.audio) {
 					var bytes = decodeBase64Safe(res.payload.audio);
 					var audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
@@ -1817,14 +1780,7 @@ function VoiceStep({ onNext, onBack }) {
 					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 
 					try {
-						var resp = await fetch(
-							`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true&provider=${encodeURIComponent(providerId)}`,
-							{
-								method: "POST",
-								headers: { "Content-Type": audioBlob.type || "audio/webm" },
-								body: audioBlob,
-							},
-						);
+						var resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
 						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
 							var sttRes = await resp.json();
@@ -1984,12 +1940,9 @@ function ChannelStep({ onNext, onBack }) {
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!accountId.trim()) {
-			setError("Bot username is required.");
-			return;
-		}
-		if (!token.trim()) {
-			setError("Bot token is required.");
+		var v = validateChannelFields(accountId, token);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
@@ -1999,15 +1952,11 @@ function ChannelStep({ onNext, onBack }) {
 			.split(/\n/)
 			.map((s) => s.trim())
 			.filter(Boolean);
-		sendRpc("channels.add", {
-			type: "telegram",
-			account_id: accountId.trim(),
-			config: {
-				token: token.trim(),
-				dm_policy: dmPolicy,
-				mention_mode: "mention",
-				allowlist: allowlistEntries,
-			},
+		addChannel("telegram", accountId.trim(), {
+			token: token.trim(),
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
@@ -2146,11 +2095,11 @@ function SummaryStep({ onBack, onFinish }) {
 
 			var [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
 				sendRpc("providers.available", {}).catch(() => null),
-				sendRpc("channels.status", {}).catch(() => null),
+				fetchChannelStatus().catch(() => null),
 				fetch("/api/tailscale/status")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
-				voiceEnabled ? sendRpc("voice.providers.all", {}).catch(() => null) : Promise.resolve(null),
+				voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
 				fetch("/api/bootstrap")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
