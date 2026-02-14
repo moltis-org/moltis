@@ -9,13 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Memory bootstrap**: inject `MEMORY.md` content directly into the system
+  prompt (truncated at 20,000 chars) so the agent always has core memory
+  available without needing to call `memory_search` first. Matches OpenClaw's
+  bootstrap behavior
+- **Memory save tool**: new `memory_save` tool lets the LLM write to long-term
+  memory files (`MEMORY.md` or `memory/<name>.md`) with append/overwrite modes
+  and immediate re-indexing for search
+
 ### Changed
+
+- **Memory writing**: `MemoryManager` now implements the `MemoryWriter` trait
+  directly, unifying read and write paths behind a single manager. The silent
+  memory turn and `MemorySaveTool` both delegate to the manager, which handles
+  path validation, size limits, and automatic re-indexing after writes
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- **Memory file watcher**: the file watcher now covers `MEMORY.md` at the data
+  directory root, which was previously excluded because the filter only matched
+  directories
 
 ### Security
 

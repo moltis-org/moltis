@@ -2199,6 +2199,7 @@ pub async fn start_gateway(
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
+                        data_dir: Some(data_dir.clone()),
                         memory_dirs: vec![
                             data_memory_file,
                             data_memory_file_lower,
@@ -2210,11 +2211,22 @@ pub async fn start_gateway(
                     let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
                         memory_pool,
                     ));
+                    // Map file entries to their parent directory so that
+                    // root-level files like MEMORY.md are covered by the
+                    // watcher. Deduplicate via BTreeSet to avoid watching
+                    // the same directory twice.
                     let watch_dirs: Vec<_> = config
                         .memory_dirs
                         .iter()
-                        .filter(|p| p.is_dir())
-                        .cloned()
+                        .map(|p| {
+                            if p.is_dir() {
+                                p.clone()
+                            } else {
+                                p.parent().unwrap_or(p.as_path()).to_path_buf()
+                            }
+                        })
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
                         .collect();
                     let manager = Arc::new(if let Some(embedder) = embedder {
                         moltis_memory::manager::MemoryManager::new(config, store, embedder)
@@ -2507,6 +2519,9 @@ pub async fn start_gateway(
                 Arc::clone(mm),
             )));
             tool_registry.register(Box::new(moltis_memory::tools::MemoryGetTool::new(
+                Arc::clone(mm),
+            )));
+            tool_registry.register(Box::new(moltis_memory::tools::MemorySaveTool::new(
                 Arc::clone(mm),
             )));
         }

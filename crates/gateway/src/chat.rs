@@ -730,6 +730,7 @@ struct PromptPersona {
     soul_text: Option<String>,
     agents_text: Option<String>,
     tools_text: Option<String>,
+    memory_text: Option<String>,
 }
 
 /// Load identity, user profile, soul, and workspace text from config + data files.
@@ -769,6 +770,7 @@ fn load_prompt_persona() -> PromptPersona {
         soul_text: moltis_config::load_soul(),
         agents_text: moltis_config::load_agents_md(),
         tools_text: moltis_config::load_tools_md(),
+        memory_text: moltis_config::load_memory_md(),
     }
 }
 
@@ -1674,6 +1676,8 @@ impl ModelService for LiveModelService {
                 return Err(format!("unknown model: {model_id}{suggestion_hint}"));
             }
         };
+        let started = Instant::now();
+        info!(model_id, provider = provider.name(), "model probe started");
 
         // Use streaming and return as soon as the first token arrives.
         // Dropping the stream closes the HTTP connection, which tells the
@@ -1699,7 +1703,12 @@ impl ModelService for LiveModelService {
 
         match result {
             Ok(Ok(())) => {
-                info!(model_id, "model probe succeeded");
+                info!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe succeeded"
+                );
                 Ok(serde_json::json!({
                     "ok": true,
                     "modelId": model_id,
@@ -1713,11 +1722,22 @@ impl ModelService for LiveModelService {
                     .unwrap_or(&err)
                     .to_string();
 
-                warn!(model_id, error = %detail, "model probe failed");
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    error = %detail,
+                    "model probe failed"
+                );
                 Err(detail)
             },
             Err(_) => {
-                warn!(model_id, "model probe timed out after 10s");
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe timed out after 10s"
+                );
                 Err("Connection timed out after 10 seconds".to_string())
             },
         }
@@ -3017,33 +3037,30 @@ impl ChatService for LiveChatService {
         }
 
         // Run silent memory turn before summarization — saves important memories to disk.
-        // Write into the data directory (e.g. ~/.moltis/) so files don't end up in cwd.
-        if let Some(ref mm) = self.state.memory_manager {
-            let memory_dir = moltis_config::data_dir();
-            if let Ok(provider) = self.resolve_provider(&session_key, &history).await {
-                let chat_history_for_memory = values_to_chat_messages(&history);
-                match moltis_agents::silent_turn::run_silent_memory_turn(
-                    provider,
-                    &chat_history_for_memory,
-                    &memory_dir,
-                )
-                .await
-                {
-                    Ok(paths) => {
-                        for path in &paths {
-                            if let Err(e) = mm.sync_path(path).await {
-                                warn!(path = %path.display(), error = %e, "compact: memory sync of written file failed");
-                            }
-                        }
-                        if !paths.is_empty() {
-                            info!(
-                                files = paths.len(),
-                                "compact: silent memory turn wrote files"
-                            );
-                        }
-                    },
-                    Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
-                }
+        // The manager implements MemoryWriter directly (with path validation, size limits,
+        // and automatic re-indexing), so no manual sync_path is needed after the turn.
+        if let Some(ref mm) = self.state.memory_manager
+            && let Ok(provider) = self.resolve_provider(&session_key, &history).await
+        {
+            let chat_history_for_memory = values_to_chat_messages(&history);
+            let writer: std::sync::Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
+                std::sync::Arc::clone(mm) as _;
+            match moltis_agents::silent_turn::run_silent_memory_turn(
+                provider,
+                &chat_history_for_memory,
+                writer,
+            )
+            .await
+            {
+                Ok(paths) => {
+                    if !paths.is_empty() {
+                        info!(
+                            files = paths.len(),
+                            "compact: silent memory turn wrote files"
+                        );
+                    }
+                },
+                Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
             }
         }
 
@@ -3485,6 +3502,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3495,6 +3513,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3612,6 +3631,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3622,6 +3642,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3828,6 +3849,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     } else {
         // Minimal prompt without tools for local LLMs
@@ -3839,6 +3861,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     };
 
@@ -4471,6 +4494,7 @@ async fn run_streaming(
         persona.agents_text.as_deref(),
         persona.tools_text.as_deref(),
         runtime_context,
+        persona.memory_text.as_deref(),
     );
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.

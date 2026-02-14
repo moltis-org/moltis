@@ -280,6 +280,11 @@ pub fn heartbeat_path() -> PathBuf {
     data_dir().join("HEARTBEAT.md")
 }
 
+/// Path to the workspace `MEMORY.md` file.
+pub fn memory_path() -> PathBuf {
+    data_dir().join("MEMORY.md")
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
@@ -414,6 +419,11 @@ pub fn load_tools_md() -> Option<String> {
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_heartbeat_md() -> Option<String> {
     load_workspace_markdown(heartbeat_path())
+}
+
+/// Load MEMORY.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_memory_md() -> Option<String> {
+    load_workspace_markdown(memory_path())
 }
 
 /// Persist SOUL.md in the workspace root (`data_dir`).
@@ -1400,6 +1410,47 @@ name = "Rex"
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "\n# Heartbeat\n- ping\n").unwrap();
         assert_eq!(load_heartbeat_md().as_deref(), Some("# Heartbeat\n- ping"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(
+            dir.path().join("MEMORY.md"),
+            "\n## User Facts\n- Lives in Paris\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_memory_md().as_deref(),
+            Some("## User Facts\n- Lives in Paris")
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_returns_none_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(load_memory_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn memory_path_is_under_data_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(memory_path(), dir.path().join("MEMORY.md"));
 
         clear_data_dir();
     }
