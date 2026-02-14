@@ -19,6 +19,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.8.28] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **Browser sandbox resolution**: `BrowserTool` now resolves sandbox mode
+  directly from `SandboxRouter` instead of relying on a `_sandbox` flag
+  injected via tool call params.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **E2E onboarding failures**: Fixed missing `saveProviderKey` export in
+  `provider-validation.js` that was accidentally left unstaged in the DRY
+  refactoring commit.
+
+### Security
+
 ## [0.8.27] - 2026-02-14
 
 
