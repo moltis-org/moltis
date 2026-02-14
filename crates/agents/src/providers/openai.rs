@@ -1,4 +1,9 @@
-use std::{collections::HashSet, pin::Pin, sync::mpsc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    pin::Pin,
+    sync::mpsc,
+    time::Duration,
+};
 
 use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
 
@@ -223,6 +228,84 @@ fn should_warn_on_api_error(status: reqwest::StatusCode, body_text: &str) -> boo
     !matches!(status.as_u16(), 404)
 }
 
+const OPENAI_MAX_TOOL_CALL_ID_LEN: usize = 40;
+
+fn short_stable_hash(value: &str) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn base_openai_tool_call_id(raw: &str) -> String {
+    let mut cleaned: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if cleaned.is_empty() {
+        cleaned = "call".to_string();
+    }
+
+    if cleaned.len() <= OPENAI_MAX_TOOL_CALL_ID_LEN {
+        return cleaned;
+    }
+
+    let hash = short_stable_hash(raw);
+    let keep = OPENAI_MAX_TOOL_CALL_ID_LEN.saturating_sub(hash.len() + 1);
+    cleaned.truncate(keep);
+    if cleaned.is_empty() {
+        return format!("call-{hash}");
+    }
+    format!("{cleaned}-{hash}")
+}
+
+fn disambiguate_tool_call_id(base: &str, nonce: usize) -> String {
+    let suffix = format!("-{nonce}");
+    let keep = OPENAI_MAX_TOOL_CALL_ID_LEN.saturating_sub(suffix.len());
+
+    let mut value = base.to_string();
+    if value.len() > keep {
+        value.truncate(keep);
+    }
+    if value.is_empty() {
+        value = "call".to_string();
+        if value.len() > keep {
+            value.truncate(keep);
+        }
+    }
+    format!("{value}{suffix}")
+}
+
+fn assign_openai_tool_call_id(
+    raw: &str,
+    remapped_tool_call_ids: &mut HashMap<String, String>,
+    used_tool_call_ids: &mut HashSet<String>,
+) -> String {
+    if let Some(existing) = remapped_tool_call_ids.get(raw) {
+        return existing.clone();
+    }
+
+    let base = base_openai_tool_call_id(raw);
+    let mut candidate = base.clone();
+    let mut nonce = 1usize;
+    while used_tool_call_ids.contains(&candidate) {
+        candidate = disambiguate_tool_call_id(&base, nonce);
+        nonce = nonce.saturating_add(1);
+    }
+
+    used_tool_call_ids.insert(candidate.clone());
+    remapped_tool_call_ids.insert(raw.to_string(), candidate.clone());
+    candidate
+}
+
 fn models_endpoint(base_url: &str) -> String {
     format!(
         "{}{OPENAI_MODELS_ENDPOINT_PATH}",
@@ -342,15 +425,49 @@ impl OpenAiProvider {
 
     fn serialize_messages_for_request(&self, messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
-        messages
-            .iter()
-            .map(|message| {
-                let mut value = message.to_openai_value();
+        let mut remapped_tool_call_ids = HashMap::new();
+        let mut used_tool_call_ids = HashSet::new();
+        let mut out = Vec::with_capacity(messages.len());
 
-                if !needs_reasoning_content {
-                    return value;
+        for message in messages {
+            let mut value = message.to_openai_value();
+
+            if let Some(tool_calls) = value
+                .get_mut("tool_calls")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for tool_call in tool_calls {
+                    let Some(tool_call_id) =
+                        tool_call.get("id").and_then(serde_json::Value::as_str)
+                    else {
+                        continue;
+                    };
+                    let mapped_id = assign_openai_tool_call_id(
+                        tool_call_id,
+                        &mut remapped_tool_call_ids,
+                        &mut used_tool_call_ids,
+                    );
+                    tool_call["id"] = serde_json::Value::String(mapped_id);
                 }
+            } else if value.get("role").and_then(serde_json::Value::as_str) == Some("tool")
+                && let Some(tool_call_id) = value
+                    .get("tool_call_id")
+                    .and_then(serde_json::Value::as_str)
+            {
+                let mapped_id = remapped_tool_call_ids
+                    .get(tool_call_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        assign_openai_tool_call_id(
+                            tool_call_id,
+                            &mut remapped_tool_call_ids,
+                            &mut used_tool_call_ids,
+                        )
+                    });
+                value["tool_call_id"] = serde_json::Value::String(mapped_id);
+            }
 
+            if needs_reasoning_content {
                 let is_assistant =
                     value.get("role").and_then(serde_json::Value::as_str) == Some("assistant");
                 let has_tool_calls = value
@@ -358,27 +475,27 @@ impl OpenAiProvider {
                     .and_then(serde_json::Value::as_array)
                     .is_some_and(|calls| !calls.is_empty());
 
-                if !is_assistant || !has_tool_calls {
-                    return value;
+                if is_assistant && has_tool_calls {
+                    let reasoning_content = value
+                        .get("content")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+
+                    if value.get("content").is_none() {
+                        value["content"] = serde_json::Value::String(String::new());
+                    }
+
+                    if value.get("reasoning_content").is_none() {
+                        value["reasoning_content"] = serde_json::Value::String(reasoning_content);
+                    }
                 }
+            }
 
-                let reasoning_content = value
-                    .get("content")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
+            out.push(value);
+        }
 
-                if value.get("content").is_none() {
-                    value["content"] = serde_json::Value::String(String::new());
-                }
-
-                if value.get("reasoning_content").is_none() {
-                    value["reasoning_content"] = serde_json::Value::String(reasoning_content);
-                }
-
-                value
-            })
-            .collect()
+        out
     }
 }
 
@@ -705,6 +822,64 @@ mod tests {
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
         assert!(serialized[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn openai_serialization_remaps_long_tool_call_ids() {
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-4o".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+        let long_id = "forced-123e4567-e89b-12d3-a456-426614174000";
+        let messages = vec![
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
+                    id: long_id.to_string(),
+                    name: "exec".to_string(),
+                    arguments: serde_json::json!({ "command": "pwd" }),
+                },
+            ]),
+            ChatMessage::tool(long_id, "ok"),
+        ];
+
+        let serialized = provider.serialize_messages_for_request(&messages);
+        assert_eq!(serialized.len(), 2);
+
+        let remapped_id = serialized[0]["tool_calls"][0]["id"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(!remapped_id.is_empty());
+        assert!(remapped_id.len() <= OPENAI_MAX_TOOL_CALL_ID_LEN);
+        assert_ne!(remapped_id, long_id);
+        assert_eq!(serialized[1]["tool_call_id"].as_str(), Some(remapped_id));
+    }
+
+    #[test]
+    fn openai_serialization_keeps_short_tool_call_ids_stable() {
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-4o".to_string(),
+            "https://api.openai.com/v1".to_string(),
+        );
+        let short_id = "call_abc";
+        let messages = vec![
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
+                    id: short_id.to_string(),
+                    name: "exec".to_string(),
+                    arguments: serde_json::json!({ "command": "pwd" }),
+                },
+            ]),
+            ChatMessage::tool(short_id, "ok"),
+        ];
+
+        let serialized = provider.serialize_messages_for_request(&messages);
+        assert_eq!(
+            serialized[0]["tool_calls"][0]["id"].as_str(),
+            Some(short_id)
+        );
+        assert_eq!(serialized[1]["tool_call_id"].as_str(), Some(short_id));
     }
 
     #[tokio::test]

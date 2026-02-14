@@ -1019,7 +1019,7 @@ function ProviderStep({ onNext, onBack }) {
 		var modelVal = model.trim() || null;
 
 		validateProviderKey(p.name, keyVal, endpointVal, modelVal)
-			.then((result) => {
+			.then(async (result) => {
 				if (!result.valid) {
 					// Validation failed — stay on the form.
 					setPhase("form");
@@ -1031,6 +1031,22 @@ function ProviderStep({ onNext, onBack }) {
 				// so save immediately without showing the model selector.
 				if (BYOM_PROVIDERS.includes(p.name)) {
 					return saveAndFinishByom(p.name, keyVal, endpointVal, modelVal);
+				}
+
+				// Keep onboarding behavior aligned with Settings>LLM:
+				// persist credentials before opening model selection so probes
+				// and follow-up actions use an initialized provider registry.
+				var savePayload = buildSaveKeyPayload(p.name, []);
+				if (!savePayload) {
+					setPhase("form");
+					setError("Failed to build provider credentials payload.");
+					return;
+				}
+				var saveRes = await sendRpc("providers.save_key", savePayload);
+				if (!saveRes?.ok) {
+					setPhase("form");
+					setError(saveRes?.error?.message || "Failed to save credentials.");
+					return;
 				}
 
 				// Regular providers: show the model selector.
