@@ -30,6 +30,9 @@ impl std::str::FromStr for CitationMode {
 pub struct MemoryConfig {
     /// Path to the SQLite database file (or `:memory:` for tests).
     pub db_path: String,
+    /// Root data directory for writing memory files (e.g. `~/.moltis/`).
+    /// Required for `MemoryWriter` support. `None` disables writes.
+    pub data_dir: Option<PathBuf>,
     /// Directories to scan for markdown files.
     pub memory_dirs: Vec<PathBuf>,
     /// Target chunk size in tokens (approximate, counted as whitespace-split words).
@@ -57,6 +60,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             db_path: "memory.db".into(),
+            data_dir: None,
             memory_dirs: vec![PathBuf::from("memory")],
             chunk_size: 400,
             chunk_overlap: 80,

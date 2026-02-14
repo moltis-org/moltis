@@ -354,6 +354,7 @@ main {
 .msg-image {
   display: block;
   max-width: min(100%, 430px);
+  height: auto;
   border-radius: 8px;
   border: 1px solid var(--border);
 }
@@ -873,7 +874,7 @@ import { DateTime } from "/assets/js/vendor/luxon.mjs";
     return icon;
   }
 
-  function renderAudioPlayer(container, audioSrc) {
+  function renderAudioPlayer(container, audioSrc, onEnded) {
     var wrapper = document.createElement("div");
     wrapper.className = "waveform-player";
 
@@ -979,6 +980,7 @@ import { DateTime } from "/assets/js/vendor/luxon.mjs";
       if (Number.isFinite(audio.duration) && audio.duration >= 0) {
         durationElement.textContent = formatAudioDuration(audio.duration);
       }
+      if (onEnded) onEnded();
     });
 
     barsWrapper.onclick = function(event) {
@@ -992,10 +994,21 @@ import { DateTime } from "/assets/js/vendor/luxon.mjs";
     };
   }
 
-  document.querySelectorAll("[data-audio-src]").forEach(function(holder) {
+  var audioHolders = Array.from(document.querySelectorAll("[data-audio-src]")).filter(function(h) {
+    return h.getAttribute("data-audio-src");
+  });
+
+  audioHolders.forEach(function(holder, index) {
     var src = holder.getAttribute("data-audio-src");
-    if (!src) return;
-    renderAudioPlayer(holder, src);
+    renderAudioPlayer(holder, src, function() {
+      var nextHolder = audioHolders[index + 1];
+      if (!nextHolder) return;
+      var nextPlayBtn = nextHolder.querySelector(".waveform-play-btn");
+      if (nextPlayBtn) {
+        nextHolder.scrollIntoView({ behavior: "smooth", block: "center" });
+        nextPlayBtn.click();
+      }
+    });
   });
 }();
 </script>

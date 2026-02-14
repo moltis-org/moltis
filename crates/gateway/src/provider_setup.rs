@@ -1,7 +1,10 @@
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -100,6 +103,39 @@ fn parse_models_param(params: &Value) -> Vec<String> {
         models = normalize_model_list([model.to_string()]);
     }
     models
+}
+
+struct ProviderSetupTiming {
+    operation: &'static str,
+    provider: String,
+    started: std::time::Instant,
+}
+
+impl ProviderSetupTiming {
+    fn start(operation: &'static str, provider: Option<&str>) -> Self {
+        let provider_name = provider.unwrap_or("<missing>").to_string();
+        info!(
+            operation,
+            provider = %provider_name,
+            "provider setup operation started"
+        );
+        Self {
+            operation,
+            provider: provider_name,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for ProviderSetupTiming {
+    fn drop(&mut self) {
+        info!(
+            operation = self.operation,
+            provider = %self.provider,
+            elapsed_ms = self.started.elapsed().as_millis(),
+            "provider setup operation finished"
+        );
+    }
 }
 
 /// File-based provider config storage at `~/.config/moltis/provider_keys.json`.
@@ -955,6 +991,8 @@ pub struct LiveProviderSetupService {
     /// Shared priority models list from `LiveModelService`. Updated by
     /// `save_model` so the dropdown ordering reflects the latest preference.
     priority_models: Option<Arc<RwLock<Vec<String>>>>,
+    /// Monotonic sequence used to drop stale async registry refreshes.
+    registry_rebuild_seq: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -978,6 +1016,7 @@ impl LiveProviderSetupService {
             pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
             priority_models: None,
+            registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -985,6 +1024,75 @@ impl LiveProviderSetupService {
     /// `save_model` can update dropdown ordering at runtime.
     pub fn set_priority_models(&mut self, handle: Arc<RwLock<Vec<String>>>) {
         self.priority_models = Some(handle);
+    }
+
+    fn queue_registry_rebuild(&self, provider_name: &str, reason: &'static str) {
+        let rebuild_seq = self.registry_rebuild_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let latest_seq = Arc::clone(&self.registry_rebuild_seq);
+        let registry = Arc::clone(&self.registry);
+        let config = Arc::clone(&self.config);
+        let key_store = self.key_store.clone();
+        let provider_name = provider_name.to_string();
+
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            info!(
+                provider = %provider_name,
+                reason,
+                rebuild_seq,
+                "provider registry async rebuild started"
+            );
+
+            let effective = {
+                let base = config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                config_with_saved_keys(&base, &key_store)
+            };
+
+            let new_registry = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::from_env_with_config(&effective)
+            })
+            .await
+            {
+                Ok(registry) => registry,
+                Err(error) => {
+                    warn!(
+                        provider = %provider_name,
+                        reason,
+                        rebuild_seq,
+                        error = %error,
+                        "provider registry async rebuild worker failed"
+                    );
+                    return;
+                },
+            };
+
+            let current_seq = latest_seq.load(Ordering::Acquire);
+            if rebuild_seq != current_seq {
+                info!(
+                    provider = %provider_name,
+                    reason,
+                    rebuild_seq,
+                    latest_seq = current_seq,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "provider registry async rebuild skipped as stale"
+                );
+                return;
+            }
+
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
+            let mut reg = registry.write().await;
+            *reg = new_registry;
+            info!(
+                provider = %provider_name,
+                reason,
+                rebuild_seq,
+                provider_summary = %provider_summary,
+                models = model_count,
+                elapsed_ms = started.elapsed().as_millis(),
+                "provider registry async rebuild finished"
+            );
+        });
     }
 
     fn config_snapshot(&self) -> ProvidersConfig {
@@ -1326,6 +1434,10 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn save_key(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1656,6 +1768,10 @@ impl ProviderSetupService for LiveProviderSetupService {
     async fn validate_key(&self, params: Value) -> ServiceResult {
         use moltis_agents::model::ChatMessage;
 
+        let _timing = ProviderSetupTiming::start(
+            "providers.validate_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1762,6 +1878,12 @@ impl ProviderSetupService for LiveProviderSetupService {
             }));
         }
 
+        info!(
+            provider = provider_name,
+            model_count = models.len(),
+            "provider validation discovered candidate models for probing"
+        );
+
         let probe = [ChatMessage::user("ping")];
         let mut probe_attempted = false;
         let mut unsupported_errors = Vec::new();
@@ -1770,12 +1892,20 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         // Try multiple models because provider catalogs can include endpoint-
         // incompatible IDs. We only need one successful probe to validate creds.
-        for probe_model in &models {
+        for (attempt, probe_model) in models.iter().enumerate() {
             let Some(llm_provider) = temp_registry.get(&probe_model.id) else {
                 continue;
             };
 
             probe_attempted = true;
+            let probe_started = std::time::Instant::now();
+            info!(
+                provider = provider_name,
+                model = %probe_model.id,
+                attempt = attempt + 1,
+                total_models = models.len(),
+                "provider validation model probe started"
+            );
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(20),
                 llm_provider.complete(&probe, &[]),
@@ -1784,6 +1914,12 @@ impl ProviderSetupService for LiveProviderSetupService {
 
             match result {
                 Ok(Ok(_)) => {
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe succeeded"
+                    );
                     probe_succeeded = true;
                     break;
                 },
@@ -1798,6 +1934,13 @@ impl ProviderSetupService for LiveProviderSetupService {
                         .to_string();
                     let is_unsupported =
                         error_obj.get("type").and_then(|v| v.as_str()) == Some("unsupported_model");
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        unsupported = is_unsupported,
+                        "provider validation model probe failed"
+                    );
                     if is_unsupported {
                         unsupported_errors.push(detail);
                         continue;
@@ -1806,6 +1949,12 @@ impl ProviderSetupService for LiveProviderSetupService {
                     break;
                 },
                 Err(_) => {
+                    warn!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe timed out"
+                    );
                     last_error = Some(
                         "Connection timed out after 20 seconds. Check your endpoint URL and try again."
                             .to_string(),
@@ -1888,13 +2037,6 @@ impl ProviderSetupService for LiveProviderSetupService {
         self.key_store
             .save_config(provider_name, None, None, Some(models))?;
 
-        // Rebuild the provider registry so the new model ordering takes
-        // effect immediately (models.list reflects updated preferences).
-        let effective = self.effective_config();
-        let new_registry = ProviderRegistry::from_env_with_config(&effective);
-        let mut reg = self.registry.write().await;
-        *reg = new_registry;
-
         // Update the cross-provider priority list so the dropdown puts
         // the chosen model at the top immediately.
         if let Some(ref priority) = self.priority_models {
@@ -1907,12 +2049,17 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         info!(
             provider = provider_name,
-            model, "saved model preference and rebuilt registry"
+            model, "saved model preference and queued async registry rebuild"
         );
+        self.queue_registry_rebuild(provider_name, "save_model");
         Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn save_models(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_models",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1935,13 +2082,6 @@ impl ProviderSetupService for LiveProviderSetupService {
         self.key_store
             .save_config(provider_name, None, None, Some(models.clone()))?;
 
-        // Rebuild the provider registry so the new model ordering takes
-        // effect immediately.
-        let effective = self.effective_config();
-        let new_registry = ProviderRegistry::from_env_with_config(&effective);
-        let mut reg = self.registry.write().await;
-        *reg = new_registry;
-
         // Update the cross-provider priority list.
         if let Some(ref priority) = self.priority_models {
             let mut list = priority.write().await;
@@ -1957,8 +2097,9 @@ impl ProviderSetupService for LiveProviderSetupService {
             provider = provider_name,
             count = models.len(),
             models = ?models,
-            "saved model preferences and rebuilt registry"
+            "saved model preferences and queued async registry rebuild"
         );
+        self.queue_registry_rebuild(provider_name, "save_models");
         Ok(serde_json::json!({ "ok": true }))
     }
 }
