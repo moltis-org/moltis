@@ -59,6 +59,23 @@ async function moveToLlmStep(page) {
 	return true;
 }
 
+function horizontalOverflowPx(page) {
+	return page.evaluate(() => Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth));
+}
+
+function firstVisibleOnboardingInputFontSizePx(page) {
+	return page.evaluate(() => {
+		const inputs = Array.from(document.querySelectorAll(".onboarding-card .provider-key-input"));
+		const input = inputs.find((el) => {
+			const rect = el.getBoundingClientRect();
+			const style = window.getComputedStyle(el);
+			return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+		});
+		if (!input) return 0;
+		return Number.parseFloat(window.getComputedStyle(input).fontSize || "0");
+	});
+}
+
 /**
  * Onboarding tests run against a server started WITHOUT seeded
  * IDENTITY.md and USER.md, so the app enters onboarding mode.
@@ -158,6 +175,39 @@ test.describe("Onboarding wizard", () => {
 		await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. Rex")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+	});
+
+	test("mobile onboarding layout avoids horizontal overflow", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.setViewportSize({ width: 375, height: 812 });
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		await expect(page.locator(".onboarding-card")).toBeVisible();
+		await expect.poll(() => horizontalOverflowPx(page), { timeout: 10_000 }).toBeLessThan(2);
+		await expect
+			.poll(() => firstVisibleOnboardingInputFontSizePx(page), { timeout: 10_000 })
+			.toBeGreaterThanOrEqual(16);
+
+		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
+		if (await authHeading.isVisible().catch(() => false)) {
+			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
+			if (await skipBtn.isVisible().catch(() => false)) {
+				await skipBtn.click();
+			}
+		}
+
+		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+		if (await identityHeading.isVisible().catch(() => false)) {
+			await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
+			await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+		}
+
+		await expect.poll(() => horizontalOverflowPx(page), { timeout: 10_000 }).toBeLessThan(2);
+		await expect
+			.poll(() => firstVisibleOnboardingInputFontSizePx(page), { timeout: 10_000 })
+			.toBeGreaterThanOrEqual(16);
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("page has no JS errors through wizard", async ({ page }) => {

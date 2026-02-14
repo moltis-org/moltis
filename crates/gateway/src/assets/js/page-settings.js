@@ -41,11 +41,16 @@ import {
 var identity = signal(null);
 var loading = signal(true);
 var activeSection = signal("identity");
+var mobileSidebarVisible = signal(true);
 var mounted = false;
 var containerRef = null;
 
 function rerender() {
 	if (containerRef) render(html`<${SettingsPage} />`, containerRef);
+}
+
+function isMobileViewport() {
+	return window.innerWidth < 768;
 }
 
 function isSafariBrowser() {
@@ -210,6 +215,10 @@ function SettingsSidebar() {
 							key=${s.id}
 							class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
 							onClick=${() => {
+								if (isMobileViewport()) {
+									mobileSidebarVisible.value = false;
+									rerender();
+								}
 								navigate(settingsPath(s.id));
 							}}
 						>
@@ -833,10 +842,12 @@ function SecuritySection() {
 			rerender();
 			return;
 		}
+		var requestedRpId = null;
 		fetch("/api/auth/passkey/register/begin", { method: "POST" })
 			.then((r) => r.json())
 			.then((data) => {
 				var opts = data.options;
+				requestedRpId = opts.publicKey.rp?.id || null;
 				opts.publicKey.challenge = b64ToBuf(opts.publicKey.challenge);
 				opts.publicKey.user.id = b64ToBuf(opts.publicKey.user.id);
 				if (opts.publicKey.excludeCredentials) {
@@ -890,7 +901,11 @@ function SecuritySection() {
 					});
 			})
 			.catch((err) => {
-				setPkMsg(err.message || "Failed to add passkey");
+				var msg = err.message || "Failed to add passkey";
+				if (requestedRpId) {
+					msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+				}
+				setPkMsg(msg);
 				rerender();
 			});
 	}
@@ -3256,18 +3271,48 @@ function SettingsPage() {
 
 	var section = activeSection.value;
 	var ps = pageSectionHandlers[section];
+	var mobile = isMobileViewport();
+	var showSidebar = !mobile || mobileSidebarVisible.value;
+	var mobileSectionsLabel = showSidebar ? "Hide Sections" : "Sections";
 
-	return html`<div class="settings-layout">
-		<${SettingsSidebar} />
-		${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
-		${section === "identity" ? html`<${IdentitySection} />` : null}
-		${section === "memory" ? html`<${MemorySection} />` : null}
-		${section === "environment" ? html`<${EnvironmentSection} />` : null}
-		${section === "security" ? html`<${SecuritySection} />` : null}
-		${section === "tailscale" ? html`<${TailscaleSection} />` : null}
-		${section === "voice" ? html`<${VoiceSection} />` : null}
-		${section === "notifications" ? html`<${NotificationsSection} />` : null}
-		${section === "config" ? html`<${ConfigSection} />` : null}
+	return html`<div class="settings-layout ${mobile && !showSidebar ? "settings-layout-mobile-collapsed" : ""}">
+		${showSidebar ? html`<${SettingsSidebar} />` : null}
+		<div class="settings-content-wrap">
+			${
+				mobile
+					? html`<div class="settings-mobile-controls">
+						<button
+							class="settings-mobile-chat-btn"
+							type="button"
+							onClick=${() => navigate(routes.chats)}
+						>
+							<span class="icon icon-chat"></span>
+							<span>Back to Chats</span>
+						</button>
+						<button
+							class="settings-mobile-menu-btn"
+							type="button"
+							onClick=${() => {
+								mobileSidebarVisible.value = !mobileSidebarVisible.value;
+								rerender();
+							}}
+						>
+							<span class="icon icon-burger"></span>
+							<span>${mobileSectionsLabel}</span>
+						</button>
+					</div>`
+					: null
+			}
+			${ps ? html`<${PageSection} key=${section} initFn=${ps.init} teardownFn=${ps.teardown} />` : null}
+			${section === "identity" ? html`<${IdentitySection} />` : null}
+			${section === "memory" ? html`<${MemorySection} />` : null}
+			${section === "environment" ? html`<${EnvironmentSection} />` : null}
+			${section === "security" ? html`<${SecuritySection} />` : null}
+			${section === "tailscale" ? html`<${TailscaleSection} />` : null}
+			${section === "voice" ? html`<${VoiceSection} />` : null}
+			${section === "notifications" ? html`<${NotificationsSection} />` : null}
+			${section === "config" ? html`<${ConfigSection} />` : null}
+		</div>
 	</div>`;
 }
 
@@ -3282,6 +3327,7 @@ registerPrefix(
 		var isValidSection = param && getSectionItems().some((s) => s.id === param);
 		var section = isValidSection ? param : DEFAULT_SECTION;
 		activeSection.value = section;
+		mobileSidebarVisible.value = !isMobileViewport();
 		if (!isValidSection) {
 			history.replaceState(null, "", settingsPath(section));
 		}
@@ -3295,5 +3341,6 @@ registerPrefix(
 		identity.value = null;
 		loading.value = true;
 		activeSection.value = DEFAULT_SECTION;
+		mobileSidebarVisible.value = true;
 	},
 );
