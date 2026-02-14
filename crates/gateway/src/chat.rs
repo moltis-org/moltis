@@ -3849,7 +3849,7 @@ async fn run_with_tools(
         system_prompt
     };
 
-    // Determine if this session is sandboxed (for browser tool execution mode)
+    // Determine sandbox mode for this session.
     let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
         router.is_sandboxed(session_key).await
     } else {
@@ -4161,12 +4161,10 @@ async fn run_with_tools(
         Some(chat_history)
     };
 
-    // Inject session key, sandbox mode, and accept-language into tool call params so tools can
+    // Inject session key and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    // The browser tool uses _sandbox to determine whether to run in a container.
     let mut tool_context = serde_json::json!({
         "_session_key": session_key,
-        "_sandbox": session_is_sandboxed,
     });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
