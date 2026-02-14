@@ -950,8 +950,7 @@ fn log_directory_write_probe(dir: &FsPath) {
 }
 
 fn log_startup_config_storage_diagnostics() {
-    let config_dir =
-        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    let config_dir = moltis_config::config_dir().unwrap_or_else(|| PathBuf::from(".moltis"));
     let discovered_config = moltis_config::loader::find_config_file();
     let expected_config = moltis_config::find_or_default_config_path();
     let provider_keys_path = config_dir.join("provider_keys.json");
@@ -1092,7 +1091,7 @@ pub async fn start_gateway(
     if !providers_available_at_startup {
         let config_path = moltis_config::find_or_default_config_path();
         let provider_keys_path = moltis_config::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from(".moltis"))
+            .unwrap_or_else(|| PathBuf::from(".moltis"))
             .join("provider_keys.json");
         warn!(
             provider_summary = %provider_summary,
@@ -4074,7 +4073,7 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 async fn oauth_callback_handler(
     State(state): State<AppState>,
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let Some(code) = params.get("code") else {
         return (
@@ -5106,7 +5105,7 @@ async fn api_search_handler(
 
 #[cfg(feature = "web-ui")]
 async fn api_skills_search_handler(
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let source = params.get("source").cloned().unwrap_or_default();

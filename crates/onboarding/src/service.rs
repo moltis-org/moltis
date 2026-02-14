@@ -277,7 +277,7 @@ impl LiveOnboardingService {
 }
 
 /// Path to the `.onboarded` sentinel file in the data directory.
-fn onboarded_sentinel() -> std::path::PathBuf {
+fn onboarded_sentinel() -> PathBuf {
     moltis_config::data_dir().join(".onboarded")
 }
 

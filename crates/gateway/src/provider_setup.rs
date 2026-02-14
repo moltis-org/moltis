@@ -49,11 +49,11 @@ fn deserialize_provider_models<'de, D>(deserializer: D) -> Result<Vec<String>, D
 where
     D: serde::Deserializer<'de>,
 {
-    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    let value: Value = serde::Deserialize::deserialize(deserializer)?;
     let normalized = match value {
-        serde_json::Value::Null => Vec::new(),
-        serde_json::Value::String(model) => vec![model],
-        serde_json::Value::Array(values) => values
+        Value::Null => Vec::new(),
+        Value::String(model) => vec![model],
+        Value::Array(values) => values
             .into_iter()
             .filter_map(|value| value.as_str().map(ToString::to_string))
             .collect(),
@@ -1966,7 +1966,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         if probe_succeeded {
             // Build model list for the frontend, excluding non-chat models.
-            let model_list: Vec<serde_json::Value> = models
+            let model_list: Vec<Value> = models
                 .iter()
                 .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
                 .map(|m| {

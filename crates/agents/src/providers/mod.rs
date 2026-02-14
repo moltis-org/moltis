@@ -1504,7 +1504,7 @@ impl ProviderRegistry {
             .models
             .iter()
             .map(|m| m.provider.as_str())
-            .collect::<std::collections::HashSet<_>>()
+            .collect::<HashSet<_>>()
             .len();
         let model_count = self.models.len();
         format!(
@@ -1640,59 +1640,59 @@ mod tests {
     #[test]
     fn is_chat_capable_filters_non_chat_models() {
         // Chat-capable models pass
-        assert!(super::is_chat_capable_model("gpt-5.2"));
-        assert!(super::is_chat_capable_model("gpt-4o"));
-        assert!(super::is_chat_capable_model("o4-mini"));
-        assert!(super::is_chat_capable_model("chatgpt-4o-latest"));
+        assert!(is_chat_capable_model("gpt-5.2"));
+        assert!(is_chat_capable_model("gpt-4o"));
+        assert!(is_chat_capable_model("o4-mini"));
+        assert!(is_chat_capable_model("chatgpt-4o-latest"));
 
         // Non-chat models are rejected
-        assert!(!super::is_chat_capable_model("dall-e-3"));
-        assert!(!super::is_chat_capable_model("gpt-image-1-mini"));
-        assert!(!super::is_chat_capable_model("chatgpt-image-latest"));
-        assert!(!super::is_chat_capable_model("gpt-audio"));
-        assert!(!super::is_chat_capable_model("tts-1"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
-        assert!(!super::is_chat_capable_model("gpt-4o-audio-preview"));
-        assert!(!super::is_chat_capable_model("gpt-4o-realtime-preview"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-transcribe"));
-        assert!(!super::is_chat_capable_model("sora"));
+        assert!(!is_chat_capable_model("dall-e-3"));
+        assert!(!is_chat_capable_model("gpt-image-1-mini"));
+        assert!(!is_chat_capable_model("chatgpt-image-latest"));
+        assert!(!is_chat_capable_model("gpt-audio"));
+        assert!(!is_chat_capable_model("tts-1"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
+        assert!(!is_chat_capable_model("gpt-4o-audio-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-realtime-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
+        assert!(!is_chat_capable_model("sora"));
 
         // Works with namespaced model IDs too
-        assert!(super::is_chat_capable_model("openai::gpt-5.2"));
-        assert!(!super::is_chat_capable_model("openai::dall-e-3"));
-        assert!(!super::is_chat_capable_model("openai::gpt-image-1-mini"));
-        assert!(!super::is_chat_capable_model("openai::gpt-4o-mini-tts"));
+        assert!(is_chat_capable_model("openai::gpt-5.2"));
+        assert!(!is_chat_capable_model("openai::dall-e-3"));
+        assert!(!is_chat_capable_model("openai::gpt-image-1-mini"));
+        assert!(!is_chat_capable_model("openai::gpt-4o-mini-tts"));
     }
 
     #[test]
     fn supports_tools_for_chat_models() {
         // Modern chat models support tools
-        assert!(super::supports_tools_for_model("gpt-5.2"));
-        assert!(super::supports_tools_for_model("gpt-4o"));
-        assert!(super::supports_tools_for_model("gpt-4o-mini"));
-        assert!(super::supports_tools_for_model("o3"));
-        assert!(super::supports_tools_for_model("o4-mini"));
-        assert!(super::supports_tools_for_model("chatgpt-4o-latest"));
-        assert!(super::supports_tools_for_model("claude-sonnet-4-20250514"));
-        assert!(super::supports_tools_for_model("gemini-2.0-flash"));
-        assert!(super::supports_tools_for_model("codestral-latest"));
+        assert!(supports_tools_for_model("gpt-5.2"));
+        assert!(supports_tools_for_model("gpt-4o"));
+        assert!(supports_tools_for_model("gpt-4o-mini"));
+        assert!(supports_tools_for_model("o3"));
+        assert!(supports_tools_for_model("o4-mini"));
+        assert!(supports_tools_for_model("chatgpt-4o-latest"));
+        assert!(supports_tools_for_model("claude-sonnet-4-20250514"));
+        assert!(supports_tools_for_model("gemini-2.0-flash"));
+        assert!(supports_tools_for_model("codestral-latest"));
     }
 
     #[test]
     fn supports_tools_false_for_legacy_and_non_chat_models() {
         // Legacy completions-only models
-        assert!(!super::supports_tools_for_model("babbage-002"));
-        assert!(!super::supports_tools_for_model("davinci-002"));
+        assert!(!supports_tools_for_model("babbage-002"));
+        assert!(!supports_tools_for_model("davinci-002"));
 
         // Non-chat model families
-        assert!(!super::supports_tools_for_model("dall-e-3"));
-        assert!(!super::supports_tools_for_model("gpt-image-1"));
-        assert!(!super::supports_tools_for_model("tts-1"));
-        assert!(!super::supports_tools_for_model("tts-1-hd"));
-        assert!(!super::supports_tools_for_model("whisper-1"));
-        assert!(!super::supports_tools_for_model("text-embedding-3-large"));
-        assert!(!super::supports_tools_for_model("omni-moderation-latest"));
+        assert!(!supports_tools_for_model("dall-e-3"));
+        assert!(!supports_tools_for_model("gpt-image-1"));
+        assert!(!supports_tools_for_model("tts-1"));
+        assert!(!supports_tools_for_model("tts-1-hd"));
+        assert!(!supports_tools_for_model("whisper-1"));
+        assert!(!supports_tools_for_model("text-embedding-3-large"));
+        assert!(!supports_tools_for_model("omni-moderation-latest"));
     }
 
     #[test]

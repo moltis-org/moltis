@@ -3035,8 +3035,7 @@ impl ChatService for LiveChatService {
             && let Ok(provider) = self.resolve_provider(&session_key, &history).await
         {
             let chat_history_for_memory = values_to_chat_messages(&history);
-            let writer: std::sync::Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
-                std::sync::Arc::clone(mm) as _;
+            let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> = Arc::clone(mm) as _;
             match moltis_agents::silent_turn::run_silent_memory_turn(
                 provider,
                 &chat_history_for_memory,

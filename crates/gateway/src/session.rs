@@ -1645,7 +1645,7 @@ mod tests {
     #[tokio::test]
     async fn message_audio_data_url_for_share_reads_media_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let bytes = b"OggSfake".to_vec();
         store
             .save_media("main", "voice.ogg", &bytes)
@@ -1670,7 +1670,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_skips_system_and_notice_roles() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
 
         let system_msg = serde_json::json!({
             "role": "system",
@@ -1705,7 +1705,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_user_audio_without_text() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         store
             .save_media("main", "voice-input.webm", b"RIFFfake")
             .await
@@ -1735,7 +1735,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tiny_png = general_purpose::STANDARD
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=")
             .unwrap();
@@ -1835,7 +1835,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_exec_command_for_tool_result() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",
@@ -1864,7 +1864,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_redacts_exec_command_and_output_secrets() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",

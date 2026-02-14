@@ -293,7 +293,7 @@ mod tests {
             file: &str,
             content: &str,
             append: bool,
-        ) -> Result<crate::memory_writer::MemoryWriteResult> {
+        ) -> Result<MemoryWriteResult> {
             let path = self.dir.join(file);
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
@@ -306,7 +306,7 @@ mod tests {
                 tokio::fs::write(&path, content).await?;
             }
             let bytes = tokio::fs::read(&path).await?.len();
-            Ok(crate::memory_writer::MemoryWriteResult {
+            Ok(MemoryWriteResult {
                 location: path.to_string_lossy().into_owned(),
                 bytes_written: bytes,
             })
