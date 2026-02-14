@@ -10,6 +10,7 @@ Configure providers through the web UI or directly in configuration files.
 | **OpenAI Codex** | OAuth | Codex-focused cloud models |
 | **GitHub Copilot** | OAuth | Requires active Copilot subscription |
 | **Local LLM** | Local runtime | Runs models on your machine |
+| **OpenAI-compatible APIs (e.g., Z.AI)** | API key | Configure via `providers.<name>` + `base_url` |
 
 \*More providers are coming soon.
 
@@ -81,6 +82,20 @@ Local LLM runs models directly on your machine.
 1. Go to **Settings** -> **Providers** -> **Local LLM**.
 2. Choose a model from the local registry or download one.
 3. Save and select it as your active model.
+
+### Z.AI (OpenAI-compatible)
+
+Z.AI exposes an OpenAI-compatible Chat Completions API. Configure it under
+`providers.zai` and point `base_url` to the appropriate endpoint.
+
+```toml
+[providers.zai]
+enabled = true
+api_key = "${ZAI_API_KEY}"
+base_url = "https://api.z.ai/api/paas/v4"  # Use /api/coding/paas/v4 for Coding Plan
+models = ["glm-4.7"]
+fetch_models = false
+```
 
 ## Switching Models
 

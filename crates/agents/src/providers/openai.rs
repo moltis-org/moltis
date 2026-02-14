@@ -392,6 +392,16 @@ pub fn available_models(
 }
 
 impl OpenAiProvider {
+    fn should_disable_thinking(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("zai") || self.base_url.contains("api.z.ai")
+    }
+
+    fn apply_thinking_overrides(&self, body: &mut serde_json::Value) {
+        if self.should_disable_thinking() {
+            body["thinking"] = serde_json::json!({ "type": "disabled" });
+        }
+    }
+
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
         Self {
             api_key,
@@ -535,6 +545,7 @@ impl LlmProvider for OpenAiProvider {
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
         }
+        self.apply_thinking_overrides(&mut body);
 
         debug!(
             model = %self.model,
@@ -628,6 +639,7 @@ impl LlmProvider for OpenAiProvider {
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
             }
+            self.apply_thinking_overrides(&mut body);
 
             debug!(
                 model = %self.model,
@@ -963,6 +975,30 @@ mod tests {
             body.get("tools").is_none(),
             "tools key should be absent when no tools provided"
         );
+        assert!(
+            body.get("thinking").is_none(),
+            "thinking override should be absent for non-ZAI providers"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_with_tools_disables_thinking_for_zai() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n\
+                   data: [DONE]\n\n";
+        let (base_url, captured) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "glm-4.7".to_string(),
+            base_url,
+            "zai".to_string(),
+        );
+
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], vec![]);
+        while stream.next().await.is_some() {}
+
+        let reqs = captured.lock().unwrap();
+        let body = reqs[0].body.as_ref().expect("request should have a body");
+        assert_eq!(body["thinking"]["type"], "disabled");
     }
 
     // ── Regression: stream_with_tools must parse tool_call streaming events ──
