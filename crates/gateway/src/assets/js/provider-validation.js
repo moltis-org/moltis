@@ -113,6 +113,25 @@ export async function testModel(modelId) {
 	};
 }
 
+/**
+ * Build the payload for a `providers.save_key` RPC call.
+ */
+export function buildSaveKeyPayload(providerName, apiKey, baseUrl, model) {
+	var payload = { provider: providerName, apiKey };
+	if (baseUrl) payload.baseUrl = baseUrl;
+	if (model) payload.model = model;
+	return payload;
+}
+
+/**
+ * Persist provider credentials via the `providers.save_key` RPC.
+ * Returns the RPC response (check `.ok` for success).
+ */
+export function saveProviderKey(providerName, apiKey, baseUrl, model) {
+	var payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
+	return sendRpc("providers.save_key", payload);
+}
+
 export async function validateProviderConnection(providerName) {
 	var res = await sendRpc("models.detect_supported", {
 		provider: providerName,

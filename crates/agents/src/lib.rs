@@ -4,6 +4,7 @@
 #![cfg_attr(feature = "local-llm", allow(unsafe_code))]
 
 pub mod auth_profiles;
+pub mod memory_writer;
 pub mod model;
 pub mod multimodal;
 pub mod prompt;

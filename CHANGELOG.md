@@ -9,6 +9,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Memory bootstrap**: inject `MEMORY.md` content directly into the system
+  prompt (truncated at 20,000 chars) so the agent always has core memory
+  available without needing to call `memory_search` first. Matches OpenClaw's
+  bootstrap behavior
+- **Memory save tool**: new `memory_save` tool lets the LLM write to long-term
+  memory files (`MEMORY.md` or `memory/<name>.md`) with append/overwrite modes
+  and immediate re-indexing for search
+
+### Changed
+
+- **Memory writing**: `MemoryManager` now implements the `MemoryWriter` trait
+  directly, unifying read and write paths behind a single manager. The silent
+  memory turn and `MemorySaveTool` both delegate to the manager, which handles
+  path validation, size limits, and automatic re-indexing after writes
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Memory file watcher**: the file watcher now covers `MEMORY.md` at the data
+  directory root, which was previously excluded because the filter only matched
+  directories
+
+### Security
+
+## [0.8.28] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **Browser sandbox resolution**: `BrowserTool` now resolves sandbox mode
+  directly from `SandboxRouter` instead of relying on a `_sandbox` flag
+  injected via tool call params.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **E2E onboarding failures**: Fixed missing `saveProviderKey` export in
+  `provider-validation.js` that was accidentally left unstaged in the DRY
+  refactoring commit.
+
+### Security
+
+## [0.8.27] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **DRY voice/identity/channel utils**: Extracted shared RPC wrappers and
+  validation helpers from `onboarding-view.js` and `page-settings.js` /
+  `page-channels.js` into dedicated `voice-utils.js`, `identity-utils.js`,
+  and `channel-utils.js` modules.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Config test env isolation**: Fixed spurious
+  `save_config_to_path_removes_stale_keys_when_values_are_cleared` test
+  failure caused by `MOLTIS_IDENTITY__NAME` environment variable leaking
+  into the test via `apply_env_overrides`.
+
+### Security
+
+## [0.8.26] - 2026-02-14
+
+
+### Added
+
+- **Rustls/OpenSSL migration roadmap**: Added
+  `plans/2026-02-14-rustls-migration-and-openssl-reduction.md` with a staged
+  plan to reduce OpenSSL coupling, isolate feature gates, and move default TLS
+  networking paths toward rustls.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Windows release build reliability**: The `.exe` release workflow now forces
+  Strawberry Perl (`OPENSSL_SRC_PERL`/`PERL`) so vendored OpenSSL builds do not
+  fail due to missing Git Bash Perl modules.
+- **OpenAI tool-call ID length**: Remap tool-call IDs that exceed OpenAI's
+  40-character limit during message serialization, and generate shorter
+  synthetic IDs in the agent runner to prevent API errors.
+- **Onboarding credential persistence**: Provider credentials are now saved
+  before opening model selection during onboarding, aligning behavior with the
+  Settings > LLM flow.
+
+### Security
+
+## [0.8.25] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.24] - 2026-02-13
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.23] - 2026-02-13
+
+
+### Added
+
 - **Multi-select preferred models per provider**: The LLMs page now has a
   "Preferred Models" button per provider that opens a multi-select modal.
   Selected models are pinned at the top of the session model dropdown.

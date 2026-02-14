@@ -1,4 +1,7 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashSet, fs::OpenOptions, io::Write, net::SocketAddr, path::Path as FsPath,
+    sync::Arc,
+};
 
 use secrecy::ExposeSecret;
 
@@ -368,6 +371,34 @@ fn sandbox_container_prefix(instance_slug: &str) -> String {
 
 fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
+}
+
+fn log_startup_model_inventory(reg: &ProviderRegistry) {
+    let mut model_ids: Vec<String> = reg.list_models().iter().map(|m| m.id.clone()).collect();
+    model_ids.sort();
+    info!(
+        model_count = model_ids.len(),
+        model_ids = ?model_ids,
+        "startup model inventory"
+    );
+
+    let mut by_provider: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for model in reg.list_models() {
+        by_provider
+            .entry(model.provider.clone())
+            .or_default()
+            .push(model.id.clone());
+    }
+    for (provider, provider_models) in &mut by_provider {
+        provider_models.sort();
+        info!(
+            provider = %provider,
+            model_count = provider_models.len(),
+            model_ids = ?provider_models,
+            "startup provider model inventory"
+        );
+    }
 }
 
 async fn ollama_has_model(base_url: &str, model: &str) -> bool {
@@ -837,6 +868,161 @@ pub fn build_gateway_app(
     router.with_state(app_state)
 }
 
+fn env_var_or_unset(name: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "<unset>".to_string())
+}
+
+fn log_path_diagnostics(kind: &str, path: &FsPath) {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            info!(
+                kind,
+                path = %path.display(),
+                exists = true,
+                is_dir = metadata.is_dir(),
+                readonly = metadata.permissions().readonly(),
+                size_bytes = metadata.len(),
+                "startup path diagnostics"
+            );
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            info!(kind, path = %path.display(), exists = false, "startup path missing");
+        },
+        Err(error) => {
+            warn!(
+                kind,
+                path = %path.display(),
+                error = %error,
+                "failed to inspect startup path"
+            );
+        },
+    }
+}
+
+fn log_directory_write_probe(dir: &FsPath) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let probe_path = dir.join(format!(
+        ".moltis-write-check-{}-{nanos}.tmp",
+        std::process::id()
+    ));
+
+    match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&probe_path)
+    {
+        Ok(mut file) => {
+            if let Err(error) = file.write_all(b"probe") {
+                warn!(
+                    path = %probe_path.display(),
+                    error = %error,
+                    "startup write probe could not write to config directory"
+                );
+            } else {
+                info!(
+                    path = %probe_path.display(),
+                    "startup write probe succeeded for config directory"
+                );
+            }
+            if let Err(error) = std::fs::remove_file(&probe_path) {
+                warn!(
+                    path = %probe_path.display(),
+                    error = %error,
+                    "failed to clean up startup write probe file"
+                );
+            }
+        },
+        Err(error) => {
+            warn!(
+                path = %probe_path.display(),
+                error = %error,
+                "startup write probe failed for config directory"
+            );
+        },
+    }
+}
+
+fn log_startup_config_storage_diagnostics() {
+    let config_dir =
+        moltis_config::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".moltis"));
+    let discovered_config = moltis_config::loader::find_config_file();
+    let expected_config = moltis_config::find_or_default_config_path();
+    let provider_keys_path = config_dir.join("provider_keys.json");
+
+    let discovered_display = discovered_config
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    info!(
+        user = %env_var_or_unset("USER"),
+        home = %env_var_or_unset("HOME"),
+        config_dir = %config_dir.display(),
+        discovered_config = %discovered_display,
+        expected_config = %expected_config.display(),
+        provider_keys_path = %provider_keys_path.display(),
+        "startup configuration storage diagnostics"
+    );
+
+    log_path_diagnostics("config-dir", &config_dir);
+    log_directory_write_probe(&config_dir);
+
+    if let Some(path) = discovered_config {
+        log_path_diagnostics("config-file", &path);
+    } else if expected_config.exists() {
+        info!(
+            path = %expected_config.display(),
+            "default config file exists even though discovery did not report a named config"
+        );
+        log_path_diagnostics("config-file", &expected_config);
+    } else {
+        warn!(
+            path = %expected_config.display(),
+            "no config file detected on startup; Moltis is running with in-memory defaults until config is persisted"
+        );
+    }
+
+    if provider_keys_path.exists() {
+        log_path_diagnostics("provider-keys", &provider_keys_path);
+        match std::fs::read_to_string(&provider_keys_path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(_) => {
+                    info!(
+                        path = %provider_keys_path.display(),
+                        bytes = content.len(),
+                        "provider key store file is readable JSON"
+                    );
+                },
+                Err(error) => {
+                    warn!(
+                        path = %provider_keys_path.display(),
+                        error = %error,
+                        "provider key store file contains invalid JSON"
+                    );
+                },
+            },
+            Err(error) => {
+                warn!(
+                    path = %provider_keys_path.display(),
+                    error = %error,
+                    "provider key store file exists but is not readable"
+                );
+            },
+        }
+    } else {
+        info!(
+            path = %provider_keys_path.display(),
+            "provider key store file not found yet; it will be created after the first providers.save_key"
+        );
+    }
+}
+
 /// Start the gateway HTTP + WebSocket server.
 #[allow(clippy::expect_used)] // Startup fail-fast: DB, migrations, credential store must succeed.
 pub async fn start_gateway(
@@ -900,10 +1086,18 @@ pub async fn start_gateway(
     ));
     let (provider_summary, providers_available_at_startup) = {
         let reg = registry.read().await;
+        log_startup_model_inventory(&reg);
         (reg.provider_summary(), !reg.is_empty())
     };
     if !providers_available_at_startup {
+        let config_path = moltis_config::find_or_default_config_path();
+        let provider_keys_path = moltis_config::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".moltis"))
+            .join("provider_keys.json");
         warn!(
+            provider_summary = %provider_summary,
+            config_path = %config_path.display(),
+            provider_keys_path = %provider_keys_path.display(),
             "no LLM providers at startup; model/chat services remain active and will pick up providers after credentials are saved"
         );
     }
@@ -1093,6 +1287,7 @@ pub async fn start_gateway(
             config_dir.display()
         )
     });
+    log_startup_config_storage_diagnostics();
 
     // Enable log persistence so entries survive restarts.
     if let Some(ref buf) = log_buffer {
@@ -1996,6 +2191,7 @@ pub async fn start_gateway(
 
                     let config = moltis_memory::config::MemoryConfig {
                         db_path: memory_db_path.to_string_lossy().into(),
+                        data_dir: Some(data_dir.clone()),
                         memory_dirs: vec![
                             data_memory_file,
                             data_memory_file_lower,
@@ -2007,11 +2203,22 @@ pub async fn start_gateway(
                     let store = Box::new(moltis_memory::store_sqlite::SqliteMemoryStore::new(
                         memory_pool,
                     ));
+                    // Map file entries to their parent directory so that
+                    // root-level files like MEMORY.md are covered by the
+                    // watcher. Deduplicate via BTreeSet to avoid watching
+                    // the same directory twice.
                     let watch_dirs: Vec<_> = config
                         .memory_dirs
                         .iter()
-                        .filter(|p| p.is_dir())
-                        .cloned()
+                        .map(|p| {
+                            if p.is_dir() {
+                                p.clone()
+                            } else {
+                                p.parent().unwrap_or(p.as_path()).to_path_buf()
+                            }
+                        })
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
                         .collect();
                     let manager = Arc::new(if let Some(embedder) = embedder {
                         moltis_memory::manager::MemoryManager::new(config, store, embedder)
@@ -2295,7 +2502,7 @@ pub async fn start_gateway(
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
-            tool_registry.register(Box::new(t));
+            tool_registry.register(Box::new(t.with_sandbox_router(Arc::clone(&sandbox_router))));
         }
 
         // Register memory tools if the memory system is available.
@@ -2304,6 +2511,9 @@ pub async fn start_gateway(
                 Arc::clone(mm),
             )));
             tool_registry.register(Box::new(moltis_memory::tools::MemoryGetTool::new(
+                Arc::clone(mm),
+            )));
+            tool_registry.register(Box::new(moltis_memory::tools::MemorySaveTool::new(
                 Arc::clone(mm),
             )));
         }

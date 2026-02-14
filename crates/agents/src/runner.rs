@@ -88,6 +88,19 @@ pub struct AgentRunResult {
 /// Callback for streaming events out of the runner.
 pub type OnEvent = Box<dyn Fn(RunnerEvent) + Send + Sync>;
 
+/// Keep synthetic tool-call IDs OpenAI-compatible (`maxLength: 40`).
+const SYNTHETIC_TOOL_CALL_ID_MAX_LEN: usize = 40;
+
+fn new_synthetic_tool_call_id(prefix: &str) -> String {
+    let mut id = String::new();
+    let _ = write!(&mut id, "{prefix}_{}", uuid::Uuid::new_v4().simple());
+    if id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN {
+        return id;
+    }
+    id.truncate(SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+    id
+}
+
 /// Events emitted during the agent run.
 #[derive(Debug, Clone)]
 pub enum RunnerEvent {
@@ -251,7 +264,7 @@ fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<Stri
         .cloned()
         .unwrap_or(serde_json::json!({}));
 
-    let id = format!("text-{}", uuid::Uuid::new_v4());
+    let id = new_synthetic_tool_call_id("text");
 
     // Collect any text outside the tool_call block.
     let before = text[..start].trim();
@@ -328,7 +341,7 @@ fn parse_function_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<St
         return None;
     }
 
-    let id = format!("text-{}", uuid::Uuid::new_v4());
+    let id = new_synthetic_tool_call_id("text");
     let before = trim_tool_call_wrappers(text[..start].trim());
     let after_start = body_start + body_end_rel + "</function>".len();
     let after = trim_tool_call_wrappers(text.get(after_start..).unwrap_or("").trim());
@@ -825,7 +838,7 @@ pub async fn run_agent_loop_with_context(
             // tool-call message. Some providers (e.g. Moonshot thinking mode)
             // require this history field for follow-up tool turns.
             response.tool_calls = vec![ToolCall {
-                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
@@ -1407,7 +1420,7 @@ pub async fn run_agent_loop_streaming(
             // message so providers that validate thinking history accept the
             // next iteration.
             tool_calls = vec![ToolCall {
-                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
@@ -1679,6 +1692,7 @@ mod tests {
         let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
         assert_eq!(tc.name, "exec");
         assert_eq!(tc.arguments["command"], "ls");
+        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
         assert!(remaining.is_none());
     }
 
@@ -1711,7 +1725,20 @@ mod tests {
         assert_eq!(tc.name, "process");
         assert_eq!(tc.arguments["action"], "start");
         assert_eq!(tc.arguments["command"], "pwd");
+        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
         assert!(remaining.is_none());
+    }
+
+    #[test]
+    fn test_new_synthetic_tool_call_id_is_openai_compatible() {
+        let id = new_synthetic_tool_call_id("forced");
+        assert!(id.starts_with("forced_"));
+        assert!(id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+
+        let long_prefix_id = new_synthetic_tool_call_id(
+            "prefix_that_is_intentionally_way_too_long_for_openai_tool_call_ids",
+        );
+        assert!(long_prefix_id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
     }
 
     #[test]
