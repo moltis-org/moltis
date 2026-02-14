@@ -44,8 +44,8 @@ function ensureWsConnected() {
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "LLM", "Channel", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "LLM", "Voice", "Channel", "Summary"];
+var BASE_STEP_LABELS = ["Security", "LLM", "Channel", "Identity", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "LLM", "Voice", "Channel", "Identity", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -2372,18 +2372,20 @@ function OnboardingPage() {
 	}
 
 	// Determine which component to show for each step
-	var channelStep = voiceAvailable ? 4 : 3;
-	var voiceStep = voiceAvailable ? 3 : -1;
+	// Order: Auth(0) → LLM(1) → Voice(2)? → Channel → Identity → Summary
+	var voiceStep = voiceAvailable ? 2 : -1;
+	var channelStep = voiceAvailable ? 3 : 2;
+	var identityStep = voiceAvailable ? 4 : 3;
 	var summaryStep = voiceAvailable ? 5 : 4;
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
-			${step === 1 && html`<${IdentityStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
-			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === 1 && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
 	</div>`;
