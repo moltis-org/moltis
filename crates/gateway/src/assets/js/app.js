@@ -7,7 +7,7 @@ import { applyIdentityFavicon, formatPageTitle } from "./branding.js";
 import { SessionList } from "./components/session-list.js";
 import { onEvent } from "./events.js";
 import * as gon from "./gon.js";
-import { initMobile } from "./mobile.js";
+import { initMobile, toggleSessions } from "./mobile.js";
 import { updateNavCounts } from "./nav-counts.js";
 import { renderSessionProjectSelect } from "./project-combo.js";
 import { renderProjectSelect } from "./projects.js";
@@ -108,28 +108,102 @@ onEvent("tick", (payload) => applyMemory(payload.mem));
 // Logout button — wire up click handler once.
 var logoutBtn = document.getElementById("logoutBtn");
 var settingsBtn = document.getElementById("settingsBtn");
-if (logoutBtn) {
-	logoutBtn.addEventListener("click", () => {
-		fetch("/api/auth/logout", { method: "POST" }).finally(() => {
-			location.href = "/";
-		});
-	});
+var mobileMenuBtn = document.getElementById("mobileMenuBtn");
+var mobileMenuOverlay = document.getElementById("mobileMenuOverlay");
+var mobileMenuPanel = document.getElementById("mobileMenuPanel");
+var mobileMenuSessionsBtn = document.getElementById("mobileMenuSessionsBtn");
+var mobileMenuSettingsBtn = document.getElementById("mobileMenuSettingsBtn");
+var mobileMenuLogoutBtn = document.getElementById("mobileMenuLogoutBtn");
+
+function closeMobileMenu() {
+	if (mobileMenuPanel) mobileMenuPanel.classList.remove("open");
+	if (mobileMenuOverlay) mobileMenuOverlay.classList.remove("visible");
 }
-if (settingsBtn) {
-	settingsBtn.addEventListener("click", () => {
-		navigate(routes.identity);
+
+function toggleMobileMenu() {
+	if (!(mobileMenuPanel && mobileMenuOverlay)) return;
+	var isOpen = mobileMenuPanel.classList.contains("open");
+	if (isOpen) {
+		closeMobileMenu();
+		return;
+	}
+	mobileMenuPanel.classList.add("open");
+	mobileMenuOverlay.classList.add("visible");
+}
+
+function performLogout() {
+	closeMobileMenu();
+	fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+		location.href = "/";
 	});
 }
 
+if (logoutBtn) {
+	logoutBtn.addEventListener("click", performLogout);
+}
+if (settingsBtn) {
+	settingsBtn.addEventListener("click", () => {
+		closeMobileMenu();
+		navigate(routes.identity);
+	});
+}
+if (mobileMenuBtn) {
+	mobileMenuBtn.addEventListener("click", (e) => {
+		e.stopPropagation();
+		toggleMobileMenu();
+	});
+}
+if (mobileMenuOverlay) {
+	mobileMenuOverlay.addEventListener("click", closeMobileMenu);
+}
+if (mobileMenuSettingsBtn) {
+	mobileMenuSettingsBtn.addEventListener("click", () => {
+		closeMobileMenu();
+		navigate(routes.identity);
+	});
+}
+if (mobileMenuSessionsBtn) {
+	mobileMenuSessionsBtn.addEventListener("click", () => {
+		closeMobileMenu();
+		if (window.innerWidth < 768) {
+			toggleSessions();
+		}
+	});
+}
+if (mobileMenuLogoutBtn) {
+	mobileMenuLogoutBtn.addEventListener("click", performLogout);
+}
+window.addEventListener("resize", () => {
+	if (window.innerWidth >= 768) closeMobileMenu();
+});
+document.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closeMobileMenu();
+});
+document.addEventListener("click", (e) => {
+	if (!mobileMenuPanel?.classList.contains("open")) return;
+	if (mobileMenuPanel.contains(e.target)) return;
+	if (mobileMenuBtn?.contains(e.target)) return;
+	closeMobileMenu();
+});
+
 function updateAuthChrome(auth) {
+	var showLogout = !!(auth?.authenticated && !auth.auth_disabled && (auth.has_password || auth.has_passkeys));
 	if (logoutBtn) {
-		var showLogout = !!(auth && auth.authenticated && !auth.auth_disabled && (auth.has_password || auth.has_passkeys));
 		logoutBtn.style.display = showLogout ? "" : "none";
+	}
+	if (mobileMenuLogoutBtn) {
+		mobileMenuLogoutBtn.style.display = showLogout ? "" : "none";
+	}
+	if (mobileMenuPanel) {
+		mobileMenuPanel.classList.toggle("logout-hidden", !showLogout);
+	}
+	if (!showLogout) {
+		closeMobileMenu();
 	}
 
 	var banner = document.getElementById("authDisabledBanner");
 	if (banner) {
-		var showAuthDisabled = !!(auth && auth.auth_disabled && !auth.localhost_only);
+		var showAuthDisabled = !!(auth?.auth_disabled && !auth.localhost_only);
 		banner.style.display = showAuthDisabled ? "" : "none";
 	}
 }

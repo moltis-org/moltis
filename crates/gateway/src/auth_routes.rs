@@ -2,18 +2,21 @@ use std::{net::SocketAddr, sync::Arc};
 
 use secrecy::ExposeSecret;
 
-use axum::{
-    Json,
-    extract::{ConnectInfo, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{delete, get, post},
+use {
+    axum::{
+        Json,
+        extract::{ConnectInfo, State},
+        http::StatusCode,
+        response::IntoResponse,
+        routing::{delete, get, post},
+    },
+    axum_extra::extract::Host,
 };
 
 use crate::{
     auth::CredentialStore,
     auth_middleware::{AuthResult, AuthSession, SESSION_COOKIE, check_auth},
-    auth_webauthn::WebAuthnState,
+    auth_webauthn::WebAuthnRegistry,
     server::is_local_connection,
     state::GatewayState,
 };
@@ -22,7 +25,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AuthState {
     pub credential_store: Arc<CredentialStore>,
-    pub webauthn_state: Option<Arc<WebAuthnState>>,
+    pub webauthn_registry: Option<Arc<WebAuthnRegistry>>,
     pub gateway_state: Arc<GatewayState>,
 }
 
@@ -96,12 +99,12 @@ async fn status_handler(
 
     let setup_code_required = state.gateway_state.inner.read().await.setup_code.is_some();
 
-    let webauthn_available = state.webauthn_state.is_some();
+    let webauthn_available = state.webauthn_registry.is_some();
 
     let passkey_origins: Vec<String> = state
-        .webauthn_state
+        .webauthn_registry
         .as_ref()
-        .map(|wa| wa.get_allowed_origins())
+        .map(|reg| reg.get_all_origins())
         .unwrap_or_default();
 
     let setup_complete = state.credential_store.is_setup_complete();
@@ -495,9 +498,17 @@ fn localhost_cookie_domain(headers: &axum::http::HeaderMap) -> &'static str {
 async fn passkey_register_begin_handler(
     _session: AuthSession,
     State(state): State<AuthState>,
+    Host(host): Host,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -524,10 +535,18 @@ struct PasskeyRegisterFinishRequest {
 async fn passkey_register_finish_handler(
     _session: AuthSession,
     State(state): State<AuthState>,
+    Host(host): Host,
     Json(body): Json<PasskeyRegisterFinishRequest>,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
@@ -559,9 +578,19 @@ async fn passkey_register_finish_handler(
 
 // ── Passkey authentication (no session required) ─────────────────────────────
 
-async fn passkey_auth_begin_handler(State(state): State<AuthState>) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+async fn passkey_auth_begin_handler(
+    State(state): State<AuthState>,
+    Host(host): Host,
+) -> impl IntoResponse {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkeys = match crate::auth_webauthn::load_passkeys(&state.credential_store).await {
@@ -587,11 +616,19 @@ struct PasskeyAuthFinishRequest {
 
 async fn passkey_auth_finish_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     headers: axum::http::HeaderMap,
     Json(body): Json<PasskeyAuthFinishRequest>,
 ) -> impl IntoResponse {
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     match wa.finish_authentication(&body.challenge_id, &body.credential) {
@@ -612,6 +649,7 @@ struct SetupPasskeyBeginRequest {
 
 async fn setup_passkey_register_begin_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     Json(body): Json<SetupPasskeyBeginRequest>,
 ) -> impl IntoResponse {
     if state.credential_store.is_setup_complete() {
@@ -628,8 +666,15 @@ async fn setup_passkey_register_begin_handler(
         }
     }
 
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let existing = crate::auth_webauthn::load_passkeys(&state.credential_store)
@@ -656,6 +701,7 @@ struct SetupPasskeyFinishRequest {
 
 async fn setup_passkey_register_finish_handler(
     State(state): State<AuthState>,
+    Host(host): Host,
     headers: axum::http::HeaderMap,
     Json(body): Json<SetupPasskeyFinishRequest>,
 ) -> impl IntoResponse {
@@ -673,8 +719,15 @@ async fn setup_passkey_register_finish_handler(
         }
     }
 
-    let Some(ref wa) = state.webauthn_state else {
+    let Some(ref registry) = state.webauthn_registry else {
         return (StatusCode::NOT_IMPLEMENTED, "passkeys not configured").into_response();
+    };
+    let Some(wa) = host_to_webauthn(&host, registry) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "no passkey config for this hostname",
+        )
+            .into_response();
     };
 
     let passkey = match wa.finish_registration(&body.challenge_id, &body.credential) {
@@ -724,6 +777,16 @@ async fn setup_passkey_register_finish_handler(
         )
             .into_response(),
     }
+}
+
+/// Look up the `WebAuthnState` whose RP ID matches the hostname from the
+/// request. `host` is the value from `axum::extract::Host` (handles both
+/// HTTP/1.1 `Host` header and HTTP/2 `:authority` pseudo-header).
+fn host_to_webauthn<'a>(
+    host: &str,
+    registry: &'a WebAuthnRegistry,
+) -> Option<&'a crate::auth_webauthn::WebAuthnState> {
+    registry.get_for_host(host)
 }
 
 fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {

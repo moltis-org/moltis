@@ -59,7 +59,13 @@ function ErrorPanel({ message }) {
 }
 
 function StepIndicator({ steps, current }) {
-	return html`<div class="onboarding-steps">
+	var ref = useRef(null);
+	useEffect(() => {
+		if (!ref.current) return;
+		var active = ref.current.querySelector(".onboarding-step.active");
+		if (active) active.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+	}, [current]);
+	return html`<div class="onboarding-steps" ref=${ref}>
 		${steps.map((label, i) => {
 			var state = i < current ? "completed" : i === current ? "active" : "";
 			var isLast = i === steps.length - 1;
@@ -121,6 +127,8 @@ function AuthStep({ onNext, skippable }) {
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
 	var passkeyEnabled = webauthnAvailable && browserSupportsWebauthn && !isIpAddress;
 
+	var [setupComplete, setSetupComplete] = useState(false);
+
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => r.json())
@@ -129,6 +137,7 @@ function AuthStep({ onNext, skippable }) {
 				if (data.localhost_only) setLocalhostOnly(true);
 				if (data.webauthn_available) setWebauthnAvailable(true);
 				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
+				if (data.setup_complete) setSetupComplete(true);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
@@ -190,6 +199,7 @@ function AuthStep({ onNext, skippable }) {
 		}
 		setSaving(true);
 		var codeBody = codeRequired ? { setup_code: setupCode.trim() } : {};
+		var requestedRpId = null;
 		fetch("/api/auth/setup/passkey/register/begin", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -201,6 +211,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((data) => {
 				var options = data.options;
+				requestedRpId = options.publicKey.rp?.id || null;
 				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
 				options.publicKey.user.id = base64ToBuffer(options.publicKey.user.id);
 				if (options.publicKey.excludeCredentials) {
@@ -249,7 +260,11 @@ function AuthStep({ onNext, skippable }) {
 				if (err.name === "NotAllowedError") {
 					setError("Passkey registration was cancelled.");
 				} else {
-					setError(err.message || "Passkey registration failed");
+					var msg = err.message || "Passkey registration failed";
+					if (requestedRpId) {
+						msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+					}
+					setError(msg);
 				}
 				setSaving(false);
 			});
@@ -293,6 +308,23 @@ function AuthStep({ onNext, skippable }) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
 	}
 
+	// Setup already complete (passkeys/password configured) — let user proceed.
+	if (setupComplete) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<span class="icon icon-checkmark"></span>
+				Authentication is already configured.
+			</div>
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" onClick=${() => {
+					ensureWsConnected();
+					onNext();
+				}}>Next</button>
+			</div>
+		</div>`;
+	}
+
 	var passkeyDisabledReason = webauthnAvailable
 		? browserSupportsWebauthn
 			? isIpAddress
@@ -332,7 +364,7 @@ function AuthStep({ onNext, skippable }) {
 						placeholder="Repeat password" />
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
-				<div class="flex items-center gap-3 mt-1">
+				<div class="flex flex-wrap items-center gap-3 mt-1">
 					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
 						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
 					</button>
@@ -366,9 +398,9 @@ function AuthStep({ onNext, skippable }) {
 		<div class="flex flex-col gap-2">
 			<div class=${`backend-card ${method === "passkey" ? "selected" : ""} ${passkeyEnabled ? "" : "disabled"}`}
 				onClick=${passkeyEnabled ? () => setMethod("passkey") : null}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Passkey</span>
-					<div class="flex gap-2">
+					<div class="flex flex-wrap gap-2 justify-end">
 						${passkeyEnabled ? html`<span class="recommended-badge">Recommended</span>` : null}
 						${passkeyDisabledReason ? html`<span class="tier-badge">${passkeyDisabledReason}</span>` : null}
 					</div>
@@ -377,7 +409,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			<div class=${`backend-card ${method === "password" ? "selected" : ""}`}
 				onClick=${() => setMethod("password")}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
 				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
@@ -395,7 +427,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
 					${saving ? "Registering\u2026" : "Register passkey"}
 				</button>
@@ -420,7 +452,7 @@ function AuthStep({ onNext, skippable }) {
 					placeholder="Repeat password" />
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
@@ -431,7 +463,7 @@ function AuthStep({ onNext, skippable }) {
 
 		${
 			method === null &&
-			html`<div class="flex items-center gap-3 mt-1">
+			html`<div class="flex flex-wrap items-center gap-3 mt-1">
 			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 		</div>`
 		}
@@ -488,32 +520,36 @@ function IdentityStep({ onNext, onBack }) {
 					placeholder="e.g. Alice" autofocus />
 			</div>
 			<!-- Agent section -->
-			<div class="grid grid-cols-2 gap-x-4 gap-y-3">
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${name} onInput=${(e) => setName(e.target.value)}
-						placeholder="e.g. Rex" />
+			<div class="flex flex-col gap-3">
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:gap-x-4">
+					<div class="min-w-0">
+						<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${name} onInput=${(e) => setName(e.target.value)}
+							placeholder="e.g. Rex" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
+						<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
+					</div>
 				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
-					<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${creature} onInput=${(e) => setCreature(e.target.value)}
-						placeholder="e.g. dog" />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${vibe} onInput=${(e) => setVibe(e.target.value)}
-						placeholder="e.g. chill" />
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-x-4">
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${creature} onInput=${(e) => setCreature(e.target.value)}
+							placeholder="e.g. dog" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${vibe} onInput=${(e) => setVibe(e.target.value)}
+							placeholder="e.g. chill" />
+					</div>
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				${onBack && html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>`}
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Saving\u2026" : "Continue"}
@@ -530,9 +566,9 @@ var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 function ModelSelectCard({ model, selected, probe, onToggle }) {
 	return html`<div class="model-card ${selected ? "selected" : ""}" onClick=${onToggle}>
-		<div class="flex items-center justify-between">
+		<div class="flex flex-wrap items-center justify-between gap-2">
 			<span class="text-sm font-medium text-[var(--text)]">${model.displayName}</span>
-			<div class="flex gap-2">
+			<div class="flex flex-wrap gap-2 justify-end">
 				${model.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
 				${probe === "probing" ? html`<span class="tier-badge">Probing\u2026</span>` : null}
 				${probe && probe !== "ok" && probe !== "probing" ? html`<span class="provider-item-badge warning" title=${probe.error || ""}>Unsupported</span>` : null}
@@ -765,9 +801,9 @@ function OnboardingProviderRow({
 										onClick=${() => {
 											if (b.available) setSelectedBackend(b.id);
 										}}>
-										<div class="flex items-center justify-between">
+										<div class="flex flex-wrap items-center justify-between gap-2">
 											<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
-											<div class="flex gap-2">
+											<div class="flex flex-wrap gap-2 justify-end">
 												${b.id === sysInfo.recommendedBackend && b.available ? html`<span class="recommended-badge">Recommended</span>` : null}
 												${b.available ? null : html`<span class="tier-badge">Not installed</span>`}
 											</div>
@@ -788,9 +824,9 @@ function OnboardingProviderRow({
 											.filter((m) => m.backend === selectedBackend)
 											.map(
 												(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => onConfigureLocalModel(mdl)}>
-											<div class="flex items-center justify-between">
+											<div class="flex flex-wrap items-center justify-between gap-2">
 												<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
-												<div class="flex gap-2">
+												<div class="flex flex-wrap gap-2 justify-end">
 													<span class="tier-badge">${mdl.minRamGb}GB</span>
 													${mdl.suggested ? html`<span class="recommended-badge">Recommended</span>` : null}
 												</div>
@@ -1391,7 +1427,7 @@ function ProviderStep({ onNext, onBack }) {
 			)}
 		</div>
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
@@ -1918,7 +1954,7 @@ function VoiceStep({ onNext, onBack }) {
 		}
 
 		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<button class="provider-btn" onClick=${onNext}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
@@ -2028,7 +2064,7 @@ function ChannelStep({ onNext, onBack }) {
 				${error && html`<${ErrorPanel} message=${error} />`}
 			</form>`
 		}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			${
 				connected
@@ -2269,7 +2305,7 @@ function SummaryStep({ onBack, onFinish }) {
 			}
 		</div>
 
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<div class="flex-1" />
 			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
@@ -2397,7 +2433,8 @@ var containerRef = null;
 
 export function mountOnboarding(container) {
 	containerRef = container;
-	container.style.cssText = "display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;";
+	container.style.cssText =
+		"display:flex;align-items:center;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;";
 	render(html`<${OnboardingPage} />`, container);
 }
 

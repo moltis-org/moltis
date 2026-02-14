@@ -1570,19 +1570,65 @@
   /* Onboarding wizard */
   .onboarding-card {
     width: 100%;
-    max-width: 520px;
+    max-width: min(520px, calc(100vw - 2rem));
+    box-sizing: border-box;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     padding: 32px;
+    overflow-x: hidden;
+    overflow-y: visible;
     animation: msg-in 0.2s ease-out;
+  }
+  @media (max-width: 640px) {
+    .onboarding-card {
+      max-width: calc(100vw - 1rem);
+      padding: 18px 14px;
+    }
+
+    /* iOS Safari zooms focused inputs below 16px and can stay zoomed in. */
+    .onboarding-card .provider-key-input {
+      font-size: 16px;
+    }
+
+    /* Keep emoji entry visually larger while still above Safari zoom threshold. */
+    .onboarding-card .settings-emoji-field .provider-key-input {
+      font-size: 20px;
+    }
+
+    .onboarding-steps {
+      justify-content: flex-start;
+      padding-inline: 2px;
+      margin-inline: -2px;
+    }
+
+    .onboarding-step-line {
+      width: 24px;
+      margin-inline: 2px;
+    }
+
+    .onboarding-step-label {
+      font-size: 0.62rem;
+    }
+  }
+  @media (max-width: 480px) {
+    .onboarding-card {
+      padding: 16px 12px;
+    }
   }
   .onboarding-steps {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 0 8px;
+  }
+  .onboarding-steps::-webkit-scrollbar {
+    display: none;
   }
   .onboarding-step {
     display: flex;

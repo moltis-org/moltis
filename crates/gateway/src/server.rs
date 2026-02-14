@@ -740,7 +740,7 @@ pub fn build_gateway_app(
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
     http_request_logs: bool,
-    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
+    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -752,7 +752,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: webauthn_state.clone(),
+            webauthn_registry: webauthn_registry.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -803,7 +803,7 @@ pub fn build_gateway_app(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     http_request_logs: bool,
-    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
+    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -824,7 +824,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: webauthn_state.clone(),
+            webauthn_registry: webauthn_registry.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -1326,80 +1326,94 @@ pub async fn start_gateway(
             .expect("failed to init credential store"),
     );
 
-    // Initialize WebAuthn state for passkey support.
-    // RP ID: explicit env > PaaS env (DO, Render, Fly, Railway) > "localhost"
-    let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
-        .or_else(|_| std::env::var("APP_DOMAIN"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
-        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
-        .unwrap_or_else(|_| "localhost".into());
+    // Initialize WebAuthn registry for passkey support.
+    // Each hostname the user may access from gets its own RP ID + origins entry
+    // so passkeys work from localhost, mDNS hostname, and .local alike.
     let default_scheme = if config.tls.enabled {
         "https"
     } else {
         "http"
     };
-    // Origin: explicit env > PaaS env (DO, Render, Fly) > scheme://rp_id(:port)
-    // PaaS platforms proxy on standard ports, so skip the port when rp_id isn't localhost.
-    let rp_origin_str = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
+
+    // Explicit RP ID from env (PaaS platforms).
+    let explicit_rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
+        .or_else(|_| std::env::var("APP_DOMAIN"))
+        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
+        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
+        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
+        .ok();
+
+    let explicit_origin = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
         .or_else(|_| std::env::var("APP_URL"))
         .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .unwrap_or_else(|_| {
-            if rp_id == "localhost" {
-                format!("{default_scheme}://{rp_id}:{port}")
-            } else {
-                // PaaS platforms terminate TLS at the proxy, so the browser always
-                // sees https even though the app runs with --no-tls.
-                format!("https://{rp_id}")
+        .ok();
+
+    let webauthn_registry = {
+        let mut registry = crate::auth_webauthn::WebAuthnRegistry::new();
+        let mut any_ok = false;
+
+        // Helper: try to add one RP ID with its origin + extras to the registry.
+        let mut try_add = |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
+            let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
+                tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
+                return;
+            };
+            match crate::auth_webauthn::WebAuthnState::new(rp_id, &origin_url, extras) {
+                Ok(wa) => {
+                    info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
+                    registry.add(rp_id.to_owned(), wa);
+                    any_ok = true;
+                },
+                Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
             }
-        });
-    // Build extra allowed origins so passkeys work when accessed via mDNS
-    // hostname (e.g. http://m4max.local:18080) in addition to localhost.
-    let mut extra_origins = Vec::new();
-    if rp_id == "localhost"
-        && let Ok(url) =
-            webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://moltis.localhost:{port}"))
-    {
-        extra_origins.push(url);
-    }
-    if let Ok(hn) = hostname::get() {
-        let hn_str = hn.to_string_lossy();
-        if hn_str != rp_id && hn_str != "localhost" {
-            if let Ok(url) =
-                webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://{hn_str}:{port}"))
-            {
-                extra_origins.push(url);
-            }
-            // Also accept the .local mDNS variant if the hostname doesn't
-            // already end with .local.
-            if !hn_str.ends_with(".local")
-                && let Ok(url) = webauthn_rs::prelude::Url::parse(&format!(
-                    "{default_scheme}://{hn_str}.local:{port}"
+        };
+
+        if let Some(ref rp_id) = explicit_rp_id {
+            // PaaS: single explicit RP ID.
+            let origin = explicit_origin
+                .clone()
+                .unwrap_or_else(|| format!("https://{rp_id}"));
+            try_add(rp_id, &origin, &[]);
+        } else {
+            // Local: register localhost + moltis.localhost as extras.
+            let localhost_origin = format!("{default_scheme}://localhost:{port}");
+            let moltis_localhost: Vec<webauthn_rs::prelude::Url> =
+                webauthn_rs::prelude::Url::parse(&format!(
+                    "{default_scheme}://moltis.localhost:{port}"
                 ))
-            {
-                extra_origins.push(url);
+                .into_iter()
+                .collect();
+            try_add("localhost", &localhost_origin, &moltis_localhost);
+
+            // Register system hostname and hostname.local for LAN/mDNS access.
+            if let Ok(hn) = hostname::get() {
+                let hn_str = hn.to_string_lossy();
+                if hn_str != "localhost" {
+                    // hostname.local as RP ID (mDNS access)
+                    let local_name = if hn_str.ends_with(".local") {
+                        hn_str.to_string()
+                    } else {
+                        format!("{hn_str}.local")
+                    };
+                    let local_origin = format!("{default_scheme}://{local_name}:{port}");
+                    try_add(&local_name, &local_origin, &[]);
+
+                    // bare hostname as RP ID (direct LAN access)
+                    let bare = hn_str.strip_suffix(".local").unwrap_or(&hn_str);
+                    if bare != local_name {
+                        let bare_origin = format!("{default_scheme}://{bare}:{port}");
+                        try_add(bare, &bare_origin, &[]);
+                    }
+                }
             }
         }
-    }
 
-    let webauthn_state = match webauthn_rs::prelude::Url::parse(&rp_origin_str) {
-        Ok(rp_origin) => {
-            match crate::auth_webauthn::WebAuthnState::new(&rp_id, &rp_origin, &extra_origins) {
-                Ok(wa) => {
-                    let origins = wa.get_allowed_origins();
-                    info!(rp_id = %rp_id, origins = ?origins, "WebAuthn passkeys enabled");
-                    Some(Arc::new(wa))
-                },
-                Err(e) => {
-                    tracing::warn!("failed to init WebAuthn: {e}");
-                    None
-                },
-            }
-        },
-        Err(e) => {
-            tracing::warn!("invalid WebAuthn origin URL '{rp_origin_str}': {e}");
+        if any_ok {
+            info!(origins = ?registry.get_all_origins(), "WebAuthn passkeys enabled");
+            Some(Arc::new(registry))
+        } else {
             None
-        },
+        }
     };
 
     // If MOLTIS_PASSWORD is set and no password in DB yet, migrate it.
@@ -2708,7 +2722,7 @@ pub async fn start_gateway(
         Arc::clone(&methods),
         push_service,
         config.server.http_request_logs,
-        webauthn_state.clone(),
+        webauthn_registry.clone(),
     );
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     #[cfg(not(feature = "push-notifications"))]
@@ -2716,7 +2730,7 @@ pub async fn start_gateway(
         Arc::clone(&state),
         Arc::clone(&methods),
         config.server.http_request_logs,
-        webauthn_state.clone(),
+        webauthn_registry.clone(),
     );
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;

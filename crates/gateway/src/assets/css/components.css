@@ -1,5 +1,17 @@
 /* ══ Components: Modals, Providers, Crons, Logs, Channels, Projects, Skills, Forms ══ */
 
+/* Horizontal 3-dot icon for compact mobile controls */
+.icon-menu-dots-horizontal {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1.65' fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='12' cy='12' r='1.65' fill='black'/%3E%3Ccircle cx='19' cy='12' r='1.65' fill='black'/%3E%3C/svg%3E");
+}
+
+/* Slightly bolder burger glyph used in the mobile header button. */
+.icon-burger-mobile {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='2.3' stroke-linecap='round' d='M4 7h16M4 12h16M4 17h16'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='2.3' stroke-linecap='round' d='M4 7h16M4 12h16M4 17h16'/%3E%3C/svg%3E");
+}
+
 /* ── Provider Modal ── */
 
 .provider-modal-backdrop {
@@ -120,6 +132,17 @@
 .provider-key-input:focus {
   border-color: var(--border-strong);
   outline: none;
+}
+
+@media (max-width: 640px) {
+  /* Prevent iOS Safari from auto-zooming onboarding inputs (<16px). */
+  .onboarding-card .provider-key-input {
+    font-size: 16px;
+  }
+
+  .onboarding-card .settings-emoji-field .provider-key-input {
+    font-size: 20px;
+  }
 }
 
 .btn-row { display: flex; gap: 8px; align-items: center; }
@@ -686,6 +709,18 @@
   overflow: hidden;
 }
 
+.settings-content-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-mobile-controls {
+  display: none;
+}
+
 .settings-sidebar {
   width: 240px;
   flex-shrink: 0;
@@ -880,6 +915,7 @@
 .settings-emoji-field {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.35rem;
   position: relative;
 }
@@ -922,6 +958,13 @@
 .settings-emoji-btn.active {
   border-color: var(--accent);
   background: var(--accent-subtle);
+}
+
+@media (max-width: 480px) {
+  .settings-emoji-picker {
+    grid-template-columns: repeat(6, 1fr);
+    max-width: min(280px, calc(100vw - 2rem));
+  }
 }
 
 /* ── Auth Pages (Login / Setup) ── */

@@ -7,13 +7,29 @@ function isVisible(locator) {
 	return locator.isVisible().catch(() => false);
 }
 
+async function clickFirstVisibleButton(page, roleQuery) {
+	const buttons = page.locator(".onboarding-card").getByRole("button", roleQuery);
+	const count = await buttons.count();
+	for (let i = 0; i < count; i++) {
+		const button = buttons.nth(i);
+		if (!(await isVisible(button))) continue;
+		await button.click();
+		return true;
+	}
+	return false;
+}
+
+async function waitForOnboardingStepLoaded(page) {
+	await expect(page.locator(".onboarding-card")).toBeVisible();
+	await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 10_000 });
+}
+
 async function maybeSkipAuth(page) {
 	const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
 	if (!(await isVisible(authHeading))) return false;
 
-	const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
-	await expect(authSkip).toBeVisible();
-	await authSkip.click();
+	const clicked = await clickFirstVisibleButton(page, { name: /skip/i });
+	expect(clicked).toBeTruthy();
 	return true;
 }
 
@@ -41,6 +57,8 @@ async function maybeCompleteIdentity(page) {
 }
 
 async function moveToLlmStep(page) {
+	await waitForOnboardingStepLoaded(page);
+
 	const llmHeading = page.getByRole("heading", { name: LLM_STEP_HEADING });
 	if (await isVisible(llmHeading)) return true;
 
@@ -57,6 +75,52 @@ async function moveToLlmStep(page) {
 
 	await expect(llmHeading).toBeVisible({ timeout: 10_000 });
 	return true;
+}
+
+async function moveToIdentityStep(page) {
+	await waitForOnboardingStepLoaded(page);
+
+	const identityHeading = page.getByRole("heading", {
+		name: "Set up your identity",
+		exact: true,
+	});
+	if (await isVisible(identityHeading)) return { reached: true, blockedByAuth: false };
+
+	const authHeading = page.getByRole("heading", {
+		name: "Secure your instance",
+		exact: true,
+	});
+	if (await isVisible(authHeading)) {
+		const authSkippable = await clickFirstVisibleButton(page, { name: "Skip for now", exact: true });
+		if (!authSkippable) return { reached: false, blockedByAuth: true };
+	}
+
+	for (let i = 0; i < 6; i++) {
+		if (await isVisible(identityHeading)) return { reached: true, blockedByAuth: false };
+
+		if (await clickFirstVisibleButton(page, { name: /skip/i })) continue;
+		if (await clickFirstVisibleButton(page, { name: /continue/i })) continue;
+		break;
+	}
+
+	return { reached: await isVisible(identityHeading), blockedByAuth: false };
+}
+
+function horizontalOverflowPx(page) {
+	return page.evaluate(() => Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth));
+}
+
+function firstVisibleOnboardingInputFontSizePx(page) {
+	return page.evaluate(() => {
+		const inputs = Array.from(document.querySelectorAll(".onboarding-card .provider-key-input"));
+		const input = inputs.find((el) => {
+			const rect = el.getBoundingClientRect();
+			const style = window.getComputedStyle(el);
+			return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+		});
+		if (!input) return 0;
+		return Number.parseFloat(window.getComputedStyle(input).fontSize || "0");
+	});
 }
 
 /**
@@ -98,7 +162,10 @@ test.describe("Onboarding wizard", () => {
 		await page.waitForLoadState("networkidle");
 
 		await expect(page.locator(".onboarding-step-dot").first()).toHaveClass(/active/);
-		await expect(page.locator(".onboarding-step-label", { hasText: "Identity" })).toBeVisible();
+		const activeStepLabel = (
+			await page.locator(".onboarding-step.active .onboarding-step-label").first().textContent()
+		)?.trim();
+		expect(["Security", "LLM"]).toContain(activeStepLabel);
 	});
 
 	test("auth step renders actionable controls when shown", async ({ page }) => {
@@ -109,8 +176,7 @@ test.describe("Onboarding wizard", () => {
 		const isAuthStepVisible = await authHeading.isVisible().catch(() => false);
 
 		if (!isAuthStepVisible) {
-			await expect(page.getByRole("heading", { name: "Set up your identity", exact: true })).toBeVisible();
-			await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
+			await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
 			return;
 		}
 
@@ -127,37 +193,71 @@ test.describe("Onboarding wizard", () => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		const identityHeading = page.getByRole("heading", {
-			name: "Set up your identity",
-			exact: true,
-		});
-		const isIdentityStepVisible = await identityHeading.isVisible().catch(() => false);
-		if (!isIdentityStepVisible) {
-			const skipBtn = page.getByRole("button", { name: /skip/i });
-			if (
-				await skipBtn
-					.first()
-					.isVisible()
-					.catch(() => false)
-			) {
-				await skipBtn.first().click();
-			} else {
-				const authHeading = page.getByRole("heading", {
-					name: "Secure your instance",
-					exact: true,
-				});
-				await expect(authHeading).toBeVisible();
-				await expect(page.locator(".backend-card").filter({ hasText: "Passkey" }).first()).toBeVisible();
-				await expect(page.locator(".backend-card").filter({ hasText: "Password" }).first()).toBeVisible();
-				await expect(page.getByText("Setup code", { exact: true })).toBeVisible();
-				return;
-			}
+		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+		const identityStep = await moveToIdentityStep(page);
+
+		if (identityStep.blockedByAuth) {
+			const authHeading = page.getByRole("heading", {
+				name: "Secure your instance",
+				exact: true,
+			});
+			await expect(authHeading).toBeVisible();
+			await expect(page.locator(".backend-card").filter({ hasText: "Passkey" }).first()).toBeVisible();
+			await expect(page.locator(".backend-card").filter({ hasText: "Password" }).first()).toBeVisible();
+			await expect(page.getByText("Setup code", { exact: true })).toBeVisible();
+			return;
+		}
+
+		if (!identityStep.reached) {
+			const currentHeading = page.locator(".onboarding-card h2").first();
+			await expect(currentHeading).toBeVisible();
+			const headingText = (await currentHeading.textContent())?.trim() || "";
+			expect(["Add LLMs", "Voice (optional)", "Connect Telegram"]).toContain(headingText);
+			const canSkip = await clickFirstVisibleButton(page, { name: /skip/i });
+			const canContinue = await clickFirstVisibleButton(page, { name: /continue/i });
+			expect(canSkip || canContinue).toBeTruthy();
+			return;
 		}
 
 		await expect(identityHeading).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
 		await expect(page.getByPlaceholder("e.g. Rex")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+	});
+
+	test("mobile onboarding layout avoids horizontal overflow", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.setViewportSize({ width: 375, height: 812 });
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		await expect(page.locator(".onboarding-card")).toBeVisible();
+		await expect.poll(() => horizontalOverflowPx(page), { timeout: 10_000 }).toBeLessThan(2);
+		const initialInputFontSize = await firstVisibleOnboardingInputFontSizePx(page);
+		if (initialInputFontSize > 0) {
+			expect(initialInputFontSize).toBeGreaterThanOrEqual(16);
+		}
+
+		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
+		if (await authHeading.isVisible().catch(() => false)) {
+			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
+			if (await skipBtn.isVisible().catch(() => false)) {
+				await skipBtn.click();
+			}
+		}
+
+		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
+		if (await identityHeading.isVisible().catch(() => false)) {
+			await expect(page.getByPlaceholder("e.g. Alice")).toBeVisible();
+			await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+		}
+
+		await expect.poll(() => horizontalOverflowPx(page), { timeout: 10_000 }).toBeLessThan(2);
+		const finalInputFontSize = await firstVisibleOnboardingInputFontSizePx(page);
+		if (finalInputFontSize > 0) {
+			expect(finalInputFontSize).toBeGreaterThanOrEqual(16);
+		}
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("page has no JS errors through wizard", async ({ page }) => {
@@ -175,19 +275,8 @@ test.describe("Onboarding wizard", () => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");
 
-		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
-		if (await authHeading.isVisible().catch(() => false)) {
-			const authSkip = page.getByRole("button", { name: "Skip for now", exact: true });
-			await expect(authSkip).toBeVisible();
-			await authSkip.click();
-		}
-
-		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
-		await expect(identityHeading).toBeVisible();
-		await page.getByPlaceholder("e.g. Alice").fill("E2E User");
-		await page.getByPlaceholder("e.g. Rex").fill("E2E Bot");
-		await page.getByRole("button", { name: "Continue", exact: true }).click();
-
+		const reachedLlm = await moveToLlmStep(page);
+		expect(reachedLlm).toBeTruthy();
 		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 

@@ -72,16 +72,14 @@ export function EmojiPicker({ value, onChange, onSelect }) {
 	return html`<div class="settings-emoji-field" ref=${wrapRef}>
 		<input
 			type="text"
-			class="provider-key-input"
-			style="width:3.5rem;text-align:center;font-size:1.3rem;padding:0.35rem"
+			class="provider-key-input w-12 px-1 py-1 text-center text-xl"
 			value=${value || ""}
 			onInput=${(e) => onChange(e.target.value)}
 			placeholder="\u{1f43e}"
 		/>
 		<button
 			type="button"
-			class="provider-btn"
-			style="font-size:0.75rem"
+			class="provider-btn provider-btn-sm"
 			onClick=${() => setOpen(!open)}
 		>
 			${open ? "Close" : "Pick"}

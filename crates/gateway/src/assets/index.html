@@ -117,6 +117,10 @@
 
   <span id="memoryInfo" class="text-xs text-[var(--muted)]" title="Process memory · System free memory"></span>
 
+  <button id="mobileMenuBtn" class="burger-btn" title="Menu" aria-label="Open menu">
+    <span class="icon icon-md icon-burger-mobile"></span>
+  </button>
+
   <div class="header-actions">
     <button id="settingsBtn" class="header-link-btn" title="Settings">
       <span class="icon icon-settings"></span>
@@ -153,6 +157,22 @@
   </button>
 
 </header>
+
+<div id="mobileMenuOverlay" class="mobile-menu-overlay"></div>
+<div id="mobileMenuPanel" class="mobile-menu-panel">
+  <button id="mobileMenuSessionsBtn" type="button" class="mobile-menu-item">
+    <span class="icon icon-chat-dots"></span>
+    <span>Sessions</span>
+  </button>
+  <button id="mobileMenuSettingsBtn" type="button" class="mobile-menu-item">
+    <span class="icon icon-settings"></span>
+    <span>Settings</span>
+  </button>
+  <button id="mobileMenuLogoutBtn" type="button" class="mobile-menu-item mobile-menu-item-danger" style="display:none">
+    <span class="icon icon-logout"></span>
+    <span>Sign out</span>
+  </button>
+</div>
 
 <!-- Auth disabled warning banner (shown by JS when auth is removed) -->
 <div id="authDisabledBanner" class="auth-disabled-banner" style="display:none">
