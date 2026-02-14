@@ -102,6 +102,39 @@ fn parse_models_param(params: &Value) -> Vec<String> {
     models
 }
 
+struct ProviderSetupTiming {
+    operation: &'static str,
+    provider: String,
+    started: std::time::Instant,
+}
+
+impl ProviderSetupTiming {
+    fn start(operation: &'static str, provider: Option<&str>) -> Self {
+        let provider_name = provider.unwrap_or("<missing>").to_string();
+        info!(
+            operation,
+            provider = %provider_name,
+            "provider setup operation started"
+        );
+        Self {
+            operation,
+            provider: provider_name,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for ProviderSetupTiming {
+    fn drop(&mut self) {
+        info!(
+            operation = self.operation,
+            provider = %self.provider,
+            elapsed_ms = self.started.elapsed().as_millis(),
+            "provider setup operation finished"
+        );
+    }
+}
+
 /// File-based provider config storage at `~/.config/moltis/provider_keys.json`.
 /// Stores per-provider configuration including API keys, base URLs, and models.
 #[derive(Debug, Clone)]
@@ -1326,6 +1359,10 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn save_key(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1656,6 +1693,10 @@ impl ProviderSetupService for LiveProviderSetupService {
     async fn validate_key(&self, params: Value) -> ServiceResult {
         use moltis_agents::model::ChatMessage;
 
+        let _timing = ProviderSetupTiming::start(
+            "providers.validate_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1762,6 +1803,12 @@ impl ProviderSetupService for LiveProviderSetupService {
             }));
         }
 
+        info!(
+            provider = provider_name,
+            model_count = models.len(),
+            "provider validation discovered candidate models for probing"
+        );
+
         let probe = [ChatMessage::user("ping")];
         let mut probe_attempted = false;
         let mut unsupported_errors = Vec::new();
@@ -1770,12 +1817,20 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         // Try multiple models because provider catalogs can include endpoint-
         // incompatible IDs. We only need one successful probe to validate creds.
-        for probe_model in &models {
+        for (attempt, probe_model) in models.iter().enumerate() {
             let Some(llm_provider) = temp_registry.get(&probe_model.id) else {
                 continue;
             };
 
             probe_attempted = true;
+            let probe_started = std::time::Instant::now();
+            info!(
+                provider = provider_name,
+                model = %probe_model.id,
+                attempt = attempt + 1,
+                total_models = models.len(),
+                "provider validation model probe started"
+            );
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(20),
                 llm_provider.complete(&probe, &[]),
@@ -1784,6 +1839,12 @@ impl ProviderSetupService for LiveProviderSetupService {
 
             match result {
                 Ok(Ok(_)) => {
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe succeeded"
+                    );
                     probe_succeeded = true;
                     break;
                 },
@@ -1798,6 +1859,13 @@ impl ProviderSetupService for LiveProviderSetupService {
                         .to_string();
                     let is_unsupported =
                         error_obj.get("type").and_then(|v| v.as_str()) == Some("unsupported_model");
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        unsupported = is_unsupported,
+                        "provider validation model probe failed"
+                    );
                     if is_unsupported {
                         unsupported_errors.push(detail);
                         continue;
@@ -1806,6 +1874,12 @@ impl ProviderSetupService for LiveProviderSetupService {
                     break;
                 },
                 Err(_) => {
+                    warn!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe timed out"
+                    );
                     last_error = Some(
                         "Connection timed out after 20 seconds. Check your endpoint URL and try again."
                             .to_string(),
@@ -1913,6 +1987,10 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn save_models(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_models",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
