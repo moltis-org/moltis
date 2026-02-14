@@ -188,6 +188,56 @@ impl WebAuthnState {
     }
 }
 
+/// Registry of WebAuthn instances keyed by RP ID, allowing passkey
+/// registration/authentication from multiple hostnames (e.g. `localhost`
+/// and `m4max.local`).
+pub struct WebAuthnRegistry {
+    entries: Vec<(String, WebAuthnState)>,
+}
+
+impl Default for WebAuthnRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WebAuthnRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Add a WebAuthn instance for the given RP ID.
+    pub fn add(&mut self, rp_id: String, state: WebAuthnState) {
+        self.entries.push((rp_id, state));
+    }
+
+    /// Look up the `WebAuthnState` whose RP ID matches the hostname portion
+    /// of the request's `Host` header.
+    pub fn get_for_host(&self, host: &str) -> Option<&WebAuthnState> {
+        let hostname = host.split(':').next().unwrap_or(host);
+        self.entries
+            .iter()
+            .find(|(rpid, _)| rpid == hostname)
+            .map(|(_, state)| state)
+    }
+
+    /// Return combined allowed origins from all registered instances.
+    pub fn get_all_origins(&self) -> Vec<String> {
+        let mut origins = Vec::new();
+        for (_, state) in &self.entries {
+            for o in state.get_allowed_origins() {
+                if !origins.contains(&o) {
+                    origins.push(o);
+                }
+            }
+        }
+        origins
+    }
+}
+
 /// Load all stored passkeys from the credential store as `webauthn_rs::Passkey` objects.
 pub async fn load_passkeys(store: &CredentialStore) -> anyhow::Result<Vec<Passkey>> {
     let rows = store.load_all_passkey_data().await?;

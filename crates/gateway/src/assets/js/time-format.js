@@ -14,7 +14,8 @@ function parseTime(el) {
 	return DateTime.fromISO(val, { zone: "utc" });
 }
 
-function formatTime(dt) {
+function formatTime(dt, format) {
+	if (format === "year-month") return dt.toFormat("LLL yyyy");
 	var now = DateTime.now();
 	var diff = now.toMillis() - dt.toMillis();
 	if (diff >= 0 && diff < 30000) return "just now";
@@ -27,7 +28,8 @@ function hydrateTimeElements() {
 	for (var el of els) {
 		var dt = parseTime(el);
 		if (!dt?.isValid) continue;
-		el.textContent = formatTime(dt);
+		var fmt = el.getAttribute("data-format") || null;
+		el.textContent = formatTime(dt, fmt);
 		el.title = dt.toLocaleString(DateTime.DATETIME_FULL);
 		el.setAttribute("data-hydrated", "1");
 	}

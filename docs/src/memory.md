@@ -131,11 +131,12 @@ By default, moltis indexes markdown files from:
 
 ## Tools
 
-The memory system exposes two agent tools:
+The memory system exposes three agent tools:
 
 ### memory_search
 
-Search memory with a natural language query.
+Search memory with a natural language query. Returns relevant chunks ranked
+by hybrid (vector + keyword) similarity.
 
 ```json
 {
@@ -146,7 +147,8 @@ Search memory with a natural language query.
 
 ### memory_get
 
-Retrieve a specific chunk by ID.
+Retrieve a specific memory chunk by ID. Useful for reading the full text of a
+result found via `memory_search`.
 
 ```json
 {
@@ -154,31 +156,106 @@ Retrieve a specific chunk by ID.
 }
 ```
 
+### memory_save
+
+Save content to long-term memory files. The agent uses this tool when you ask
+it to remember something ("remember that I prefer dark mode") or when it
+decides certain information is worth persisting.
+
+```json
+{
+  "content": "User prefers dark mode and Vim keybindings.",
+  "file": "MEMORY.md",
+  "append": true
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `content` | string | *(required)* | The content to save |
+| `file` | string | `MEMORY.md` | Target file: `MEMORY.md`, `memory.md`, or `memory/<name>.md` |
+| `append` | boolean | `true` | Append to existing file (`true`) or overwrite (`false`) |
+
+**Path validation:** The tool enforces a strict allowlist of write targets
+to prevent path traversal attacks. Only these patterns are accepted:
+
+- `MEMORY.md` or `memory.md` (root memory files)
+- `memory/<name>.md` (files in the memory subdirectory, one level deep)
+
+Absolute paths, `..` traversal, non-`.md` extensions, spaces in filenames,
+and nested subdirectories (`memory/a/b.md`) are all rejected. Content is
+limited to 50 KB per write.
+
+**Auto-reindex:** After writing, the memory system automatically re-indexes
+the affected file so the new content is immediately searchable via
+`memory_search`.
+
+## Silent Memory Turn (Pre-Compaction Flush)
+
+Before compacting a session (summarizing old messages to free context window
+space), Moltis runs a **silent agentic turn** that reviews the conversation
+and saves important information to memory files. This ensures durable memories
+survive compaction.
+
+**How it works:**
+
+1. When a session approaches the model's context window limit, the gateway
+   triggers compaction
+2. Before summarizing, a hidden LLM turn runs with a special system prompt
+   asking the agent to save noteworthy information
+3. The agent writes to `MEMORY.md` and/or `memory/YYYY-MM-DD.md` using an
+   internal `write_file` tool backed by the same `MemoryWriter` as
+   `memory_save`
+4. The LLM's response text is discarded (the user sees nothing)
+5. Written files are automatically re-indexed for future search
+
+**What gets saved:**
+
+- User preferences and working style
+- Key decisions and their reasoning
+- Project context, architecture choices, and conventions
+- Important facts, names, dates, and relationships
+- Technical setup details (tools, languages, frameworks)
+
+This is the same approach used by OpenClaw. See the
+[comparison page](memory-comparison.md) for a detailed analysis of both
+systems.
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Memory Manager                          │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   Chunker   │  │   Search    │  │  Session Export     │  │
-│  │ (markdown)  │  │  (hybrid)   │  │  (transcripts)      │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                    Storage Backend                          │
-│  ┌────────────────────────┐  ┌────────────────────────┐    │
-│  │   Built-in (SQLite)    │  │   QMD (sidecar)        │    │
-│  │  - FTS5 keyword        │  │  - BM25 keyword        │    │
-│  │  - Vector similarity   │  │  - Vector similarity   │    │
-│  │  - Embedding cache     │  │  - LLM reranking       │    │
-│  └────────────────────────┘  └────────────────────────┘    │
-├─────────────────────────────────────────────────────────────┤
-│                  Embedding Providers                        │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────────┐  │
-│  │  Local  │  │ Ollama  │  │ OpenAI  │  │ Batch/Fallback│  │
-│  │  (GGUF) │  │         │  │         │  │               │  │
-│  └─────────┘  └─────────┘  └─────────┘  └───────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       Memory Manager                             │
+│               (implements MemoryWriter trait)                     │
+├──────────────────────────────────────────────────────────────────┤
+│                         Read Path                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐      │
+│  │   Chunker   │  │   Search    │  │  Session Export     │      │
+│  │ (markdown)  │  │  (hybrid)   │  │  (transcripts)      │      │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘      │
+├──────────────────────────────────────────────────────────────────┤
+│                        Write Path                                │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────┐  │
+│  │  memory_save    │  │  Silent Turn     │  │  Path          │  │
+│  │  (agent tool)   │  │  (pre-compact)   │  │  Validation    │  │
+│  └─────────────────┘  └──────────────────┘  └────────────────┘  │
+├──────────────────────────────────────────────────────────────────┤
+│                      Storage Backend                             │
+│  ┌────────────────────────┐  ┌────────────────────────┐         │
+│  │   Built-in (SQLite)    │  │   QMD (sidecar)        │         │
+│  │  - FTS5 keyword        │  │  - BM25 keyword        │         │
+│  │  - Vector similarity   │  │  - Vector similarity   │         │
+│  │  - Embedding cache     │  │  - LLM reranking       │         │
+│  └────────────────────────┘  └────────────────────────┘         │
+├──────────────────────────────────────────────────────────────────┤
+│                    Embedding Providers                            │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────────┐      │
+│  │  Local  │  │ Ollama  │  │ OpenAI  │  │ Batch/Fallback│      │
+│  │  (GGUF) │  │         │  │         │  │               │      │
+│  └─────────┘  └─────────┘  └─────────┘  └───────────────┘      │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Troubleshooting

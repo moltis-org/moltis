@@ -42,13 +42,15 @@ app enters onboarding mode. Uses a random free port by default.
 
 ## Playwright Projects
 
-The test suite is split into three Playwright projects:
+The test suite is split into five Playwright projects:
 
 | Project | Port | Spec files | Notes |
 |---------|------|------------|-------|
 | `default` | Random free port (`MOLTIS_E2E_PORT`) | All except `auth.spec.js` and `onboarding.spec.js` | Seeded identity, no password |
 | `auth` | Same as `default` | `auth.spec.js` | Runs after `default`; sets a password to test login |
 | `onboarding` | Random free port (`MOLTIS_E2E_ONBOARDING_PORT`) | `onboarding.spec.js` | Separate server without seeded identity |
+| `onboarding-auth` | Random free port (`MOLTIS_E2E_ONBOARDING_AUTH_PORT`) | `onboarding-auth.spec.js` | Separate server with remote-auth simulation |
+| `onboarding-anthropic` | Random free port (`MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT`) | `onboarding-anthropic.spec.js` | Separate server proving first-run Anthropic onboarding with zero providers at startup |
 
 ## Spec Files
 
@@ -68,6 +70,8 @@ The test suite is split into three Playwright projects:
 | `monitoring.spec.js` | 3 | Monitoring dashboard, time range selector |
 | `auth.spec.js` | 6 | Password setup, login, wrong password, Bearer auth |
 | `onboarding.spec.js` | 5 | Onboarding redirect, steps, skip, identity input |
+| `onboarding-auth.spec.js` | 1 | Remote onboarding auth flow with setup code and identity save |
+| `onboarding-anthropic.spec.js` | 1 | Anthropic onboarding from empty startup, model discovery, model selection |
 
 ## Shared Helpers
 

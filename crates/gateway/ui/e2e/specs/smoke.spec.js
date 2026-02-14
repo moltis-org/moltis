@@ -24,9 +24,9 @@ test("index page exposes OG and Twitter share metadata", async ({ page }) => {
 	await expect(page).toHaveURL(/\/chats\/main$/);
 
 	await expect.poll(() => page.locator('meta[property="og:title"]').getAttribute("content")).toContain("AI assistant");
-	await expect.poll(() => page.locator('meta[property="og:description"]').getAttribute("content")).toContain(
-		"personal AI assistant",
-	);
+	await expect
+		.poll(() => page.locator('meta[property="og:description"]').getAttribute("content"))
+		.toContain("personal AI assistant");
 	await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
 		"content",
 		"https://www.moltis.org/og-social.jpg?v=4",
@@ -36,6 +36,55 @@ test("index page exposes OG and Twitter share metadata", async ({ page }) => {
 		"content",
 		"https://www.moltis.org/og-social.jpg?v=4",
 	);
+
+	expect(pageErrors).toEqual([]);
+});
+
+test("mobile menu drives settings and sessions", async ({ page }) => {
+	const pageErrors = watchPageErrors(page);
+	await page.setViewportSize({ width: 390, height: 844 });
+
+	await page.goto("/");
+	await expect(page).toHaveURL(/\/chats\/main$/);
+	await expectPageContentMounted(page);
+
+	await expect(page.locator("#settingsBtn")).toBeHidden();
+	await expect(page.locator("#mobileMenuBtn")).toBeVisible();
+	await page.locator("#mobileMenuBtn").click();
+	await expect(page.locator("#mobileMenuPanel")).toHaveClass(/open/);
+	await page.locator("#mobileMenuSettingsBtn").click();
+	await expect(page).toHaveURL(/\/settings\/identity$/);
+	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
+	await page.locator(".settings-mobile-menu-btn").click();
+	await expect(page.locator(".settings-sidebar")).toBeVisible();
+	await page.locator(".settings-nav-item", { hasText: "Memory" }).click();
+	await expect(page).toHaveURL(/\/settings\/memory$/);
+	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
+	await page.locator(".settings-mobile-menu-btn").click();
+	var voiceNav = page.locator(".settings-nav-item", { hasText: "Voice" });
+	await voiceNav.scrollIntoViewIfNeeded();
+	await voiceNav.click();
+	await expect(page).toHaveURL(/\/settings\/voice$/);
+	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
+	await page.locator(".settings-mobile-menu-btn").click();
+	var heartbeatNav = page.locator(".settings-nav-item", { hasText: "Heartbeat" });
+	await heartbeatNav.scrollIntoViewIfNeeded();
+	await heartbeatNav.click();
+	await expect(page).toHaveURL(/\/settings\/heartbeat$/);
+	await expect(
+		page.getByRole("heading", {
+			name: "Heartbeat",
+			exact: true,
+		}),
+	).toBeVisible();
+
+	await page.goto("/chats/main");
+	await expectPageContentMounted(page);
+	await expect(page.locator("#sessionsToggle")).toBeHidden();
+	await page.locator("#mobileMenuBtn").click();
+	await page.locator("#mobileMenuSessionsBtn").click();
+	await expect(page.locator("#sessionsPanel")).toHaveClass(/open/);
+	await expect(page.locator("#sessionsOverlay")).toHaveClass(/visible/);
 
 	expect(pageErrors).toEqual([]);
 });

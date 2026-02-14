@@ -296,6 +296,9 @@ impl CredentialStore {
     }
 
     /// Change the password (requires correct current password).
+    ///
+    /// Invalidates all existing sessions for defense-in-depth — even if the
+    /// WebSocket disconnect misses a client, old sessions cannot be reused.
     pub async fn change_password(&self, current: &str, new_password: &str) -> anyhow::Result<()> {
         if !self.verify_password(current).await? {
             anyhow::bail!("current password is incorrect");
@@ -307,6 +310,12 @@ impl CredentialStore {
         .bind(&hash)
         .execute(&self.pool)
         .await?;
+
+        // Invalidate all sessions so old cookies cannot be reused.
+        sqlx::query("DELETE FROM auth_sessions")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -1043,6 +1052,31 @@ mod tests {
 
         store.remove_passkey(id).await.unwrap();
         assert!(!store.has_passkeys().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_change_password_invalidates_sessions() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = CredentialStore::new(pool).await.unwrap();
+
+        store.set_initial_password("original").await.unwrap();
+
+        // Create two sessions.
+        let token1 = store.create_session().await.unwrap();
+        let token2 = store.create_session().await.unwrap();
+        assert!(store.validate_session(&token1).await.unwrap());
+        assert!(store.validate_session(&token2).await.unwrap());
+
+        // Change password.
+        store.change_password("original", "newpass").await.unwrap();
+
+        // Both sessions should be invalidated.
+        assert!(!store.validate_session(&token1).await.unwrap());
+        assert!(!store.validate_session(&token2).await.unwrap());
+
+        // New session should still work.
+        let token3 = store.create_session().await.unwrap();
+        assert!(store.validate_session(&token3).await.unwrap());
     }
 
     #[tokio::test]

@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "benchmarks"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "codspeed-divan-compat",
  "moltis-agents",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "moltis"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "clap",
@@ -4451,7 +4451,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-agents"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -4486,7 +4486,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-auto-reply"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "moltis-agents",
@@ -4502,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-browser"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4526,7 +4526,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-canvas"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "axum",
@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-channels"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4553,7 +4553,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-common"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4569,7 +4569,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-config"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "chrono-tz",
@@ -4581,12 +4581,13 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
 ]
 
 [[package]]
 name = "moltis-cron"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4597,6 +4598,7 @@ dependencies = [
  "moltis-agents",
  "moltis-common",
  "moltis-metrics",
+ "rstest",
  "serde",
  "serde_json",
  "sqlx",
@@ -4608,7 +4610,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-discord"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4627,7 +4629,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-gateway"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4706,7 +4708,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-mcp"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4724,7 +4726,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-media"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "image",
@@ -4738,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-memory"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4763,7 +4765,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-metrics"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4781,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-oauth"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "axum",
@@ -4803,7 +4805,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-onboarding"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -4819,7 +4821,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-plugins"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4838,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-projects"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4855,7 +4857,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-protocol"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "moltis-metrics",
  "serde",
@@ -4865,7 +4867,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-qmd"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4879,7 +4881,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-routing"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "moltis-common",
@@ -4892,7 +4894,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-sessions"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "fd-lock",
@@ -4909,7 +4911,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-skills"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4918,6 +4920,7 @@ dependencies = [
  "moltis-metrics",
  "notify-debouncer-full",
  "reqwest 0.12.28",
+ "rstest",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -4929,7 +4932,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-slack"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4948,7 +4951,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-telegram"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4961,6 +4964,7 @@ dependencies = [
  "moltis-metrics",
  "rand 0.9.2",
  "reqwest 0.12.28",
+ "rstest",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
@@ -4972,7 +4976,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-tools"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4989,6 +4993,7 @@ dependencies = [
  "moltis-sessions",
  "moltis-skills",
  "reqwest 0.12.28",
+ "rstest",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
@@ -5003,7 +5008,7 @@ dependencies = [
 
 [[package]]
 name = "moltis-voice"
-version = "0.8.8"
+version = "0.8.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6027,6 +6032,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6251,6 +6262,36 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "rstest"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fc39292f8613e913f7df8fa892b8944ceb47c247b78e1b1ae2f09e019be789d"
+dependencies = [
+ "futures-timer",
+ "futures-util",
+ "rstest_macros",
+ "rustc_version",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f168d99749d307be9de54d23fd226628d99768225ef08f6ffb52e0182a27746"
+dependencies = [
+ "cfg-if",
+ "glob",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "relative-path",
+ "rustc_version",
+ "syn 2.0.114",
+ "unicode-ident",
 ]
 
 [[package]]

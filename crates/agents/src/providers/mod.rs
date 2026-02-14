@@ -23,11 +23,43 @@ pub mod local_gguf;
 #[cfg(feature = "local-llm")]
 pub mod local_llm;
 
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    pin::Pin,
+    sync::Arc,
+};
 
 use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret, tokio_stream::Stream};
 
 use crate::model::{ChatMessage, LlmProvider, StreamEvent};
+
+/// A model discovered from a provider API (e.g. `/v1/models`).
+///
+/// Replaces bare `(String, String)` tuples so that optional metadata
+/// such as `created_at` can travel alongside the id/display_name pair.
+#[derive(Debug, Clone)]
+pub struct DiscoveredModel {
+    pub id: String,
+    pub display_name: String,
+    /// Unix timestamp from the API (e.g. OpenAI `created` field).
+    /// Used to sort models newest-first. `None` for static catalog entries.
+    pub created_at: Option<i64>,
+}
+
+impl DiscoveredModel {
+    pub fn new(id: impl Into<String>, display_name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            display_name: display_name.into(),
+            created_at: None,
+        }
+    }
+
+    pub fn with_created_at(mut self, created_at: Option<i64>) -> Self {
+        self.created_at = created_at;
+        self
+    }
+}
 
 const MODEL_ID_NAMESPACE_SEP: &str = "::";
 
@@ -52,6 +84,161 @@ fn configured_model_for_provider<'a>(provider: &str, model_id: &'a str) -> &'a s
         Some((cfg_provider, raw)) if cfg_provider == provider => raw,
         _ => model_id,
     }
+}
+
+fn configured_models_for_provider(config: &ProvidersConfig, provider: &str) -> Vec<String> {
+    let configured = config
+        .get(provider)
+        .map(|entry| entry.models.clone())
+        .unwrap_or_default();
+
+    normalize_unique_models(
+        configured
+            .into_iter()
+            .map(|model| configured_model_for_provider(provider, model.trim()).to_string()),
+    )
+}
+
+fn normalize_unique_models(models: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut normalized_models = Vec::new();
+    let mut seen = HashSet::new();
+    for model in models {
+        let normalized = model.trim().to_string();
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        normalized_models.push(normalized);
+    }
+    normalized_models
+}
+
+fn should_fetch_models(config: &ProvidersConfig, provider: &str) -> bool {
+    config.get(provider).is_none_or(|entry| entry.fetch_models)
+}
+
+fn merge_preferred_and_discovered_models(
+    preferred: Vec<String>,
+    discovered: Vec<DiscoveredModel>,
+) -> Vec<DiscoveredModel> {
+    let discovered_by_id: HashMap<String, &DiscoveredModel> =
+        discovered.iter().map(|m| (m.id.clone(), m)).collect();
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+
+    for model_id in preferred {
+        if !seen.insert(model_id.clone()) {
+            continue;
+        }
+        let model = if let Some(d) = discovered_by_id.get(&model_id) {
+            DiscoveredModel {
+                id: model_id,
+                display_name: d.display_name.clone(),
+                created_at: d.created_at,
+            }
+        } else {
+            DiscoveredModel::new(model_id.clone(), model_id)
+        };
+        merged.push(model);
+    }
+
+    for model in discovered {
+        if !seen.insert(model.id.clone()) {
+            continue;
+        }
+        merged.push(model);
+    }
+
+    merged
+}
+
+fn merge_discovered_with_fallback_catalog(
+    discovered: Vec<DiscoveredModel>,
+    fallback: Vec<DiscoveredModel>,
+) -> Vec<DiscoveredModel> {
+    if discovered.is_empty() {
+        return fallback;
+    }
+
+    let fallback_by_id: HashMap<String, DiscoveredModel> =
+        fallback.into_iter().map(|m| (m.id.clone(), m)).collect();
+    discovered
+        .into_iter()
+        .map(|m| {
+            let display_name = if m.display_name.trim().is_empty() {
+                fallback_by_id
+                    .get(&m.id)
+                    .map(|fb| fb.display_name.clone())
+                    .unwrap_or_else(|| m.id.clone())
+            } else {
+                m.display_name
+            };
+            DiscoveredModel {
+                id: m.id,
+                display_name,
+                created_at: m.created_at,
+            }
+        })
+        .collect()
+}
+
+fn normalize_ollama_api_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OllamaTagEntry {
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OllamaTagsPayload {
+    #[serde(default)]
+    models: Vec<OllamaTagEntry>,
+}
+
+async fn discover_ollama_models_from_api(base_url: String) -> anyhow::Result<Vec<DiscoveredModel>> {
+    let api_base = normalize_ollama_api_base_url(&base_url);
+    let endpoint = format!("{}/api/tags", api_base.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()?
+        .get(&endpoint)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("ollama model discovery failed HTTP {status}");
+    }
+
+    let payload: OllamaTagsPayload = response.json().await?;
+    let mut models: Vec<DiscoveredModel> = payload
+        .models
+        .into_iter()
+        .map(|entry| entry.name.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .map(|model| DiscoveredModel::new(model.clone(), model))
+        .collect();
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    models.dedup_by(|left, right| left.id == right.id);
+    Ok(models)
+}
+
+fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let base_url = base_url.to_string();
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|rt| rt.block_on(discover_ollama_models_from_api(base_url)));
+        let _ = tx.send(result);
+    });
+
+    rx.recv()
+        .map_err(|err| anyhow::anyhow!("ollama model discovery worker failed: {err}"))?
 }
 
 struct RegistryModelProvider {
@@ -160,6 +347,71 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
     200_000
 }
 
+/// Returns `false` for model IDs that are clearly not chat-completion models
+/// (image generators, TTS, speech-to-text, embeddings, moderation, etc.).
+///
+/// Provider APIs like OpenAI's `/v1/models` return every model in the account.
+/// Since no capability metadata is exposed we filter by well-known prefixes and
+/// patterns. This is applied both at discovery time and at display time so that
+/// non-chat models never appear in the UI.
+pub fn is_chat_capable_model(model_id: &str) -> bool {
+    let id = raw_model_id(model_id);
+    const NON_CHAT_PREFIXES: &[&str] = &[
+        "dall-e",
+        "gpt-image",
+        "chatgpt-image",
+        "gpt-audio",
+        "tts-",
+        "whisper",
+        "text-embedding",
+        "omni-moderation",
+        "moderation-",
+        "sora",
+    ];
+    for prefix in NON_CHAT_PREFIXES {
+        if id.starts_with(prefix) {
+            return false;
+        }
+    }
+    // TTS / audio-only / realtime / transcription variants
+    if id.contains("-tts") || id.contains("-audio-") || id.ends_with("-audio") {
+        return false;
+    }
+    if id.contains("-realtime-") || id.ends_with("-realtime") {
+        return false;
+    }
+    if id.contains("-transcribe") {
+        return false;
+    }
+    true
+}
+
+/// Check if a model supports tool/function calling.
+///
+/// Most modern chat models support tools, but legacy completions-only models
+/// (e.g. `babbage-002`, `davinci-002`) and non-chat models do not.
+/// This is checked per-model rather than per-provider so that providers
+/// exposing mixed catalogs report accurate tool support.
+pub fn supports_tools_for_model(model_id: &str) -> bool {
+    let id = raw_model_id(model_id);
+    // Legacy completions-only models — no tool support
+    if id.starts_with("babbage") || id.starts_with("davinci") {
+        return false;
+    }
+    // Non-chat model families — never support tools
+    if id.starts_with("dall-e")
+        || id.starts_with("gpt-image")
+        || id.starts_with("tts-")
+        || id.starts_with("whisper")
+        || id.starts_with("text-embedding")
+        || id.starts_with("omni-moderation")
+    {
+        return false;
+    }
+    // Default: assume tool support for modern chat models
+    true
+}
+
 /// Check if a model supports vision (image inputs).
 ///
 /// Vision-capable models can process images in tool results and user messages.
@@ -201,6 +453,9 @@ pub struct ModelInfo {
     pub id: String,
     pub provider: String,
     pub display_name: String,
+    /// Unix timestamp from the provider API (e.g. OpenAI `created` field).
+    /// `None` for static catalog entries.
+    pub created_at: Option<i64>,
 }
 
 /// Known Anthropic Claude models (model_id, display_name).
@@ -214,16 +469,6 @@ const ANTHROPIC_MODELS: &[(&str, &str)] = &[
     ("claude-opus-4-20250514", "Claude Opus 4"),
     ("claude-3-7-sonnet-20250219", "Claude 3.7 Sonnet"),
     ("claude-3-haiku-20240307", "Claude 3 Haiku"),
-];
-
-/// Known OpenAI models (model_id, display_name).
-const OPENAI_MODELS: &[(&str, &str)] = &[
-    ("gpt-4o", "GPT-4o"),
-    ("gpt-4o-mini", "GPT-4o Mini"),
-    ("gpt-4-turbo", "GPT-4 Turbo"),
-    ("o3", "o3"),
-    ("o3-mini", "o3-mini"),
-    ("o4-mini", "o4-mini"),
 ];
 
 /// Known Mistral models.
@@ -307,9 +552,10 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
 trait DynamicModelDiscovery {
     fn provider_name(&self) -> &'static str;
     fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool;
-    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str>;
-    fn available_models(&self) -> Vec<(String, String)>;
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>>;
+    fn configured_models(&self, config: &ProvidersConfig) -> Vec<String>;
+    fn should_fetch_models(&self, config: &ProvidersConfig) -> bool;
+    fn available_models(&self) -> Vec<DiscoveredModel>;
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>>;
     fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider>;
     fn display_name(&self, model_id: &str, discovered: &str) -> String;
 }
@@ -327,18 +573,19 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
         config.is_enabled(self.provider_name()) && openai_codex::has_stored_tokens()
     }
 
-    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str> {
-        config
-            .get(self.provider_name())
-            .and_then(|entry| entry.model.as_deref())
-            .map(|model| configured_model_for_provider(self.provider_name(), model))
+    fn configured_models(&self, config: &ProvidersConfig) -> Vec<String> {
+        configured_models_for_provider(config, self.provider_name())
     }
 
-    fn available_models(&self) -> Vec<(String, String)> {
+    fn should_fetch_models(&self, config: &ProvidersConfig) -> bool {
+        should_fetch_models(config, self.provider_name())
+    }
+
+    fn available_models(&self) -> Vec<DiscoveredModel> {
         openai_codex::available_models()
     }
 
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
         openai_codex::live_models()
     }
 
@@ -364,18 +611,19 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
         config.is_enabled(self.provider_name()) && github_copilot::has_stored_tokens()
     }
 
-    fn configured_model<'a>(&self, config: &'a ProvidersConfig) -> Option<&'a str> {
-        config
-            .get(self.provider_name())
-            .and_then(|entry| entry.model.as_deref())
-            .map(|model| configured_model_for_provider(self.provider_name(), model))
+    fn configured_models(&self, config: &ProvidersConfig) -> Vec<String> {
+        configured_models_for_provider(config, self.provider_name())
     }
 
-    fn available_models(&self) -> Vec<(String, String)> {
+    fn should_fetch_models(&self, config: &ProvidersConfig) -> bool {
+        should_fetch_models(config, self.provider_name())
+    }
+
+    fn available_models(&self) -> Vec<DiscoveredModel> {
         github_copilot::available_models()
     }
 
-    fn live_models(&self) -> anyhow::Result<Vec<(String, String)>> {
+    fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>> {
         github_copilot::live_models()
     }
 
@@ -399,9 +647,23 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            providers: HashMap::new(),
+            models: Vec::new(),
+        }
+    }
+
     fn has_provider_model(&self, provider: &str, model_id: &str) -> bool {
         self.providers
             .contains_key(&namespaced_model_id(provider, model_id))
+    }
+
+    /// Check if the raw (un-namespaced) model ID is registered under any provider.
+    fn has_model_any_provider(&self, model_id: &str) -> bool {
+        let raw = raw_model_id(model_id);
+        self.models.iter().any(|m| raw_model_id(&m.id) == raw)
     }
 
     fn resolve_registry_model_id(
@@ -439,22 +701,14 @@ impl ProviderRegistry {
     fn desired_models_for_dynamic_source(
         source: &dyn DynamicModelDiscovery,
         config: &ProvidersConfig,
-        catalog: Vec<(String, String)>,
-    ) -> Option<Vec<(String, String)>> {
+        catalog: Vec<DiscoveredModel>,
+    ) -> Option<Vec<DiscoveredModel>> {
         if !source.is_enabled_and_authenticated(config) {
             return None;
         }
 
-        if let Some(model_id) = source.configured_model(config) {
-            let display_name = catalog
-                .iter()
-                .find(|(id, _)| id == model_id)
-                .map(|(_, name)| name.as_str())
-                .unwrap_or(model_id);
-            return Some(vec![(model_id.to_string(), display_name.to_string())]);
-        }
-
-        Some(catalog)
+        let preferred = source.configured_models(config);
+        Some(merge_preferred_and_discovered_models(preferred, catalog))
     }
 
     #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
@@ -462,22 +716,23 @@ impl ProviderRegistry {
         &mut self,
         source: &dyn DynamicModelDiscovery,
         config: &ProvidersConfig,
-        catalog: Vec<(String, String)>,
+        catalog: Vec<DiscoveredModel>,
     ) {
         let Some(models) = Self::desired_models_for_dynamic_source(source, config, catalog) else {
             return;
         };
 
-        for (model_id, discovered_display) in models {
-            if self.has_provider_model(source.provider_name(), &model_id) {
+        for model in models {
+            if self.has_provider_model(source.provider_name(), &model.id) {
                 continue;
             }
-            let provider = source.build_provider(model_id.clone());
+            let provider = source.build_provider(model.id.clone());
             self.register(
                 ModelInfo {
-                    id: model_id.clone(),
+                    id: model.id.clone(),
                     provider: source.provider_name().to_string(),
-                    display_name: source.display_name(&model_id, &discovered_display),
+                    display_name: source.display_name(&model.id, &model.display_name),
+                    created_at: model.created_at,
                 },
                 provider,
             );
@@ -491,6 +746,9 @@ impl ProviderRegistry {
         config: &ProvidersConfig,
     ) -> bool {
         if !source.is_enabled_and_authenticated(config) {
+            return false;
+        }
+        if !source.should_fetch_models(config) {
             return false;
         }
 
@@ -514,14 +772,15 @@ impl ProviderRegistry {
 
         let new_entries: Vec<(ModelInfo, Arc<dyn LlmProvider>)> = next_models
             .into_iter()
-            .map(|(model_id, discovered_display)| {
+            .map(|model| {
                 (
                     ModelInfo {
-                        id: model_id.clone(),
+                        id: model.id.clone(),
                         provider: source.provider_name().to_string(),
-                        display_name: source.display_name(&model_id, &discovered_display),
+                        display_name: source.display_name(&model.id, &model.display_name),
+                        created_at: model.created_at,
                     },
-                    source.build_provider(model_id),
+                    source.build_provider(model.id),
                 )
             })
             .collect();
@@ -585,10 +844,7 @@ impl ProviderRegistry {
     /// 3. genai-backed providers (if `provider-genai` feature enabled, no tool support)
     /// 4. OpenAI Codex OAuth providers (if `provider-openai-codex` feature enabled)
     pub fn from_env_with_config(config: &ProvidersConfig) -> Self {
-        let mut reg = Self {
-            providers: HashMap::new(),
-            models: Vec::new(),
-        };
+        let mut reg = Self::empty();
 
         // Built-in providers first: they support tool calling.
         reg.register_builtin_providers(config);
@@ -672,29 +928,29 @@ impl ProviderRegistry {
                 continue;
             };
 
-            let model_id = config
-                .get(provider_name)
-                .and_then(|e| e.model.as_deref())
-                .unwrap_or(default_model_id);
-            let model_id = configured_model_for_provider(provider_name, model_id);
+            let model_id = configured_models_for_provider(config, provider_name)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| default_model_id.to_string());
 
             // Get alias if configured (for metrics differentiation).
             let alias = config.get(provider_name).and_then(|e| e.alias.clone());
             let genai_provider_name = alias.unwrap_or_else(|| format!("genai/{provider_name}"));
-            if self.has_provider_model(&genai_provider_name, model_id) {
+            if self.has_model_any_provider(&model_id) {
                 continue;
             }
 
             let provider = Arc::new(genai_provider::GenaiProvider::new(
-                model_id.into(),
+                model_id.clone(),
                 genai_provider_name.clone(),
                 resolved_key,
             ));
             self.register(
                 ModelInfo {
-                    id: model_id.into(),
+                    id: model_id,
                     provider: genai_provider_name,
                     display_name: display_name.into(),
+                    created_at: None,
                 },
                 provider,
             );
@@ -717,30 +973,30 @@ impl ProviderRegistry {
             .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
             .unwrap_or_else(|| "https://api.openai.com/v1".into());
 
-        let model_id = config
-            .get("openai")
-            .and_then(|e| e.model.as_deref())
-            .unwrap_or("gpt-4o");
-        let model_id = configured_model_for_provider("openai", model_id);
+        let model_id = configured_models_for_provider(config, "openai")
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "gpt-4o".to_string());
 
         // Get alias if configured (for metrics differentiation).
         let alias = config.get("openai").and_then(|e| e.alias.clone());
         let provider_label = alias.clone().unwrap_or_else(|| "async-openai".into());
-        if self.has_provider_model(&provider_label, model_id) {
+        if self.has_model_any_provider(&model_id) {
             return;
         }
 
         let provider = Arc::new(async_openai_provider::AsyncOpenAiProvider::with_alias(
             key,
-            model_id.into(),
+            model_id.clone(),
             base_url,
             alias,
         ));
         self.register(
             ModelInfo {
-                id: model_id.into(),
+                id: model_id,
                 provider: provider_label,
                 display_name: "GPT-4o (async-openai)".into(),
+                created_at: None,
             },
             provider,
         );
@@ -749,7 +1005,12 @@ impl ProviderRegistry {
     #[cfg(feature = "provider-openai-codex")]
     fn register_openai_codex_providers(&mut self, config: &ProvidersConfig) {
         let source = OpenAiCodexDiscovery;
-        self.register_dynamic_source_models(&source, config, source.available_models());
+        let catalog = if source.should_fetch_models(config) {
+            source.available_models()
+        } else {
+            Vec::new()
+        };
+        self.register_dynamic_source_models(&source, config, catalog);
     }
 
     pub fn refresh_openai_codex_models(&mut self, config: &ProvidersConfig) -> bool {
@@ -769,7 +1030,12 @@ impl ProviderRegistry {
     #[cfg(feature = "provider-github-copilot")]
     fn register_github_copilot_providers(&mut self, config: &ProvidersConfig) {
         let source = GitHubCopilotDiscovery;
-        self.register_dynamic_source_models(&source, config, source.available_models());
+        let catalog = if source.should_fetch_models(config) {
+            source.available_models()
+        } else {
+            Vec::new()
+        };
+        self.register_dynamic_source_models(&source, config, catalog);
     }
 
     pub fn refresh_github_copilot_models(&mut self, config: &ProvidersConfig) -> bool {
@@ -820,7 +1086,7 @@ impl ProviderRegistry {
             .get("kimi-code")
             .and_then(|e| e.base_url.clone())
             .or_else(|| std::env::var("KIMI_BASE_URL").ok())
-            .unwrap_or_else(|| "https://api.moonshot.ai/v1".into());
+            .unwrap_or_else(|| "https://api.kimi.com/coding/v1".into());
 
         let build_provider = |model_id: &str| -> Arc<dyn LlmProvider> {
             if let Some(api_key) = api_key.as_ref() {
@@ -834,37 +1100,29 @@ impl ProviderRegistry {
             }
         };
 
-        if let Some(configured_model) = config.get("kimi-code").and_then(|e| e.model.as_deref()) {
-            let model_id = configured_model_for_provider("kimi-code", configured_model);
-            if !self.has_provider_model("kimi-code", model_id) {
-                let display = kimi_code::KIMI_CODE_MODELS
-                    .iter()
-                    .find(|(id, _)| *id == model_id)
-                    .map(|(_, name)| name.to_string())
-                    .unwrap_or_else(|| model_id.to_string());
-                let provider = build_provider(model_id);
-                self.register(
-                    ModelInfo {
-                        id: model_id.into(),
-                        provider: "kimi-code".into(),
-                        display_name: display,
-                    },
-                    provider,
-                );
-            }
-            return;
-        }
-
-        for &(model_id, display_name) in kimi_code::KIMI_CODE_MODELS {
-            if self.has_provider_model("kimi-code", model_id) {
+        let preferred = configured_models_for_provider(config, "kimi-code");
+        let discovered = if should_fetch_models(config, "kimi-code") {
+            kimi_code::KIMI_CODE_MODELS
+                .iter()
+                .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let models = merge_preferred_and_discovered_models(preferred, discovered);
+        for model in models {
+            let (model_id, display_name, created_at) =
+                (model.id, model.display_name, model.created_at);
+            if self.has_provider_model("kimi-code", &model_id) {
                 continue;
             }
-            let provider = build_provider(model_id);
+            let provider = build_provider(&model_id);
             self.register(
                 ModelInfo {
-                    id: model_id.into(),
+                    id: model_id,
                     provider: "kimi-code".into(),
-                    display_name: display_name.into(),
+                    display_name,
+                    created_at,
                 },
                 provider,
             );
@@ -884,20 +1142,14 @@ impl ProviderRegistry {
 
         // Collect all model IDs to register:
         // 1. From local_models (multi-model config from local-llm.json)
-        // 2. From the single model field (for backward compatibility)
+        // 2. From provider models in config (preferred pins)
         let mut model_ids: Vec<String> = config.local_models.clone();
-
-        // Add the single model if not already in the list
-        if let Some(configured_model) = config.get("local").and_then(|e| e.model.as_deref())
-            && !model_ids
-                .contains(&configured_model_for_provider("local", configured_model).to_string())
-        {
-            model_ids.push(configured_model_for_provider("local", configured_model).to_string());
-        }
+        model_ids.extend(configured_models_for_provider(config, "local"));
+        model_ids = normalize_unique_models(model_ids);
 
         if model_ids.is_empty() {
             tracing::info!(
-                "local-llm enabled but no model configured. Add [providers.local] model = \"...\" to config."
+                "local-llm enabled but no models configured. Add [providers.local] models = [\"...\"] to config."
             );
             return;
         }
@@ -947,6 +1199,7 @@ impl ProviderRegistry {
                     id: model_id,
                     provider: "local-llm".into(),
                     display_name,
+                    created_at: None,
                 },
                 provider,
             );
@@ -967,52 +1220,38 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get("anthropic").and_then(|e| e.alias.clone());
             let provider_label = alias.clone().unwrap_or_else(|| "anthropic".into());
-
-            // If user configured a specific model, register only that one.
-            if let Some(model_id) = config.get("anthropic").and_then(|e| e.model.as_deref()) {
-                let model_id = configured_model_for_provider("anthropic", model_id);
-                if !self.has_provider_model(&provider_label, model_id) {
-                    let display = ANTHROPIC_MODELS
-                        .iter()
-                        .find(|(id, _)| *id == model_id)
-                        .map(|(_, name)| name.to_string())
-                        .unwrap_or_else(|| model_id.to_string());
-                    let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
-                        key.clone(),
-                        model_id.into(),
-                        base_url.clone(),
-                        alias.clone(),
-                    ));
-                    self.register(
-                        ModelInfo {
-                            id: model_id.into(),
-                            provider: provider_label.clone(),
-                            display_name: display,
-                        },
-                        provider,
-                    );
-                }
+            let preferred = configured_models_for_provider(config, "anthropic");
+            let discovered = if should_fetch_models(config, "anthropic") {
+                ANTHROPIC_MODELS
+                    .iter()
+                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                    .collect()
             } else {
-                // No specific model — register all known Anthropic models.
-                for &(model_id, display_name) in ANTHROPIC_MODELS {
-                    if self.has_provider_model(&provider_label, model_id) {
-                        continue;
-                    }
-                    let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
-                        key.clone(),
-                        model_id.into(),
-                        base_url.clone(),
-                        alias.clone(),
-                    ));
-                    self.register(
-                        ModelInfo {
-                            id: model_id.into(),
-                            provider: provider_label.clone(),
-                            display_name: display_name.into(),
-                        },
-                        provider,
-                    );
+                Vec::new()
+            };
+            let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
+                if self.has_provider_model(&provider_label, &model_id) {
+                    continue;
                 }
+                let provider = Arc::new(anthropic::AnthropicProvider::with_alias(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    alias.clone(),
+                ));
+                self.register(
+                    ModelInfo {
+                        id: model_id,
+                        provider: provider_label.clone(),
+                        display_name,
+                        created_at,
+                    },
+                    provider,
+                );
             }
         }
 
@@ -1029,50 +1268,35 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get("openai").and_then(|e| e.alias.clone());
             let provider_label = alias.clone().unwrap_or_else(|| "openai".into());
-
-            if let Some(model_id) = config.get("openai").and_then(|e| e.model.as_deref()) {
-                let model_id = configured_model_for_provider("openai", model_id);
-                if !self.has_provider_model(&provider_label, model_id) {
-                    let display = OPENAI_MODELS
-                        .iter()
-                        .find(|(id, _)| *id == model_id)
-                        .map(|(_, name)| name.to_string())
-                        .unwrap_or_else(|| model_id.to_string());
-                    let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                        key.clone(),
-                        model_id.into(),
-                        base_url.clone(),
-                        provider_label.clone(),
-                    ));
-                    self.register(
-                        ModelInfo {
-                            id: model_id.into(),
-                            provider: provider_label.clone(),
-                            display_name: display,
-                        },
-                        provider,
-                    );
-                }
+            let preferred = configured_models_for_provider(config, "openai");
+            let discovered = if should_fetch_models(config, "openai") {
+                openai::available_models(&key, &base_url)
             } else {
-                for &(model_id, display_name) in OPENAI_MODELS {
-                    if self.has_provider_model(&provider_label, model_id) {
-                        continue;
-                    }
-                    let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                        key.clone(),
-                        model_id.into(),
-                        base_url.clone(),
-                        provider_label.clone(),
-                    ));
-                    self.register(
-                        ModelInfo {
-                            id: model_id.into(),
-                            provider: provider_label.clone(),
-                            display_name: display_name.into(),
-                        },
-                        provider,
-                    );
+                Vec::new()
+            };
+            let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
+                if self.has_provider_model(&provider_label, &model_id) {
+                    continue;
                 }
+                let provider = Arc::new(openai::OpenAiProvider::new_with_name(
+                    key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    provider_label.clone(),
+                ));
+                self.register(
+                    ModelInfo {
+                        id: model_id,
+                        provider: provider_label.clone(),
+                        display_name,
+                        created_at,
+                    },
+                    provider,
+                );
             }
         }
     }
@@ -1105,55 +1329,74 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get(def.config_name).and_then(|e| e.alias.clone());
             let provider_label = alias.unwrap_or_else(|| def.config_name.into());
-
-            // If user configured a specific model, register only that one.
-            if let Some(model_id) = config.get(def.config_name).and_then(|e| e.model.as_deref()) {
-                let model_id = configured_model_for_provider(def.config_name, model_id);
-                if !self.has_provider_model(&provider_label, model_id) {
-                    let display = def
-                        .models
-                        .iter()
-                        .find(|(id, _)| *id == model_id)
-                        .map(|(_, name)| name.to_string())
-                        .unwrap_or_else(|| model_id.to_string());
-                    let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                        key.clone(),
-                        model_id.into(),
-                        base_url.clone(),
-                        provider_label.clone(),
-                    ));
-                    self.register(
-                        ModelInfo {
-                            id: model_id.into(),
-                            provider: provider_label.clone(),
-                            display_name: display,
-                        },
-                        provider,
-                    );
+            let preferred = configured_models_for_provider(config, def.config_name);
+            if def.config_name == "ollama" {
+                let has_explicit_entry = config.get("ollama").is_some();
+                let has_env_base_url = std::env::var(def.env_base_url_key)
+                    .ok()
+                    .is_some_and(|value| !value.trim().is_empty());
+                if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
+                    continue;
                 }
-                continue;
             }
-
-            // No specific model — register all known models for this provider.
-            if def.models.is_empty() {
-                // "Bring your own model" providers: skip if no model configured.
-                continue;
-            }
-            for &(model_id, display_name) in def.models {
-                if self.has_provider_model(&provider_label, model_id) {
+            // "Bring your own model" providers (empty static catalog, no
+            // configured models) skip discovery — the user must pick a model.
+            let skip_discovery =
+                def.models.is_empty() && preferred.is_empty() && def.config_name != "ollama";
+            let discovered = if !skip_discovery && should_fetch_models(config, def.config_name) {
+                if def.config_name == "ollama" {
+                    match discover_ollama_models(&base_url) {
+                        Ok(models) => models,
+                        Err(err) => {
+                            tracing::warn!(
+                                provider = def.config_name,
+                                error = %err,
+                                "failed to fetch live models for provider"
+                            );
+                            def.models
+                                .iter()
+                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                .collect()
+                        },
+                    }
+                } else {
+                    match openai::live_models(&key, &base_url) {
+                        Ok(models) => models,
+                        Err(err) => {
+                            tracing::warn!(
+                                provider = def.config_name,
+                                error = %err,
+                                "failed to fetch live models for provider"
+                            );
+                            def.models
+                                .iter()
+                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                .collect()
+                        },
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            let models = merge_preferred_and_discovered_models(preferred, discovered);
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
+                if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
                 let provider = Arc::new(openai::OpenAiProvider::new_with_name(
                     key.clone(),
-                    model_id.into(),
+                    model_id.clone(),
                     base_url.clone(),
                     provider_label.clone(),
                 ));
                 self.register(
                     ModelInfo {
-                        id: model_id.into(),
+                        id: model_id,
                         provider: provider_label.clone(),
-                        display_name: display_name.into(),
+                        display_name,
+                        created_at,
                     },
                     provider,
                 );
@@ -1404,6 +1647,73 @@ mod tests {
     }
 
     #[test]
+    fn is_chat_capable_filters_non_chat_models() {
+        // Chat-capable models pass
+        assert!(super::is_chat_capable_model("gpt-5.2"));
+        assert!(super::is_chat_capable_model("gpt-4o"));
+        assert!(super::is_chat_capable_model("o4-mini"));
+        assert!(super::is_chat_capable_model("chatgpt-4o-latest"));
+
+        // Non-chat models are rejected
+        assert!(!super::is_chat_capable_model("dall-e-3"));
+        assert!(!super::is_chat_capable_model("gpt-image-1-mini"));
+        assert!(!super::is_chat_capable_model("chatgpt-image-latest"));
+        assert!(!super::is_chat_capable_model("gpt-audio"));
+        assert!(!super::is_chat_capable_model("tts-1"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
+        assert!(!super::is_chat_capable_model("gpt-4o-audio-preview"));
+        assert!(!super::is_chat_capable_model("gpt-4o-realtime-preview"));
+        assert!(!super::is_chat_capable_model("gpt-4o-mini-transcribe"));
+        assert!(!super::is_chat_capable_model("sora"));
+
+        // Works with namespaced model IDs too
+        assert!(super::is_chat_capable_model("openai::gpt-5.2"));
+        assert!(!super::is_chat_capable_model("openai::dall-e-3"));
+        assert!(!super::is_chat_capable_model("openai::gpt-image-1-mini"));
+        assert!(!super::is_chat_capable_model("openai::gpt-4o-mini-tts"));
+    }
+
+    #[test]
+    fn supports_tools_for_chat_models() {
+        // Modern chat models support tools
+        assert!(super::supports_tools_for_model("gpt-5.2"));
+        assert!(super::supports_tools_for_model("gpt-4o"));
+        assert!(super::supports_tools_for_model("gpt-4o-mini"));
+        assert!(super::supports_tools_for_model("o3"));
+        assert!(super::supports_tools_for_model("o4-mini"));
+        assert!(super::supports_tools_for_model("chatgpt-4o-latest"));
+        assert!(super::supports_tools_for_model("claude-sonnet-4-20250514"));
+        assert!(super::supports_tools_for_model("gemini-2.0-flash"));
+        assert!(super::supports_tools_for_model("codestral-latest"));
+    }
+
+    #[test]
+    fn supports_tools_false_for_legacy_and_non_chat_models() {
+        // Legacy completions-only models
+        assert!(!super::supports_tools_for_model("babbage-002"));
+        assert!(!super::supports_tools_for_model("davinci-002"));
+
+        // Non-chat model families
+        assert!(!super::supports_tools_for_model("dall-e-3"));
+        assert!(!super::supports_tools_for_model("gpt-image-1"));
+        assert!(!super::supports_tools_for_model("tts-1"));
+        assert!(!super::supports_tools_for_model("tts-1-hd"));
+        assert!(!super::supports_tools_for_model("whisper-1"));
+        assert!(!super::supports_tools_for_model("text-embedding-3-large"));
+        assert!(!super::supports_tools_for_model("omni-moderation-latest"));
+    }
+
+    #[test]
+    fn provider_supports_tools_uses_model_lookup() {
+        let gpt = openai::OpenAiProvider::new(secret("k"), "gpt-5.2".into(), "u".into());
+        assert!(gpt.supports_tools());
+
+        let babbage = openai::OpenAiProvider::new(secret("k"), "babbage-002".into(), "u".into());
+        assert!(!babbage.supports_tools());
+    }
+
+    #[test]
     fn default_context_window_trait() {
         // OpenAiProvider with unknown model should get the fallback
         let provider =
@@ -1412,9 +1722,40 @@ mod tests {
     }
 
     #[test]
+    fn merge_discovered_with_fallback_keeps_discovered_when_non_empty() {
+        let merged = merge_discovered_with_fallback_catalog(
+            vec![
+                DiscoveredModel::new("live-a", "Live A"),
+                DiscoveredModel::new("live-b", "Live B"),
+            ],
+            vec![
+                DiscoveredModel::new("live-a", "Fallback A"),
+                DiscoveredModel::new("fallback-only", "Fallback Only"),
+            ],
+        );
+
+        let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["live-a", "live-b"]);
+    }
+
+    #[test]
+    fn merge_discovered_with_fallback_uses_fallback_when_discovered_empty() {
+        let merged = merge_discovered_with_fallback_catalog(
+            Vec::new(),
+            vec![
+                DiscoveredModel::new("fallback-a", "Fallback A"),
+                DiscoveredModel::new("fallback-b", "Fallback B"),
+            ],
+        );
+
+        let ids: Vec<&str> = merged.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["fallback-a", "fallback-b"]);
+    }
+
+    #[test]
     fn model_lists_not_empty() {
         assert!(!ANTHROPIC_MODELS.is_empty());
-        assert!(!OPENAI_MODELS.is_empty());
+        assert!(!openai::default_model_catalog().is_empty());
         assert!(!MISTRAL_MODELS.is_empty());
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
@@ -1423,9 +1764,18 @@ mod tests {
 
     #[test]
     fn model_lists_have_unique_ids() {
+        let openai_models = openai::default_model_catalog();
+        let mut openai_ids: Vec<&str> = openai_models.iter().map(|m| m.id.as_str()).collect();
+        openai_ids.sort();
+        openai_ids.dedup();
+        assert_eq!(
+            openai_ids.len(),
+            openai_models.len(),
+            "duplicate OpenAI model IDs found"
+        );
+
         for models in [
             ANTHROPIC_MODELS,
-            OPENAI_MODELS,
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
             MINIMAX_MODELS,
@@ -1500,6 +1850,7 @@ mod tests {
                 id: "test-model".into(),
                 provider: "test".into(),
                 display_name: "Test Model".into(),
+                created_at: None,
             },
             provider,
         );
@@ -1527,6 +1878,7 @@ mod tests {
                 id: "gpt-5.2-codex".into(),
                 provider: "openai-codex".into(),
                 display_name: "GPT-5.2 Codex (Codex/OAuth)".into(),
+                created_at: None,
             },
             provider,
         );
@@ -1552,12 +1904,13 @@ mod tests {
     #[test]
     fn mistral_registers_with_api_key() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("mistral".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "mistral".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-mistral".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         // Should have registered Mistral models
@@ -1579,12 +1932,13 @@ mod tests {
     #[test]
     fn cerebras_registers_with_api_key() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("cerebras".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "cerebras".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-cerebras".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         let cerebras_models: Vec<_> = reg
@@ -1598,12 +1952,13 @@ mod tests {
     #[test]
     fn minimax_registers_with_api_key() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("minimax".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "minimax".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-minimax".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
@@ -1612,12 +1967,13 @@ mod tests {
     #[test]
     fn moonshot_registers_with_api_key() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("moonshot".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "moonshot".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-moonshot".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "moonshot"));
@@ -1625,14 +1981,15 @@ mod tests {
 
     #[test]
     fn openrouter_requires_model_in_config() {
-        // OpenRouter has no default models — without a model in config it registers nothing.
+        // OpenRouter has no default models — without configured models it registers nothing.
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("openrouter".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "openrouter".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-or".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "openrouter"));
@@ -1641,13 +1998,14 @@ mod tests {
     #[test]
     fn openrouter_registers_with_model_in_config() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("openrouter".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "openrouter".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-or".into())),
-                model: Some("anthropic/claude-3-haiku".into()),
+                models: vec!["anthropic/claude-3-haiku".into()],
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         let or_models: Vec<_> = reg
@@ -1663,12 +2021,13 @@ mod tests {
     fn ollama_registers_without_api_key_env() {
         // Ollama should use a dummy key if no env var is set.
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("ollama".into(), moltis_config::schema::ProviderEntry {
-                model: Some("llama3".into()),
+        config.providers.insert(
+            "ollama".into(),
+            moltis_config::schema::ProviderEntry {
+                models: vec!["llama3".into()],
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "ollama"));
@@ -1678,12 +2037,13 @@ mod tests {
     #[test]
     fn venice_requires_model_in_config() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("venice".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "venice".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test-venice".into())),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "venice"));
@@ -1692,13 +2052,14 @@ mod tests {
     #[test]
     fn disabled_provider_not_registered() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("mistral".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "mistral".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test".into())),
                 enabled: false,
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "mistral"));
@@ -1718,28 +2079,31 @@ mod tests {
     #[test]
     fn custom_base_url_from_config() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("mistral".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "mistral".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test".into())),
                 base_url: Some("https://custom.mistral.example.com/v1".into()),
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "mistral"));
     }
 
     #[test]
-    fn specific_model_override() {
+    fn provider_models_can_disable_fetch_and_pin_single_model() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("mistral".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "mistral".into(),
+            moltis_config::schema::ProviderEntry {
                 api_key: Some(secrecy::Secret::new("sk-test".into())),
-                model: Some("mistral-small-latest".into()),
+                models: vec!["mistral-small-latest".into()],
+                fetch_models: false,
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         let mistral_models: Vec<_> = reg
@@ -1747,9 +2111,32 @@ mod tests {
             .iter()
             .filter(|m| m.provider == "mistral")
             .collect();
-        // Should only have the one specified model, not the full default list
+        // With fetch disabled, only pinned models should be registered.
         assert_eq!(mistral_models.len(), 1);
         assert_eq!(mistral_models[0].id, "mistral::mistral-small-latest");
+    }
+
+    #[test]
+    fn provider_models_are_ordered_before_discovered_catalog() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "mistral".into(),
+            moltis_config::schema::ProviderEntry {
+                api_key: Some(secrecy::Secret::new("sk-test".into())),
+                models: vec!["codestral-latest".into()],
+                ..Default::default()
+            },
+        );
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        let mistral_models: Vec<&str> = reg
+            .list_models()
+            .iter()
+            .filter(|m| m.provider == "mistral")
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(!mistral_models.is_empty());
+        assert_eq!(mistral_models[0], "mistral::codestral-latest");
     }
 
     #[test]
@@ -1771,6 +2158,7 @@ mod tests {
                     id: id.into(),
                     provider: prov.into(),
                     display_name: id.into(),
+                    created_at: None,
                 },
                 Arc::new(openai::OpenAiProvider::new_with_name(
                     secret("k"),
@@ -1818,13 +2206,14 @@ mod tests {
     #[cfg(feature = "local-llm")]
     #[test]
     fn local_llm_requires_model_in_config() {
-        // local-llm is a "bring your own model" provider — without a model it registers nothing.
+        // local-llm is a "bring your own model" provider — without configured models it registers nothing.
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("local".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "local".into(),
+            moltis_config::schema::ProviderEntry {
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
@@ -1834,12 +2223,13 @@ mod tests {
     #[test]
     fn local_llm_registers_with_model_in_config() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("local".into(), moltis_config::schema::ProviderEntry {
-                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+        config.providers.insert(
+            "local".into(),
+            moltis_config::schema::ProviderEntry {
+                models: vec!["qwen2.5-coder-7b-q4_k_m".into()],
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         let local_models: Vec<_> = reg
@@ -1855,16 +2245,56 @@ mod tests {
     #[test]
     fn local_llm_disabled_not_registered() {
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("local".into(), moltis_config::schema::ProviderEntry {
+        config.providers.insert(
+            "local".into(),
+            moltis_config::schema::ProviderEntry {
                 enabled: false,
-                model: Some("qwen2.5-coder-7b-q4_k_m".into()),
+                models: vec!["qwen2.5-coder-7b-q4_k_m".into()],
                 ..Default::default()
-            });
+            },
+        );
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(!reg.list_models().iter().any(|m| m.provider == "local-llm"));
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_alias_key_registers_model() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "local-llm".into(),
+            moltis_config::schema::ProviderEntry {
+                models: vec!["qwen2.5-coder-7b-q4_k_m".into()],
+                ..Default::default()
+            },
+        );
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(
+            reg.list_models().iter().any(|m| m.provider == "local-llm"),
+            "local-llm alias config key should register local models"
+        );
+    }
+
+    #[cfg(feature = "local-llm")]
+    #[test]
+    fn local_llm_alias_key_respects_disabled_flag() {
+        let mut config = ProvidersConfig::default();
+        config.providers.insert(
+            "local-llm".into(),
+            moltis_config::schema::ProviderEntry {
+                enabled: false,
+                models: vec!["qwen2.5-coder-7b-q4_k_m".into()],
+                ..Default::default()
+            },
+        );
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(
+            !reg.list_models().iter().any(|m| m.provider == "local-llm"),
+            "disabled local-llm alias config should suppress local model registration"
+        );
     }
 
     // ── Vision Support Tests (Extended) ────────────────────────────────

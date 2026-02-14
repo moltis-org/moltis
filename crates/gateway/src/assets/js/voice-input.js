@@ -3,8 +3,8 @@
 
 import { chatAddMsg } from "./chat-ui.js";
 import * as gon from "./gon.js";
-import { renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
-import { bumpSessionCount, setSessionReplying } from "./sessions.js";
+import { renderAudioPlayer, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
+import { bumpSessionCount, seedSessionPreviewFromUserText, setSessionReplying } from "./sessions.js";
 import * as S from "./state.js";
 
 var micBtn = null;
@@ -232,20 +232,40 @@ function cleanupTranscribingState() {
 }
 
 /** Send transcribed text as a chat message. */
-function sendTranscribedMessage(text) {
+function sendTranscribedMessage(text, audioFilename) {
 	// Unlock audio playback while we still have user-gesture context.
 	warmAudioPlayback();
 
-	// Add user message to chat (like sendChat does)
-	chatAddMsg("user", renderMarkdown(text), true);
+	// Add user message to chat (like sendChat does), including the recorded
+	// audio player when we have a saved filename from the upload endpoint.
+	if (audioFilename) {
+		var userEl = chatAddMsg("user", "", true);
+		if (userEl) {
+			var audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(audioFilename)}`;
+			renderAudioPlayer(userEl, audioSrc);
+			if (text) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown escapes untrusted content before formatting tags.
+				textWrap.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
+				userEl.appendChild(textWrap);
+			}
+		}
+	} else {
+		chatAddMsg("user", renderMarkdown(text), true);
+	}
 
 	// Send the message
 	var chatParams = { text: text, _input_medium: "voice" };
+	if (audioFilename) {
+		chatParams._audio_filename = audioFilename;
+	}
 	var selectedModel = S.selectedModelId;
 	if (selectedModel) {
 		chatParams.model = selectedModel;
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
+	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((sendRes) => {
 		if (sendRes && !sendRes.ok && sendRes.error) {
@@ -284,9 +304,10 @@ async function transcribeAudio() {
 
 		if (res.ok && res.transcription?.text) {
 			var text = res.transcription.text.trim();
+			var audioFilename = typeof res.filename === "string" ? res.filename.trim() : "";
 			if (text) {
 				cleanupTranscribingState();
-				sendTranscribedMessage(text);
+				sendTranscribedMessage(text, audioFilename || null);
 			} else {
 				showTemporaryMessage("No speech detected", false, 2000);
 			}

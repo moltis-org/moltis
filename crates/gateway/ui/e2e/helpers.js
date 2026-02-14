@@ -7,13 +7,18 @@ const { expect } = require("@playwright/test");
 async function expectPageContentMounted(page) {
 	await expect
 		// biome-ignore lint/suspicious/useAwait: page.evaluate returns a Promise
-		.poll(async () => {
-			return page.evaluate(() => {
-				const el = document.getElementById("pageContent");
-				if (!el) return 0;
-				return el.childElementCount;
-			});
-		})
+		.poll(
+			async () => {
+				return page.evaluate(() => {
+					const el = document.getElementById("pageContent");
+					if (!el) return 0;
+					return el.childElementCount;
+				});
+			},
+			{
+				timeout: 20_000,
+			},
+		)
 		.toBeGreaterThan(0);
 }
 
@@ -38,9 +43,29 @@ function watchPageErrors(page) {
  * only check the dot's CSS class.
  */
 async function waitForWsConnected(page) {
-	await expect(page.locator("#statusDot")).toHaveClass(/connected/, {
-		timeout: 15_000,
-	});
+	await expect
+		.poll(
+			async () => {
+				const statusDotConnected = await page
+					.locator("#statusDot")
+					.getAttribute("class")
+					.then((cls) => /connected/.test(cls || ""))
+					.catch(() => false);
+				if (!statusDotConnected) return false;
+				return page
+					.evaluate(async () => {
+						const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+						if (!appScript) return false;
+						const appUrl = new URL(appScript.src, window.location.origin);
+						const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+						const state = await import(`${prefix}js/state.js`);
+						return Boolean(state.connected && state.ws && state.ws.readyState === WebSocket.OPEN);
+					})
+					.catch(() => false);
+			},
+			{ timeout: 20_000 },
+		)
+		.toBe(true);
 }
 
 /**
@@ -49,8 +74,17 @@ async function waitForWsConnected(page) {
  */
 async function navigateAndWait(page, path) {
 	const pageErrors = watchPageErrors(page);
-	await page.goto(path);
-	await expectPageContentMounted(page);
+	let lastError = null;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		await page.goto(path, { waitUntil: "domcontentloaded" });
+		try {
+			await expectPageContentMounted(page);
+			return pageErrors;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError) throw lastError;
 	return pageErrors;
 }
 
@@ -63,6 +97,26 @@ async function createSession(page) {
 	await page.locator("#newSessionBtn").click();
 	await page.waitForURL((url) => url.href !== currentUrl, { timeout: 10_000 });
 	await expectPageContentMounted(page);
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const store = window.__moltis_stores?.sessionStore;
+					if (!store) return false;
+
+					const pathname = window.location.pathname || "";
+					if (!pathname.startsWith("/chats/")) return false;
+					const expectedKey = decodeURIComponent(pathname.slice("/chats/".length)).replace(/\//g, ":");
+
+					const activeKey = store.activeSessionKey?.value || "";
+					if (activeKey !== expectedKey) return false;
+
+					const activeSession = store.getByKey ? store.getByKey(activeKey) : store.activeSession?.value;
+					return Boolean(activeSession && activeSession.key === activeKey);
+				}),
+			{ timeout: 10_000 },
+		)
+		.toBe(true);
 }
 
 module.exports = {

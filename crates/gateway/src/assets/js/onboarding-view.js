@@ -7,20 +7,45 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { testModel, validateProviderKey } from "./provider-validation.js";
+import {
+	humanizeProbeError,
+	isModelServiceNotConfigured,
+	saveProviderKey,
+	testModel,
+	validateProviderKey,
+} from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
-import { forceReconnect } from "./ws-connect.js";
+import {
+	decodeBase64Safe,
+	fetchVoiceProviders,
+	saveVoiceKey,
+	testTts,
+	toggleVoiceProvider,
+	transcribeAudio,
+	VOICE_COUNTERPART_IDS,
+} from "./voice-utils.js";
+import { connectWs } from "./ws-connect.js";
+
+var wsStarted = false;
+function ensureWsConnected() {
+	if (wsStarted) return;
+	wsStarted = true;
+	connectWs({ backoff: { factor: 2, max: 10000 } });
+}
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "LLM", "Channel", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "LLM", "Voice", "Channel", "Summary"];
+var BASE_STEP_LABELS = ["Security", "LLM", "Channel", "Identity", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "LLM", "Voice", "Channel", "Identity", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -34,7 +59,13 @@ function ErrorPanel({ message }) {
 }
 
 function StepIndicator({ steps, current }) {
-	return html`<div class="onboarding-steps">
+	var ref = useRef(null);
+	useEffect(() => {
+		if (!ref.current) return;
+		var active = ref.current.querySelector(".onboarding-step.active");
+		if (active) active.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+	}, [current]);
+	return html`<div class="onboarding-steps" ref=${ref}>
 		${steps.map((label, i) => {
 			var state = i < current ? "completed" : i === current ? "active" : "";
 			var isLast = i === steps.length - 1;
@@ -96,6 +127,8 @@ function AuthStep({ onNext, skippable }) {
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
 	var passkeyEnabled = webauthnAvailable && browserSupportsWebauthn && !isIpAddress;
 
+	var [setupComplete, setSetupComplete] = useState(false);
+
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => r.json())
@@ -104,10 +137,16 @@ function AuthStep({ onNext, skippable }) {
 				if (data.localhost_only) setLocalhostOnly(true);
 				if (data.webauthn_available) setWebauthnAvailable(true);
 				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
+				if (data.setup_complete) setSetupComplete(true);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
 	}, []);
+
+	// Pre-select passkey when available (easier than passwords)
+	useEffect(() => {
+		if (passkeyEnabled && method === null) setMethod("passkey");
+	}, [passkeyEnabled]);
 
 	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: password+code validation
 	function onPasswordSubmit(e) {
@@ -137,7 +176,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -160,6 +199,7 @@ function AuthStep({ onNext, skippable }) {
 		}
 		setSaving(true);
 		var codeBody = codeRequired ? { setup_code: setupCode.trim() } : {};
+		var requestedRpId = null;
 		fetch("/api/auth/setup/passkey/register/begin", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -171,6 +211,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((data) => {
 				var options = data.options;
+				requestedRpId = options.publicKey.rp?.id || null;
 				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
 				options.publicKey.user.id = base64ToBuffer(options.publicKey.user.id);
 				if (options.publicKey.excludeCredentials) {
@@ -205,7 +246,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					setSaving(false);
 					setPasskeyDone(true);
 				} else {
@@ -219,7 +260,11 @@ function AuthStep({ onNext, skippable }) {
 				if (err.name === "NotAllowedError") {
 					setError("Passkey registration was cancelled.");
 				} else {
-					setError(err.message || "Passkey registration failed");
+					var msg = err.message || "Passkey registration failed";
+					if (requestedRpId) {
+						msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+					}
+					setError(msg);
 				}
 				setSaving(false);
 			});
@@ -244,7 +289,7 @@ function AuthStep({ onNext, skippable }) {
 		})
 			.then((r) => {
 				if (r.ok) {
-					forceReconnect();
+					ensureWsConnected();
 					onNext();
 				} else {
 					return r.text().then((t) => {
@@ -261,6 +306,23 @@ function AuthStep({ onNext, skippable }) {
 
 	if (loading) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
+	}
+
+	// Setup already complete (passkeys/password configured) — let user proceed.
+	if (setupComplete) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<span class="icon icon-checkmark"></span>
+				Authentication is already configured.
+			</div>
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" onClick=${() => {
+					ensureWsConnected();
+					onNext();
+				}}>Next</button>
+			</div>
+		</div>`;
 	}
 
 	var passkeyDisabledReason = webauthnAvailable
@@ -302,12 +364,12 @@ function AuthStep({ onNext, skippable }) {
 						placeholder="Repeat password" />
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
-				<div class="flex items-center gap-3 mt-1">
+				<div class="flex flex-wrap items-center gap-3 mt-1">
 					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
 						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
 					</button>
 					<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${() => {
-						forceReconnect();
+						ensureWsConnected();
 						onNext();
 					}}>Skip</button>
 				</div>
@@ -336,9 +398,9 @@ function AuthStep({ onNext, skippable }) {
 		<div class="flex flex-col gap-2">
 			<div class=${`backend-card ${method === "passkey" ? "selected" : ""} ${passkeyEnabled ? "" : "disabled"}`}
 				onClick=${passkeyEnabled ? () => setMethod("passkey") : null}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Passkey</span>
-					<div class="flex gap-2">
+					<div class="flex flex-wrap gap-2 justify-end">
 						${passkeyEnabled ? html`<span class="recommended-badge">Recommended</span>` : null}
 						${passkeyDisabledReason ? html`<span class="tier-badge">${passkeyDisabledReason}</span>` : null}
 					</div>
@@ -347,7 +409,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			<div class=${`backend-card ${method === "password" ? "selected" : ""}`}
 				onClick=${() => setMethod("password")}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
 				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
@@ -365,7 +427,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
 					${saving ? "Registering\u2026" : "Register passkey"}
 				</button>
@@ -390,7 +452,7 @@ function AuthStep({ onNext, skippable }) {
 					placeholder="Repeat password" />
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
@@ -401,7 +463,7 @@ function AuthStep({ onNext, skippable }) {
 
 		${
 			method === null &&
-			html`<div class="flex items-center gap-3 mt-1">
+			html`<div class="flex flex-wrap items-center gap-3 mt-1">
 			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 		</div>`
 		}
@@ -411,27 +473,25 @@ function AuthStep({ onNext, skippable }) {
 // ── Identity step ───────────────────────────────────────────
 
 function IdentityStep({ onNext, onBack }) {
-	var [userName, setUserName] = useState("");
-	var [name, setName] = useState("Moltis");
-	var [emoji, setEmoji] = useState("\u{1f916}");
-	var [creature, setCreature] = useState("");
-	var [vibe, setVibe] = useState("");
+	var identity = getGon("identity") || {};
+	var [userName, setUserName] = useState(identity.user_name || "");
+	var [name, setName] = useState(identity.name || "Moltis");
+	var [emoji, setEmoji] = useState(identity.emoji || "\u{1f916}");
+	var [creature, setCreature] = useState(identity.creature || "");
+	var [vibe, setVibe] = useState(identity.vibe || "");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!userName.trim()) {
-			setError("Your name is required.");
-			return;
-		}
-		if (!name.trim()) {
-			setError("Agent name is required.");
+		var v = validateIdentityFields(name, userName);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
 		setSaving(true);
-		sendRpc("agent.identity.update", {
+		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
 			creature: creature.trim() || "",
@@ -460,32 +520,36 @@ function IdentityStep({ onNext, onBack }) {
 					placeholder="e.g. Alice" autofocus />
 			</div>
 			<!-- Agent section -->
-			<div class="grid grid-cols-2 gap-x-4 gap-y-3">
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${name} onInput=${(e) => setName(e.target.value)}
-						placeholder="e.g. Rex" />
+			<div class="flex flex-col gap-3">
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:gap-x-4">
+					<div class="min-w-0">
+						<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${name} onInput=${(e) => setName(e.target.value)}
+							placeholder="e.g. Rex" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
+						<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
+					</div>
 				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
-					<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${creature} onInput=${(e) => setCreature(e.target.value)}
-						placeholder="e.g. dog" />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${vibe} onInput=${(e) => setVibe(e.target.value)}
-						placeholder="e.g. chill" />
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-x-4">
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${creature} onInput=${(e) => setCreature(e.target.value)}
+							placeholder="e.g. dog" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${vibe} onInput=${(e) => setVibe(e.target.value)}
+							placeholder="e.g. chill" />
+					</div>
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				${onBack && html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>`}
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Saving\u2026" : "Continue"}
@@ -498,7 +562,22 @@ function IdentityStep({ onNext, onBack }) {
 // ── Provider step ───────────────────────────────────────────
 
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
-var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
+var BYOM_PROVIDERS = ["openrouter", "venice"];
+
+function ModelSelectCard({ model, selected, probe, onToggle }) {
+	return html`<div class="model-card ${selected ? "selected" : ""}" onClick=${onToggle}>
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<span class="text-sm font-medium text-[var(--text)]">${model.displayName}</span>
+			<div class="flex flex-wrap gap-2 justify-end">
+				${model.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
+				${probe === "probing" ? html`<span class="tier-badge">Probing\u2026</span>` : null}
+				${probe && probe !== "ok" && probe !== "probing" ? html`<span class="provider-item-badge warning" title=${probe.error || ""}>Unsupported</span>` : null}
+			</div>
+		</div>
+		<div class="text-xs text-[var(--muted)] mt-1 font-mono">${model.id}</div>
+		${model.createdAt ? html`<time class="text-xs text-[var(--muted)] mt-0.5 opacity-60 block" data-epoch-ms=${model.createdAt * 1000} data-format="year-month"></time>` : null}
+	</div>`;
+}
 
 // ── Provider row for multi-provider onboarding ──────────────
 
@@ -508,8 +587,8 @@ function OnboardingProviderRow({
 	configuring,
 	phase,
 	providerModels,
-	selectedModel,
-	modelTestError,
+	selectedModels,
+	probeResults,
 	modelSearch,
 	setModelSearch,
 	oauthProvider,
@@ -526,18 +605,20 @@ function OnboardingProviderRow({
 	model,
 	setModel,
 	saving,
+	savingModels,
 	error,
 	validationResult,
 	onStartConfigure,
 	onCancelConfigure,
 	onSaveKey,
-	onSelectModel,
+	onToggleModel,
+	onSaveModels,
 	onCancelOAuth,
 	onConfigureLocalModel,
 	onCancelLocal,
 }) {
 	var isApiKeyForm = configuring === provider.name && (phase === "form" || phase === "validating");
-	var isModelSelect = configuring === provider.name && (phase === "selectModel" || phase === "testingModel");
+	var isModelSelect = configuring === provider.name && phase === "selectModel";
 	var isOAuth = oauthProvider === provider.name;
 	var isLocal = localProvider === provider.name;
 	var isExpanded = isApiKeyForm || isModelSelect || isOAuth || isLocal;
@@ -558,6 +639,7 @@ function OnboardingProviderRow({
 
 	var supportsEndpoint = OPENAI_COMPATIBLE.includes(provider.name);
 	var needsModel = BYOM_PROVIDERS.includes(provider.name);
+	var keyHelp = providerApiKeyHelp(provider);
 
 	// Filter models for the model selector.
 	var filteredModels = (providerModels || []).filter(
@@ -605,7 +687,18 @@ function OnboardingProviderRow({
 					<input type="password" class="provider-key-input w-full"
 						ref=${keyInputRef}
 						value=${apiKey} onInput=${(e) => setApiKey(e.target.value)}
-						placeholder=${provider.name === "ollama" ? "(optional for Ollama)" : "sk-..."} />
+						placeholder=${provider.keyOptional ? "(optional)" : "sk-..."} />
+					${
+						keyHelp
+							? html`<div class="text-xs text-[var(--muted)] mt-1">
+							${
+								keyHelp.url
+									? html`${keyHelp.text} <a href=${keyHelp.url} target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] underline">${keyHelp.label || keyHelp.url}</a>`
+									: keyHelp.text
+							}
+						</div>`
+							: null
+					}
 				</div>
 				${
 					supportsEndpoint
@@ -624,7 +717,7 @@ function OnboardingProviderRow({
 						<label class="text-xs text-[var(--muted)] mb-1 block">Model ID</label>
 						<input type="text" class="provider-key-input w-full"
 							value=${model} onInput=${(e) => setModel(e.target.value)}
-							placeholder=${provider.name === "ollama" ? "llama3" : "model-id"} />
+							placeholder="model-id" />
 					</div>`
 						: null
 				}
@@ -639,7 +732,8 @@ function OnboardingProviderRow({
 		${
 			isModelSelect
 				? html`<div class="flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3">
-				<div class="text-xs font-medium text-[var(--text-strong)]">Select a model</div>
+				<div class="text-xs font-medium text-[var(--text-strong)]">Select preferred models</div>
+				<div class="text-xs text-[var(--muted)]">Selected models appear first in the session model selector.</div>
 				${
 					(providerModels || []).length > 5
 						? html`<input type="text" class="provider-key-input w-full text-xs"
@@ -648,31 +742,24 @@ function OnboardingProviderRow({
 							onInput=${(e) => setModelSearch(e.target.value)} />`
 						: null
 				}
-				<div class="flex flex-col gap-2 max-h-56 overflow-y-auto">
+				<div class="flex flex-col gap-1 max-h-56 overflow-y-auto">
 					${
 						filteredModels.length === 0
 							? html`<div class="text-xs text-[var(--muted)] py-4 text-center">No models match your search.</div>`
 							: filteredModels.map(
-									(m) => html`<div key=${m.id}
-									class="model-card ${selectedModel === m.id ? "selected" : ""}"
-									onClick=${() => {
-										if (phase !== "testingModel") onSelectModel(m.id);
-									}}>
-									<div class="flex items-center justify-between">
-										<span class="text-sm font-medium text-[var(--text)]">${m.displayName}</span>
-										<div class="flex gap-2">
-											${m.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
-											${phase === "testingModel" && selectedModel === m.id ? html`<span class="tier-badge">Testing\u2026</span>` : null}
-										</div>
-									</div>
-									<div class="text-xs text-[var(--muted)] mt-1 font-mono">${m.id}</div>
-								</div>`,
+									(m) => html`<${ModelSelectCard} key=${m.id} model=${m}
+										selected=${selectedModels.has(m.id)}
+										probe=${probeResults.get(m.id)}
+										onToggle=${() => onToggleModel(m.id)} />`,
 								)
 					}
 				</div>
-				${modelTestError ? html`<${ErrorPanel} message=${modelTestError} />` : null}
+				<div class="text-xs text-[var(--muted)]">${selectedModels.size === 0 ? "No models selected" : `${selectedModels.size} model${selectedModels.size > 1 ? "s" : ""} selected`}</div>
 				${error ? html`<${ErrorPanel} message=${error} />` : null}
-				<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm self-start" onClick=${onCancelConfigure}>Cancel</button>
+				<div class="flex items-center gap-2 mt-1">
+					<button type="button" class="provider-btn provider-btn-sm" disabled=${selectedModels.size === 0 || savingModels} onClick=${onSaveModels}>${savingModels ? "Saving\u2026" : "Save"}</button>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${savingModels}>Cancel</button>
+				</div>
 			</div>`
 				: null
 		}
@@ -714,9 +801,9 @@ function OnboardingProviderRow({
 										onClick=${() => {
 											if (b.available) setSelectedBackend(b.id);
 										}}>
-										<div class="flex items-center justify-between">
+										<div class="flex flex-wrap items-center justify-between gap-2">
 											<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
-											<div class="flex gap-2">
+											<div class="flex flex-wrap gap-2 justify-end">
 												${b.id === sysInfo.recommendedBackend && b.available ? html`<span class="recommended-badge">Recommended</span>` : null}
 												${b.available ? null : html`<span class="tier-badge">Not installed</span>`}
 											</div>
@@ -737,9 +824,9 @@ function OnboardingProviderRow({
 											.filter((m) => m.backend === selectedBackend)
 											.map(
 												(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => onConfigureLocalModel(mdl)}>
-											<div class="flex items-center justify-between">
+											<div class="flex flex-wrap items-center justify-between gap-2">
 												<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
-												<div class="flex gap-2">
+												<div class="flex flex-wrap gap-2 justify-end">
 													<span class="tier-badge">${mdl.minRamGb}GB</span>
 													${mdl.suggested ? html`<span class="recommended-badge">Recommended</span>` : null}
 												</div>
@@ -763,13 +850,40 @@ function OnboardingProviderRow({
 
 function sortProviders(list) {
 	list.sort((a, b) => {
-		var aIsLocal = a.authType === "local" || a.name === "ollama";
-		var bIsLocal = b.authType === "local" || b.name === "ollama";
-		if (aIsLocal && !bIsLocal) return -1;
-		if (!aIsLocal && bIsLocal) return 1;
+		var aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+		var bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+		if (aOrder !== bOrder) return aOrder - bOrder;
 		return a.displayName.localeCompare(b.displayName);
 	});
 	return list;
+}
+
+function normalizeProviderToken(value) {
+	return String(value || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "");
+}
+
+function modelBelongsToProvider(providerName, model) {
+	var needle = normalizeProviderToken(providerName);
+	if (!needle) return false;
+	var modelProvider = normalizeProviderToken(model?.provider);
+	if (modelProvider?.includes(needle)) {
+		return true;
+	}
+	var modelId = String(model?.id || "");
+	var modelPrefix = normalizeProviderToken(modelId.split("::")[0]);
+	return modelPrefix === needle;
+}
+
+function toModelSelectorRow(modelRow) {
+	return {
+		id: modelRow.id,
+		displayName: modelRow.displayName || modelRow.id,
+		provider: modelRow.provider,
+		supportsTools: modelRow.supportsTools,
+		createdAt: modelRow.createdAt || 0,
+	};
 }
 
 function ProviderStep({ onNext, onBack }) {
@@ -782,15 +896,16 @@ function ProviderStep({ onNext, onBack }) {
 	var [oauthProvider, setOauthProvider] = useState(null);
 	var [localProvider, setLocalProvider] = useState(null);
 
-	// Phase: "form" | "validating" | "selectModel" | "testingModel"
+	// Phase: "form" | "validating" | "selectModel"
 	var [phase, setPhase] = useState("form");
 	var [providerModels, setProviderModels] = useState([]);
-	var [selectedModel, setSelectedModel] = useState(null);
-	var [modelTestError, setModelTestError] = useState(null);
+	var [selectedModels, setSelectedModels] = useState(new Set());
+	var [probeResults, setProbeResults] = useState(new Map());
 	var [modelSearch, setModelSearch] = useState("");
+	var [savingModels, setSavingModels] = useState(false);
 
-	// Track when model selection originated from OAuth (provider name or null)
-	var [oauthModelSelect, setOauthModelSelect] = useState(null);
+	// Track provider whose credentials already exist and only model selection is needed.
+	var [modelSelectProvider, setModelSelectProvider] = useState(null);
 
 	// API key form state
 	var [apiKey, setApiKey] = useState("");
@@ -864,12 +979,13 @@ function ProviderStep({ onNext, onBack }) {
 		setConfiguring(null);
 		setOauthProvider(null);
 		setLocalProvider(null);
-		setOauthModelSelect(null);
+		setModelSelectProvider(null);
 		setPhase("form");
 		setProviderModels([]);
-		setSelectedModel(null);
-		setModelTestError(null);
+		setSelectedModels(new Set());
+		setProbeResults(new Map());
 		setModelSearch("");
+		setSavingModels(false);
 		setApiKey("");
 		setEndpoint("");
 		setModel("");
@@ -883,14 +999,42 @@ function ProviderStep({ onNext, onBack }) {
 		}
 	}
 
-	function onStartConfigure(name) {
+	async function loadModelsForProvider(providerName) {
+		var modelsRes = await sendRpc("models.list", {});
+		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
+		return allModels.filter((m) => modelBelongsToProvider(providerName, m)).map(toModelSelectorRow);
+	}
+
+	async function openModelSelectForConfiguredApiProvider(provider) {
+		if (provider.authType !== "api-key" || !provider.configured) return false;
+		var existingModels = await loadModelsForProvider(provider.name);
+		if (existingModels.length === 0) return false;
+
+		// Pre-select already-saved preferred models.
+		var saved = new Set();
+		if (provider.models) {
+			for (var sm of provider.models) saved.add(sm);
+		}
+
+		setModelSelectProvider(provider.name);
+		setConfiguring(provider.name);
+		setProviderModels(existingModels);
+		setSelectedModels(saved);
+		setPhase("selectModel");
+		return true;
+	}
+
+	async function onStartConfigure(name) {
 		closeAll();
 		var p = providers.find((pr) => pr.name === name);
 		if (!p) return;
 		if (p.authType === "api-key") {
 			setEndpoint(p.baseUrl || "");
 			setModel(p.model || "");
+			if (await openModelSelectForConfiguredApiProvider(p)) return;
 			setConfiguring(name);
+			setPhase("form");
+			return;
 		} else if (p.authType === "oauth") {
 			startOAuth(p);
 		} else if (p.authType === "local") {
@@ -904,7 +1048,7 @@ function ProviderStep({ onNext, onBack }) {
 		e.preventDefault();
 		var p = providers.find((pr) => pr.name === configuring);
 		if (!p) return;
-		if (!apiKey.trim() && p.name !== "ollama") {
+		if (!(apiKey.trim() || p.keyOptional)) {
 			setError("API key is required.");
 			return;
 		}
@@ -915,12 +1059,12 @@ function ProviderStep({ onNext, onBack }) {
 		setError(null);
 		setPhase("validating");
 
-		var keyVal = apiKey.trim() || "ollama";
+		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 
 		validateProviderKey(p.name, keyVal, endpointVal, modelVal)
-			.then((result) => {
+			.then(async (result) => {
 				if (!result.valid) {
 					// Validation failed — stay on the form.
 					setPhase("form");
@@ -931,7 +1075,16 @@ function ProviderStep({ onNext, onBack }) {
 				// BYOM providers: we already tested the specific model during validation,
 				// so save immediately without showing the model selector.
 				if (BYOM_PROVIDERS.includes(p.name)) {
-					return saveAndFinish(p.name, keyVal, endpointVal, modelVal);
+					return saveAndFinishByom(p.name, keyVal, endpointVal, modelVal);
+				}
+
+				// Persist credentials before opening model selection so probes
+				// and follow-up actions use an initialized provider registry.
+				var saveRes = await saveProviderKey(p.name, keyVal, endpointVal, modelVal);
+				if (!saveRes?.ok) {
+					setPhase("form");
+					setError(saveRes?.error?.message || "Failed to save credentials.");
+					return;
 				}
 
 				// Regular providers: show the model selector.
@@ -944,53 +1097,107 @@ function ProviderStep({ onNext, onBack }) {
 			});
 	}
 
-	function onSelectModel(modelId) {
-		setSelectedModel(modelId);
-		setModelTestError(null);
-		setPhase("testingModel");
-
-		if (oauthModelSelect) {
-			// OAuth flow: credentials already saved, just test + save model preference.
-			testModel(modelId).then((testResult) => {
-				if (!testResult.ok) {
-					setPhase("selectModel");
-					setModelTestError(testResult.error || "Model test failed. Try another model.");
-					return;
+	function probeModelAsync(modelId) {
+		setProbeResults((prev) => {
+			var next = new Map(prev);
+			next.set(modelId, "probing");
+			return next;
+		});
+		testModel(modelId).then((result) => {
+			setProbeResults((prev) => {
+				var next = new Map(prev);
+				if (isModelServiceNotConfigured(result.error || "")) {
+					next.delete(modelId);
+				} else {
+					next.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") });
 				}
-				sendRpc("providers.save_model", { provider: oauthModelSelect, model: modelId }).then(() => {
-					localStorage.setItem("moltis-model", modelId);
-					setValidationResults((prev) => ({ ...prev, [oauthModelSelect]: { ok: true } }));
-					setOauthModelSelect(null);
-					setConfiguring(null);
-					setPhase("form");
-					setProviderModels([]);
-					setSelectedModel(null);
-					setModelTestError(null);
-					setModelSearch("");
-					setError(null);
-					refreshProviders();
-				});
+				return next;
 			});
-			return;
-		}
-
-		var p = providers.find((pr) => pr.name === configuring);
-		if (!p) return;
-
-		// Save credentials first so the model is available in the live registry.
-		var keyVal = apiKey.trim() || "ollama";
-		var endpointVal = endpoint.trim() || null;
-		var modelVal = model.trim() || null;
-
-		saveAndFinish(p.name, keyVal, endpointVal, modelVal, modelId);
+		});
 	}
 
-	function saveAndFinish(providerName, keyVal, endpointVal, modelVal, selectedModelId) {
-		var payload = { provider: providerName, apiKey: keyVal };
-		if (endpointVal) payload.baseUrl = endpointVal;
-		if (modelVal) payload.model = modelVal;
+	function onToggleModel(modelId) {
+		setSelectedModels((prev) => {
+			var next = new Set(prev);
+			if (next.has(modelId)) {
+				next.delete(modelId);
+			} else {
+				next.add(modelId);
+				probeModelAsync(modelId);
+			}
+			return next;
+		});
+	}
 
-		sendRpc("providers.save_key", payload)
+	function resolveCredentials(providerName, modelIds) {
+		var p = providers.find((pr) => pr.name === providerName);
+		if (!p) return null;
+		var keyVal = apiKey.trim() || p.name;
+		var endpointVal = endpoint.trim() || null;
+		var modelVal = model.trim() || null;
+		var effectiveModelVal = p.keyOptional && modelIds.length > 0 ? modelIds[0] : modelVal;
+		return { keyVal, endpointVal, modelVal: effectiveModelVal };
+	}
+
+	async function saveProviderKeyIfNeeded(providerName, modelIds) {
+		if (modelSelectProvider) return true;
+		var creds = resolveCredentials(providerName, modelIds);
+		if (!creds) return false;
+		var res = await saveProviderKey(providerName, creds.keyVal, creds.endpointVal, creds.modelVal);
+		if (!res?.ok) {
+			setPhase("form");
+			setError(res?.error?.message || "Failed to save credentials.");
+			return false;
+		}
+		return true;
+	}
+
+	async function onSaveSelectedModels() {
+		var providerName = modelSelectProvider || configuring;
+		if (!providerName) return false;
+		var modelIds = Array.from(selectedModels);
+
+		setSavingModels(true);
+		setError(null);
+
+		try {
+			if (!(await saveProviderKeyIfNeeded(providerName, modelIds))) {
+				setSavingModels(false);
+				return false;
+			}
+			var res = await sendRpc("providers.save_models", { provider: providerName, models: modelIds });
+			if (!res?.ok) {
+				setSavingModels(false);
+				setError(res?.error?.message || "Failed to save model preferences.");
+				return false;
+			}
+			if (modelIds.length > 0) {
+				localStorage.setItem("moltis-model", modelIds[0]);
+			}
+			setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
+			closeAll();
+			refreshProviders();
+			return true;
+		} catch (err) {
+			setSavingModels(false);
+			setError(err?.message || "Failed to save credentials.");
+			return false;
+		}
+	}
+
+	async function onContinue() {
+		var hasPendingModelSelection =
+			phase === "selectModel" && (configuring || modelSelectProvider) && selectedModels.size > 0;
+		if (hasPendingModelSelection) {
+			var saved = await onSaveSelectedModels();
+			if (!saved) return;
+		}
+		onNext();
+	}
+
+	// BYOM-only save path (no model selector shown for these providers).
+	function saveAndFinishByom(providerName, keyVal, endpointVal, modelVal) {
+		saveProviderKey(providerName, keyVal, endpointVal, modelVal)
 			.then(async (res) => {
 				if (!res?.ok) {
 					setPhase("form");
@@ -998,28 +1205,25 @@ function ProviderStep({ onNext, onBack }) {
 					return;
 				}
 
-				// If a specific model was selected, test it from the live registry.
-				if (selectedModelId) {
-					var testResult = await testModel(selectedModelId);
-					if (!testResult.ok) {
-						// Model test failed — let user pick another.
-						setPhase("selectModel");
-						setModelTestError(testResult.error || "Model test failed. Try another model.");
+				// Test the specific model from the live registry.
+				if (modelVal) {
+					var testResult = await testModel(modelVal);
+					var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
+					if (!(testResult.ok || modelServiceUnavailable)) {
+						setPhase("form");
+						setError(testResult.error || "Model test failed. Check your model ID.");
 						return;
 					}
-					// Persist model preference for the provider.
-					await sendRpc("providers.save_model", { provider: providerName, model: selectedModelId });
-					// Store chosen model in localStorage for the UI.
-					localStorage.setItem("moltis-model", selectedModelId);
+					await sendRpc("providers.save_models", { provider: providerName, models: [modelVal] });
+					localStorage.setItem("moltis-model", modelVal);
 				}
 
-				// Success — close the form and update state.
 				setValidationResults((prev) => ({ ...prev, [providerName]: { ok: true, message: null } }));
 				setConfiguring(null);
 				setPhase("form");
 				setProviderModels([]);
-				setSelectedModel(null);
-				setModelTestError(null);
+				setSelectedModels(new Set());
+				setProbeResults(new Map());
 				setModelSearch("");
 				setApiKey("");
 				setEndpoint("");
@@ -1061,25 +1265,16 @@ function ProviderStep({ onNext, onBack }) {
 	}
 
 	async function onOAuthAuthenticated(providerName) {
-		var modelsRes = await sendRpc("models.list", {});
-		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
-		var needle = providerName.replace(/-/g, "").toLowerCase();
-		var provModels = allModels.filter((m) => m.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+		var provModels = await loadModelsForProvider(providerName);
 
 		setOauthProvider(null);
 		setOauthInfo(null);
 
 		if (provModels.length > 0) {
-			setOauthModelSelect(providerName);
+			setModelSelectProvider(providerName);
 			setConfiguring(providerName);
-			setProviderModels(
-				provModels.map((m) => ({
-					id: m.id,
-					displayName: m.displayName || m.id,
-					provider: m.provider,
-					supportsTools: m.supportsTools,
-				})),
-			);
+			setProviderModels(provModels);
+			setSelectedModels(new Set());
 			setPhase("selectModel");
 		} else {
 			sendRpc("models.detect_supported", {
@@ -1199,8 +1394,8 @@ function ProviderStep({ onNext, onBack }) {
 				configuring=${configuring}
 				phase=${configuring === p.name ? phase : "form"}
 				providerModels=${configuring === p.name ? providerModels : []}
-				selectedModel=${configuring === p.name ? selectedModel : null}
-				modelTestError=${configuring === p.name ? modelTestError : null}
+				selectedModels=${configuring === p.name ? selectedModels : new Set()}
+				probeResults=${configuring === p.name ? probeResults : new Map()}
 				modelSearch=${configuring === p.name ? modelSearch : ""}
 				setModelSearch=${setModelSearch}
 				oauthProvider=${oauthProvider}
@@ -1217,12 +1412,14 @@ function ProviderStep({ onNext, onBack }) {
 				model=${model}
 				setModel=${setModel}
 				saving=${saving}
+				savingModels=${savingModels}
 				error=${configuring === p.name || oauthProvider === p.name || localProvider === p.name ? error : null}
 				validationResult=${validationResults[p.name] || null}
 				onStartConfigure=${onStartConfigure}
 				onCancelConfigure=${closeAll}
 				onSaveKey=${onSaveKey}
-				onSelectModel=${onSelectModel}
+				onToggleModel=${onToggleModel}
+				onSaveModels=${onSaveSelectedModels}
 				onCancelOAuth=${cancelOAuth}
 				onConfigureLocalModel=${configureLocalModel}
 				onCancelLocal=${cancelLocal}
@@ -1230,30 +1427,15 @@ function ProviderStep({ onNext, onBack }) {
 			)}
 		</div>
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
-			<button class="provider-btn" onClick=${onNext}>Continue</button>
+			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
 		</div>
 	</div>`;
 }
 
 // ── Voice helpers ────────────────────────────────────────────
-
-function decodeBase64Safe(input) {
-	if (!input) return new Uint8Array();
-	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-	while (normalized.length % 4) normalized += "=";
-	var binary = "";
-	try {
-		binary = atob(normalized);
-	} catch (_err) {
-		throw new Error("Invalid base64 audio payload");
-	}
-	var bytes = new Uint8Array(binary.length);
-	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return bytes;
-}
 
 // ── Voice provider row for onboarding ────────────────────────
 
@@ -1404,7 +1586,7 @@ function VoiceStep({ onNext, onBack }) {
 	var [enableSaving, setEnableSaving] = useState(false);
 
 	function fetchProviders() {
-		return sendRpc("voice.providers.all", {}).then((res) => {
+		return fetchVoiceProviders().then((res) => {
 			if (res?.ok) {
 				setAllProviders(res.payload || { tts: [], stt: [] });
 			}
@@ -1418,7 +1600,7 @@ function VoiceStep({ onNext, onBack }) {
 
 		function load() {
 			if (cancelled) return;
-			sendRpc("voice.providers.all", {}).then((res) => {
+			fetchVoiceProviders().then((res) => {
 				if (cancelled) return;
 				if (res?.ok) {
 					setAllProviders(res.payload || { tts: [], stt: [] });
@@ -1458,8 +1640,8 @@ function VoiceStep({ onNext, onBack }) {
 		var firstStt = allProviders.stt.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var firstTts = allProviders.tts.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var toggles = [];
-		if (firstStt) toggles.push(sendRpc("voice.provider.toggle", { provider: firstStt.id, enabled: true, type: "stt" }));
-		if (firstTts) toggles.push(sendRpc("voice.provider.toggle", { provider: firstTts.id, enabled: true, type: "tts" }));
+		if (firstStt) toggles.push(toggleVoiceProvider(firstStt.id, true, "stt"));
+		if (firstTts) toggles.push(toggleVoiceProvider(firstTts.id, true, "tts"));
 		if (toggles.length === 0) {
 			setEnableSaving(false);
 			return;
@@ -1496,18 +1678,12 @@ function VoiceStep({ onNext, onBack }) {
 		setError(null);
 		setSaving(true);
 		var providerId = configuring;
-		sendRpc("voice.config.save_key", { provider: providerId, api_key: apiKey.trim() }).then(async (res) => {
+		saveVoiceKey(providerId, apiKey.trim()).then(async (res) => {
 			if (res?.ok) {
 				// Auto-enable in onboarding: toggle on for each type this provider appears in.
 				// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
 				// so also check the counterpart ID.
-				var COUNTERPART_IDS = {
-					elevenlabs: "elevenlabs-stt",
-					"elevenlabs-stt": "elevenlabs",
-					"google-tts": "google",
-					google: "google-tts",
-				};
-				var counterId = COUNTERPART_IDS[providerId];
+				var counterId = VOICE_COUNTERPART_IDS[providerId];
 				var toggles = [];
 				var sttMatch =
 					allProviders.stt.find((p) => p.id === providerId) ||
@@ -1516,10 +1692,10 @@ function VoiceStep({ onNext, onBack }) {
 					allProviders.tts.find((p) => p.id === providerId) ||
 					(counterId && allProviders.tts.find((p) => p.id === counterId));
 				if (sttMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: sttMatch.id, enabled: true, type: "stt" }));
+					toggles.push(toggleVoiceProvider(sttMatch.id, true, "stt"));
 				}
 				if (ttsMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: ttsMatch.id, enabled: true, type: "tts" }));
+					toggles.push(toggleVoiceProvider(ttsMatch.id, true, "tts"));
 				}
 				await Promise.all(toggles);
 				setSaving(false);
@@ -1554,7 +1730,7 @@ function VoiceStep({ onNext, onBack }) {
 		// Auto-enable the provider if it's available but not yet enabled
 		var prov = (type === "stt" ? allProviders.stt : allProviders.tts).find((p) => p.id === providerId);
 		if (prov?.available && !prov?.enabled) {
-			var toggleRes = await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type });
+			var toggleRes = await toggleVoiceProvider(providerId, true, type);
 			if (!toggleRes?.ok) {
 				setVoiceTestResults((prev) => ({
 					...prev,
@@ -1564,20 +1740,12 @@ function VoiceStep({ onNext, onBack }) {
 				return;
 			}
 			// ElevenLabs/Google share API keys — enable the counterpart too.
-			// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
-			// so map to the counterpart ID before looking it up.
 			var counterType = type === "stt" ? "tts" : "stt";
 			var counterList = type === "stt" ? allProviders.tts : allProviders.stt;
-			var COUNTERPART_IDS = {
-				elevenlabs: "elevenlabs-stt",
-				"elevenlabs-stt": "elevenlabs",
-				"google-tts": "google",
-				google: "google-tts",
-			};
-			var counterId = COUNTERPART_IDS[providerId] || providerId;
+			var counterId = VOICE_COUNTERPART_IDS[providerId] || providerId;
 			var counterProv = counterList.find((p) => p.id === counterId);
 			if (counterProv?.available && !counterProv?.enabled) {
-				await sendRpc("voice.provider.toggle", { provider: counterId, enabled: true, type: counterType });
+				await toggleVoiceProvider(counterId, true, counterType);
 			}
 			// Refresh provider list in background
 			fetchProviders();
@@ -1589,10 +1757,7 @@ function VoiceStep({ onNext, onBack }) {
 				var user = identity?.user_name || "friend";
 				var bot = identity?.name || "Moltis";
 				var ttsText = await fetchPhrase("onboarding", user, bot);
-				var res = await sendRpc("tts.convert", {
-					text: ttsText,
-					provider: providerId,
-				});
+				var res = await testTts(ttsText, providerId);
 				if (res?.ok && res.payload?.audio) {
 					var bytes = decodeBase64Safe(res.payload.audio);
 					var audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
@@ -1651,14 +1816,7 @@ function VoiceStep({ onNext, onBack }) {
 					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 
 					try {
-						var resp = await fetch(
-							`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true&provider=${encodeURIComponent(providerId)}`,
-							{
-								method: "POST",
-								headers: { "Content-Type": audioBlob.type || "audio/webm" },
-								body: audioBlob,
-							},
-						);
+						var resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
 						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
 							var sttRes = await resp.json();
@@ -1796,7 +1954,7 @@ function VoiceStep({ onNext, onBack }) {
 		}
 
 		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<button class="provider-btn" onClick=${onNext}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
@@ -1818,12 +1976,9 @@ function ChannelStep({ onNext, onBack }) {
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!accountId.trim()) {
-			setError("Bot username is required.");
-			return;
-		}
-		if (!token.trim()) {
-			setError("Bot token is required.");
+		var v = validateChannelFields(accountId, token);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
@@ -1833,15 +1988,11 @@ function ChannelStep({ onNext, onBack }) {
 			.split(/\n/)
 			.map((s) => s.trim())
 			.filter(Boolean);
-		sendRpc("channels.add", {
-			type: "telegram",
-			account_id: accountId.trim(),
-			config: {
-				token: token.trim(),
-				dm_policy: dmPolicy,
-				mention_mode: "mention",
-				allowlist: allowlistEntries,
-			},
+		addChannel("telegram", accountId.trim(), {
+			token: token.trim(),
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
@@ -1884,16 +2035,16 @@ function ChannelStep({ onNext, onBack }) {
 						name="telegram_bot_username"
 						autofocus />
 				</div>
-				<div>
-					<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
-					<input type="text" class="provider-key-input w-full"
-						value=${token} onInput=${(e) => setToken(e.target.value)}
-						placeholder="123456:ABC-DEF..."
-						autocomplete="off"
-						autocapitalize="none"
-						autocorrect="off"
-						spellcheck="false"
-						name="telegram_bot_token" />
+					<div>
+						<label class="text-xs text-[var(--muted)] mb-1 block">Bot token (from @BotFather)</label>
+						<input type="password" class="provider-key-input w-full"
+							value=${token} onInput=${(e) => setToken(e.target.value)}
+							placeholder="123456:ABC-DEF..."
+							autocomplete="new-password"
+							autocapitalize="none"
+							autocorrect="off"
+							spellcheck="false"
+							name="telegram_bot_token" />
 				</div>
 				<div>
 					<label class="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
@@ -1913,7 +2064,7 @@ function ChannelStep({ onNext, onBack }) {
 				${error && html`<${ErrorPanel} message=${error} />`}
 			</form>`
 		}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			${
 				connected
@@ -1980,11 +2131,11 @@ function SummaryStep({ onBack, onFinish }) {
 
 			var [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
 				sendRpc("providers.available", {}).catch(() => null),
-				sendRpc("channels.status", {}).catch(() => null),
+				fetchChannelStatus().catch(() => null),
 				fetch("/api/tailscale/status")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
-				voiceEnabled ? sendRpc("voice.providers.all", {}).catch(() => null) : Promise.resolve(null),
+				voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
 				fetch("/api/bootstrap")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
@@ -2154,7 +2305,7 @@ function SummaryStep({ onBack, onFinish }) {
 			}
 		</div>
 
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<div class="flex-1" />
 			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
@@ -2168,7 +2319,7 @@ function OnboardingPage() {
 	var [step, setStep] = useState(-1); // -1 = checking
 	var [authNeeded, setAuthNeeded] = useState(false);
 	var [authSkippable, setAuthSkippable] = useState(false);
-	var [voiceAvailable, setVoiceAvailable] = useState(false);
+	var [voiceAvailable] = useState(() => getGon("voice_enabled") === true);
 	var headerRef = useRef(null);
 	var navRef = useRef(null);
 	var sessionsPanelRef = useRef(null);
@@ -2213,41 +2364,15 @@ function OnboardingPage() {
 					setStep(0);
 				} else {
 					setAuthNeeded(false);
+					ensureWsConnected();
 					setStep(1);
 				}
 			})
 			.catch(() => {
 				setAuthNeeded(false);
+				ensureWsConnected();
 				setStep(1);
 			});
-	}, []);
-
-	// Probe voice feature availability
-	useEffect(() => {
-		var cancelled = false;
-		var attempts = 0;
-
-		function probe() {
-			if (cancelled) return;
-			sendRpc("voice.providers.all", {}).then((res) => {
-				if (cancelled) return;
-				if (res?.ok) {
-					setVoiceAvailable(true);
-					return;
-				}
-				if (res?.error?.message === "WebSocket not connected" && attempts < 30) {
-					attempts += 1;
-					window.setTimeout(probe, 200);
-					return;
-				}
-				// Voice not compiled or other error — leave false
-			});
-		}
-
-		probe();
-		return () => {
-			cancelled = true;
-		};
 	}, []);
 
 	if (step === -1) {
@@ -2283,18 +2408,20 @@ function OnboardingPage() {
 	}
 
 	// Determine which component to show for each step
-	var channelStep = voiceAvailable ? 4 : 3;
-	var voiceStep = voiceAvailable ? 3 : -1;
+	// Order: Auth(0) → LLM(1) → Voice(2)? → Channel → Identity → Summary
+	var voiceStep = voiceAvailable ? 2 : -1;
+	var channelStep = voiceAvailable ? 3 : 2;
+	var identityStep = voiceAvailable ? 4 : 3;
 	var summaryStep = voiceAvailable ? 5 : 4;
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
-			${step === 1 && html`<${IdentityStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
-			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === 1 && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
 	</div>`;
@@ -2306,7 +2433,8 @@ var containerRef = null;
 
 export function mountOnboarding(container) {
 	containerRef = container;
-	container.style.cssText = "display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;";
+	container.style.cssText =
+		"display:flex;align-items:center;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;";
 	render(html`<${OnboardingPage} />`, container);
 }
 

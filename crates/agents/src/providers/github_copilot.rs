@@ -254,10 +254,10 @@ async fn fetch_valid_copilot_token_with_fallback(
     fetch_valid_copilot_token(client, &token_store).await
 }
 
-fn default_model_catalog() -> Vec<(String, String)> {
+fn default_model_catalog() -> Vec<super::DiscoveredModel> {
     COPILOT_MODELS
         .iter()
-        .map(|(id, name)| (id.to_string(), name.to_string()))
+        .map(|(id, name)| super::DiscoveredModel::new(*id, *name))
         .collect()
 }
 
@@ -285,7 +285,7 @@ fn is_likely_model_id(model_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
-fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
+fn parse_model_entry(entry: &serde_json::Value) -> Option<super::DiscoveredModel> {
     let obj = entry.as_object()?;
     let model_id = obj
         .get("id")
@@ -304,10 +304,12 @@ fn parse_model_entry(entry: &serde_json::Value) -> Option<(String, String)> {
         .or_else(|| obj.get("title"))
         .and_then(serde_json::Value::as_str);
 
-    Some((
-        model_id.to_string(),
-        normalize_display_name(model_id, display_name),
-    ))
+    let created_at = obj.get("created").and_then(serde_json::Value::as_i64);
+
+    Some(
+        super::DiscoveredModel::new(model_id, normalize_display_name(model_id, display_name))
+            .with_created_at(created_at),
+    )
 }
 
 fn collect_candidate_arrays<'a>(
@@ -327,26 +329,36 @@ fn collect_candidate_arrays<'a>(
     }
 }
 
-fn parse_models_payload(value: &serde_json::Value) -> Vec<(String, String)> {
+fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel> {
     let mut candidates = Vec::new();
     collect_candidate_arrays(value, &mut candidates);
 
     let mut models = Vec::new();
     let mut seen = HashSet::new();
     for entry in candidates {
-        if let Some((id, display_name)) = parse_model_entry(entry)
-            && seen.insert(id.clone())
+        if let Some(model) = parse_model_entry(entry)
+            && seen.insert(model.id.clone())
         {
-            models.push((id, display_name));
+            models.push(model);
         }
     }
+
+    // Sort by created_at descending (newest first). Models without a
+    // timestamp are placed after those with one, preserving relative order.
+    models.sort_by(|a, b| match (a.created_at, b.created_at) {
+        (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts), // newest first
+        (Some(_), None) => std::cmp::Ordering::Less, // timestamp before no-timestamp
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
     models
 }
 
 async fn fetch_models_from_api(
     client: &reqwest::Client,
     access_token: String,
-) -> anyhow::Result<Vec<(String, String)>> {
+) -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let response = client
         .get(COPILOT_MODELS_ENDPOINT)
         .header("Authorization", format!("Bearer {access_token}"))
@@ -368,7 +380,7 @@ async fn fetch_models_from_api(
     Ok(models)
 }
 
-fn fetch_models_blocking() -> anyhow::Result<Vec<(String, String)>> {
+fn fetch_models_blocking() -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
@@ -392,7 +404,7 @@ fn fetch_models_blocking() -> anyhow::Result<Vec<(String, String)>> {
         .map_err(|err| anyhow::anyhow!("copilot model discovery worker failed: {err}"))?
 }
 
-pub fn live_models() -> anyhow::Result<Vec<(String, String)>> {
+pub fn live_models() -> anyhow::Result<Vec<super::DiscoveredModel>> {
     let models = fetch_models_blocking()?;
     debug!(
         model_count = models.len(),
@@ -401,7 +413,7 @@ pub fn live_models() -> anyhow::Result<Vec<(String, String)>> {
     Ok(models)
 }
 
-pub fn available_models() -> Vec<(String, String)> {
+pub fn available_models() -> Vec<super::DiscoveredModel> {
     let fallback = default_model_catalog();
     let discovered = match live_models() {
         Ok(models) => models,
@@ -416,14 +428,7 @@ pub fn available_models() -> Vec<(String, String)> {
         },
     };
 
-    let mut merged = discovered;
-    let mut seen: HashSet<String> = merged.iter().map(|(id, _)| id.clone()).collect();
-    for (id, display_name) in fallback {
-        if seen.insert(id.clone()) {
-            merged.push((id, display_name));
-        }
-    }
-    merged
+    super::merge_discovered_with_fallback_catalog(discovered, fallback)
 }
 
 // ── LlmProvider impl ────────────────────────────────────────────────────────
@@ -439,7 +444,7 @@ impl LlmProvider for GitHubCopilotProvider {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        super::supports_tools_for_model(&self.model)
     }
 
     async fn complete(

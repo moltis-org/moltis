@@ -44,7 +44,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.8.8"
+version      = "0.8.29"
 
 [workspace.dependencies]
 # Async runtime
@@ -90,6 +90,7 @@ tokio-util   = "0.7"
 serde_yaml        = "0.9"
 tokio-tungstenite = "0.26"
 toml              = "0.8"
+toml_edit         = "0.22"
 # LLM provider crates (optional, behind feature flags)
 async-openai = { features = ["chat-completion"], version = "0.32" }
 base64       = "0.22"
@@ -142,6 +143,7 @@ dirs-next             = "2"
 flate2                = "1"
 include_dir           = "0.7"
 notify-debouncer-full = "0.7"
+rstest                = "0.25"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"

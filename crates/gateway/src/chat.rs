@@ -161,6 +161,8 @@ struct ChatFinalBroadcast {
     #[serde(skip_serializing_if = "Option::is_none")]
     audio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    audio_warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
 }
 
@@ -207,6 +209,7 @@ fn normalize_provider_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+#[allow(dead_code)]
 fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
     matches!(
         normalize_provider_key(provider_name).as_str(),
@@ -216,8 +219,27 @@ fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
 
 /// Returns `true` if the model matches the allowlist patterns.
 /// An empty pattern list means all models are allowed.
-/// Matching is case-insensitive substring against the full model ID, raw model
-/// ID, and display name.
+/// Matching is case-insensitive against the full model ID, raw model ID, and
+/// display name:
+/// - patterns with digits use exact-or-suffix matching (boundary aware)
+/// - patterns without digits use substring matching
+///
+/// This keeps precise model pins like "gpt 5.2" from matching variants such as
+/// "gpt-5.2-chat-latest", while still allowing broad buckets like "mini".
+#[allow(dead_code)]
+fn allowlist_pattern_matches_key(pattern: &str, key: &str) -> bool {
+    if pattern.chars().any(|ch| ch.is_ascii_digit()) {
+        if key == pattern {
+            return true;
+        }
+        return key
+            .strip_suffix(pattern)
+            .is_some_and(|prefix| prefix.ends_with(' '));
+    }
+    key.contains(pattern)
+}
+
+#[allow(dead_code)]
 pub(crate) fn model_matches_allowlist(
     model: &moltis_agents::providers::ModelInfo,
     patterns: &[String],
@@ -232,10 +254,13 @@ pub(crate) fn model_matches_allowlist(
     let raw = normalize_model_key(raw_model_id(&model.id));
     let display = normalize_model_key(&model.display_name);
     patterns.iter().any(|p| {
-        full.contains(p.as_str()) || raw.contains(p.as_str()) || display.contains(p.as_str())
+        allowlist_pattern_matches_key(p, &full)
+            || allowlist_pattern_matches_key(p, &raw)
+            || allowlist_pattern_matches_key(p, &display)
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn model_matches_allowlist_with_provider(
     model: &moltis_agents::providers::ModelInfo,
     provider_name: Option<&str>,
@@ -610,6 +635,34 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+fn is_safe_user_audio_filename(filename: &str) -> bool {
+    !filename.is_empty()
+        && filename.len() <= 255
+        && filename
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+}
+
+fn user_audio_path_from_params(params: &Value, session_key: &str) -> Option<String> {
+    let filename = params
+        .get("_audio_filename")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    if !is_safe_user_audio_filename(filename) {
+        warn!(
+            session = %session_key,
+            filename = filename,
+            "ignoring invalid user audio filename"
+        );
+        return None;
+    }
+
+    let key = SessionStore::key_to_filename(session_key);
+    Some(format!("media/{key}/{filename}"))
+}
+
 fn detect_runtime_shell() -> Option<String> {
     let candidate = std::env::var("SHELL")
         .ok()
@@ -679,6 +732,7 @@ struct PromptPersona {
     soul_text: Option<String>,
     agents_text: Option<String>,
     tools_text: Option<String>,
+    memory_text: Option<String>,
 }
 
 /// Load identity, user profile, soul, and workspace text from config + data files.
@@ -718,6 +772,7 @@ fn load_prompt_persona() -> PromptPersona {
         soul_text: moltis_config::load_soul(),
         agents_text: moltis_config::load_agents_md(),
         tools_text: moltis_config::load_tools_md(),
+        memory_text: moltis_config::load_memory_md(),
     }
 }
 
@@ -926,8 +981,7 @@ pub struct LiveModelService {
     disabled: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<OnceCell<Arc<GatewayState>>>,
     detect_gate: Arc<Semaphore>,
-    priority_order: HashMap<String, usize>,
-    allowed_models: Vec<String>,
+    priority_models: Arc<RwLock<Vec<String>>>,
 }
 
 impl LiveModelService {
@@ -935,54 +989,65 @@ impl LiveModelService {
         providers: Arc<RwLock<ProviderRegistry>>,
         disabled: Arc<RwLock<DisabledModelsStore>>,
         priority_models: Vec<String>,
-        allowed_models: Vec<String>,
     ) -> Self {
-        let mut priority_order = HashMap::new();
-        for (idx, model) in priority_models.into_iter().enumerate() {
-            let key = normalize_model_key(&model);
-            if !key.is_empty() {
-                let _ = priority_order.entry(key).or_insert(idx);
-            }
-        }
-        let allowed_models: Vec<String> = allowed_models
-            .into_iter()
-            .map(|p| normalize_model_key(&p))
-            .filter(|p| !p.is_empty())
-            .collect();
         Self {
             providers,
             disabled,
             state: Arc::new(OnceCell::new()),
             detect_gate: Arc::new(Semaphore::new(1)),
-            priority_order,
-            allowed_models,
+            priority_models: Arc::new(RwLock::new(priority_models)),
         }
     }
 
-    fn priority_rank(&self, model: &moltis_agents::providers::ModelInfo) -> usize {
+    /// Shared handle to the priority models list. Pass this to services
+    /// that need to update model ordering at runtime (e.g. `save_model`).
+    pub fn priority_models_handle(&self) -> Arc<RwLock<Vec<String>>> {
+        Arc::clone(&self.priority_models)
+    }
+
+    fn build_priority_order(models: &[String]) -> HashMap<String, usize> {
+        let mut order = HashMap::new();
+        for (idx, model) in models.iter().enumerate() {
+            let key = normalize_model_key(model);
+            if !key.is_empty() {
+                let _ = order.entry(key).or_insert(idx);
+            }
+        }
+        order
+    }
+
+    fn priority_rank(
+        order: &HashMap<String, usize>,
+        model: &moltis_agents::providers::ModelInfo,
+    ) -> usize {
         let full = normalize_model_key(&model.id);
-        if let Some(rank) = self.priority_order.get(&full) {
+        if let Some(rank) = order.get(&full) {
             return *rank;
         }
         let raw = normalize_model_key(raw_model_id(&model.id));
-        if let Some(rank) = self.priority_order.get(&raw) {
+        if let Some(rank) = order.get(&raw) {
             return *rank;
         }
         let display = normalize_model_key(&model.display_name);
-        if let Some(rank) = self.priority_order.get(&display) {
+        if let Some(rank) = order.get(&display) {
             return *rank;
         }
         usize::MAX
     }
 
     fn prioritize_models<'a>(
-        &self,
+        order: &HashMap<String, usize>,
         models: impl Iterator<Item = &'a moltis_agents::providers::ModelInfo>,
     ) -> Vec<&'a moltis_agents::providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_agents::providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| (self.priority_rank(model), *idx));
+        ordered.sort_by_key(|(idx, model)| (Self::priority_rank(order, model), *idx));
         ordered.into_iter().map(|(_, model)| model).collect()
+    }
+
+    async fn priority_order(&self) -> HashMap<String, usize> {
+        let list = self.priority_models.read().await;
+        Self::build_priority_order(&list)
     }
 
     /// Set the gateway state reference for broadcasting model updates.
@@ -1006,35 +1071,144 @@ impl LiveModelService {
     }
 }
 
+fn normalize_model_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn model_id_provider(model_id: &str) -> Option<&str> {
+    model_id.split_once("::").map(|(provider, _)| provider)
+}
+
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    if a.is_empty() {
+        return b.chars().count();
+    }
+    if b.is_empty() {
+        return a.chars().count();
+    }
+
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_chars: Vec<char> = a.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0; b_chars.len() + 1];
+
+    for (i, a_ch) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, b_ch) in b_chars.iter().enumerate() {
+            let cost = usize::from(a_ch != b_ch);
+            let deletion = prev[j + 1] + 1;
+            let insertion = curr[j] + 1;
+            let substitution = prev[j] + cost;
+            curr[j + 1] = deletion.min(insertion).min(substitution);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[b_chars.len()]
+}
+
+fn suggest_model_ids(
+    requested_model_id: &str,
+    available_model_ids: &[String],
+    limit: usize,
+) -> Vec<String> {
+    if requested_model_id.trim().is_empty() || available_model_ids.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let requested_provider = model_id_provider(requested_model_id).map(str::to_ascii_lowercase);
+    let requested_raw = raw_model_id(requested_model_id);
+    let requested_norm = normalize_model_lookup_key(requested_model_id);
+    let requested_raw_norm = normalize_model_lookup_key(requested_raw);
+
+    let mut ranked: Vec<(String, bool, usize, usize, usize)> = available_model_ids
+        .iter()
+        .filter_map(|candidate| {
+            let candidate_provider = model_id_provider(candidate).map(str::to_ascii_lowercase);
+            let provider_match = requested_provider
+                .as_deref()
+                .zip(candidate_provider.as_deref())
+                .is_some_and(|(left, right)| left == right);
+
+            let candidate_raw = raw_model_id(candidate);
+            let candidate_norm = normalize_model_lookup_key(candidate);
+            let candidate_raw_norm = normalize_model_lookup_key(candidate_raw);
+
+            let raw_distance = levenshtein_distance(&requested_raw_norm, &candidate_raw_norm);
+            let full_distance = levenshtein_distance(&requested_norm, &candidate_norm);
+            let contains = requested_raw_norm.contains(&candidate_raw_norm)
+                || candidate_raw_norm.contains(&requested_raw_norm)
+                || requested_norm.contains(&candidate_norm)
+                || candidate_norm.contains(&requested_norm);
+
+            // Keep nearest neighbors and strong substring matches. This trims
+            // unrelated model IDs from suggestion logs/responses.
+            let distance_cap = requested_raw_norm
+                .len()
+                .max(candidate_raw_norm.len())
+                .max(3)
+                / 2
+                + 2;
+            if !contains && raw_distance > distance_cap {
+                return None;
+            }
+
+            Some((
+                candidate.clone(),
+                provider_match,
+                raw_distance,
+                full_distance,
+                requested_raw_norm.len().abs_diff(candidate_raw_norm.len()),
+            ))
+        })
+        .collect();
+
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1) // provider match first
+            .then(left.2.cmp(&right.2)) // nearest raw model id
+            .then(left.3.cmp(&right.3)) // nearest full model id
+            .then(left.4.cmp(&right.4)) // similar length
+            .then(left.0.cmp(&right.0))
+    });
+
+    ranked.into_iter().map(|(id, ..)| id).take(limit).collect()
+}
+
 #[async_trait]
 impl ModelService for LiveModelService {
     async fn list(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(
+        let order = self.priority_order().await;
+        let prioritized = Self::prioritize_models(
+            &order,
             reg.list_models()
                 .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
                 .filter(|m| !disabled.is_disabled(&m.id))
-                .filter(|m| disabled.unsupported_info(&m.id).is_none())
-                .filter(|m| {
-                    let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
-                    model_matches_allowlist_with_provider(
-                        m,
-                        provider_name.as_deref(),
-                        &self.allowed_models,
-                    )
-                }),
+                .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(model_count = model_ids.len(), model_ids = ?model_ids, "models.list response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()
             .map(|m| {
                 let supports_tools = reg.get(&m.id).is_some_and(|p| p.supports_tools());
+                let preferred = Self::priority_rank(&order, m) != usize::MAX;
                 serde_json::json!({
                     "id": m.id,
                     "provider": m.provider,
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
+                    "preferred": preferred,
+                    "createdAt": m.created_at,
                     "unsupported": false,
                     "unsupportedReason": Value::Null,
                     "unsupportedProvider": Value::Null,
@@ -1048,10 +1222,19 @@ impl ModelService for LiveModelService {
     async fn list_all(&self) -> ServiceResult {
         let reg = self.providers.read().await;
         let disabled = self.disabled.read().await;
-        let prioritized = self.prioritize_models(reg.list_models().iter().filter(|m| {
-            let provider_name = reg.get(&m.id).map(|p| p.name().to_string());
-            model_matches_allowlist_with_provider(m, provider_name.as_deref(), &self.allowed_models)
-        }));
+        let order = self.priority_order().await;
+        let prioritized = Self::prioritize_models(
+            &order,
+            reg.list_models()
+                .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
+        );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(
+            model_count = model_ids.len(),
+            model_ids = ?model_ids,
+            "models.list_all response"
+        );
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1063,6 +1246,7 @@ impl ModelService for LiveModelService {
                     "provider": m.provider,
                     "displayName": m.display_name,
                     "supportsTools": supports_tools,
+                    "createdAt": m.created_at,
                     "disabled": disabled.is_disabled(&m.id),
                     "unsupported": unsupported.is_some(),
                     "unsupportedReason": unsupported.map(|u| u.detail.clone()),
@@ -1473,35 +1657,91 @@ impl ModelService for LiveModelService {
 
         let provider = {
             let reg = self.providers.read().await;
-            reg.get(model_id)
-                .ok_or_else(|| format!("unknown model: {model_id}"))?
+            if let Some(provider) = reg.get(model_id) {
+                provider
+            } else {
+                let available_model_ids: Vec<String> =
+                    reg.list_models().iter().map(|m| m.id.clone()).collect();
+                let suggestions = suggest_model_ids(model_id, &available_model_ids, 5);
+                warn!(
+                    model_id,
+                    available_model_count = available_model_ids.len(),
+                    available_model_ids = ?available_model_ids,
+                    suggested_model_ids = ?suggestions,
+                    "models.test received unknown model id"
+                );
+                let suggestion_hint = if suggestions.is_empty() {
+                    String::new()
+                } else {
+                    format!(". did you mean: {}", suggestions.join(", "))
+                };
+                return Err(format!("unknown model: {model_id}{suggestion_hint}"));
+            }
         };
+        let started = Instant::now();
+        info!(model_id, provider = provider.name(), "model probe started");
 
-        let probe = [ChatMessage::user("ping")];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            provider.complete(&probe, &[]),
-        )
+        // Use streaming and return as soon as the first token arrives.
+        // Dropping the stream closes the HTTP connection, which tells the
+        // provider to stop generating — effectively max_tokens: 1.
+        let probe = vec![ChatMessage::user("ping")];
+        let mut stream = provider.stream(probe);
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Some(event) = stream.next().await {
+                match event {
+                    StreamEvent::Delta(_) | StreamEvent::Done(_) => return Ok(()),
+                    StreamEvent::Error(err) => return Err(err),
+                    // Skip other events (tool calls, etc.) and keep waiting.
+                    _ => continue,
+                }
+            }
+            Err("stream ended without producing any output".to_string())
+        })
         .await;
 
+        // Drop the stream early to cancel the request on the provider side.
+        drop(stream);
+
         match result {
-            Ok(Ok(_)) => Ok(serde_json::json!({
-                "ok": true,
-                "modelId": model_id,
-            })),
+            Ok(Ok(())) => {
+                info!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe succeeded"
+                );
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "modelId": model_id,
+                }))
+            },
             Ok(Err(err)) => {
-                let error_text = err.to_string();
-                let error_obj =
-                    crate::chat_error::parse_chat_error(&error_text, Some(provider.name()));
+                let error_obj = crate::chat_error::parse_chat_error(&err, Some(provider.name()));
                 let detail = error_obj
                     .get("detail")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(&error_text)
+                    .unwrap_or(&err)
                     .to_string();
 
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    error = %detail,
+                    "model probe failed"
+                );
                 Err(detail)
             },
-            Err(_) => Err("Connection timed out after 20 seconds".to_string()),
+            Err(_) => {
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe timed out after 10s"
+                );
+                Err("Connection timed out after 10 seconds".to_string())
+            },
         }
     }
 }
@@ -1790,6 +2030,10 @@ impl ChatService for LiveChatService {
             Some(sk) => sk.to_string(),
             None => self.session_key_for(conn_id.as_deref()).await,
         };
+        let queued_replay = params
+            .get("_queued_replay")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Track client-side sequence number for ordering diagnostics.
         // Note: seq resets to 1 on page reload, so a drop from a high value
@@ -1797,32 +2041,45 @@ impl ChatService for LiveChatService {
         // a continuous ascending sequence.
         let client_seq = params.get("_seq").and_then(|v| v.as_u64());
         if let Some(seq) = client_seq {
-            let mut seq_map = self.last_client_seq.write().await;
-            let last = seq_map.entry(session_key.clone()).or_insert(0);
-            if seq == 1 && *last > 1 {
-                // Page reload — reset tracking.
+            if queued_replay {
                 debug!(
                     session = %session_key,
-                    prev_seq = *last,
-                    "client seq reset (page reload)"
-                );
-            } else if seq <= *last {
-                warn!(
-                    session = %session_key,
                     seq,
-                    last_seq = *last,
-                    "client seq out of order (duplicate or reorder)"
+                    "client seq replayed from queue; skipping ordering diagnostics"
                 );
-            } else if seq > *last + 1 {
-                warn!(
-                    session = %session_key,
-                    seq,
-                    last_seq = *last,
-                    gap = seq - *last - 1,
-                    "client seq gap detected (missing messages)"
-                );
+            } else {
+                let mut seq_map = self.last_client_seq.write().await;
+                let last = seq_map.entry(session_key.clone()).or_insert(0);
+                if *last == 0 {
+                    // First observed sequence for this session in this process.
+                    // We cannot infer a gap yet because earlier messages may have
+                    // come from another tab/process before we started tracking.
+                    debug!(session = %session_key, seq, "client seq initialized");
+                } else if seq == 1 && *last > 1 {
+                    // Page reload — reset tracking.
+                    debug!(
+                        session = %session_key,
+                        prev_seq = *last,
+                        "client seq reset (page reload)"
+                    );
+                } else if seq <= *last {
+                    warn!(
+                        session = %session_key,
+                        seq,
+                        last_seq = *last,
+                        "client seq out of order (duplicate or reorder)"
+                    );
+                } else if seq > *last + 1 {
+                    warn!(
+                        session = %session_key,
+                        seq,
+                        last_seq = *last,
+                        gap = seq - *last - 1,
+                        "client seq gap detected (missing messages)"
+                    );
+                }
+                *last = seq;
             }
-            *last = seq;
         }
 
         // Resolve model: explicit param → session metadata → first registered.
@@ -1925,9 +2182,11 @@ impl ChatService for LiveChatService {
         // know the message won't be queued — avoids double-persist when a
         // queued message is replayed via send()).
         let channel_meta = params.get("channel").cloned();
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         let user_msg = PersistedMessage::User {
             content: message_content,
             created_at: Some(now_ms()),
+            audio: user_audio,
             channel: channel_meta,
             seq: client_seq,
             run_id: Some(run_id.clone()),
@@ -2377,7 +2636,9 @@ impl ChatService for LiveChatService {
                                 .extend(rest);
                         }
                         info!(session = %session_key_clone, "replaying queued message (followup)");
-                        if let Err(e) = chat.send(first.params).await {
+                        let mut replay_params = first.params;
+                        replay_params["_queued_replay"] = serde_json::json!(true);
+                        if let Err(e) = chat.send(replay_params).await {
                             warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
                         }
                     },
@@ -2398,6 +2659,7 @@ impl ChatService for LiveChatService {
                             };
                             let mut merged = last.params.clone();
                             merged["text"] = serde_json::json!(combined.join("\n\n"));
+                            merged["_queued_replay"] = serde_json::json!(true);
                             if let Err(e) = chat.send(merged).await {
                                 warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
                             }
@@ -2447,8 +2709,16 @@ impl ChatService for LiveChatService {
             }
         };
 
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         // Persist the user message.
-        let user_msg = PersistedMessage::user(&text);
+        let user_msg = PersistedMessage::User {
+            content: MessageContent::Text(text.clone()),
+            created_at: Some(now_ms()),
+            audio: user_audio,
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
         if let Err(e) = self
             .session_store
             .append(&session_key, &user_msg.to_value())
@@ -2708,6 +2978,13 @@ impl ChatService for LiveChatService {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Reset client sequence tracking for this session. A cleared chat starts
+        // a fresh sequence from the web UI.
+        {
+            let mut seq_map = self.last_client_seq.write().await;
+            seq_map.remove(&session_key);
+        }
+
         // Reset metadata message count and preview.
         self.session_metadata.touch(&session_key, 0).await;
         self.session_metadata.set_preview(&session_key, None).await;
@@ -2762,33 +3039,30 @@ impl ChatService for LiveChatService {
         }
 
         // Run silent memory turn before summarization — saves important memories to disk.
-        // Write into the data directory (e.g. ~/.moltis/) so files don't end up in cwd.
-        if let Some(ref mm) = self.state.memory_manager {
-            let memory_dir = moltis_config::data_dir();
-            if let Ok(provider) = self.resolve_provider(&session_key, &history).await {
-                let chat_history_for_memory = values_to_chat_messages(&history);
-                match moltis_agents::silent_turn::run_silent_memory_turn(
-                    provider,
-                    &chat_history_for_memory,
-                    &memory_dir,
-                )
-                .await
-                {
-                    Ok(paths) => {
-                        for path in &paths {
-                            if let Err(e) = mm.sync_path(path).await {
-                                warn!(path = %path.display(), error = %e, "compact: memory sync of written file failed");
-                            }
-                        }
-                        if !paths.is_empty() {
-                            info!(
-                                files = paths.len(),
-                                "compact: silent memory turn wrote files"
-                            );
-                        }
-                    },
-                    Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
-                }
+        // The manager implements MemoryWriter directly (with path validation, size limits,
+        // and automatic re-indexing), so no manual sync_path is needed after the turn.
+        if let Some(ref mm) = self.state.memory_manager
+            && let Ok(provider) = self.resolve_provider(&session_key, &history).await
+        {
+            let chat_history_for_memory = values_to_chat_messages(&history);
+            let writer: std::sync::Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
+                std::sync::Arc::clone(mm) as _;
+            match moltis_agents::silent_turn::run_silent_memory_turn(
+                provider,
+                &chat_history_for_memory,
+                writer,
+            )
+            .await
+            {
+                Ok(paths) => {
+                    if !paths.is_empty() {
+                        info!(
+                            files = paths.len(),
+                            "compact: silent memory turn wrote files"
+                        );
+                    }
+                },
+                Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
             }
         }
 
@@ -3230,6 +3504,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3240,6 +3515,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3357,6 +3633,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3367,6 +3644,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3573,6 +3851,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     } else {
         // Minimal prompt without tools for local LLMs
@@ -3584,6 +3863,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     };
 
@@ -3594,7 +3874,7 @@ async fn run_with_tools(
         system_prompt
     };
 
-    // Determine if this session is sandboxed (for browser tool execution mode)
+    // Determine sandbox mode for this session.
     let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
         router.is_sandboxed(session_key).await
     } else {
@@ -3906,12 +4186,10 @@ async fn run_with_tools(
         Some(chat_history)
     };
 
-    // Inject session key, sandbox mode, and accept-language into tool call params so tools can
+    // Inject session key and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    // The browser tool uses _sandbox to determine whether to run in a container.
     let mut tool_context = serde_json::json!({
         "_session_key": session_key,
-        "_sandbox": session_is_sandboxed,
     });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
@@ -4044,22 +4322,35 @@ async fn run_with_tools(
             let assistant_message_index = user_message_index + 1;
 
             // Generate & persist TTS audio for voice-medium web UI replies.
+            let mut audio_warning: Option<String> = None;
             let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                if let Some(bytes) = generate_tts_audio(state, session_key, &display_text).await {
-                    let filename = format!("{run_id}.ogg");
-                    if let Some(store) = session_store {
-                        match store.save_media(session_key, &filename, &bytes).await {
-                            Ok(path) => Some(path),
-                            Err(e) => {
-                                warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                None
-                            },
+                match generate_tts_audio(state, session_key, &display_text).await {
+                    Ok(bytes) => {
+                        let filename = format!("{run_id}.ogg");
+                        if let Some(store) = session_store {
+                            match store.save_media(session_key, &filename, &bytes).await {
+                                Ok(path) => Some(path),
+                                Err(e) => {
+                                    let warning =
+                                        format!("TTS audio generated but failed to save: {e}");
+                                    warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                    audio_warning = Some(warning);
+                                    None
+                                },
+                            }
+                        } else {
+                            audio_warning = Some(
+                                "TTS audio generated but session media storage is unavailable"
+                                    .to_string(),
+                            );
+                            None
                         }
-                    } else {
+                    },
+                    Err(error) => {
+                        warn!(run_id, error = %error, "voice reply generation skipped");
+                        audio_warning = Some(error);
                         None
-                    }
-                } else {
-                    None
+                    },
                 }
             } else {
                 None
@@ -4079,6 +4370,7 @@ async fn run_with_tools(
                 iterations: Some(result.iterations),
                 tool_calls_made: Some(result.tool_calls_made),
                 audio: audio_path.clone(),
+                audio_warning,
                 seq: client_seq,
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4218,6 +4510,7 @@ async fn run_streaming(
         persona.agents_text.as_deref(),
         persona.tools_text.as_deref(),
         runtime_context,
+        persona.memory_text.as_deref(),
     );
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
@@ -4316,23 +4609,35 @@ async fn run_streaming(
                 let assistant_message_index = user_message_index + 1;
 
                 // Generate & persist TTS audio for voice-medium web UI replies.
+                let mut audio_warning: Option<String> = None;
                 let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                    if let Some(bytes) = generate_tts_audio(state, session_key, &accumulated).await
-                    {
-                        let filename = format!("{run_id}.ogg");
-                        if let Some(store) = session_store {
-                            match store.save_media(session_key, &filename, &bytes).await {
-                                Ok(path) => Some(path),
-                                Err(e) => {
-                                    warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                    None
-                                },
+                    match generate_tts_audio(state, session_key, &accumulated).await {
+                        Ok(bytes) => {
+                            let filename = format!("{run_id}.ogg");
+                            if let Some(store) = session_store {
+                                match store.save_media(session_key, &filename, &bytes).await {
+                                    Ok(path) => Some(path),
+                                    Err(e) => {
+                                        let warning =
+                                            format!("TTS audio generated but failed to save: {e}");
+                                        warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                        audio_warning = Some(warning);
+                                        None
+                                    },
+                                }
+                            } else {
+                                audio_warning = Some(
+                                    "TTS audio generated but session media storage is unavailable"
+                                        .to_string(),
+                                );
+                                None
                             }
-                        } else {
+                        },
+                        Err(error) => {
+                            warn!(run_id, error = %error, "voice reply generation skipped");
+                            audio_warning = Some(error);
                             None
-                        }
-                    } else {
-                        None
+                        },
                     }
                 } else {
                     None
@@ -4352,6 +4657,7 @@ async fn run_streaming(
                     iterations: None,
                     tool_calls_made: None,
                     audio: audio_path.clone(),
+                    audio_warning,
                     seq: client_seq,
                 };
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4466,12 +4772,48 @@ async fn deliver_channel_replies(
     desired_reply_medium: ReplyMedium,
 ) {
     let targets = state.drain_channel_replies(session_key).await;
-    if targets.is_empty() || text.is_empty() {
+    let is_telegram_session = session_key.starts_with("telegram:");
+    if targets.is_empty() {
+        if is_telegram_session {
+            info!(
+                session_key,
+                text_len = text.len(),
+                "telegram reply delivery skipped: no pending targets"
+            );
+        }
         return;
+    }
+    if text.is_empty() {
+        if is_telegram_session {
+            info!(
+                session_key,
+                target_count = targets.len(),
+                "telegram reply delivery skipped: empty response text"
+            );
+        }
+        return;
+    }
+    if is_telegram_session {
+        info!(
+            session_key,
+            target_count = targets.len(),
+            text_len = text.len(),
+            reply_medium = ?desired_reply_medium,
+            "telegram reply delivery starting"
+        );
     }
     let outbound = match state.services.channel_outbound_arc() {
         Some(o) => o,
-        None => return,
+        None => {
+            if is_telegram_session {
+                info!(
+                    session_key,
+                    target_count = targets.len(),
+                    "telegram reply delivery skipped: outbound unavailable"
+                );
+            }
+            return;
+        },
     };
     // Drain buffered status log entries to build a logbook suffix.
     let status_log = state.drain_channel_status_log(session_key).await;
@@ -4690,17 +5032,27 @@ async fn generate_tts_audio(
     state: &Arc<GatewayState>,
     session_key: &str,
     text: &str,
-) -> Option<Vec<u8>> {
+) -> Result<Vec<u8>, String> {
     use base64::Engine;
 
-    let tts_status = state.services.tts.status().await.ok()?;
-    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
+    let tts_status = state
+        .services
+        .tts
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status: TtsStatusResponse =
+        serde_json::from_value(tts_status).map_err(|_| "invalid tts.status response")?;
     if !status.enabled {
-        return None;
+        return Err("TTS is disabled or not configured".to_string());
     }
 
     // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("response has no speakable text".to_string());
+    }
 
     let session_override = {
         state
@@ -4713,24 +5065,27 @@ async fn generate_tts_audio(
     };
 
     let request = TtsConvertRequest {
-        text: &text,
+        text,
         format: "ogg",
         provider: session_override.as_ref().and_then(|o| o.provider.clone()),
         voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
         model: session_override.as_ref().and_then(|o| o.model.clone()),
     };
 
+    let request_value = serde_json::to_value(request)
+        .map_err(|_| "failed to build tts.convert request".to_string())?;
     let tts_result = state
         .services
         .tts
-        .convert(serde_json::to_value(request).ok()?)
+        .convert(request_value)
         .await
-        .ok()?;
+        .map_err(|e| e.to_string())?;
 
-    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
+    let response: TtsConvertResponse =
+        serde_json::from_value(tts_result).map_err(|_| "invalid tts.convert response")?;
     base64::engine::general_purpose::STANDARD
         .decode(&response.audio)
-        .ok()
+        .map_err(|_| "invalid base64 audio returned by TTS provider".to_string())
 }
 
 async fn build_tts_payload(
@@ -5133,6 +5488,31 @@ mod tests {
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
         delay: Duration,
+    }
+
+    #[test]
+    fn is_safe_user_audio_filename_allows_sanitized_names() {
+        assert!(is_safe_user_audio_filename("voice-123.webm"));
+        assert!(is_safe_user_audio_filename("recording_1.ogg"));
+    }
+
+    #[test]
+    fn user_audio_path_from_params_builds_session_scoped_media_path() {
+        let params = serde_json::json!({
+            "_audio_filename": "voice-123.webm",
+        });
+        assert_eq!(
+            user_audio_path_from_params(&params, "session:abc"),
+            Some("media/session_abc/voice-123.webm".to_string())
+        );
+    }
+
+    #[test]
+    fn user_audio_path_from_params_rejects_invalid_filename() {
+        let params = serde_json::json!({
+            "_audio_filename": "../secret.webm",
+        });
+        assert!(user_audio_path_from_params(&params, "main").is_none());
     }
 
     #[async_trait]
@@ -5677,32 +6057,28 @@ mod tests {
 
     #[test]
     fn priority_models_pin_raw_model_ids_first() {
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
-                &moltis_config::schema::ProvidersConfig::default(),
-            ))),
-            Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec!["gpt-5.2".into(), "claude-opus-4-5".into()],
-            vec![],
-        );
-
         let m1 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
-        let ordered = service.prioritize_models(vec![&m3, &m2, &m1].into_iter());
+        let order =
+            LiveModelService::build_priority_order(&["gpt-5.2".into(), "claude-opus-4-5".into()]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -5710,32 +6086,28 @@ mod tests {
 
     #[test]
     fn priority_models_match_separator_variants() {
-        let service = LiveModelService::new(
-            Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
-                &moltis_config::schema::ProvidersConfig::default(),
-            ))),
-            Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec!["gpt 5.2".into(), "claude-sonnet-4.5".into()],
-            vec![],
-        );
-
         let m1 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
-        let ordered = service.prioritize_models(vec![&m3, &m2, &m1].into_iter());
+        let order =
+            LiveModelService::build_priority_order(&["gpt 5.2".into(), "claude-sonnet-4.5".into()]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m3, &m2, &m1].into_iter());
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
@@ -5747,16 +6119,19 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         let m2 = moltis_agents::providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
+            created_at: None,
         };
         let m3 = moltis_agents::providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "google".into(),
             display_name: "Gemini 3 Flash".into(),
+            created_at: None,
         };
 
         let patterns: Vec<String> = vec!["opus".into()];
@@ -5771,6 +6146,7 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
         assert!(model_matches_allowlist(&m, &[]));
     }
@@ -5781,6 +6157,7 @@ mod tests {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
+            created_at: None,
         };
 
         // Uppercase pattern matches lowercase model key.
@@ -5798,6 +6175,7 @@ mod tests {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
+            created_at: None,
         };
 
         let patterns = vec![normalize_model_key("gpt 5.2")];
@@ -5808,16 +6186,51 @@ mod tests {
     }
 
     #[test]
+    fn allowed_models_numeric_pattern_does_not_match_extended_variants() {
+        let exact = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2".into(),
+            created_at: None,
+        };
+        let extended = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2-chat-latest".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2 Chat Latest".into(),
+            created_at: None,
+        };
+        let patterns = vec![normalize_model_key("gpt 5.2")];
+
+        assert!(model_matches_allowlist(&exact, &patterns));
+        assert!(!model_matches_allowlist(&extended, &patterns));
+    }
+
+    #[test]
+    fn allowed_models_numeric_pattern_matches_provider_prefixed_models() {
+        let m = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-sonnet-4-5".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Sonnet 4.5".into(),
+            created_at: None,
+        };
+        let patterns = vec![normalize_model_key("sonnet 4.5")];
+
+        assert!(model_matches_allowlist(&m, &patterns));
+    }
+
+    #[test]
     fn allowed_models_does_not_filter_local_llm_or_ollama() {
         let local = moltis_agents::providers::ModelInfo {
             id: "local-llm::qwen2.5-coder-7b-q4_k_m".into(),
             provider: "local-llm".into(),
             display_name: "Qwen2.5 Coder 7B".into(),
+            created_at: None,
         };
         let ollama = moltis_agents::providers::ModelInfo {
             id: "ollama::llama3.1:8b".into(),
             provider: "ollama".into(),
             display_name: "Llama 3.1 8B".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -5831,6 +6244,7 @@ mod tests {
             id: "local-ai::llama3.1:8b".into(),
             provider: "local-ai".into(),
             display_name: "Llama 3.1 8B".into(),
+            created_at: None,
         };
         let patterns = vec![normalize_model_key("opus")];
 
@@ -5842,15 +6256,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allowed_models_filters_list_and_list_all() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
-        );
+    async fn list_and_list_all_return_all_registered_models() {
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "anthropic::claude-opus-4-5".to_string(),
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus 4.5".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "anthropic".to_string(),
@@ -5862,6 +6275,7 @@ mod tests {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -5873,6 +6287,7 @@ mod tests {
                 id: "google::gemini-3-flash".to_string(),
                 provider: "google".to_string(),
                 display_name: "Gemini 3 Flash".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "google".to_string(),
@@ -5881,34 +6296,99 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
-                "opus".into(),
-            ]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
-        // list() should only contain opus.
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+        assert_eq!(arr.len(), 3);
 
-        // list_all() should also only contain opus.
         let result = service.list_all().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "anthropic::claude-opus-4-5");
+        assert_eq!(arr.len(), 3);
     }
 
     #[tokio::test]
-    async fn allowed_models_keeps_ollama_when_provider_is_aliased() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
+    async fn list_includes_created_at_in_response() {
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5.3".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT-5.3".to_string(),
+                created_at: Some(1700000000),
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5.3".to_string(),
+            }),
         );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::babbage-002".to_string(),
+                provider: "openai".to_string(),
+                display_name: "babbage-002".to_string(),
+                created_at: Some(1600000000),
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::babbage-002".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "anthropic::claude-opus".to_string(),
+                provider: "anthropic".to_string(),
+                display_name: "Claude Opus".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "anthropic".to_string(),
+                id: "anthropic::claude-opus".to_string(),
+            }),
+        );
+
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
+
+        let result = service.list().await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+
+        // Verify createdAt is present and correct.
+        let gpt = arr.iter().find(|m| m["id"] == "openai::gpt-5.3").unwrap();
+        assert_eq!(gpt["createdAt"], 1700000000);
+
+        let babbage = arr
+            .iter()
+            .find(|m| m["id"] == "openai::babbage-002")
+            .unwrap();
+        assert_eq!(babbage["createdAt"], 1600000000);
+
+        let claude = arr
+            .iter()
+            .find(|m| m["id"] == "anthropic::claude-opus")
+            .unwrap();
+        assert!(claude["createdAt"].is_null());
+
+        // Also verify list_all includes createdAt.
+        let result_all = service.list_all().await.unwrap();
+        let arr_all = result_all.as_array().unwrap();
+        let gpt_all = arr_all
+            .iter()
+            .find(|m| m["id"] == "openai::gpt-5.3")
+            .unwrap();
+        assert_eq!(gpt_all["createdAt"], 1700000000);
+    }
+
+    #[tokio::test]
+    async fn list_includes_ollama_when_provider_is_aliased() {
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "openai-codex".to_string(),
@@ -5920,6 +6400,7 @@ mod tests {
                 id: "local-ai::llama3.1:8b".to_string(),
                 provider: "local-ai".to_string(),
                 display_name: "Llama 3.1 8B".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "ollama".to_string(),
@@ -5928,20 +6409,23 @@ mod tests {
         );
 
         let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![
-                "opus".into(),
-            ]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
         let result = service.list().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr.iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("local-ai::llama3.1:8b"))
+        );
 
         let result = service.list_all().await.unwrap();
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["id"], "local-ai::llama3.1:8b");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr.iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("local-ai::llama3.1:8b"))
+        );
     }
 
     #[test]
@@ -6008,14 +6492,13 @@ mod tests {
 
     #[tokio::test]
     async fn list_all_includes_disabled_models_and_list_hides_them() {
-        let mut registry = ProviderRegistry::from_env_with_config(
-            &moltis_config::schema::ProvidersConfig::default(),
-        );
+        let mut registry = ProviderRegistry::empty();
         registry.register(
             moltis_agents::providers::ModelInfo {
                 id: "unit-test-model".to_string(),
                 provider: "unit-test-provider".to_string(),
                 display_name: "Unit Test Model".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "unit-test-provider".to_string(),
@@ -6029,8 +6512,7 @@ mod tests {
             store.disable("unit-test-provider::unit-test-model");
         }
 
-        let service =
-            LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![], vec![]);
+        let service = LiveModelService::new(Arc::new(RwLock::new(registry)), disabled, vec![]);
 
         let all = service
             .list_all()
@@ -6087,7 +6569,6 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec![],
-            vec![],
         );
         let result = service.test(serde_json::json!({})).await;
         assert!(result.is_err());
@@ -6102,13 +6583,80 @@ mod tests {
             ))),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
             vec![],
-            vec![],
         );
         let result = service
             .test(serde_json::json!({"modelId": "nonexistent::model-xyz"}))
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown model"));
+    }
+
+    #[tokio::test]
+    async fn model_test_unknown_model_includes_suggestion() {
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5.2-codex".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5.2 Codex".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5.2-codex".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5".to_string(),
+            }),
+        );
+
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service
+            .test(serde_json::json!({"modelId": "openai::gpt-5.2"}))
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("unknown model: openai::gpt-5.2"));
+        assert!(error.contains("did you mean"));
+        assert!(error.contains("openai::gpt-5.2-codex"));
+    }
+
+    #[test]
+    fn suggest_model_ids_prefers_provider_and_similarity() {
+        let available = vec![
+            "openai::gpt-5.2-codex".to_string(),
+            "openai::gpt-5".to_string(),
+            "openai-codex::gpt-5.2-codex".to_string(),
+            "anthropic::claude-sonnet-4".to_string(),
+        ];
+
+        let suggestions = suggest_model_ids("openai::gpt-5.2", &available, 3);
+
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|id| id == "openai::gpt-5.2-codex"),
+            "close provider-prefixed match should be included"
+        );
+        assert!(
+            suggestions
+                .iter()
+                .all(|id| id != "anthropic::claude-sonnet-4"),
+            "unrelated models should not be suggested"
+        );
     }
 
     #[tokio::test]
@@ -6122,6 +6670,7 @@ mod tests {
                 id: "test-provider::test-model".to_string(),
                 provider: "test-provider".to_string(),
                 display_name: "Test Model".to_string(),
+                created_at: None,
             },
             Arc::new(StaticProvider {
                 name: "test-provider".to_string(),
@@ -6132,7 +6681,6 @@ mod tests {
         let service = LiveModelService::new(
             Arc::new(RwLock::new(registry)),
             Arc::new(RwLock::new(DisabledModelsStore::default())),
-            vec![],
             vec![],
         );
         let result = service

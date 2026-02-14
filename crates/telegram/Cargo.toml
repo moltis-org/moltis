@@ -27,8 +27,9 @@ default = []
 metrics = ["dep:moltis-metrics"]
 
 [dev-dependencies]
-axum  = { workspace = true }
-tokio = { workspace = true }
+axum   = { workspace = true }
+rstest = { workspace = true }
+tokio  = { workspace = true }
 
 [lints]
 workspace = true

@@ -375,7 +375,20 @@ impl AgentTool for ExecTool {
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
                 backend.ensure_ready(&id, Some(&image)).await?;
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
-                backend.exec(&id, command, &opts).await?
+                let mut sandbox_result = backend.exec(&id, command, &opts).await?;
+                if sandbox_result.exit_code != 0
+                    && is_container_not_running_exec_error(&sandbox_result.stderr)
+                {
+                    warn!(
+                        session = sk,
+                        sandbox_id = %id,
+                        command,
+                        "sandbox exec failed because container is not running, reinitializing and retrying once"
+                    );
+                    backend.ensure_ready(&id, Some(&image)).await?;
+                    sandbox_result = backend.exec(&id, command, &opts).await?;
+                }
+                sandbox_result
             } else {
                 debug!(session = sk, command, "running unsandboxed");
                 exec_command(command, &opts).await?
@@ -383,7 +396,19 @@ impl AgentTool for ExecTool {
         } else if let Some(ref id) = self.sandbox_id {
             debug!(sandbox_id = %id, command, "static sandbox running command");
             self.sandbox.ensure_ready(id, None).await?;
-            self.sandbox.exec(id, command, &opts).await?
+            let mut sandbox_result = self.sandbox.exec(id, command, &opts).await?;
+            if sandbox_result.exit_code != 0
+                && is_container_not_running_exec_error(&sandbox_result.stderr)
+            {
+                warn!(
+                    sandbox_id = %id,
+                    command,
+                    "sandbox exec failed because container is not running, reinitializing and retrying once"
+                );
+                self.sandbox.ensure_ready(id, None).await?;
+                sandbox_result = self.sandbox.exec(id, command, &opts).await?;
+            }
+            sandbox_result
         } else {
             exec_command(command, &opts).await?
         };
@@ -486,6 +511,12 @@ fn redaction_needles(value: &str) -> Vec<String> {
     }
 
     needles
+}
+
+fn is_container_not_running_exec_error(stderr: &str) -> bool {
+    stderr.contains("cannot exec: container is not running")
+        || (stderr.contains("failed to create process in container")
+            && stderr.contains("container is not running"))
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -773,6 +804,19 @@ mod tests {
         assert!(needles.iter().any(|n| n.contains("c2VjcmV0MTIz")));
         // hex
         assert!(needles.iter().any(|n| n.contains("736563726574313233")));
+    }
+
+    #[test]
+    fn test_is_container_not_running_exec_error() {
+        assert!(is_container_not_running_exec_error(
+            "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"cannot exec: container is not running\\\"\")"
+        ));
+        assert!(is_container_not_running_exec_error(
+            "cannot exec: container is not running"
+        ));
+        assert!(!is_container_not_running_exec_error(
+            "permission denied: operation not permitted"
+        ));
     }
 
     #[tokio::test]

@@ -244,24 +244,30 @@ fn split_frontmatter(content: &str) -> anyhow::Result<(String, String)> {
 mod tests {
     use super::*;
 
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("my-skill", true)]
+    #[case("a", true)]
+    #[case("skill123", true)]
+    #[case("plugin:skill", true)]
+    #[case("pr-review-toolkit:code-reviewer", true)]
+    #[case("", false)]
+    #[case("-bad", false)]
+    #[case("bad-", false)]
+    #[case("Bad", false)]
+    #[case("has space", false)]
+    #[case("has--double", false)]
+    #[case(":bad", false)]
+    #[case("bad:", false)]
+    #[case("bad::double", false)]
+    fn test_validate_name(#[case] name: &str, #[case] expected: bool) {
+        assert_eq!(validate_name(name), expected, "validate_name({name:?})");
+    }
+
     #[test]
-    fn test_validate_name() {
-        assert!(validate_name("my-skill"));
-        assert!(validate_name("a"));
-        assert!(validate_name("skill123"));
-        assert!(!validate_name(""));
-        assert!(!validate_name("-bad"));
-        assert!(!validate_name("bad-"));
-        assert!(!validate_name("Bad"));
-        assert!(!validate_name("has space"));
-        assert!(!validate_name("has--double"));
+    fn test_validate_name_too_long() {
         assert!(!validate_name(&"a".repeat(65)));
-        // Colons allowed for namespaced plugin names
-        assert!(validate_name("plugin:skill"));
-        assert!(validate_name("pr-review-toolkit:code-reviewer"));
-        assert!(!validate_name(":bad"));
-        assert!(!validate_name("bad:"));
-        assert!(!validate_name("bad::double"));
     }
 
     #[test]

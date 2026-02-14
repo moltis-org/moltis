@@ -5,6 +5,256 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.29] - 2026-02-14
+
+
+### Added
+
+- **Memory bootstrap**: inject `MEMORY.md` content directly into the system
+  prompt (truncated at 20,000 chars) so the agent always has core memory
+  available without needing to call `memory_search` first. Matches OpenClaw's
+  bootstrap behavior
+- **Memory save tool**: new `memory_save` tool lets the LLM write to long-term
+  memory files (`MEMORY.md` or `memory/<name>.md`) with append/overwrite modes
+  and immediate re-indexing for search
+
+### Changed
+
+- **Memory writing**: `MemoryManager` now implements the `MemoryWriter` trait
+  directly, unifying read and write paths behind a single manager. The silent
+  memory turn and `MemorySaveTool` both delegate to the manager, which handles
+  path validation, size limits, and automatic re-indexing after writes
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Memory file watcher**: the file watcher now covers `MEMORY.md` at the data
+  directory root, which was previously excluded because the filter only matched
+  directories
+
+### Security
+
+## [0.8.28] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **Browser sandbox resolution**: `BrowserTool` now resolves sandbox mode
+  directly from `SandboxRouter` instead of relying on a `_sandbox` flag
+  injected via tool call params.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **E2E onboarding failures**: Fixed missing `saveProviderKey` export in
+  `provider-validation.js` that was accidentally left unstaged in the DRY
+  refactoring commit.
+
+### Security
+
+## [0.8.27] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **DRY voice/identity/channel utils**: Extracted shared RPC wrappers and
+  validation helpers from `onboarding-view.js` and `page-settings.js` /
+  `page-channels.js` into dedicated `voice-utils.js`, `identity-utils.js`,
+  and `channel-utils.js` modules.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Config test env isolation**: Fixed spurious
+  `save_config_to_path_removes_stale_keys_when_values_are_cleared` test
+  failure caused by `MOLTIS_IDENTITY__NAME` environment variable leaking
+  into the test via `apply_env_overrides`.
+
+### Security
+
+## [0.8.26] - 2026-02-14
+
+
+### Added
+
+- **Rustls/OpenSSL migration roadmap**: Added
+  `plans/2026-02-14-rustls-migration-and-openssl-reduction.md` with a staged
+  plan to reduce OpenSSL coupling, isolate feature gates, and move default TLS
+  networking paths toward rustls.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Windows release build reliability**: The `.exe` release workflow now forces
+  Strawberry Perl (`OPENSSL_SRC_PERL`/`PERL`) so vendored OpenSSL builds do not
+  fail due to missing Git Bash Perl modules.
+- **OpenAI tool-call ID length**: Remap tool-call IDs that exceed OpenAI's
+  40-character limit during message serialization, and generate shorter
+  synthetic IDs in the agent runner to prevent API errors.
+- **Onboarding credential persistence**: Provider credentials are now saved
+  before opening model selection during onboarding, aligning behavior with the
+  Settings > LLM flow.
+
+### Security
+
+## [0.8.25] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.24] - 2026-02-13
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.23] - 2026-02-13
+
+
+### Added
+
+- **Multi-select preferred models per provider**: The LLMs page now has a
+  "Preferred Models" button per provider that opens a multi-select modal.
+  Selected models are pinned at the top of the session model dropdown.
+  New `providers.save_models` RPC accepts multiple model IDs at once.
+- **Multi-select model picker in onboarding**: The onboarding provider step now
+  uses a multi-select model picker matching the Settings LLMs page. Toggle
+  models on/off, see per-model probe status badges, and batch-save with a
+  single Save button. Previously-saved preferred models are pre-selected when
+  re-opening the model selector.
+
+### Changed
+
+- **Model discovery uses `DiscoveredModel` struct**: Replaced `(String, String)`
+  tuples with a typed `DiscoveredModel` struct across all providers (OpenAI,
+  GitHub Copilot, OpenAI Codex). The struct carries an optional `created_at`
+  timestamp from the `/v1/models` API, enabling discovered models to be sorted
+  newest-first. Preferred/configured models remain pinned at the top.
+- **Removed OpenAI-specific model name filtering from discovery**: The
+  `/v1/models` response is no longer filtered by OpenAI naming conventions
+  (`gpt-*`, `o1`, etc.). All valid model IDs from any provider are now
+  accepted. This fixes model discovery for third-party providers like
+  Moonshot whose model IDs don't follow OpenAI naming.
+- **Disabled automatic model probe at startup**: The background chat
+  completion probe that checked which models are supported is now
+  triggered on-demand by the web UI instead of running automatically
+  2 seconds after startup. With dynamic model discovery, the startup
+  probe was expensive and noisy (non-chat models like image, audio,
+  and video would log spurious warnings).
+- **Model test uses streaming for faster feedback**: The "Testing..."
+  probe when selecting a model now uses streaming and returns on the
+  first token instead of waiting for a full non-streaming response.
+  Timeout reduced from 20s to 10s.
+- **Chosen models merge with config-defined priority**: Models selected
+  via the UI are prepended to the saved models list and merged with
+  config-defined preferred models, so both sources contribute to
+  ordering.
+- **Dynamic cross-provider priority list**: The model dropdown priority
+  is now a shared `Arc<RwLock<Vec<String>>>` updated at runtime when
+  models are saved, instead of a static `HashMap` built once at startup.
+- **Replaced hardcoded Ollama checks with `keyOptional` metadata**: JS
+  files no longer check `provider.name === "ollama"` for behavior.
+  Instead, the backend exposes a `keyOptional` field on provider
+  metadata, making the UI provider-agnostic.
+
+## [0.8.14] - 2026-02-11
+
+### Security
+
+- **Disconnect all WS clients on credential change**: WebSocket connections
+  opened before auth setup are now disconnected when credentials change
+  (password set/changed, passkey registered during setup, auth reset, last
+  credential removed). An `auth.credentials_changed` event notifies browsers
+  to redirect to `/login`. Existing sessions are also invalidated on password
+  change for defense-in-depth.
+
+### Fixed
+
+- **Onboarding test for SOUL.md clear behavior**: Fixed `identity_update_partial`
+  test to match the new empty-file behavior from v0.8.13.
+
+## [0.8.13] - 2026-02-11
+
+### Added
+
+- **Auto-create SOUL.md on first run**: `SOUL.md` is now seeded with the
+  default soul text when the file doesn't exist, mirroring how `moltis.toml`
+  is auto-created. If deleted, it re-seeds on next load.
+
+### Fixed
+
+- **SOUL.md clear via settings**: Clearing the soul textarea in settings no
+  longer re-creates the default on the next load. An explicit clear now writes
+  an empty file to distinguish "user cleared soul" from "file never existed".
+- **Onboarding WS connection timing**: Deferred WebSocket connection until
+  authentication completes, preventing connection failures during onboarding.
+
+### Changed
+
+- **Passkey auth preselection**: Onboarding now preselects the passkey
+  authentication method when a passkey is already registered.
+- **Moonshot provider**: Added Moonshot to the default offered providers list.
+
+## [0.8.12] - 2026-02-11
+
+### Fixed
+
+- **E2E test CI stability**: `NoopChatService::clear()` now returns Ok instead
+  of an error when no LLM providers are configured, fixing 5 e2e test failures
+  in CI environments. Hardened websocket, chat-input, and onboarding-auth e2e
+  tests against startup race conditions and flaky selectors.
+
 ## [0.8.8] - 2026-02-11
 
 ### Changed

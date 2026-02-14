@@ -3,7 +3,7 @@
 /// Before compacting a session, runs a hidden LLM turn that reviews the conversation
 /// and writes important memories to disk. The LLM's response text is discarded (not
 /// shown to the user). This matches OpenClaw's approach to long-term memory creation.
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use {
@@ -12,6 +12,7 @@ use {
 };
 
 use crate::{
+    memory_writer::{MemoryWriteResult, MemoryWriter},
     model::{ChatMessage, LlmProvider},
     runner::run_agent_loop,
     tool_registry::{AgentTool, ToolRegistry},
@@ -34,16 +35,16 @@ Write to these paths:
 Format files as clean Markdown. Be concise but preserve important context.
 Do NOT respond to the user. Only use the write_file tool to save memories."#;
 
-/// A restricted write_file tool for the silent memory turn.
+/// A thin `AgentTool` wrapper around `dyn MemoryWriter` that tracks written locations.
 struct MemoryWriteFileTool {
-    workspace_dir: PathBuf,
+    writer: Arc<dyn MemoryWriter>,
     written_paths: std::sync::Mutex<Vec<PathBuf>>,
 }
 
 impl MemoryWriteFileTool {
-    fn new(workspace_dir: PathBuf) -> Self {
+    fn new(writer: Arc<dyn MemoryWriter>) -> Self {
         Self {
-            workspace_dir,
+            writer,
             written_paths: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -94,31 +95,18 @@ impl AgentTool for MemoryWriteFileTool {
             .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
         let append = params["append"].as_bool().unwrap_or(false);
 
-        // Resolve relative to workspace
-        let full_path = self.workspace_dir.join(path_str);
-
-        // Ensure parent directory exists
-        if let Some(parent) = full_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        if append && full_path.exists() {
-            let existing = tokio::fs::read_to_string(&full_path)
-                .await
-                .unwrap_or_default();
-            let combined = format!("{existing}\n\n{content}");
-            tokio::fs::write(&full_path, combined).await?;
-        } else {
-            tokio::fs::write(&full_path, content).await?;
-        }
+        let MemoryWriteResult {
+            location,
+            bytes_written,
+        } = self.writer.write_memory(path_str, content, append).await?;
 
         self.written_paths
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push(full_path.clone());
+            .push(PathBuf::from(&location));
 
-        debug!(path = %full_path.display(), "silent memory turn: wrote file");
-        Ok(serde_json::json!({ "ok": true, "path": full_path.to_string_lossy() }))
+        debug!(location = %location, bytes = bytes_written, "silent memory turn: wrote file");
+        Ok(serde_json::json!({ "ok": true, "path": location }))
     }
 }
 
@@ -131,9 +119,9 @@ impl AgentTool for MemoryWriteFileTool {
 pub async fn run_silent_memory_turn(
     provider: Arc<dyn LlmProvider>,
     conversation: &[ChatMessage],
-    workspace_dir: &Path,
+    writer: Arc<dyn MemoryWriter>,
 ) -> Result<Vec<PathBuf>> {
-    let write_tool = Arc::new(MemoryWriteFileTool::new(workspace_dir.to_path_buf()));
+    let write_tool = Arc::new(MemoryWriteFileTool::new(writer));
 
     let mut tools = ToolRegistry::new();
     // We need to register a non-Arc version. Use a wrapper.
@@ -293,11 +281,46 @@ mod tests {
         }
     }
 
+    /// Mock MemoryWriter that writes to a temp directory.
+    struct MockMemoryWriter {
+        dir: PathBuf,
+    }
+
+    #[async_trait::async_trait]
+    impl MemoryWriter for MockMemoryWriter {
+        async fn write_memory(
+            &self,
+            file: &str,
+            content: &str,
+            append: bool,
+        ) -> Result<crate::memory_writer::MemoryWriteResult> {
+            let path = self.dir.join(file);
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            if append && path.exists() {
+                let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                let combined = format!("{existing}\n\n{content}");
+                tokio::fs::write(&path, &combined).await?;
+            } else {
+                tokio::fs::write(&path, content).await?;
+            }
+            let bytes = tokio::fs::read(&path).await?.len();
+            Ok(crate::memory_writer::MemoryWriteResult {
+                location: path.to_string_lossy().into_owned(),
+                bytes_written: bytes,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_silent_memory_turn_writes_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let provider = Arc::new(MemoryWritingProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let writer: Arc<dyn MemoryWriter> = Arc::new(MockMemoryWriter {
+            dir: tmp.path().to_path_buf(),
         });
 
         let conversation = vec![
@@ -305,7 +328,7 @@ mod tests {
             ChatMessage::assistant("Noted! Rust is a great choice."),
         ];
 
-        let paths = run_silent_memory_turn(provider, &conversation, tmp.path())
+        let paths = run_silent_memory_turn(provider, &conversation, writer)
             .await
             .unwrap();
 
@@ -323,10 +346,11 @@ mod tests {
         let provider = Arc::new(MemoryWritingProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
         });
+        let writer: Arc<dyn MemoryWriter> = Arc::new(MockMemoryWriter {
+            dir: tmp.path().to_path_buf(),
+        });
 
-        let paths = run_silent_memory_turn(provider, &[], tmp.path())
-            .await
-            .unwrap();
+        let paths = run_silent_memory_turn(provider, &[], writer).await.unwrap();
 
         // Should succeed even with empty conversation (provider still writes)
         assert!(!paths.is_empty());

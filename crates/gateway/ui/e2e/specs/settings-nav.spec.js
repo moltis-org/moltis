@@ -1,5 +1,5 @@
 const { expect, test } = require("@playwright/test");
-const { expectPageContentMounted, navigateAndWait, watchPageErrors } = require("../helpers");
+const { expectPageContentMounted, navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 async function spoofSafari(page) {
 	await page.addInitScript(() => {
@@ -181,6 +181,23 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
 	});
 
+	test("channels add telegram token field is treated as a password", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/channels");
+		await waitForWsConnected(page);
+
+		const addButton = page.getByRole("button", { name: "+ Add Telegram Bot", exact: true });
+		await expect(addButton).toBeVisible();
+		await addButton.click();
+
+		await expect(page.getByRole("heading", { name: "Add Telegram Bot", exact: true })).toBeVisible();
+		const tokenInput = page.getByPlaceholder("123456:ABC-DEF...");
+		await expect(tokenInput).toHaveAttribute("type", "password");
+		await expect(tokenInput).toHaveAttribute("autocomplete", "new-password");
+		await expect(tokenInput).toHaveAttribute("name", "telegram_bot_token");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("sidebar groups and order match product layout", async ({ page }) => {
 		await navigateAndWait(page, "/settings/identity");
 
@@ -196,14 +213,15 @@ test.describe("Settings navigation", () => {
 			"Memory",
 			"Notifications",
 			"Crons",
+			"Heartbeat",
 			"Security",
 			"Tailscale",
-			"LLMs",
 			"Channels",
-			"Voice",
-			"MCP",
 			"Hooks",
+			"LLMs",
+			"MCP",
 			"Skills",
+			"Voice",
 			"Sandboxes",
 			"Monitoring",
 			"Logs",
@@ -211,5 +229,16 @@ test.describe("Settings navigation", () => {
 		];
 		const expectedWithoutVoice = expectedWithVoice.filter((item) => item !== "Voice");
 		expect(navItems).toEqual(navItems.includes("Voice") ? expectedWithVoice : expectedWithoutVoice);
+
+		const llmsNavItem = page.locator(".settings-nav-item", { hasText: "LLMs" });
+		await expect(llmsNavItem.locator(".icon-layers")).toHaveCount(1);
+		await expect(llmsNavItem.locator(".icon-server")).toHaveCount(0);
+
+		const logsNavItem = page.locator(".settings-nav-item", { hasText: "Logs" });
+		await expect(logsNavItem.locator(".icon-document")).toHaveCount(1);
+
+		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
+		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);
+		await expect(configNavItem.locator(".icon-document")).toHaveCount(0);
 	});
 });

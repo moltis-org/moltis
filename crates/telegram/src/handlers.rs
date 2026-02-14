@@ -111,6 +111,21 @@ pub async fn handle_message_direct(
     );
 
     let username = msg.from.as_ref().and_then(|u| u.username.clone());
+    let inbound_kind = message_kind(&msg);
+    let text_len = text.as_ref().map_or(0, |body| body.len());
+    info!(
+        account_id,
+        chat_id = msg.chat.id.0,
+        message_id = msg.id.0,
+        peer_id,
+        username = ?username,
+        sender_name = ?sender_name,
+        kind = ?inbound_kind,
+        has_media = has_media(&msg),
+        has_text = text.is_some(),
+        text_len,
+        "telegram inbound message received"
+    );
 
     // Access control
     let access_result = access::check_access(
@@ -339,6 +354,17 @@ pub async fn handle_message_direct(
             false
         };
 
+        info!(
+            account_id,
+            chat_id = msg.chat.id.0,
+            message_id = msg.id.0,
+            lat,
+            lon,
+            is_live = loc_info.is_live,
+            resolved_pending_request = resolved,
+            "telegram location received"
+        );
+
         if resolved {
             // Pending tool request was resolved — the LLM will respond via the tool flow.
             if let Err(e) = outbound
@@ -397,6 +423,16 @@ pub async fn handle_message_direct(
             chat_id: msg.chat.id.0.to_string(),
             message_id: Some(msg.id.0.to_string()),
         };
+
+        info!(
+            account_id,
+            chat_id = %reply_target.chat_id,
+            message_id = ?reply_target.message_id,
+            body_len = body.len(),
+            attachment_count = attachments.len(),
+            message_kind = ?inbound_kind,
+            "telegram inbound dispatched to chat"
+        );
 
         // Intercept slash commands before dispatching to the LLM.
         if body.starts_with('/') {
@@ -798,6 +834,14 @@ pub async fn handle_edited_location(
         lon,
         chat_id = msg.chat.id.0,
         "live location update"
+    );
+    info!(
+        account_id,
+        chat_id = msg.chat.id.0,
+        message_id = msg.id.0,
+        lat,
+        lon,
+        "telegram live location update received"
     );
 
     let event_sink = {

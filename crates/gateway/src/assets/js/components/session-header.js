@@ -6,9 +6,9 @@
 import { html } from "htm/preact";
 import { useCallback, useRef, useState } from "preact/hooks";
 import { sendRpc } from "../helpers.js";
-import { fetchSessions, switchSession } from "../sessions.js";
+import { clearActiveSession, fetchSessions, switchSession } from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
-import { confirmDialog } from "../ui.js";
+import { confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
 
 function nextSessionKey(currentKey) {
 	var allSessions = sessionStore.sessions.value;
@@ -20,18 +20,40 @@ function nextSessionKey(currentKey) {
 	return "main";
 }
 
+function buildShareUrl(payload) {
+	var url = `${window.location.origin}${payload.path}`;
+	if (payload.accessKey) {
+		url += `?k=${encodeURIComponent(payload.accessKey)}`;
+	}
+	return url;
+}
+
+async function copyShareUrl(url, visibility) {
+	try {
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(url);
+			showToast("Share link copied", "success");
+			return;
+		}
+	} catch (_err) {
+		// Clipboard APIs can fail on some browsers/permissions.
+	}
+	await shareLinkDialog(url, visibility);
+}
+
 export function SessionHeader() {
 	var session = sessionStore.activeSession.value;
 	var currentKey = sessionStore.activeSessionKey.value;
 
 	var [renaming, setRenaming] = useState(false);
+	var [clearing, setClearing] = useState(false);
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
 	var displayName = fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
 
 	var isMain = currentKey === "main";
-	var isChannel = (session && session.channelBinding) || currentKey.startsWith("telegram:");
+	var isChannel = session?.channelBinding || currentKey.startsWith("telegram:");
 	var isCron = currentKey.startsWith("cron:");
 	var canRename = !(isMain || isChannel || isCron);
 
@@ -108,6 +130,43 @@ export function SessionHeader() {
 		}
 	}, [currentKey, session]);
 
+	var onClear = useCallback(() => {
+		if (clearing) return;
+		setClearing(true);
+		clearActiveSession().finally(() => {
+			setClearing(false);
+		});
+	}, [clearing]);
+
+	var shareSnapshot = useCallback(
+		async (visibility) => {
+			var res = await sendRpc("sessions.share.create", { key: currentKey, visibility: visibility });
+			if (!(res?.ok && res.payload?.path)) {
+				showToast(res?.error?.message || "Failed to create share link", "error");
+				return;
+			}
+
+			var url = buildShareUrl(res.payload);
+			await copyShareUrl(url, visibility);
+
+			if (visibility === "private") {
+				showToast("Private link includes a key, share it only with trusted people", "success");
+			}
+
+			// Reload the active session so the snapshot cutoff notice appears.
+			switchSession(currentKey);
+			fetchSessions();
+		},
+		[currentKey],
+	);
+
+	var onShare = useCallback(() => {
+		shareVisibilityDialog().then((visibility) => {
+			if (!visibility) return;
+			void shareSnapshot(visibility);
+		});
+	}, [shareSnapshot]);
+
 	return html`
 		<div class="flex items-center gap-2">
 			${
@@ -130,6 +189,17 @@ export function SessionHeader() {
 				html`
 				<button class="chat-session-btn" onClick=${onFork} title="Fork session">
 					Fork
+				</button>
+				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
+					Share
+				</button>
+			`
+			}
+			${
+				isMain &&
+				html`
+				<button class="chat-session-btn" onClick=${onClear} title="Clear session" disabled=${clearing}>
+					${clearing ? "Clearing\u2026" : "Clear"}
 				</button>
 			`
 			}

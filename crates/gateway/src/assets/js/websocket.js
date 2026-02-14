@@ -21,6 +21,7 @@ import {
 	toolCallSummary,
 } from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
+import { attachMessageVoiceControl } from "./message-voice.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
 import { maybeRefreshFullContext, renderCompactCard } from "./page-chat.js";
@@ -39,31 +40,32 @@ import { connectWs, forceReconnect } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
-var ttsWebStatus = null; // null = unknown, true/false = enabled state
+var pendingToolCallEnds = new Map();
 
-async function appendAssistantVoiceIfEnabled(msgEl, text) {
-	if (!(msgEl && text)) return false;
+function toolCallLogicalId(payload) {
+	if (!payload) return "";
+	if (payload.runId) return `${payload.runId}:${payload.toolCallId}`;
+	return String(payload.toolCallId || "");
+}
 
-	if (ttsWebStatus === null) {
-		var status = await sendRpc("tts.status", {});
-		ttsWebStatus = status?.ok && status.payload?.enabled === true;
+function toolCallCardId(payload) {
+	if (payload?.runId) {
+		return `tool-${payload.runId}-${payload.toolCallId}`;
 	}
-	if (!ttsWebStatus) return false;
+	return `tool-${payload.toolCallId}`;
+}
 
-	var tts = await sendRpc("tts.convert", { text: text, format: "ogg" });
-	if (!(tts?.ok && tts.payload?.audio)) {
-		if (tts?.error) {
-			console.warn("TTS convert failed:", tts.error.message || tts.error);
+function toolCallEventKey(eventSession, payload) {
+	return `${eventSession}:${toolCallLogicalId(payload)}`;
+}
+
+function clearPendingToolCallEndsForSession(sessionKey) {
+	var prefix = `${sessionKey}:`;
+	for (var key of pendingToolCallEnds.keys()) {
+		if (key.startsWith(prefix)) {
+			pendingToolCallEnds.delete(key);
 		}
-		return false;
 	}
-
-	msgEl.textContent = "";
-
-	var mimeType = tts.payload.mimeType || "audio/ogg";
-	var src = `data:${mimeType};base64,${tts.payload.audio}`;
-	renderAudioPlayer(msgEl, src, true);
-	return true;
 }
 
 function makeThinkingDots() {
@@ -136,13 +138,21 @@ function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 		S.setStreamEl(null);
 		S.setStreamText("");
 	}
+	var cardId = toolCallCardId(p);
+	if (document.getElementById(cardId)) return;
 	var tpl = document.getElementById("tpl-exec-card");
 	var frag = tpl.content.cloneNode(true);
 	var card = frag.firstElementChild;
-	card.id = `tool-${p.toolCallId}`;
+	card.id = cardId;
 	var cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
 	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
 	S.chatMsgBox.appendChild(card);
+	var endKey = toolCallEventKey(eventSession, p);
+	var pendingEnd = pendingToolCallEnds.get(endKey);
+	if (pendingEnd) {
+		pendingToolCallEnds.delete(endKey);
+		completeToolCard(card, pendingEnd, eventSession);
+	}
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
@@ -185,28 +195,20 @@ function appendToolResult(toolCard, result, eventSession) {
 	}
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Tool result processing with multiple cases
-function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
-	// Always bump badge — the server persists a tool_result message for each call.
-	bumpSessionCount(eventSession, 1);
-	if (!(isActive && isChatPage)) return;
-	var toolCard = document.getElementById(`tool-${p.toolCallId}`);
-	if (!toolCard) return;
+function isToolValidationErrorPayload(p) {
+	if (!(p && !p.success && p.error && p.error.detail)) return false;
+	var errDetail = p.error.detail.toLowerCase();
+	return (
+		errDetail.includes("missing field") ||
+		errDetail.includes("missing required") ||
+		errDetail.includes("missing 'action'") ||
+		errDetail.includes("missing 'url'")
+	);
+}
 
-	// Check if this is a schema validation error (model sent malformed args)
-	// These are expected sometimes and the agent retries automatically
-	var isValidationError = false;
-	if (!p.success && p.error && p.error.detail) {
-		var errDetail = p.error.detail.toLowerCase();
-		isValidationError =
-			errDetail.includes("missing field") ||
-			errDetail.includes("missing required") ||
-			errDetail.includes("missing 'action'") ||
-			errDetail.includes("missing 'url'");
-	}
-
-	// Use muted "retry" style for validation errors, normal styles otherwise
-	if (isValidationError) {
+function completeToolCard(toolCard, p, eventSession) {
+	// Use muted "retry" style for validation errors, normal styles otherwise.
+	if (isToolValidationErrorPayload(p)) {
 		toolCard.className = "msg exec-card exec-retry";
 	} else {
 		toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
@@ -214,14 +216,42 @@ function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 
 	var toolSpin = toolCard.querySelector(".exec-status");
 	if (toolSpin) toolSpin.remove();
+
 	if (p.success && p.result) {
 		appendToolResult(toolCard, p.result, eventSession);
-	} else if (!p.success && p.error && p.error.detail) {
+		return;
+	}
+	if (!p.success && p.error && p.error.detail) {
 		var errMsg = document.createElement("div");
-		errMsg.className = isValidationError ? "exec-retry-detail" : "exec-error-detail";
+		errMsg.className = isToolValidationErrorPayload(p) ? "exec-retry-detail" : "exec-error-detail";
 		errMsg.textContent = p.error.detail;
 		toolCard.appendChild(errMsg);
 	}
+}
+
+function clearStaleRunningToolCards() {
+	if (!S.chatMsgBox) return;
+	var statusEls = S.chatMsgBox.querySelectorAll(".msg.exec-card .exec-status");
+	for (var statusEl of statusEls) {
+		var card = statusEl.closest(".msg.exec-card");
+		statusEl.remove();
+		if (!card) continue;
+		if (!(card.classList.contains("exec-ok") || card.classList.contains("exec-err"))) {
+			card.className = "msg exec-card exec-ok";
+		}
+	}
+}
+
+function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
+	// Always bump badge — the server persists a tool_result message for each call.
+	bumpSessionCount(eventSession, 1);
+	if (!(isActive && isChatPage)) return;
+	var toolCard = document.getElementById(toolCallCardId(p));
+	if (!toolCard) {
+		pendingToolCallEnds.set(toolCallEventKey(eventSession, p), p);
+		return;
+	}
+	completeToolCard(toolCard, p, eventSession);
 }
 
 function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
@@ -273,11 +303,23 @@ function handleChatDelta(p, isActive, isChatPage, eventSession) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
+function normalizeEchoComparable(text) {
+	if (!text) return "";
+	return text
+		.replace(/```[a-zA-Z0-9_-]*\n?/g, "")
+		.replace(/```/g, "")
+		.replace(/[`\s]/g, "");
+}
+
+function isPureToolOutputEcho(finalText, toolOutput) {
+	var finalComparable = normalizeEchoComparable(finalText);
+	var toolComparable = normalizeEchoComparable(toolOutput);
+	if (!(finalComparable && toolComparable)) return false;
+	return finalComparable === toolComparable;
+}
+
 function resolveFinalMessageEl(p) {
-	var isEcho =
-		S.lastToolOutput &&
-		p.text &&
-		p.text.replace(/[`\s]/g, "").indexOf(S.lastToolOutput.replace(/\s/g, "").substring(0, 80)) !== -1;
+	var isEcho = isPureToolOutputEcho(p.text, S.lastToolOutput);
 	if (!isEcho) {
 		if (p.text && S.streamEl) {
 			setSafeMarkdownHtml(S.streamEl, p.text);
@@ -292,7 +334,7 @@ function resolveFinalMessageEl(p) {
 	return null;
 }
 
-function appendFinalFooter(msgEl, p) {
+function appendFinalFooter(msgEl, p, eventSession) {
 	if (!(msgEl && p.model)) return;
 	var footer = document.createElement("div");
 	footer.className = "msg-model-footer";
@@ -308,10 +350,24 @@ function appendFinalFooter(msgEl, p) {
 		footer.appendChild(badge);
 	}
 	msgEl.appendChild(footer);
+
+	void attachMessageVoiceControl({
+		messageEl: msgEl,
+		footerEl: footer,
+		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
+		text: p.text || "",
+		runId: p.runId,
+		messageIndex: p.messageIndex,
+		audioPath: p.audio || null,
+		audioWarning: p.audioWarning || null,
+		forceAction: p.replyMedium === "voice" && !p.audio,
+		autoplayOnGenerate: true,
+	});
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	// Always bump badge — the server persists the final assistant message.
 	bumpSessionCount(eventSession, 1);
 	// Compare against the per-session history index so cross-session
@@ -331,6 +387,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
+	clearStaleRunningToolCards();
 
 	if (S.voicePending && p.text && p.replyMedium === "voice") {
 		// Voice pending path: we suppressed streaming, so render everything at once.
@@ -351,7 +408,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		textWrap.className = "mt-2";
 		setSafeMarkdownHtml(textWrap, p.text);
 		msgEl.appendChild(textWrap);
-		appendFinalFooter(msgEl, p);
+		appendFinalFooter(msgEl, p, eventSession);
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	} else {
 		var resolvedEl = resolveFinalMessageEl(p);
@@ -370,15 +427,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 				console.debug("[audio] rendering persisted audio (streamed):", fn2);
 				resolvedEl.textContent = "";
 				renderAudioPlayer(resolvedEl, src2, true);
-				appendFinalFooter(resolvedEl, p);
+				appendFinalFooter(resolvedEl, p, eventSession);
 			} else {
-				console.debug("[audio] no persisted audio, trying web TTS");
-				appendAssistantVoiceIfEnabled(resolvedEl, p.text)
-					.catch((err) => {
-						console.warn("Web UI TTS playback failed:", err);
-						return false;
-					})
-					.finally(() => appendFinalFooter(resolvedEl, p));
+				console.debug("[audio] no persisted audio, showing voice fallback action");
+				appendFinalFooter(resolvedEl, p, eventSession);
 			}
 		} else {
 			// Silent reply — attach footer to the last visible assistant element
@@ -388,7 +440,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 				var last = S.chatMsgBox?.lastElementChild;
 				if (last && !last.classList.contains("user")) target = last;
 			}
-			appendFinalFooter(target, p);
+			appendFinalFooter(target, p, eventSession);
 		}
 	}
 	if (p.inputTokens || p.outputTokens) {
@@ -428,6 +480,7 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 }
 
 function handleChatError(p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	setSessionReplying(eventSession, false);
 	// Reset per-session stream state
 	var errSession = sessionStore.getByKey(eventSession);
@@ -437,6 +490,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 		return;
 	}
 	removeThinking();
+	clearStaleRunningToolCards();
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
 	} else {
@@ -467,11 +521,16 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 }
 
 function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
+	clearPendingToolCallEndsForSession(eventSession);
 	// Reset badge, unread state, and history index for every client.
 	var session = sessionStore.getByKey(eventSession);
 	if (session) {
 		session.syncCounts(0, 0);
 		session.lastHistoryIndex.value = -1;
+	}
+	if (isActive) {
+		S.setLastHistoryIndex(-1);
+		S.setChatSeq(0);
 	}
 	if (!(isActive && isChatPage)) return;
 	// Active viewer: clear the chat box and token bar.
@@ -738,9 +797,15 @@ function handleLocationRequest(payload) {
 	);
 }
 
+function handleAuthCredentialsChanged(payload) {
+	console.warn("Auth credentials changed:", payload.reason);
+	window.location.href = "/login";
+}
+
 var eventHandlers = {
 	chat: handleChatEvent,
 	error: handleWsError,
+	"auth.credentials_changed": handleAuthCredentialsChanged,
 	"exec.approval.requested": handleApprovalEvent,
 	"logs.entry": handleLogEntry,
 	"sandbox.image.build": handleSandboxImageBuild,

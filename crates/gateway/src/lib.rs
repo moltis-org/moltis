@@ -47,6 +47,7 @@ pub mod request_throttle;
 pub mod server;
 pub mod services;
 pub mod session;
+pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
 pub mod tailscale;

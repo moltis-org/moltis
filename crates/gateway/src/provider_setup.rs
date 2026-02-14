@@ -1,7 +1,10 @@
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use secrecy::{ExposeSecret, Secret};
@@ -10,7 +13,7 @@ use {
     async_trait::async_trait,
     serde_json::Value,
     tokio::sync::RwLock,
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use {
@@ -25,7 +28,7 @@ use crate::services::{ProviderSetupService, ServiceResult};
 
 // ── Key store ──────────────────────────────────────────────────────────────
 
-/// Per-provider stored configuration (API key, base URL, model).
+/// Per-provider stored configuration (API key, base URL, preferred models).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderConfig {
@@ -33,8 +36,106 @@ pub(crate) struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    #[serde(
+        default,
+        alias = "model",
+        deserialize_with = "deserialize_provider_models",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub models: Vec<String>,
+}
+
+fn deserialize_provider_models<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    let normalized = match value {
+        serde_json::Value::Null => Vec::new(),
+        serde_json::Value::String(model) => vec![model],
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .filter_map(|value| value.as_str().map(ToString::to_string))
+            .collect(),
+        _ => {
+            return Err(serde::de::Error::custom(
+                "models must be a string or string array",
+            ));
+        },
+    };
+
+    Ok(normalize_model_list(normalized))
+}
+
+fn normalize_model_list(models: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let normalized = trimmed.to_string();
+        if out.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+fn parse_models_param(params: &Value) -> Vec<String> {
+    let from_array = params
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let mut models = normalize_model_list(from_array);
+    if models.is_empty()
+        && let Some(model) = params.get("model").and_then(Value::as_str)
+    {
+        models = normalize_model_list([model.to_string()]);
+    }
+    models
+}
+
+struct ProviderSetupTiming {
+    operation: &'static str,
+    provider: String,
+    started: std::time::Instant,
+}
+
+impl ProviderSetupTiming {
+    fn start(operation: &'static str, provider: Option<&str>) -> Self {
+        let provider_name = provider.unwrap_or("<missing>").to_string();
+        info!(
+            operation,
+            provider = %provider_name,
+            "provider setup operation started"
+        );
+        Self {
+            operation,
+            provider: provider_name,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for ProviderSetupTiming {
+    fn drop(&mut self) {
+        info!(
+            operation = self.operation,
+            provider = %self.provider,
+            elapsed_ms = self.started.elapsed().as_millis(),
+            "provider setup operation finished"
+        );
+    }
 }
 
 /// File-based provider config storage at `~/.config/moltis/provider_keys.json`.
@@ -69,11 +170,24 @@ impl KeyStore {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn path(&self) -> PathBuf {
+        self.lock().path.clone()
+    }
+
     /// Load all provider configs. Handles migration from old format (string values).
     fn load_all_configs_from_path(path: &PathBuf) -> HashMap<String, ProviderConfig> {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => return HashMap::new(),
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "failed to read provider key store"
+                    );
+                }
+                return HashMap::new();
+            },
         };
 
         // Try parsing as new format first
@@ -86,15 +200,22 @@ impl KeyStore {
             return old_format
                 .into_iter()
                 .map(|(k, v)| {
-                    (k, ProviderConfig {
-                        api_key: Some(v),
-                        base_url: None,
-                        model: None,
-                    })
+                    (
+                        k,
+                        ProviderConfig {
+                            api_key: Some(v),
+                            base_url: None,
+                            models: Vec::new(),
+                        },
+                    )
                 })
                 .collect();
         }
 
+        warn!(
+            path = %path.display(),
+            "provider key store is invalid JSON and will be ignored"
+        );
         HashMap::new()
     }
 
@@ -109,9 +230,19 @@ impl KeyStore {
         configs: &HashMap<String, ProviderConfig>,
     ) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                warn!(
+                    path = %parent.display(),
+                    error = %error,
+                    "failed to create provider key store directory"
+                );
+                error.to_string()
+            })?;
         }
-        let data = serde_json::to_string_pretty(configs).map_err(|e| e.to_string())?;
+        let data = serde_json::to_string_pretty(configs).map_err(|error| {
+            warn!(error = %error, "failed to serialize provider key store");
+            error.to_string()
+        })?;
 
         // Write atomically via temp file + rename so readers never observe
         // partially-written JSON.
@@ -120,14 +251,29 @@ impl KeyStore {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let temp_path = path.with_extension(format!("json.tmp.{nanos}"));
-        std::fs::write(&temp_path, &data).map_err(|e| e.to_string())?;
+        std::fs::write(&temp_path, &data).map_err(|error| {
+            warn!(
+                path = %temp_path.display(),
+                error = %error,
+                "failed to write provider key store temp file"
+            );
+            error.to_string()
+        })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
         }
 
-        std::fs::rename(&temp_path, path).map_err(|e| e.to_string())?;
+        std::fs::rename(&temp_path, path).map_err(|error| {
+            warn!(
+                temp_path = %temp_path.display(),
+                path = %path.display(),
+                error = %error,
+                "failed to atomically replace provider key store"
+            );
+            error.to_string()
+        })?;
 
         Ok(())
     }
@@ -168,7 +314,7 @@ impl KeyStore {
             provider,
             Some(api_key.to_string()),
             None, // preserve existing base_url
-            None, // preserve existing model
+            None, // preserve existing models
         )
     }
 
@@ -178,7 +324,7 @@ impl KeyStore {
         provider: &str,
         api_key: Option<String>,
         base_url: Option<String>,
-        model: Option<String>,
+        models: Option<Vec<String>>,
     ) -> Result<(), String> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
@@ -195,12 +341,8 @@ impl KeyStore {
                 Some(url)
             };
         }
-        if let Some(m) = model {
-            entry.model = if m.is_empty() {
-                None
-            } else {
-                Some(m)
-            };
+        if let Some(models) = models {
+            entry.models = normalize_model_list(models);
         }
 
         Self::save_all_configs_to_path(&guard.path, &configs)
@@ -234,11 +376,8 @@ pub(crate) fn config_with_saved_keys(
             {
                 dst.base_url = Some(base_url);
             }
-            if dst.model.is_none()
-                && let Some(model) = entry.model
-                && !model.trim().is_empty()
-            {
-                dst.model = Some(model);
+            if dst.models.is_empty() && !entry.models.is_empty() {
+                dst.models = normalize_model_list(entry.models);
             }
         }
     }
@@ -259,8 +398,8 @@ pub(crate) fn config_with_saved_keys(
         if saved.base_url.is_some() {
             entry.base_url = saved.base_url;
         }
-        if saved.model.is_some() {
-            entry.model = saved.model;
+        if !saved.models.is_empty() {
+            entry.models = saved.models;
         }
     }
 
@@ -284,11 +423,12 @@ pub(crate) fn config_with_saved_keys(
             entry.base_url = Some(url);
         }
 
-        // Only override model if config doesn't already have one.
-        if let Some(model) = saved.model
-            && entry.model.is_none()
-        {
-            entry.model = Some(model);
+        if !saved.models.is_empty() {
+            // Merge: saved models (from "Choose model" UI) go first, then
+            // config models. normalize_model_list deduplicates.
+            let mut merged = saved.models;
+            merged.append(&mut entry.models);
+            entry.models = normalize_model_list(merged);
         }
     }
 
@@ -303,17 +443,102 @@ pub(crate) fn config_with_saved_keys(
                 .map(|m| m.model_id.clone())
                 .collect();
 
-            // Also set the first model as the default for backward compatibility
+            // Keep provider models in sync so model pickers can prioritize these.
             let entry = config.providers.entry("local".into()).or_default();
-            if entry.model.is_none()
-                && let Some(first_model) = local_config.models.first()
-            {
-                entry.model = Some(first_model.model_id.clone());
+            if entry.models.is_empty() {
+                entry.models = normalize_model_list(config.local_models.clone());
             }
         }
     }
 
     config
+}
+
+const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
+
+fn normalize_ollama_openai_base_url(base_url: Option<&str>) -> String {
+    let base = base_url
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(OLLAMA_DEFAULT_BASE_URL);
+    let trimmed = base.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
+fn normalize_ollama_api_base_url(base_url: Option<&str>) -> String {
+    let openai_base = normalize_ollama_openai_base_url(base_url);
+    openai_base
+        .trim_end_matches('/')
+        .strip_suffix("/v1")
+        .unwrap_or(openai_base.as_str())
+        .to_string()
+}
+
+fn normalize_ollama_model_id(model: &str) -> &str {
+    model.strip_prefix("ollama::").unwrap_or(model)
+}
+
+fn ollama_model_matches(installed_model: &str, requested_model: &str) -> bool {
+    installed_model == requested_model
+        || installed_model.starts_with(&format!("{requested_model}:"))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OllamaTagsModel {
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OllamaTagsResponse {
+    #[serde(default)]
+    models: Vec<OllamaTagsModel>,
+}
+
+async fn discover_ollama_models(base_url: &str) -> Result<Vec<String>, String> {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new().get(&url).send().await.map_err(|e| {
+        format!("Failed to connect to Ollama at {base_url}. Ensure Ollama is running. ({e})")
+    })?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Ollama model discovery failed at {url} (HTTP {}).",
+            response.status()
+        ));
+    }
+
+    let payload: OllamaTagsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Invalid JSON from Ollama model discovery endpoint: {e}"))?;
+
+    let mut models: Vec<String> = payload
+        .models
+        .into_iter()
+        .map(|m| m.name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+fn ollama_models_payload(models: &[String]) -> Vec<Value> {
+    models
+        .iter()
+        .map(|model| {
+            serde_json::json!({
+                "id": format!("ollama::{model}"),
+                "displayName": model,
+                "provider": "ollama",
+                "supportsTools": true,
+            })
+        })
+        .collect()
 }
 
 /// Known provider definitions used to populate the "available providers" list.
@@ -326,6 +551,8 @@ struct KnownProvider {
     default_base_url: Option<&'static str>,
     /// Whether this provider requires a model to be specified.
     requires_model: bool,
+    /// Whether the API key is optional (e.g. Ollama runs locally without auth).
+    key_optional: bool,
 }
 
 /// Build the known providers list at runtime, including local-llm if enabled.
@@ -338,6 +565,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("ANTHROPIC_API_KEY"),
             default_base_url: Some("https://api.anthropic.com"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "openai",
@@ -346,6 +574,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("OPENAI_API_KEY"),
             default_base_url: Some("https://api.openai.com/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "gemini",
@@ -354,6 +583,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("GEMINI_API_KEY"),
             default_base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "groq",
@@ -362,6 +592,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("GROQ_API_KEY"),
             default_base_url: Some("https://api.groq.com/openai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "xai",
@@ -370,6 +601,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("XAI_API_KEY"),
             default_base_url: Some("https://api.x.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "deepseek",
@@ -378,6 +610,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("DEEPSEEK_API_KEY"),
             default_base_url: Some("https://api.deepseek.com"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "mistral",
@@ -386,6 +619,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MISTRAL_API_KEY"),
             default_base_url: Some("https://api.mistral.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "openrouter",
@@ -393,7 +627,8 @@ fn known_providers() -> Vec<KnownProvider> {
             auth_type: "api-key",
             env_key: Some("OPENROUTER_API_KEY"),
             default_base_url: Some("https://openrouter.ai/api/v1"),
-            requires_model: true, // User must specify which model to use
+            requires_model: true,
+            key_optional: false,
         },
         KnownProvider {
             name: "cerebras",
@@ -402,6 +637,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("CEREBRAS_API_KEY"),
             default_base_url: Some("https://api.cerebras.ai/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "minimax",
@@ -410,6 +646,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MINIMAX_API_KEY"),
             default_base_url: Some("https://api.minimax.chat/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "moonshot",
@@ -418,6 +655,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: Some("MOONSHOT_API_KEY"),
             default_base_url: Some("https://api.moonshot.cn/v1"),
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "venice",
@@ -425,15 +663,17 @@ fn known_providers() -> Vec<KnownProvider> {
             auth_type: "api-key",
             env_key: Some("VENICE_API_KEY"),
             default_base_url: Some("https://api.venice.ai/api/v1"),
-            requires_model: true, // User must specify which model to use
+            requires_model: true,
+            key_optional: false,
         },
         KnownProvider {
             name: "ollama",
             display_name: "Ollama",
-            auth_type: "api-key", // API key is optional, handled specially in UI
+            auth_type: "api-key",
             env_key: Some("OLLAMA_API_KEY"),
             default_base_url: Some("http://localhost:11434"),
-            requires_model: true, // User must specify which model to use
+            requires_model: false,
+            key_optional: true,
         },
         KnownProvider {
             name: "openai-codex",
@@ -442,6 +682,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "github-copilot",
@@ -450,14 +691,16 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: false,
+            key_optional: false,
         },
         KnownProvider {
             name: "kimi-code",
             display_name: "Kimi Code",
             auth_type: "api-key",
             env_key: Some("KIMI_API_KEY"),
-            default_base_url: Some("https://api.moonshot.ai/v1"),
+            default_base_url: Some("https://api.kimi.com/coding/v1"),
             requires_model: false,
+            key_optional: false,
         },
     ];
 
@@ -472,6 +715,7 @@ fn known_providers() -> Vec<KnownProvider> {
             env_key: None,
             default_base_url: None,
             requires_model: true,
+            key_optional: false,
         });
         p
     };
@@ -598,13 +842,20 @@ fn normalize_provider_name(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-fn ui_offered_provider_set(config: &ProvidersConfig) -> Option<BTreeSet<String>> {
-    let offered: BTreeSet<String> = config
-        .offered
-        .iter()
-        .map(|name| normalize_provider_name(name))
-        .filter(|name| !name.is_empty())
-        .collect();
+fn ui_offered_provider_order(config: &ProvidersConfig) -> Vec<String> {
+    let mut ordered = Vec::new();
+    for name in &config.offered {
+        let normalized = normalize_provider_name(name);
+        if normalized.is_empty() || ordered.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        ordered.push(normalized);
+    }
+    ordered
+}
+
+fn ui_offered_provider_set(offered_order: &[String]) -> Option<BTreeSet<String>> {
+    let offered: BTreeSet<String> = offered_order.iter().cloned().collect();
     (!offered.is_empty()).then_some(offered)
 }
 
@@ -614,10 +865,7 @@ pub(crate) fn has_explicit_provider_settings(config: &ProvidersConfig) -> bool {
             .api_key
             .as_ref()
             .is_some_and(|k| !k.expose_secret().trim().is_empty())
-            || entry
-                .model
-                .as_deref()
-                .is_some_and(|model| !model.trim().is_empty())
+            || entry.models.iter().any(|model| !model.trim().is_empty())
             || entry
                 .base_url
                 .as_deref()
@@ -743,8 +991,11 @@ pub struct LiveProviderSetupService {
     /// When set, local-only providers (local-llm, ollama) are hidden from
     /// the available list because they cannot run on cloud VMs.
     deploy_platform: Option<String>,
-    /// Normalized allowlist patterns for filtering models (lowercase, non-empty).
-    allowed_models: Vec<String>,
+    /// Shared priority models list from `LiveModelService`. Updated by
+    /// `save_model` so the dropdown ordering reflects the latest preference.
+    priority_models: Option<Arc<RwLock<Vec<String>>>>,
+    /// Monotonic sequence used to drop stale async registry refreshes.
+    registry_rebuild_seq: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -759,13 +1010,7 @@ impl LiveProviderSetupService {
         registry: Arc<RwLock<ProviderRegistry>>,
         config: ProvidersConfig,
         deploy_platform: Option<String>,
-        allowed_models: Vec<String>,
     ) -> Self {
-        let allowed_models: Vec<String> = allowed_models
-            .into_iter()
-            .map(|p| crate::chat::normalize_model_key(&p))
-            .filter(|p| !p.is_empty())
-            .collect();
         Self {
             registry,
             config: Arc::new(Mutex::new(config)),
@@ -773,8 +1018,84 @@ impl LiveProviderSetupService {
             key_store: KeyStore::new(),
             pending_oauth: Arc::new(RwLock::new(HashMap::new())),
             deploy_platform,
-            allowed_models,
+            priority_models: None,
+            registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Wire the shared priority models handle from `LiveModelService` so
+    /// `save_model` can update dropdown ordering at runtime.
+    pub fn set_priority_models(&mut self, handle: Arc<RwLock<Vec<String>>>) {
+        self.priority_models = Some(handle);
+    }
+
+    fn queue_registry_rebuild(&self, provider_name: &str, reason: &'static str) {
+        let rebuild_seq = self.registry_rebuild_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let latest_seq = Arc::clone(&self.registry_rebuild_seq);
+        let registry = Arc::clone(&self.registry);
+        let config = Arc::clone(&self.config);
+        let key_store = self.key_store.clone();
+        let provider_name = provider_name.to_string();
+
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            info!(
+                provider = %provider_name,
+                reason,
+                rebuild_seq,
+                "provider registry async rebuild started"
+            );
+
+            let effective = {
+                let base = config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                config_with_saved_keys(&base, &key_store)
+            };
+
+            let new_registry = match tokio::task::spawn_blocking(move || {
+                ProviderRegistry::from_env_with_config(&effective)
+            })
+            .await
+            {
+                Ok(registry) => registry,
+                Err(error) => {
+                    warn!(
+                        provider = %provider_name,
+                        reason,
+                        rebuild_seq,
+                        error = %error,
+                        "provider registry async rebuild worker failed"
+                    );
+                    return;
+                },
+            };
+
+            let current_seq = latest_seq.load(Ordering::Acquire);
+            if rebuild_seq != current_seq {
+                info!(
+                    provider = %provider_name,
+                    reason,
+                    rebuild_seq,
+                    latest_seq = current_seq,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "provider registry async rebuild skipped as stale"
+                );
+                return;
+            }
+
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
+            let mut reg = registry.write().await;
+            *reg = new_registry;
+            info!(
+                provider = %provider_name,
+                reason,
+                rebuild_seq,
+                provider_summary = %provider_summary,
+                models = model_count,
+                elapsed_ms = started.elapsed().as_millis(),
+                "provider registry async rebuild finished"
+            );
+        });
     }
 
     fn config_snapshot(&self) -> ProvidersConfig {
@@ -797,12 +1118,9 @@ impl LiveProviderSetupService {
         provider: &KnownProvider,
         active_config: &ProvidersConfig,
     ) -> bool {
-        // Explicitly disabled providers should not show as configured even if
-        // auto-detected credentials exist in home directories.
-        if active_config
-            .get(provider.name)
-            .is_some_and(|entry| !entry.enabled)
-        {
+        // Disabled providers (by offered allowlist or explicit enabled=false)
+        // should not show as configured even if credentials are auto-detected.
+        if !active_config.is_enabled(provider.name) {
             return false;
         }
 
@@ -929,10 +1247,14 @@ impl LiveProviderSetupService {
                         return;
                     }
                     let new_registry = ProviderRegistry::from_env_with_config(&config);
+                    let provider_summary = new_registry.provider_summary();
+                    let model_count = new_registry.list_models().len();
                     let mut reg = registry.write().await;
                     *reg = new_registry;
                     info!(
                         provider = %provider_name,
+                        provider_summary = %provider_summary,
+                        models = model_count,
                         "device-flow OAuth complete, rebuilt provider registry"
                     );
                 },
@@ -1018,44 +1340,107 @@ impl ProviderSetupService for LiveProviderSetupService {
     async fn available(&self) -> ServiceResult {
         let is_cloud = self.deploy_platform.is_some();
         let active_config = self.config_snapshot();
-        let offered = ui_offered_provider_set(&active_config);
-        let providers: Vec<Value> = known_providers()
+        let offered_order = ui_offered_provider_order(&active_config);
+        let offered = ui_offered_provider_set(&offered_order);
+        let offered_rank: HashMap<String, usize> = offered_order
             .iter()
-            .filter_map(|p| {
+            .enumerate()
+            .map(|(idx, provider)| (provider.clone(), idx))
+            .collect();
+
+        let mut providers: Vec<(Option<usize>, usize, Value)> = known_providers()
+            .iter()
+            .enumerate()
+            .filter_map(|(known_idx, provider)| {
                 // Hide local-only providers on cloud deployments.
-                if is_cloud && (p.auth_type == "local" || p.name == "ollama") {
+                if is_cloud && (provider.auth_type == "local" || provider.name == "ollama") {
                     return None;
                 }
 
-                let configured = self.is_provider_configured(p, &active_config);
+                let configured = self.is_provider_configured(provider, &active_config);
+                let normalized_name = normalize_provider_name(provider.name);
                 if let Some(allowed) = offered.as_ref()
-                    && !allowed.contains(&normalize_provider_name(p.name))
+                    && !allowed.contains(&normalized_name)
                     && !configured
                 {
                     return None;
                 }
 
-                // Get saved config for this provider (baseUrl, model)
-                let saved_config = self.key_store.load_config(p.name);
+                // Get saved config for this provider (baseUrl, preferred models)
+                let saved_config = self.key_store.load_config(provider.name);
                 let base_url = saved_config.as_ref().and_then(|c| c.base_url.clone());
-                let model = saved_config.as_ref().and_then(|c| c.model.clone());
+                let models = saved_config
+                    .map(|c| normalize_model_list(c.models))
+                    .unwrap_or_default();
+                let model = models.first().cloned();
 
-                Some(serde_json::json!({
-                    "name": p.name,
-                    "displayName": p.display_name,
-                    "authType": p.auth_type,
-                    "configured": configured,
-                    "defaultBaseUrl": p.default_base_url,
-                    "baseUrl": base_url,
-                    "model": model,
-                    "requiresModel": p.requires_model,
-                }))
+                Some((
+                    offered_rank.get(&normalized_name).copied(),
+                    known_idx,
+                    serde_json::json!({
+                        "name": provider.name,
+                        "displayName": provider.display_name,
+                        "authType": provider.auth_type,
+                        "configured": configured,
+                        "defaultBaseUrl": provider.default_base_url,
+                        "baseUrl": base_url,
+                        "models": models,
+                        "model": model,
+                        "requiresModel": provider.requires_model,
+                        "keyOptional": provider.key_optional,
+                    }),
+                ))
             })
             .collect();
+
+        providers.sort_by(
+            |(a_offered, a_known, a_value), (b_offered, b_known, b_value)| {
+                let offered_cmp = match (a_offered, b_offered) {
+                    (Some(a), Some(b)) => a.cmp(b),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                };
+                if offered_cmp != std::cmp::Ordering::Equal {
+                    return offered_cmp;
+                }
+
+                let known_cmp = a_known.cmp(b_known);
+                if known_cmp != std::cmp::Ordering::Equal {
+                    return known_cmp;
+                }
+
+                let a_name = a_value
+                    .get("displayName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let b_name = b_value
+                    .get("displayName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                a_name.cmp(b_name)
+            },
+        );
+
+        let providers: Vec<Value> = providers
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (_, _, mut value))| {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("uiOrder".into(), serde_json::json!(idx));
+                }
+                value
+            })
+            .collect();
+
         Ok(Value::Array(providers))
     }
 
     async fn save_key(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1064,7 +1449,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         // API key is optional for some providers (e.g., Ollama)
         let api_key = params.get("apiKey").and_then(|v| v.as_str());
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
-        let model = params.get("model").and_then(|v| v.as_str());
+        let models = parse_models_param(&params);
 
         // Validate provider name - allow both api-key and local providers
         let known = known_providers();
@@ -1080,24 +1465,56 @@ impl ProviderSetupService for LiveProviderSetupService {
             return Err("missing 'apiKey' parameter".to_string());
         }
 
+        let normalized_base_url = if provider_name == "ollama" {
+            base_url.map(|url| normalize_ollama_openai_base_url(Some(url)))
+        } else {
+            base_url.map(String::from)
+        };
+
+        let key_store_path = self.key_store.path();
+        info!(
+            provider = provider_name,
+            has_api_key = api_key.is_some(),
+            has_base_url = normalized_base_url
+                .as_ref()
+                .is_some_and(|url| !url.trim().is_empty()),
+            models = models.len(),
+            key_store_path = %key_store_path.display(),
+            "saving provider config"
+        );
+
         // Persist full config to disk
-        self.key_store.save_config(
-            provider_name,
-            api_key.map(String::from),
-            base_url.map(String::from),
-            model.map(String::from),
-        )?;
+        self.key_store
+            .save_config(
+                provider_name,
+                api_key.map(String::from),
+                normalized_base_url,
+                (!models.is_empty()).then_some(models),
+            )
+            .map_err(|error| {
+                warn!(
+                    provider = provider_name,
+                    key_store_path = %key_store_path.display(),
+                    error = %error,
+                    "failed to persist provider config"
+                );
+                error
+            })?;
         set_provider_enabled_in_config(provider_name, true)?;
         self.set_provider_enabled_in_memory(provider_name, true);
 
         // Rebuild the provider registry with saved keys merged into config.
         let effective = self.effective_config();
         let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let provider_summary = new_registry.provider_summary();
+        let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
         *reg = new_registry;
 
         info!(
             provider = provider_name,
+            provider_summary = %provider_summary,
+            models = model_count,
             "saved provider config to disk and rebuilt provider registry"
         );
 
@@ -1130,10 +1547,14 @@ impl ProviderSetupService for LiveProviderSetupService {
         if self.has_oauth_tokens(&provider_name) {
             let effective = self.effective_config();
             let new_registry = ProviderRegistry::from_env_with_config(&effective);
+            let provider_summary = new_registry.provider_summary();
+            let model_count = new_registry.list_models().len();
             let mut reg = self.registry.write().await;
             *reg = new_registry;
             info!(
                 provider = %provider_name,
+                provider_summary = %provider_summary,
+                models = model_count,
                 "oauth start skipped because provider already has tokens; rebuilt provider registry"
             );
             return Ok(serde_json::json!({
@@ -1197,10 +1618,14 @@ impl ProviderSetupService for LiveProviderSetupService {
                             }
                             // Rebuild registry with new tokens
                             let new_registry = ProviderRegistry::from_env_with_config(&config);
+                            let provider_summary = new_registry.provider_summary();
+                            let model_count = new_registry.list_models().len();
                             let mut reg = registry.write().await;
                             *reg = new_registry;
                             info!(
                                 provider = %provider_name,
+                                provider_summary = %provider_summary,
+                                models = model_count,
                                 "OAuth flow complete, rebuilt provider registry"
                             );
                         },
@@ -1261,11 +1686,15 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         let effective = self.effective_config();
         let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let provider_summary = new_registry.provider_summary();
+        let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
         *reg = new_registry;
 
         info!(
             provider = %pending.provider_name,
+            provider_summary = %provider_summary,
+            models = model_count,
             "OAuth callback complete, rebuilt provider registry"
         );
 
@@ -1340,8 +1769,12 @@ impl ProviderSetupService for LiveProviderSetupService {
     }
 
     async fn validate_key(&self, params: Value) -> ServiceResult {
-        use moltis_agents::model::{ChatMessage, LlmProvider};
+        use moltis_agents::model::ChatMessage;
 
+        let _timing = ProviderSetupTiming::start(
+            "providers.validate_key",
+            params.get("provider").and_then(Value::as_str),
+        );
         let provider_name = params
             .get("provider")
             .and_then(|v| v.as_str())
@@ -1349,7 +1782,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         let api_key = params.get("apiKey").and_then(|v| v.as_str());
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
-        let model = params.get("model").and_then(|v| v.as_str());
+        let preferred_models = parse_models_param(&params);
 
         // Validate provider name exists.
         let known = known_providers();
@@ -1363,6 +1796,58 @@ impl ProviderSetupService for LiveProviderSetupService {
             return Err("missing 'apiKey' parameter".to_string());
         }
 
+        let selected_model = preferred_models.first().map(String::as_str);
+        let base_url_value = base_url.filter(|s| !s.trim().is_empty());
+
+        // Ollama supports native model discovery through /api/tags.
+        // If no model is supplied, return discovered models for UI selection.
+        if provider_name == "ollama" {
+            let ollama_api_base =
+                normalize_ollama_api_base_url(base_url_value.or(provider_info.default_base_url));
+            let discovered_models = match discover_ollama_models(&ollama_api_base).await {
+                Ok(models) => models,
+                Err(error) => {
+                    return Ok(serde_json::json!({
+                        "valid": false,
+                        "error": error,
+                    }));
+                },
+            };
+
+            if discovered_models.is_empty() {
+                return Ok(serde_json::json!({
+                    "valid": false,
+                    "error": "No Ollama models found. Install one first with `ollama pull <model>`.",
+                }));
+            }
+
+            if let Some(requested_model) = selected_model {
+                let requested_model = normalize_ollama_model_id(requested_model.trim());
+                let installed = discovered_models
+                    .iter()
+                    .any(|installed_model| ollama_model_matches(installed_model, requested_model));
+                if !installed {
+                    return Ok(serde_json::json!({
+                        "valid": false,
+                        "error": format!(
+                            "Model '{requested_model}' is not installed in Ollama. Install it with `ollama pull {requested_model}`."
+                        ),
+                    }));
+                }
+            } else {
+                return Ok(serde_json::json!({
+                    "valid": true,
+                    "models": ollama_models_payload(&discovered_models),
+                }));
+            }
+        }
+
+        let normalized_base_url = if provider_name == "ollama" {
+            base_url_value.map(|url| normalize_ollama_openai_base_url(Some(url)))
+        } else {
+            base_url_value.map(String::from)
+        };
+
         // Build a temporary ProvidersConfig with just this provider.
         let mut temp_config = ProvidersConfig::default();
         temp_config.providers.insert(
@@ -1370,8 +1855,8 @@ impl ProviderSetupService for LiveProviderSetupService {
             moltis_config::schema::ProviderEntry {
                 enabled: true,
                 api_key: api_key.map(|k| Secret::new(k.to_string())),
-                base_url: base_url.filter(|s| !s.trim().is_empty()).map(String::from),
-                model: model.filter(|s| !s.trim().is_empty()).map(String::from),
+                base_url: normalized_base_url,
+                models: preferred_models,
                 ..Default::default()
             },
         );
@@ -1379,20 +1864,12 @@ impl ProviderSetupService for LiveProviderSetupService {
         // Build a temporary registry from the temp config.
         let temp_registry = ProviderRegistry::from_env_with_config(&temp_config);
 
-        // Filter models for this provider and by allowlist.
+        // Filter models for this provider.
         let models: Vec<_> = temp_registry
             .list_models()
             .iter()
             .filter(|m| {
                 normalize_provider_name(&m.provider) == normalize_provider_name(provider_name)
-            })
-            .filter(|m| {
-                let runtime_provider_name = temp_registry.get(&m.id).map(|p| p.name().to_string());
-                crate::chat::model_matches_allowlist_with_provider(
-                    m,
-                    runtime_provider_name.as_deref(),
-                    &self.allowed_models,
-                )
             })
             .cloned()
             .collect();
@@ -1404,66 +1881,136 @@ impl ProviderSetupService for LiveProviderSetupService {
             }));
         }
 
-        // Probe the first available model with a "ping" message.
-        let probe_model = &models[0];
-        let llm_provider: Arc<dyn LlmProvider> = match temp_registry.get(&probe_model.id) {
-            Some(p) => p,
-            None => {
-                return Ok(serde_json::json!({
-                    "valid": false,
-                    "error": "Could not instantiate provider for probing.",
-                }));
-            },
-        };
+        info!(
+            provider = provider_name,
+            model_count = models.len(),
+            "provider validation discovered candidate models for probing"
+        );
 
         let probe = [ChatMessage::user("ping")];
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            llm_provider.complete(&probe, &[]),
-        )
-        .await;
+        let mut probe_attempted = false;
+        let mut unsupported_errors = Vec::new();
+        let mut last_error: Option<String> = None;
+        let mut probe_succeeded = false;
 
-        match result {
-            Ok(Ok(_)) => {
-                // Build model list for the frontend.
-                let model_list: Vec<serde_json::Value> = models
-                    .iter()
-                    .map(|m| {
-                        let supports_tools =
-                            temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());
-                        serde_json::json!({
-                            "id": m.id,
-                            "displayName": m.display_name,
-                            "provider": m.provider,
-                            "supportsTools": supports_tools,
-                        })
-                    })
-                    .collect();
+        // Try multiple models because provider catalogs can include endpoint-
+        // incompatible IDs. We only need one successful probe to validate creds.
+        for (attempt, probe_model) in models.iter().enumerate() {
+            let Some(llm_provider) = temp_registry.get(&probe_model.id) else {
+                continue;
+            };
 
-                Ok(serde_json::json!({
-                    "valid": true,
-                    "models": model_list,
-                }))
-            },
-            Ok(Err(err)) => {
-                let error_text = err.to_string();
-                let error_obj =
-                    crate::chat_error::parse_chat_error(&error_text, Some(provider_name));
-                let detail = error_obj
-                    .get("detail")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&error_text);
+            probe_attempted = true;
+            let probe_started = std::time::Instant::now();
+            info!(
+                provider = provider_name,
+                model = %probe_model.id,
+                attempt = attempt + 1,
+                total_models = models.len(),
+                "provider validation model probe started"
+            );
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                llm_provider.complete(&probe, &[]),
+            )
+            .await;
 
-                Ok(serde_json::json!({
-                    "valid": false,
-                    "error": detail,
-                }))
-            },
-            Err(_) => Ok(serde_json::json!({
-                "valid": false,
-                "error": "Connection timed out after 20 seconds. Check your endpoint URL and try again.",
-            })),
+            match result {
+                Ok(Ok(_)) => {
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe succeeded"
+                    );
+                    probe_succeeded = true;
+                    break;
+                },
+                Ok(Err(err)) => {
+                    let error_text = err.to_string();
+                    let error_obj =
+                        crate::chat_error::parse_chat_error(&error_text, Some(provider_name));
+                    let detail = error_obj
+                        .get("detail")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&error_text)
+                        .to_string();
+                    let is_unsupported =
+                        error_obj.get("type").and_then(|v| v.as_str()) == Some("unsupported_model");
+                    info!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        unsupported = is_unsupported,
+                        "provider validation model probe failed"
+                    );
+                    if is_unsupported {
+                        unsupported_errors.push(detail);
+                        continue;
+                    }
+                    last_error = Some(detail);
+                    break;
+                },
+                Err(_) => {
+                    warn!(
+                        provider = provider_name,
+                        model = %probe_model.id,
+                        elapsed_ms = probe_started.elapsed().as_millis(),
+                        "provider validation model probe timed out"
+                    );
+                    last_error = Some(
+                        "Connection timed out after 20 seconds. Check your endpoint URL and try again."
+                            .to_string(),
+                    );
+                    break;
+                },
+            }
         }
+
+        if probe_succeeded {
+            // Build model list for the frontend, excluding non-chat models.
+            let model_list: Vec<serde_json::Value> = models
+                .iter()
+                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
+                .map(|m| {
+                    let supports_tools =
+                        temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());
+                    serde_json::json!({
+                        "id": m.id,
+                        "displayName": m.display_name,
+                        "provider": m.provider,
+                        "supportsTools": supports_tools,
+                    })
+                })
+                .collect();
+
+            return Ok(serde_json::json!({
+                "valid": true,
+                "models": model_list,
+            }));
+        }
+
+        if !probe_attempted {
+            return Ok(serde_json::json!({
+                "valid": false,
+                "error": "Could not instantiate provider for probing.",
+            }));
+        }
+
+        if let Some(error) = last_error {
+            return Ok(serde_json::json!({
+                "valid": false,
+                "error": error,
+            }));
+        }
+
+        let unsupported_error = unsupported_errors.into_iter().next().unwrap_or_else(|| {
+            "No supported chat models were found for this provider.".to_string()
+        });
+        Ok(serde_json::json!({
+            "valid": false,
+            "error": unsupported_error,
+        }))
     }
 
     async fn save_model(&self, params: Value) -> ServiceResult {
@@ -1483,13 +2030,79 @@ impl ProviderSetupService for LiveProviderSetupService {
             return Err(format!("unknown provider: {provider_name}"));
         }
 
+        // Prepend chosen model to existing saved models so it appears first,
+        // while preserving any previously chosen models.
+        let mut models = vec![model.to_string()];
+        if let Some(existing) = self.key_store.load_config(provider_name) {
+            models.extend(existing.models);
+        }
+
         self.key_store
-            .save_config(provider_name, None, None, Some(model.to_string()))?;
+            .save_config(provider_name, None, None, Some(models))?;
+
+        // Update the cross-provider priority list so the dropdown puts
+        // the chosen model at the top immediately.
+        if let Some(ref priority) = self.priority_models {
+            let mut list = priority.write().await;
+            // Remove any existing occurrence and prepend.
+            let normalized = model.to_string();
+            list.retain(|m| m != &normalized);
+            list.insert(0, normalized);
+        }
 
         info!(
             provider = provider_name,
-            model, "saved model preference for provider"
+            model, "saved model preference and queued async registry rebuild"
         );
+        self.queue_registry_rebuild(provider_name, "save_model");
+        Ok(serde_json::json!({ "ok": true }))
+    }
+
+    async fn save_models(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start(
+            "providers.save_models",
+            params.get("provider").and_then(Value::as_str),
+        );
+        let provider_name = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'provider' parameter".to_string())?;
+
+        let models: Vec<String> = params
+            .get("models")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "missing 'models' array parameter".to_string())?
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+
+        // Validate provider exists.
+        let known = known_providers();
+        if !known.iter().any(|p| p.name == provider_name) {
+            return Err(format!("unknown provider: {provider_name}"));
+        }
+
+        self.key_store
+            .save_config(provider_name, None, None, Some(models.clone()))?;
+
+        // Update the cross-provider priority list.
+        if let Some(ref priority) = self.priority_models {
+            let mut list = priority.write().await;
+            // Prepend all selected models in order, removing any existing
+            // occurrences to avoid duplicates.
+            for m in models.iter().rev() {
+                list.retain(|existing| existing != m);
+                list.insert(0, m.clone());
+            }
+        }
+
+        info!(
+            provider = provider_name,
+            count = models.len(),
+            models = ?models,
+            "saved model preferences and queued async registry rebuild"
+        );
+        self.queue_registry_rebuild(provider_name, "save_models");
         Ok(serde_json::json!({ "ok": true }))
     }
 }
@@ -1559,6 +2172,37 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names.len(), providers.len());
+    }
+
+    #[test]
+    fn normalize_ollama_openai_base_url_appends_v1() {
+        assert_eq!(
+            normalize_ollama_openai_base_url(Some("http://localhost:11434")),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            normalize_ollama_openai_base_url(Some("http://localhost:11434/v1")),
+            "http://localhost:11434/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_ollama_api_base_url_strips_v1() {
+        assert_eq!(
+            normalize_ollama_api_base_url(Some("http://localhost:11434/v1")),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            normalize_ollama_api_base_url(Some("http://localhost:11434")),
+            "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn ollama_model_matches_accepts_tag_suffix() {
+        assert!(ollama_model_matches("llama3.2:latest", "llama3.2"));
+        assert!(ollama_model_matches("qwen2.5:7b", "qwen2.5:7b"));
+        assert!(!ollama_model_matches("llama3.2:latest", "qwen2.5"));
     }
 
     #[test]
@@ -1634,6 +2278,24 @@ mod tests {
     }
 
     #[test]
+    fn key_store_path_reports_backing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.json");
+        let store = KeyStore::with_path(path.clone());
+        assert_eq!(store.path(), path);
+    }
+
+    #[test]
+    fn key_store_invalid_json_returns_empty_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.json");
+        std::fs::write(&path, "{ invalid json").unwrap();
+
+        let store = KeyStore::with_path(path);
+        assert!(store.load_all_configs().is_empty());
+    }
+
+    #[test]
     fn key_store_remove() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::with_path(dir.path().join("keys.json"));
@@ -1659,7 +2321,7 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -1669,7 +2331,7 @@ mod tests {
             config.base_url.as_deref(),
             Some("https://custom.api.com/v1")
         );
-        assert_eq!(config.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(config.models, vec!["gpt-4o"]);
     }
 
     #[test]
@@ -1683,13 +2345,13 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
-        // Update only the model, preserve others
+        // Update only models, preserve others
         store
-            .save_config("openai", None, None, Some("gpt-4o-mini".into()))
+            .save_config("openai", None, None, Some(vec!["gpt-4o-mini".into()]))
             .unwrap();
 
         let config = store.load_config("openai").unwrap();
@@ -1698,7 +2360,7 @@ mod tests {
             config.base_url.as_deref(),
             Some("https://custom.api.com/v1")
         ); // preserved
-        assert_eq!(config.model.as_deref(), Some("gpt-4o-mini")); // updated
+        assert_eq!(config.models, vec!["gpt-4o-mini"]); // updated
     }
 
     #[test]
@@ -1711,7 +2373,7 @@ mod tests {
                 "anthropic",
                 Some("sk-anthropic".into()),
                 Some("https://api.anthropic.com".into()),
-                Some("claude-sonnet-4".into()),
+                Some(vec!["claude-sonnet-4".into()]),
             )
             .unwrap();
 
@@ -1720,13 +2382,13 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://api.openai.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
-        // Update only OpenAI model, Anthropic should remain unchanged.
+        // Update only OpenAI models, Anthropic should remain unchanged.
         store
-            .save_config("openai", None, None, Some("gpt-5".into()))
+            .save_config("openai", None, None, Some(vec!["gpt-5".into()]))
             .unwrap();
 
         let anthropic = store.load_config("anthropic").unwrap();
@@ -1735,7 +2397,7 @@ mod tests {
             anthropic.base_url.as_deref(),
             Some("https://api.anthropic.com")
         );
-        assert_eq!(anthropic.model.as_deref(), Some("claude-sonnet-4"));
+        assert_eq!(anthropic.models, vec!["claude-sonnet-4"]);
 
         let openai = store.load_config("openai").unwrap();
         assert_eq!(openai.api_key.as_deref(), Some("sk-openai"));
@@ -1743,7 +2405,7 @@ mod tests {
             openai.base_url.as_deref(),
             Some("https://api.openai.com/v1")
         );
-        assert_eq!(openai.model.as_deref(), Some("gpt-5"));
+        assert_eq!(openai.models, vec!["gpt-5"]);
     }
 
     #[test]
@@ -1752,20 +2414,19 @@ mod tests {
         let store = KeyStore::with_path(dir.path().join("keys.json"));
 
         let mut handles = Vec::new();
-        for (provider, key, model) in [
-            ("openai", "sk-openai", "gpt-5"),
-            ("anthropic", "sk-anthropic", "claude-sonnet-4"),
+        for (provider, key, models) in [
+            ("openai", "sk-openai", vec!["gpt-5".to_string()]),
+            (
+                "anthropic",
+                "sk-anthropic",
+                vec!["claude-sonnet-4".to_string()],
+            ),
         ] {
             let store = store.clone();
             handles.push(std::thread::spawn(move || {
                 for _ in 0..100 {
                     store
-                        .save_config(
-                            provider,
-                            Some(key.to_string()),
-                            None,
-                            Some(model.to_string()),
-                        )
+                        .save_config(provider, Some(key.to_string()), None, Some(models.clone()))
                         .unwrap();
                 }
             }));
@@ -1791,7 +2452,7 @@ mod tests {
                 "openai",
                 Some("sk-openai".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -1803,7 +2464,7 @@ mod tests {
         let config = store.load_config("openai").unwrap();
         assert_eq!(config.api_key.as_deref(), Some("sk-openai")); // preserved
         assert!(config.base_url.is_none()); // cleared
-        assert_eq!(config.model.as_deref(), Some("gpt-4o")); // preserved
+        assert_eq!(config.models, vec!["gpt-4o"]); // preserved
     }
 
     #[test]
@@ -1824,14 +2485,14 @@ mod tests {
         let config = store.load_config("anthropic").unwrap();
         assert_eq!(config.api_key.as_deref(), Some("sk-old-key"));
         assert!(config.base_url.is_none());
-        assert!(config.model.is_none());
+        assert!(config.models.is_empty());
 
         // load() should still work
         assert_eq!(store.load("openai").unwrap(), "sk-openai-old");
     }
 
     #[test]
-    fn config_with_saved_keys_merges_base_url_and_model() {
+    fn config_with_saved_keys_merges_base_url_and_models() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::with_path(dir.path().join("keys.json"));
         store
@@ -1839,7 +2500,7 @@ mod tests {
                 "openai",
                 Some("sk-saved".into()),
                 Some("https://custom.api.com/v1".into()),
-                Some("gpt-4o".into()),
+                Some(vec!["gpt-4o".into()]),
             )
             .unwrap();
 
@@ -1851,7 +2512,7 @@ mod tests {
             Some("sk-saved")
         );
         assert_eq!(entry.base_url.as_deref(), Some("https://custom.api.com/v1"));
-        assert_eq!(entry.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(entry.models, vec!["gpt-4o"]);
     }
 
     #[tokio::test]
@@ -1859,7 +2520,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .remove_key(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -1871,7 +2532,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         assert!(svc.remove_key(serde_json::json!({})).await.is_err());
     }
 
@@ -1880,19 +2541,20 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let provider = known_providers()
             .into_iter()
             .find(|p| p.name == "openai-codex")
             .expect("openai-codex should exist");
 
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("openai-codex".into(), ProviderEntry {
+        config.providers.insert(
+            "openai-codex".into(),
+            ProviderEntry {
                 enabled: false,
                 ..Default::default()
-            });
+            },
+        );
 
         assert!(!svc.is_provider_configured(&provider, &config));
     }
@@ -1919,10 +2581,13 @@ mod tests {
         store.save("anthropic", "sk-saved").unwrap();
 
         let mut base = ProvidersConfig::default();
-        base.providers.insert("anthropic".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-config".into())),
-            ..Default::default()
-        });
+        base.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-config".into())),
+                ..Default::default()
+            },
+        );
         let merged = config_with_saved_keys(&base, &store);
         let entry = merged.get("anthropic").unwrap();
         // Config key takes precedence over saved key.
@@ -1945,7 +2610,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
         assert!(!arr.is_empty());
@@ -1958,6 +2623,7 @@ mod tests {
         // New fields for endpoint and model configuration
         assert!(first.get("defaultBaseUrl").is_some());
         assert!(first.get("requiresModel").is_some());
+        assert!(first.get("uiOrder").is_some());
     }
 
     #[tokio::test]
@@ -1969,7 +2635,7 @@ mod tests {
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        let svc = LiveProviderSetupService::new(registry, config, None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, config, None);
 
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -1989,11 +2655,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn available_respects_offered_order() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let config = ProvidersConfig {
+            offered: vec!["github-copilot".into(), "openai".into(), "anthropic".into()],
+            ..ProvidersConfig::default()
+        };
+        let svc = LiveProviderSetupService::new(registry, config, None);
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+
+        let github_copilot_idx = names
+            .iter()
+            .position(|name| *name == "github-copilot")
+            .expect("github-copilot should be present");
+        let openai_idx = names
+            .iter()
+            .position(|name| *name == "openai")
+            .expect("openai should be present");
+        let anthropic_idx = names
+            .iter()
+            .position(|name| *name == "anthropic")
+            .expect("anthropic should be present");
+
+        assert!(
+            github_copilot_idx < openai_idx && openai_idx < anthropic_idx,
+            "offered provider order should be preserved, got: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn available_hides_configured_provider_outside_offered() {
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let mut config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        config.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
+        let svc = LiveProviderSetupService::new(registry, config, None);
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+            .collect();
+
+        let openai_idx = names
+            .iter()
+            .position(|name| *name == "openai")
+            .expect("openai should be present");
+
+        assert!(
+            !names.contains(&"anthropic"),
+            "providers outside offered should be hidden even when configured, got: {names:?}"
+        );
+        assert_eq!(openai_idx, 0);
+    }
+
+    #[tokio::test]
     async fn available_includes_default_base_urls() {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2017,7 +2759,16 @@ mod tests {
         );
         assert_eq!(
             ollama.get("requiresModel").and_then(|r| r.as_bool()),
-            Some(true)
+            Some(false)
+        );
+
+        let kimi_code = arr
+            .iter()
+            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("kimi-code"))
+            .expect("kimi-code not found");
+        assert_eq!(
+            kimi_code.get("defaultBaseUrl").and_then(|u| u.as_str()),
+            Some("https://api.kimi.com/coding/v1")
         );
     }
 
@@ -2026,7 +2777,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .save_key(serde_json::json!({"provider": "nonexistent", "apiKey": "test"}))
             .await;
@@ -2038,7 +2789,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         assert!(svc.save_key(serde_json::json!({})).await.is_err());
         assert!(
             svc.save_key(serde_json::json!({"provider": "anthropic"}))
@@ -2052,7 +2803,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .oauth_start(serde_json::json!({"provider": "nonexistent"}))
             .await;
@@ -2064,7 +2815,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let redirect_uri = "https://example.com/auth/callback";
 
         let result = svc
@@ -2100,7 +2851,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .oauth_status(serde_json::json!({"provider": "openai-codex"}))
             .await
@@ -2121,11 +2872,14 @@ mod tests {
             Some(&home)
         ));
 
-        home.save("github-copilot", &OAuthTokens {
-            access_token: Secret::new("home-token".to_string()),
-            refresh_token: None,
-            expires_at: None,
-        })
+        home.save(
+            "github-copilot",
+            &OAuthTokens {
+                access_token: Secret::new("home-token".to_string()),
+                refresh_token: None,
+                expires_at: None,
+            },
+        )
         .expect("save home token");
 
         assert!(has_oauth_tokens_for_provider(
@@ -2191,8 +2945,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let _svc =
-            LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let _svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
 
         // All new API-key providers should be accepted by save_key
         let providers = known_providers();
@@ -2223,7 +2976,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2259,7 +3012,6 @@ mod tests {
             registry,
             ProvidersConfig::default(),
             Some("flyio".to_string()),
-            vec![],
         );
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
@@ -2295,7 +3047,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.available().await.unwrap();
         let arr = result.as_array().unwrap();
 
@@ -2320,17 +3072,23 @@ mod tests {
         let mut empty = ProvidersConfig::default();
         assert!(!has_explicit_provider_settings(&empty));
 
-        empty.providers.insert("openai".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-test".into())),
-            ..Default::default()
-        });
+        empty.providers.insert(
+            "openai".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&empty));
 
         let mut model_only = ProvidersConfig::default();
-        model_only.providers.insert("ollama".into(), ProviderEntry {
-            model: Some("llama3".into()),
-            ..Default::default()
-        });
+        model_only.providers.insert(
+            "ollama".into(),
+            ProviderEntry {
+                models: vec!["llama3".into()],
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&model_only));
     }
 
@@ -2339,7 +3097,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({"provider": "nonexistent", "apiKey": "sk-test"}))
             .await;
@@ -2352,7 +3110,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.validate_key(serde_json::json!({})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("missing 'provider'"));
@@ -2363,7 +3121,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc
             .validate_key(serde_json::json!({"provider": "anthropic"}))
             .await;
@@ -2376,7 +3134,7 @@ mod tests {
         let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
             &ProvidersConfig::default(),
         )));
-        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None, vec![]);
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         // Ollama doesn't require an API key, so this should not error on missing apiKey.
         // It will likely return valid=false due to connection issues, but it should not
         // reject with a "missing apiKey" error.
@@ -2386,6 +3144,168 @@ mod tests {
         // Should succeed (return Ok) even without apiKey — the probe may fail,
         // but param validation should pass.
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_key_ollama_without_model_returns_discovered_models() {
+        use axum::{Json, Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/tags",
+            get(|| async {
+                Json(serde_json::json!({
+                    "models": [
+                        {"name": "llama3.2:latest"},
+                        {"name": "qwen2.5:7b"}
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc
+            .validate_key(serde_json::json!({
+                "provider": "ollama",
+                "baseUrl": format!("http://{addr}")
+            }))
+            .await
+            .expect("validate_key should return payload");
+        server.abort();
+
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(true));
+        let models = result
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array should be present");
+        assert!(
+            models
+                .iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("ollama::llama3.2:latest"))
+        );
+        assert!(
+            models
+                .iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("ollama::qwen2.5:7b"))
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_key_ollama_reports_uninstalled_model() {
+        use axum::{Json, Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/tags",
+            get(|| async {
+                Json(serde_json::json!({
+                    "models": [
+                        {"name": "llama3.2:latest"}
+                    ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc
+            .validate_key(serde_json::json!({
+                "provider": "ollama",
+                "baseUrl": format!("http://{addr}"),
+                "model": "qwen2.5:7b"
+            }))
+            .await
+            .expect("validate_key should return payload");
+        server.abort();
+
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(false));
+        let error = result.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            error.contains("not installed in Ollama"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_key_ollama_model_probe_uses_v1_endpoint() {
+        use axum::{
+            Json, Router,
+            routing::{get, post},
+        };
+
+        let app = Router::new()
+            .route(
+                "/api/tags",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "models": [
+                            {"name": "llama3.2:latest"}
+                        ]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    Json(serde_json::json!({
+                        "choices": [{"message": {"content": "pong"}}],
+                        "usage": {
+                            "prompt_tokens": 1,
+                            "completion_tokens": 1,
+                            "prompt_tokens_details": {"cached_tokens": 0}
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+        let result = svc
+            .validate_key(serde_json::json!({
+                "provider": "ollama",
+                "baseUrl": format!("http://{addr}"),
+                "model": "llama3.2"
+            }))
+            .await
+            .expect("validate_key should return payload");
+        server.abort();
+
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(true));
+        let models = result
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array should be present");
+        assert!(
+            models
+                .iter()
+                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some("ollama::llama3.2"))
+        );
     }
 
     #[test]

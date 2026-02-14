@@ -4,8 +4,15 @@ import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { ensureProviderModal } from "./modals.js";
 import { fetchModels } from "./models.js";
+import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
-import { testModel, validateProviderKey } from "./provider-validation.js";
+import {
+	humanizeProbeError,
+	isModelServiceNotConfigured,
+	saveProviderKey,
+	testModel,
+	validateProviderKey,
+} from "./provider-validation.js";
 import * as S from "./state.js";
 
 var _els = null;
@@ -44,7 +51,7 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 	"ollama",
 ];
 
-var BYOM_PROVIDERS = ["ollama", "openrouter", "venice"];
+var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 export function openProviderModal() {
 	var m = els();
@@ -58,12 +65,10 @@ export function openProviderModal() {
 		}
 		var providers = res.payload || [];
 
-		// Sort: local/ollama first, then alphabetically
 		providers.sort((a, b) => {
-			var aIsLocal = a.authType === "local" || a.name === "ollama";
-			var bIsLocal = b.authType === "local" || b.name === "ollama";
-			if (aIsLocal && !bIsLocal) return -1;
-			if (!aIsLocal && bIsLocal) return 1;
+			var aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+			var bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+			if (aOrder !== bOrder) return aOrder - bOrder;
 			return a.displayName.localeCompare(b.displayName);
 		});
 
@@ -113,6 +118,17 @@ export function closeProviderModal() {
 	els().modal.classList.add("hidden");
 }
 
+function setFormError(errorPanel, message) {
+	if (!errorPanel) return;
+	if (!message) {
+		errorPanel.style.display = "none";
+		errorPanel.textContent = "";
+		return;
+	}
+	errorPanel.textContent = `Error: ${message}`;
+	errorPanel.style.display = "";
+}
+
 export function showApiKeyForm(provider) {
 	var m = els();
 	m.title.textContent = provider.displayName;
@@ -133,8 +149,32 @@ export function showApiKeyForm(provider) {
 	var keyInp = document.createElement("input");
 	keyInp.className = "provider-key-input";
 	keyInp.type = "password";
-	keyInp.placeholder = provider.name === "ollama" ? "(optional for Ollama)" : "sk-...";
+	keyInp.placeholder = provider.keyOptional ? "(optional)" : "sk-...";
 	form.appendChild(keyInp);
+
+	var errorPanel = document.createElement("div");
+	errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+	errorPanel.style.display = "none";
+	form.appendChild(errorPanel);
+
+	var keyHelp = providerApiKeyHelp(provider);
+	if (keyHelp) {
+		var keyHelpLine = document.createElement("div");
+		keyHelpLine.className = "text-xs text-[var(--muted)] mt-1";
+		if (keyHelp.url) {
+			keyHelpLine.append(`${keyHelp.text} `);
+			var keyLink = document.createElement("a");
+			keyLink.href = keyHelp.url;
+			keyLink.target = "_blank";
+			keyLink.rel = "noopener noreferrer";
+			keyLink.className = "text-[var(--accent)] underline";
+			keyLink.textContent = keyHelp.label || keyHelp.url;
+			keyHelpLine.appendChild(keyLink);
+		} else {
+			keyHelpLine.textContent = keyHelp.text;
+		}
+		form.appendChild(keyHelpLine);
+	}
 
 	// Endpoint field for OpenAI-compatible providers
 	var endpointInp = null;
@@ -171,7 +211,7 @@ export function showApiKeyForm(provider) {
 		modelInp = document.createElement("input");
 		modelInp.className = "provider-key-input";
 		modelInp.type = "text";
-		modelInp.placeholder = provider.name === "ollama" ? "llama3" : "model-id";
+		modelInp.placeholder = "model-id";
 		form.appendChild(modelInp);
 	}
 
@@ -190,22 +230,22 @@ export function showApiKeyForm(provider) {
 	saveBtn.textContent = "Save & Validate";
 	saveBtn.addEventListener("click", () => {
 		var key = keyInp.value.trim();
-		// Ollama doesn't require a key
-		if (!key && provider.name !== "ollama") return;
+		if (!(key || provider.keyOptional)) {
+			setFormError(errorPanel, "API key is required.");
+			return;
+		}
 
 		// Model is required for bring-your-own providers
 		if (needsModel && modelInp && !modelInp.value.trim()) {
-			keyLabel.textContent = "Model ID is required";
-			keyLabel.classList.add("text-error");
+			setFormError(errorPanel, "Model ID is required.");
 			return;
 		}
 
 		saveBtn.disabled = true;
 		saveBtn.textContent = "Validating...";
-		keyLabel.classList.remove("text-error");
-		keyLabel.textContent = "API Key";
+		setFormError(errorPanel, null);
 
-		var keyVal = key || "ollama";
+		var keyVal = key || provider.name;
 		var endpointVal = endpointInp?.value.trim() || null;
 		var modelVal = modelInp?.value.trim() || null;
 
@@ -214,8 +254,7 @@ export function showApiKeyForm(provider) {
 				if (!result.valid) {
 					saveBtn.disabled = false;
 					saveBtn.textContent = "Save & Validate";
-					keyLabel.textContent = result.error || "Validation failed. Please check your credentials.";
-					keyLabel.classList.add("text-error");
+					setFormError(errorPanel, result.error || "Validation failed. Please check your credentials.");
 					return;
 				}
 
@@ -231,8 +270,7 @@ export function showApiKeyForm(provider) {
 			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Save & Validate";
-				keyLabel.textContent = err?.message || "Validation failed.";
-				keyLabel.classList.add("text-error");
+				setFormError(errorPanel, err?.message || "Validation failed.");
 			});
 	});
 	btns.appendChild(saveBtn);
@@ -269,7 +307,7 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 	wrapper.appendChild(list);
 
 	var errorArea = document.createElement("div");
-	errorArea.className = "text-xs text-[var(--error)] mt-2";
+	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
 	errorArea.style.display = "none";
 	wrapper.appendChild(errorArea);
 
@@ -379,19 +417,19 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 
 function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
 	var m = els();
+	var effectiveModelVal = provider.keyOptional && selectedModelId ? selectedModelId : modelVal;
 
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
 		if (wrapper?._errorArea) {
-			wrapper._errorArea.textContent = msg;
-			wrapper._errorArea.style.display = "";
+			setFormError(wrapper._errorArea, msg);
 			if (wrapper._resetSelection) wrapper._resetSelection();
 		}
 	}
 
 	var savePromise = skipSave
 		? Promise.resolve({ ok: true })
-		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, modelVal));
+		: saveProviderKey(provider.name, keyVal, endpointVal, effectiveModelVal);
 
 	savePromise
 		.then(async (res) => {
@@ -402,12 +440,15 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 
 			if (selectedModelId) {
 				var testResult = await testModel(selectedModelId);
-				if (!testResult.ok) {
+				var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
+				if (!(testResult.ok || modelServiceUnavailable)) {
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
-				// Persist model preference for the provider.
 				await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				if (modelServiceUnavailable) {
+					console.warn("models.test unavailable in provider settings, saved selected model without probe");
+				}
 				localStorage.setItem("moltis-model", selectedModelId);
 			}
 
@@ -424,13 +465,6 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 		.catch((err) => {
 			showError(err?.message || "Failed to save credentials.");
 		});
-}
-
-function buildSavePayload(providerName, keyVal, endpointVal, modelVal) {
-	var payload = { provider: providerName, apiKey: keyVal };
-	if (endpointVal) payload.baseUrl = endpointVal;
-	if (modelVal) payload.model = modelVal;
-	return payload;
 }
 
 export function showOAuthFlow(provider) {
@@ -558,29 +592,20 @@ function showOAuthModelSelector(provider) {
 	});
 }
 
-// ── Model selector for existing providers ─────────────────
+// ── Model selector for existing providers (multi-select) ──
 
 export function openModelSelectorForProvider(providerName, providerDisplayName) {
 	var m = els();
 	m.modal.classList.remove("hidden");
-	m.title.textContent = `${providerDisplayName} — Select Model`;
+	m.title.textContent = `${providerDisplayName} — Preferred Models`;
 	m.body.textContent = "Loading models...";
 
-	sendRpc("models.list", {}).then((modelsRes) => {
+	Promise.all([sendRpc("models.list", {}), sendRpc("providers.available", {})]).then(([modelsRes, providersRes]) => {
 		var allModels = modelsRes?.ok ? modelsRes.payload || [] : [];
 		var needle = providerName.replace(/-/g, "").toLowerCase();
 		var provModels = allModels.filter((entry) => entry.provider?.toLowerCase().replace(/-/g, "").includes(needle));
 
-		if (provModels.length > 0) {
-			var mapped = provModels.map((entry) => ({
-				id: entry.id,
-				displayName: entry.displayName || entry.id,
-				provider: entry.provider,
-				supportsTools: entry.supportsTools,
-			}));
-			var providerObj = { name: providerName, displayName: providerDisplayName };
-			showModelSelector(providerObj, mapped, null, null, null, true);
-		} else {
+		if (provModels.length === 0) {
 			m.body.textContent = "";
 			var wrapper = document.createElement("div");
 			wrapper.className = "provider-key-form";
@@ -597,8 +622,243 @@ export function openModelSelectorForProvider(providerName, providerDisplayName) 
 			btns.appendChild(closeBtn);
 			wrapper.appendChild(btns);
 			m.body.appendChild(wrapper);
+			return;
 		}
+
+		// Get saved preferred models for this provider.
+		var savedModels = new Set();
+		if (providersRes?.ok) {
+			var providerMeta = (providersRes.payload || []).find((p) => p.name === providerName);
+			if (providerMeta?.models) {
+				for (var sm of providerMeta.models) savedModels.add(sm);
+			}
+		}
+
+		var mapped = provModels.map((entry) => ({
+			id: entry.id,
+			displayName: entry.displayName || entry.id,
+			provider: entry.provider,
+			supportsTools: entry.supportsTools,
+			createdAt: entry.createdAt || 0,
+		}));
+		showMultiModelSelector(providerName, providerDisplayName, mapped, savedModels);
 	});
+}
+
+function showMultiModelSelector(providerName, providerDisplayName, models, savedModels) {
+	var m = els();
+	m.title.textContent = `${providerDisplayName} — Preferred Models`;
+	m.body.textContent = "";
+
+	var selectedIds = new Set(savedModels);
+
+	// Track per-model probe state: "probing" | "ok" | { error: string }
+	var probeResults = new Map();
+
+	function probeModel(modelId) {
+		if (probeResults.has(modelId)) return;
+		probeResults.set(modelId, "probing");
+		renderCards(searchInp?.value.trim() || null);
+		testModel(modelId).then((result) => {
+			if (isModelServiceNotConfigured(result.error || "")) {
+				// Model service not ready — don't flag as broken.
+				probeResults.delete(modelId);
+			} else {
+				probeResults.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") });
+			}
+			renderCards(searchInp?.value.trim() || null);
+		});
+	}
+
+	var wrapper = document.createElement("div");
+	wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
+
+	var label = document.createElement("div");
+	label.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
+	label.textContent = "Select models to pin at the top of the dropdown";
+	wrapper.appendChild(label);
+
+	var hint = document.createElement("div");
+	hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
+	hint.textContent = "Selected models appear first in the session model selector.";
+	wrapper.appendChild(hint);
+
+	// Search input when >5 models
+	var searchInp = null;
+	if (models.length > 5) {
+		searchInp = document.createElement("input");
+		searchInp.type = "text";
+		searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
+		searchInp.placeholder = "Search models\u2026";
+		wrapper.appendChild(searchInp);
+	}
+
+	var list = document.createElement("div");
+	list.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0";
+	wrapper.appendChild(list);
+
+	var statusArea = document.createElement("div");
+	statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
+	wrapper.appendChild(statusArea);
+
+	function updateStatus() {
+		var count = selectedIds.size;
+		statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
+	}
+
+	function modelSortKey(m) {
+		return { selected: selectedIds.has(m.id) ? 0 : 1, time: m.createdAt || 0, name: m.displayName || m.id };
+	}
+
+	function sortModelsForSelection(items) {
+		return [...items].sort((a, b) => {
+			var ka = modelSortKey(a);
+			var kb = modelSortKey(b);
+			return ka.selected - kb.selected || kb.time - ka.time || ka.name.localeCompare(kb.name);
+		});
+	}
+
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: card rendering with probe badges
+	function renderCards(filter) {
+		list.textContent = "";
+		var filtered = models;
+		if (filter) {
+			var q = filter.toLowerCase();
+			filtered = models.filter(
+				(entry) => entry.displayName.toLowerCase().includes(q) || entry.id.toLowerCase().includes(q),
+			);
+		}
+		if (filtered.length === 0) {
+			var empty = document.createElement("div");
+			empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+			empty.textContent = "No models match your search.";
+			list.appendChild(empty);
+			return;
+		}
+		var sorted = sortModelsForSelection(filtered);
+		for (var mdl of sorted) {
+			var card = document.createElement("div");
+			card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
+
+			var header = document.createElement("div");
+			header.className = "flex items-center justify-between";
+
+			var nameSpan = document.createElement("span");
+			nameSpan.className = "text-sm font-medium text-[var(--text)] truncate";
+			nameSpan.textContent = mdl.displayName;
+			header.appendChild(nameSpan);
+
+			var badges = document.createElement("div");
+			badges.className = "flex gap-2";
+			if (mdl.supportsTools) {
+				var toolsBadge = document.createElement("span");
+				toolsBadge.className = "recommended-badge";
+				toolsBadge.textContent = "Tools";
+				badges.appendChild(toolsBadge);
+			}
+			var probe = probeResults.get(mdl.id);
+			if (probe === "probing") {
+				var probeBadge = document.createElement("span");
+				probeBadge.className = "tier-badge";
+				probeBadge.textContent = "Probing\u2026";
+				badges.appendChild(probeBadge);
+			} else if (probe && probe !== "ok") {
+				var unsupBadge = document.createElement("span");
+				unsupBadge.className = "provider-item-badge warning";
+				unsupBadge.textContent = "Unsupported";
+				unsupBadge.title = probe.error || "";
+				badges.appendChild(unsupBadge);
+			}
+			header.appendChild(badges);
+			card.appendChild(header);
+
+			var idLine = document.createElement("div");
+			idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
+			idLine.textContent = mdl.id;
+			card.appendChild(idLine);
+
+			if (mdl.createdAt) {
+				var dateLine = document.createElement("time");
+				dateLine.className = "text-xs text-[var(--muted)] mt-0.5 opacity-60 block";
+				dateLine.setAttribute("data-epoch-ms", String(mdl.createdAt * 1000));
+				dateLine.setAttribute("data-format", "year-month");
+				card.appendChild(dateLine);
+			}
+
+			// Closure to capture mdl
+			((modelId) => {
+				card.addEventListener("click", () => {
+					if (selectedIds.has(modelId)) {
+						selectedIds.delete(modelId);
+					} else {
+						selectedIds.add(modelId);
+						probeModel(modelId);
+					}
+					renderCards(searchInp?.value.trim() || null);
+					updateStatus();
+				});
+			})(mdl.id);
+
+			list.appendChild(card);
+		}
+	}
+
+	renderCards(null);
+	updateStatus();
+
+	if (searchInp) {
+		searchInp.addEventListener("input", () => {
+			renderCards(searchInp.value.trim());
+		});
+	}
+
+	var errorArea = document.createElement("div");
+	errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
+	errorArea.style.display = "none";
+	wrapper.appendChild(errorArea);
+
+	// Buttons — always visible at the bottom
+	var btns = document.createElement("div");
+	btns.className = "btn-row mt-3 shrink-0";
+
+	var cancelBtn = document.createElement("button");
+	cancelBtn.className = "provider-btn provider-btn-secondary";
+	cancelBtn.textContent = "Cancel";
+	cancelBtn.addEventListener("click", closeProviderModal);
+	btns.appendChild(cancelBtn);
+
+	var saveBtn = document.createElement("button");
+	saveBtn.className = "provider-btn";
+	saveBtn.textContent = "Save";
+	saveBtn.addEventListener("click", () => {
+		saveBtn.disabled = true;
+		saveBtn.textContent = "Saving\u2026";
+		errorArea.style.display = "none";
+
+		sendRpc("providers.save_models", { provider: providerName, models: Array.from(selectedIds) })
+			.then((res) => {
+				if (!res?.ok) {
+					saveBtn.disabled = false;
+					saveBtn.textContent = "Save";
+					errorArea.textContent = res?.error?.message || "Failed to save model preferences.";
+					errorArea.style.display = "";
+					return;
+				}
+				fetchModels();
+				if (S.refreshProvidersPage) S.refreshProvidersPage();
+				closeProviderModal();
+			})
+			.catch((err) => {
+				saveBtn.disabled = false;
+				saveBtn.textContent = "Save";
+				errorArea.textContent = err?.message || "Failed to save model preferences.";
+				errorArea.style.display = "";
+			});
+	});
+	btns.appendChild(saveBtn);
+
+	wrapper.appendChild(btns);
+	m.body.appendChild(wrapper);
 }
 
 // ── Local model flow ──────────────────────────────────────
@@ -802,7 +1062,7 @@ function renderLocalModelSelection(provider, sysInfo, modelsData) {
 			return;
 		}
 		filtered.forEach((model) => {
-			var card = createModelCard(model, provider);
+			var card = createModelCard(model, provider, sysInfo.totalRamGb);
 			modelsList.appendChild(card);
 		});
 	}
@@ -1065,9 +1325,11 @@ function formatDownloads(n) {
 	return n.toString();
 }
 
-function createModelCard(model, provider) {
+function createModelCard(model, provider, totalRamGb) {
 	var card = document.createElement("div");
 	card.className = "model-card";
+	var detectedRamGb = Number.isFinite(totalRamGb) ? totalRamGb : 0;
+	var hasEnoughRam = detectedRamGb >= model.minRamGb;
 
 	var header = document.createElement("div");
 	header.className = "flex items-center justify-between";
@@ -1085,11 +1347,18 @@ function createModelCard(model, provider) {
 	ramBadge.textContent = `${model.minRamGb}GB`;
 	badges.appendChild(ramBadge);
 
-	if (model.suggested) {
+	if (model.suggested && hasEnoughRam) {
 		var suggestedBadge = document.createElement("span");
 		suggestedBadge.className = "recommended-badge";
 		suggestedBadge.textContent = "Recommended";
 		badges.appendChild(suggestedBadge);
+	}
+
+	if (!hasEnoughRam) {
+		var insufficientBadge = document.createElement("span");
+		insufficientBadge.className = "tier-badge";
+		insufficientBadge.textContent = "Insufficient RAM";
+		badges.appendChild(insufficientBadge);
 	}
 
 	header.appendChild(badges);
@@ -1099,6 +1368,15 @@ function createModelCard(model, provider) {
 	meta.className = "text-xs text-[var(--muted)] mt-1";
 	meta.textContent = `Context: ${(model.contextWindow / 1000).toFixed(0)}k tokens`;
 	card.appendChild(meta);
+
+	if (!hasEnoughRam) {
+		card.classList.add("disabled");
+		var warning = document.createElement("div");
+		warning.className = "text-xs text-[var(--error)] mt-1";
+		warning.textContent = `You do not have enough RAM for this model (${detectedRamGb}GB detected, ${model.minRamGb}GB required).`;
+		card.appendChild(warning);
+		return card;
+	}
 
 	card.addEventListener("click", () => selectLocalModel(model, provider));
 

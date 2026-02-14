@@ -486,36 +486,31 @@ mod tests {
 
     // --- SSRF tests ---
 
-    #[test]
-    fn test_is_private_ip_v4() {
-        use std::net::Ipv4Addr;
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
-        assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
-        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("127.0.0.1", true)]
+    #[case("192.168.1.1", true)]
+    #[case("10.0.0.1", true)]
+    #[case("172.16.0.1", true)]
+    #[case("169.254.1.1", true)]
+    #[case("0.0.0.0", true)]
+    #[case("8.8.8.8", false)]
+    #[case("1.1.1.1", false)]
+    fn test_is_private_ip_v4(#[case] addr: &str, #[case] expected: bool) {
+        let ip: IpAddr = addr.parse().unwrap();
+        assert_eq!(is_private_ip(&ip), expected, "{addr}");
     }
 
-    #[test]
-    fn test_is_private_ip_v6() {
-        use std::net::Ipv6Addr;
-        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
-        // fc00::/7 unique local
-        assert!(is_private_ip(&IpAddr::V6(
-            "fd00::1".parse::<Ipv6Addr>().unwrap()
-        )));
-        // fe80::/10 link-local
-        assert!(is_private_ip(&IpAddr::V6(
-            "fe80::1".parse::<Ipv6Addr>().unwrap()
-        )));
-        // Public
-        assert!(!is_private_ip(&IpAddr::V6(
-            "2607:f8b0:4004:800::200e".parse::<Ipv6Addr>().unwrap()
-        )));
+    #[rstest]
+    #[case("::1", true)]
+    #[case("::", true)]
+    #[case("fd00::1", true)]
+    #[case("fe80::1", true)]
+    #[case("2607:f8b0:4004:800::200e", false)]
+    fn test_is_private_ip_v6(#[case] addr: &str, #[case] expected: bool) {
+        let ip: IpAddr = addr.parse().unwrap();
+        assert_eq!(is_private_ip(&ip), expected, "{addr}");
     }
 
     #[tokio::test]

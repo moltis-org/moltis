@@ -2,7 +2,7 @@
 
 import { html } from "htm/preact";
 import { render } from "preact";
-import { chatAddMsg, chatAddMsgWithImages, updateTokenBar } from "./chat-ui.js";
+import { chatAddMsg, chatAddMsgWithImages } from "./chat-ui.js";
 import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
@@ -16,9 +16,14 @@ import { bindModelComboEvents, setSessionModel } from "./models.js";
 import { registerPrefix, sessionPath } from "./router.js";
 import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
-import { bumpSessionCount, fetchSessions, setSessionReplying, switchSession } from "./sessions.js";
+import {
+	bumpSessionCount,
+	clearActiveSession,
+	seedSessionPreviewFromUserText,
+	setSessionReplying,
+	switchSession,
+} from "./sessions.js";
 import * as S from "./state.js";
-import { sessionStore } from "./stores/session-store.js";
 import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
@@ -30,6 +35,7 @@ var slashCommands = [
 var slashMenuEl = null;
 var slashMenuIdx = 0;
 var slashMenuItems = [];
+var mobileToolbarResizeHandler = null;
 
 function slashInjectStyles() {
 	if (document.getElementById("slashMenuStyles")) return;
@@ -435,44 +441,6 @@ function toggleDebugPanel() {
 	if (hidden) refreshDebugPanel();
 }
 
-// ── Raw prompt panel ─────────────────────────────────────
-
-function refreshRawPromptPanel() {
-	var panel = S.$("rawPromptPanel");
-	if (!panel) return;
-	panel.textContent = "";
-	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building prompt\u2026"));
-
-	sendRpc("chat.raw_prompt", {}).then((res) => {
-		panel.textContent = "";
-		if (!(res?.ok && res.payload)) {
-			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build prompt"));
-			return;
-		}
-		var header = ctxEl("div", "text-xs text-[var(--muted)] mb-2");
-		header.textContent = `Full system prompt sent to the model · ${res.payload.charCount} chars · ${res.payload.toolCount} tools · native_tools=${res.payload.native_tools}`;
-		panel.appendChild(header);
-
-		var pre = ctxEl(
-			"pre",
-			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-3 overflow-y-auto text-[var(--text)]",
-		);
-		pre.style.maxHeight = "320px";
-		pre.textContent = res.payload.prompt;
-		panel.appendChild(pre);
-	});
-}
-
-function toggleRawPromptPanel() {
-	var panel = S.$("rawPromptPanel");
-	var btn = S.$("rawPromptBtn");
-	if (!panel) return;
-	var hidden = panel.classList.contains("hidden");
-	panel.classList.toggle("hidden", !hidden);
-	if (btn) btn.style.color = hidden ? "var(--accent)" : "var(--muted)";
-	if (hidden) refreshRawPromptPanel();
-}
-
 // ── Full context panel ───────────────────────────────────
 
 var ROLE_COLORS = {
@@ -585,7 +553,7 @@ function refreshFullContextPanel() {
 
 		var messages = res.payload.messages || [];
 
-		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary text-xs");
+		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
 		copyBtn.textContent = "Copy";
 		copyBtn.addEventListener("click", () => {
 			var lines = messages.map((m) => {
@@ -678,20 +646,7 @@ export function showModelNotice(model) {
 // ── Slash command handlers ───────────────────────────────
 function handleSlashCommand(cmdName) {
 	if (cmdName === "clear") {
-		sendRpc("chat.clear", {}).then((res) => {
-			if (res?.ok) {
-				if (S.chatMsgBox) S.chatMsgBox.textContent = "";
-				S.setSessionTokens({ input: 0, output: 0 });
-				updateTokenBar();
-				// Reset client-side counts before fetch so the optimistic
-				// guard in update() doesn't block the server's zero.
-				var session = sessionStore.getByKey(S.activeSessionKey);
-				if (session) session.syncCounts(0, 0);
-				fetchSessions();
-			} else {
-				chatAddMsg("error", res?.error?.message || "Clear failed");
-			}
-		});
+		clearActiveSession();
 		return;
 	}
 	if (cmdName === "compact") {
@@ -772,6 +727,9 @@ function sendChat() {
 	S.setChatHistoryDraft("");
 	S.chatInput.value = "";
 	chatAutoResize();
+	if (window.innerWidth < 768) {
+		S.chatInput.blur();
+	}
 
 	S.setChatSeq(S.chatSeq + 1);
 	var msg = buildChatMessage(text, S.chatSeq);
@@ -784,6 +742,7 @@ function sendChat() {
 		setSessionModel(S.activeSessionKey, selectedModel);
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
+	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
 		if (res?.payload?.queued) {
@@ -856,7 +815,7 @@ function handleHistoryDown() {
 // Safe: static hardcoded HTML template string — no user input is interpolated.
 var chatPageHTML =
 	'<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden">' +
-	'<div class="px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
+	'<div class="chat-toolbar px-4 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">' +
 	'<div id="modelCombo" class="model-combo">' +
 	'<button id="modelComboBtn" class="model-combo-btn" type="button">' +
 	'<span id="modelComboLabel">loading\u2026</span>' +
@@ -867,30 +826,30 @@ var chatPageHTML =
 	'<div id="modelDropdownList" class="model-dropdown-list"></div>' +
 	"</div>" +
 	"</div>" +
-	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle sandbox mode">' +
+	'<button id="sandboxToggle" class="sandbox-toggle mobile-toolbar-extra text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle sandbox mode">' +
 	'<span class="icon icon-md icon-lock" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxLabel">sandboxed</span>' +
 	"</button>" +
-	'<div style="position:relative;display:inline-block">' +
+	'<button id="mobileControlsBtn" class="mobile-controls-btn text-xs transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;" title="More controls">' +
+	'<span class="icon icon-lg icon-menu-dots-horizontal" style="flex-shrink:0;"></span>' +
+	"</button>" +
+	'<div class="mobile-toolbar-break mobile-toolbar-extra" aria-hidden="true"></div>' +
+	'<div class="mobile-toolbar-extra mobile-toolbar-extra-block" style="position:relative;display:inline-block">' +
 	'<button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Sandbox image">' +
 	'<span class="icon icon-md icon-cube" style="flex-shrink:0;"></span>' +
 	'<span id="sandboxImageLabel" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ubuntu:25.10</span>' +
 	"</button>" +
 	'<div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div>' +
 	"</div>" +
-	'<button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle MCP tools for this session">' +
+	'<button id="mcpToggleBtn" class="mobile-toolbar-extra text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;" title="Toggle MCP tools for this session">' +
 	'<span class="icon icon-md icon-link" style="flex-shrink:0;"></span>' +
 	'<span id="mcpToggleLabel">MCP</span>' +
 	"</button>" +
-	'<button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show context debug info">' +
+	'<button id="debugPanelBtn" class="mobile-toolbar-hide text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show context debug info">' +
 	'<span class="icon icon-md icon-wrench" style="flex-shrink:0;"></span>' +
 	'<span id="debugPanelLabel">Debug</span>' +
 	"</button>" +
-	'<button id="rawPromptBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show raw system prompt sent to model">' +
-	'<span class="icon icon-md icon-code" style="flex-shrink:0;"></span>' +
-	'<span id="rawPromptLabel">Prompt</span>' +
-	"</button>" +
-	'<button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
+	'<button id="fullContextBtn" class="mobile-toolbar-hide text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)]" style="display:inline-flex;align-items:center;gap:4px;color:var(--muted);" title="Show full LLM context (system prompt + history)">' +
 	'<span class="icon icon-md icon-document" style="flex-shrink:0;"></span>' +
 	'<span id="fullContextLabel">Context</span>' +
 	"</button>" +
@@ -898,14 +857,13 @@ var chatPageHTML =
 	"</div>" +
 	"<div>" +
 	'<div id="debugPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:260px;"></div>' +
-	'<div id="rawPromptPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:400px;"></div>' +
 	'<div id="fullContextPanel" class="hidden px-4 py-3 border-b border-[var(--border)] bg-[var(--surface2)] overflow-y-auto" style="max-height:500px;"></div>' +
 	"</div>" +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="overflow-y:auto;min-height:0"></div>' +
 	'<div id="queuedMessages" class="queued-tray hidden"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
-	'<div class="px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
-	'<textarea id="chatInput" placeholder="Type a message..." rows="1" ' +
+	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
+	'<textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" ' +
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
 	'<button id="micBtn" disabled title="Click to start recording" ' +
 	'class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]">' +
@@ -978,11 +936,28 @@ registerPrefix(
 		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
 		updateMcpToggleUI(true); // default: MCP enabled
 
+		var toolbar = container.querySelector(".chat-toolbar");
+		var mobileControlsBtn = S.$("mobileControlsBtn");
+		if (toolbar && mobileControlsBtn) {
+			function collapseMobileControls() {
+				toolbar.classList.remove("mobile-expanded");
+				mobileControlsBtn.classList.remove("active");
+			}
+			mobileControlsBtn.addEventListener("click", () => {
+				toolbar.classList.toggle("mobile-expanded");
+				mobileControlsBtn.classList.toggle("active");
+			});
+			if (mobileToolbarResizeHandler) {
+				window.removeEventListener("resize", mobileToolbarResizeHandler);
+			}
+			mobileToolbarResizeHandler = () => {
+				if (window.innerWidth >= 768) collapseMobileControls();
+			};
+			window.addEventListener("resize", mobileToolbarResizeHandler);
+		}
+
 		var debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
-
-		var rawBtn = S.$("rawPromptBtn");
-		if (rawBtn) rawBtn.addEventListener("click", toggleRawPromptPanel);
 
 		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
 
@@ -1038,9 +1013,11 @@ registerPrefix(
 		// Initialize voice input
 		initVoiceInput(S.$("micBtn"));
 
-		// Initialize media drag-and-drop (the input area is the bottom bar)
-		var inputArea = S.chatInput?.closest(".px-4.py-3");
-		initMediaDrop(S.chatMsgBox, inputArea);
+		// Desktop only: mobile keeps chat focused and avoids drag/drop chrome.
+		if (window.innerWidth >= 768) {
+			var inputArea = S.chatInput?.closest(".px-4.py-3");
+			initMediaDrop(S.chatMsgBox, inputArea);
+		}
 
 		S.chatInput.focus();
 	},
@@ -1048,6 +1025,10 @@ registerPrefix(
 		teardownVoiceInput();
 		teardownMediaDrop();
 		slashHideMenu();
+		if (mobileToolbarResizeHandler) {
+			window.removeEventListener("resize", mobileToolbarResizeHandler);
+			mobileToolbarResizeHandler = null;
+		}
 		// Unmount reactive SessionHeader
 		var headerMount = S.$("sessionHeaderMount");
 		if (headerMount) render(null, headerMount);

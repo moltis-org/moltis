@@ -62,6 +62,40 @@ export function closeModelDropdown() {
 	S.setModelIdx(-1);
 }
 
+function buildModelItem(m, currentId) {
+	var el = document.createElement("div");
+	el.className = "model-dropdown-item";
+	if (m.id === currentId) el.classList.add("selected");
+	if (m.unsupported) el.classList.add("model-dropdown-item-unsupported");
+
+	var label = document.createElement("span");
+	label.className = "model-item-label";
+	label.textContent = m.displayName || m.id;
+	el.appendChild(label);
+
+	var meta = document.createElement("span");
+	meta.className = "model-item-meta";
+
+	if (m.provider) {
+		var prov = document.createElement("span");
+		prov.className = "model-item-provider";
+		prov.textContent = m.provider;
+		meta.appendChild(prov);
+	}
+
+	if (m.unsupported) {
+		var badge = document.createElement("span");
+		badge.className = "model-item-unsupported";
+		badge.textContent = "unsupported";
+		if (m.unsupportedReason) badge.title = m.unsupportedReason;
+		meta.appendChild(badge);
+	}
+
+	if (meta.childNodes.length > 0) el.appendChild(meta);
+	el.addEventListener("click", () => selectModel(m));
+	return el;
+}
+
 export function renderModelList(query) {
 	if (!S.modelDropdownList) return;
 	S.modelDropdownList.textContent = "";
@@ -80,41 +114,15 @@ export function renderModelList(query) {
 		return;
 	}
 	var currentId = modelStore.selectedModelId.value;
-	filtered.forEach((m) => {
-		var el = document.createElement("div");
-		el.className = "model-dropdown-item";
-		if (m.id === currentId) el.classList.add("selected");
-		if (m.unsupported) el.classList.add("model-dropdown-item-unsupported");
-		var label = document.createElement("span");
-		label.className = "model-item-label";
-		label.textContent = m.displayName || m.id;
-		el.appendChild(label);
+	var lastPreferredIdx = filtered.findLastIndex((m) => m.preferred);
+	filtered.forEach((m, idx) => {
+		S.modelDropdownList.appendChild(buildModelItem(m, currentId));
 
-		var meta = document.createElement("span");
-		meta.className = "model-item-meta";
-
-		if (m.provider) {
-			var prov = document.createElement("span");
-			prov.className = "model-item-provider";
-			prov.textContent = m.provider;
-			meta.appendChild(prov);
+		if (idx === lastPreferredIdx && lastPreferredIdx < filtered.length - 1) {
+			var divider = document.createElement("div");
+			divider.className = "model-dropdown-divider";
+			S.modelDropdownList.appendChild(divider);
 		}
-
-		if (m.unsupported) {
-			var unsupported = document.createElement("span");
-			unsupported.className = "model-item-unsupported";
-			unsupported.textContent = "unsupported";
-			if (m.unsupportedReason) unsupported.title = m.unsupportedReason;
-			meta.appendChild(unsupported);
-		}
-
-		if (meta.childNodes.length > 0) {
-			el.appendChild(meta);
-		}
-		el.addEventListener("click", () => {
-			selectModel(m);
-		});
-		S.modelDropdownList.appendChild(el);
 	});
 }
 

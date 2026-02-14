@@ -19,6 +19,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
+import { attachMessageVoiceControl } from "./message-voice.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -27,6 +28,16 @@ import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
 import { sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
+
+var SESSION_PREVIEW_MAX_CHARS = 200;
+
+function truncateSessionPreview(text) {
+	var trimmed = (text || "").trim();
+	if (!trimmed) return "";
+	var chars = Array.from(trimmed);
+	if (chars.length <= SESSION_PREVIEW_MAX_CHARS) return trimmed;
+	return `${chars.slice(0, SESSION_PREVIEW_MAX_CHARS).join("")}…`;
+}
 
 // ── Fetch & render ──────────────────────────────────────────
 
@@ -58,6 +69,30 @@ export function fetchSessions() {
 		S.setSessions(incoming);
 		renderSessionList();
 		updateChatSessionHeader();
+	});
+}
+
+/** Clear history for the currently active session and reset local UI state. */
+export function clearActiveSession() {
+	var prevHistoryIdx = S.lastHistoryIndex;
+	var prevSeq = S.chatSeq;
+	S.setLastHistoryIndex(-1);
+	S.setChatSeq(0);
+	return sendRpc("chat.clear", {}).then((res) => {
+		if (res?.ok) {
+			if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+			S.setSessionTokens({ input: 0, output: 0 });
+			updateTokenBar();
+			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
+			var session = sessionStore.getByKey(activeKey);
+			if (session) session.syncCounts(0, 0);
+			fetchSessions();
+			return res;
+		}
+		S.setLastHistoryIndex(prevHistoryIdx);
+		S.setChatSeq(prevSeq);
+		chatAddMsg("error", res?.error?.message || "Clear failed");
+		return res;
 	});
 }
 
@@ -114,6 +149,26 @@ export function bumpSessionCount(key, increment) {
 		if (key === S.activeSessionKey) {
 			entry.lastSeenMessageCount = entry.messageCount;
 		}
+	}
+}
+
+/** Set first-message preview optimistically so sidebar updates without reload. */
+export function seedSessionPreviewFromUserText(key, text) {
+	var preview = truncateSessionPreview(text);
+	if (!preview) return;
+	var now = Date.now();
+
+	var session = sessionStore.getByKey(key);
+	if (session && !session.preview) {
+		session.preview = preview;
+		session.updatedAt = now;
+		session.dataVersion.value++;
+	}
+
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry && !entry.preview) {
+		entry.preview = preview;
+		entry.updatedAt = now;
 	}
 }
 
@@ -229,14 +284,47 @@ function parseMultimodalContent(blocks) {
 }
 
 function renderHistoryUserMessage(msg) {
-	var el;
+	var text = "";
+	var images = [];
 	if (Array.isArray(msg.content)) {
 		var parsed = parseMultimodalContent(msg.content);
-		var text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
-		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", parsed.images);
+		text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
+		images = parsed.images;
 	} else {
-		var userContent = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
-		el = chatAddMsg("user", renderMarkdown(userContent), true);
+		text = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
+	}
+
+	var el;
+	if (msg.audio) {
+		el = chatAddMsg("user", "", true);
+		if (el) {
+			var filename = msg.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(el, audioSrc);
+			if (text) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown escapes user input before formatting tags.
+				textWrap.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
+				el.appendChild(textWrap);
+			}
+			if (images.length > 0) {
+				var thumbRow = document.createElement("div");
+				thumbRow.className = "msg-image-row";
+				for (var img of images) {
+					var thumb = document.createElement("img");
+					thumb.className = "msg-image-thumb";
+					thumb.src = img.dataUrl;
+					thumb.alt = img.name;
+					thumbRow.appendChild(thumb);
+				}
+				el.appendChild(thumbRow);
+			}
+		}
+	} else if (images.length > 0) {
+		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
+	} else {
+		el = chatAddMsg("user", renderMarkdown(text), true);
 	}
 	if (el && msg.channel) appendChannelFooter(el, msg.channel);
 	return el;
@@ -274,7 +362,20 @@ function renderHistoryAssistantMessage(msg) {
 		el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
 	}
 	if (el && msg.model) {
-		el.appendChild(createModelFooter(msg));
+		var footer = createModelFooter(msg);
+		el.appendChild(footer);
+		void attachMessageVoiceControl({
+			messageEl: el,
+			footerEl: footer,
+			sessionKey: S.activeSessionKey,
+			text: msg.content || "",
+			runId: msg.run_id || null,
+			messageIndex: msg.historyIndex,
+			audioPath: msg.audio || null,
+			audioWarning: null,
+			forceAction: false,
+			autoplayOnGenerate: true,
+		});
 	}
 	if (msg.inputTokens || msg.outputTokens) {
 		S.sessionTokens.input += msg.inputTokens || 0;
@@ -510,6 +611,8 @@ export function switchSession(key, searchContext, projectId) {
 					msgEls.push(renderHistoryUserMessage(msg));
 				} else if (msg.role === "assistant") {
 					msgEls.push(renderHistoryAssistantMessage(msg));
+				} else if (msg.role === "notice") {
+					msgEls.push(chatAddMsg("system", renderMarkdown(msg.content || ""), true));
 				} else if (msg.role === "tool_result") {
 					msgEls.push(renderHistoryToolResult(msg));
 				} else {
