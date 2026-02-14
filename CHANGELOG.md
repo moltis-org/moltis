@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.26] - 2026-02-14
+
+
+### Added
+
 - **Rustls/OpenSSL migration roadmap**: Added
   `plans/2026-02-14-rustls-migration-and-openssl-reduction.md` with a staged
   plan to reduce OpenSSL coupling, isolate feature gates, and move default TLS
@@ -25,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Windows release build reliability**: The `.exe` release workflow now forces
   Strawberry Perl (`OPENSSL_SRC_PERL`/`PERL`) so vendored OpenSSL builds do not
   fail due to missing Git Bash Perl modules.
+- **OpenAI tool-call ID length**: Remap tool-call IDs that exceed OpenAI's
+  40-character limit during message serialization, and generate shorter
+  synthetic IDs in the agent runner to prevent API errors.
+- **Onboarding credential persistence**: Provider credentials are now saved
+  before opening model selection during onboarding, aligning behavior with the
+  Settings > LLM flow.
 
 ### Security
 
