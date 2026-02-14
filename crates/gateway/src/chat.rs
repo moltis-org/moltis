@@ -161,6 +161,8 @@ struct ChatFinalBroadcast {
     #[serde(skip_serializing_if = "Option::is_none")]
     audio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    audio_warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
 }
 
@@ -4320,22 +4322,35 @@ async fn run_with_tools(
             let assistant_message_index = user_message_index + 1;
 
             // Generate & persist TTS audio for voice-medium web UI replies.
+            let mut audio_warning: Option<String> = None;
             let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                if let Some(bytes) = generate_tts_audio(state, session_key, &display_text).await {
-                    let filename = format!("{run_id}.ogg");
-                    if let Some(store) = session_store {
-                        match store.save_media(session_key, &filename, &bytes).await {
-                            Ok(path) => Some(path),
-                            Err(e) => {
-                                warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                None
-                            },
+                match generate_tts_audio(state, session_key, &display_text).await {
+                    Ok(bytes) => {
+                        let filename = format!("{run_id}.ogg");
+                        if let Some(store) = session_store {
+                            match store.save_media(session_key, &filename, &bytes).await {
+                                Ok(path) => Some(path),
+                                Err(e) => {
+                                    let warning =
+                                        format!("TTS audio generated but failed to save: {e}");
+                                    warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                    audio_warning = Some(warning);
+                                    None
+                                },
+                            }
+                        } else {
+                            audio_warning = Some(
+                                "TTS audio generated but session media storage is unavailable"
+                                    .to_string(),
+                            );
+                            None
                         }
-                    } else {
+                    },
+                    Err(error) => {
+                        warn!(run_id, error = %error, "voice reply generation skipped");
+                        audio_warning = Some(error);
                         None
-                    }
-                } else {
-                    None
+                    },
                 }
             } else {
                 None
@@ -4355,6 +4370,7 @@ async fn run_with_tools(
                 iterations: Some(result.iterations),
                 tool_calls_made: Some(result.tool_calls_made),
                 audio: audio_path.clone(),
+                audio_warning,
                 seq: client_seq,
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4593,23 +4609,35 @@ async fn run_streaming(
                 let assistant_message_index = user_message_index + 1;
 
                 // Generate & persist TTS audio for voice-medium web UI replies.
+                let mut audio_warning: Option<String> = None;
                 let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                    if let Some(bytes) = generate_tts_audio(state, session_key, &accumulated).await
-                    {
-                        let filename = format!("{run_id}.ogg");
-                        if let Some(store) = session_store {
-                            match store.save_media(session_key, &filename, &bytes).await {
-                                Ok(path) => Some(path),
-                                Err(e) => {
-                                    warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                    None
-                                },
+                    match generate_tts_audio(state, session_key, &accumulated).await {
+                        Ok(bytes) => {
+                            let filename = format!("{run_id}.ogg");
+                            if let Some(store) = session_store {
+                                match store.save_media(session_key, &filename, &bytes).await {
+                                    Ok(path) => Some(path),
+                                    Err(e) => {
+                                        let warning =
+                                            format!("TTS audio generated but failed to save: {e}");
+                                        warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                        audio_warning = Some(warning);
+                                        None
+                                    },
+                                }
+                            } else {
+                                audio_warning = Some(
+                                    "TTS audio generated but session media storage is unavailable"
+                                        .to_string(),
+                                );
+                                None
                             }
-                        } else {
+                        },
+                        Err(error) => {
+                            warn!(run_id, error = %error, "voice reply generation skipped");
+                            audio_warning = Some(error);
                             None
-                        }
-                    } else {
-                        None
+                        },
                     }
                 } else {
                     None
@@ -4629,6 +4657,7 @@ async fn run_streaming(
                     iterations: None,
                     tool_calls_made: None,
                     audio: audio_path.clone(),
+                    audio_warning,
                     seq: client_seq,
                 };
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4991,17 +5020,27 @@ async fn generate_tts_audio(
     state: &Arc<GatewayState>,
     session_key: &str,
     text: &str,
-) -> Option<Vec<u8>> {
+) -> Result<Vec<u8>, String> {
     use base64::Engine;
 
-    let tts_status = state.services.tts.status().await.ok()?;
-    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
+    let tts_status = state
+        .services
+        .tts
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status: TtsStatusResponse =
+        serde_json::from_value(tts_status).map_err(|_| "invalid tts.status response")?;
     if !status.enabled {
-        return None;
+        return Err("TTS is disabled or not configured".to_string());
     }
 
     // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("response has no speakable text".to_string());
+    }
 
     let session_override = {
         state
@@ -5014,24 +5053,27 @@ async fn generate_tts_audio(
     };
 
     let request = TtsConvertRequest {
-        text: &text,
+        text,
         format: "ogg",
         provider: session_override.as_ref().and_then(|o| o.provider.clone()),
         voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
         model: session_override.as_ref().and_then(|o| o.model.clone()),
     };
 
+    let request_value = serde_json::to_value(request)
+        .map_err(|_| "failed to build tts.convert request".to_string())?;
     let tts_result = state
         .services
         .tts
-        .convert(serde_json::to_value(request).ok()?)
+        .convert(request_value)
         .await
-        .ok()?;
+        .map_err(|e| e.to_string())?;
 
-    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
+    let response: TtsConvertResponse =
+        serde_json::from_value(tts_result).map_err(|_| "invalid tts.convert response")?;
     base64::engine::general_purpose::STANDARD
         .decode(&response.audio)
-        .ok()
+        .map_err(|_| "invalid base64 audio returned by TTS provider".to_string())
 }
 
 async fn build_tts_payload(

@@ -142,6 +142,60 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("voice fallback action and warning render for voice final without audio", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "voice fallback should be available",
+				messageIndex: 999901,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "voice",
+				audioWarning: "TTS synthesis failed: timeout",
+			},
+		});
+
+		var assistant = page.locator("#messages .msg.assistant").last();
+		await expect(assistant).toContainText("voice fallback should be available");
+		await expect(assistant.locator(".msg-voice-warning")).toContainText("timeout");
+		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("voice fallback action shows error when generation RPC fails", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "try generating voice now",
+				messageIndex: 999902,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "voice",
+			},
+		});
+
+		var assistant = page.locator("#messages .msg.assistant").last();
+		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
+		await assistant.locator(".msg-voice-action").click();
+		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
+		await expect(assistant.locator(".msg-voice-warning")).not.toHaveText("");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("out-of-order tool events still resolve exec card", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");

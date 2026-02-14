@@ -19,6 +19,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
+import { attachMessageVoiceControl } from "./message-voice.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -361,7 +362,20 @@ function renderHistoryAssistantMessage(msg) {
 		el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
 	}
 	if (el && msg.model) {
-		el.appendChild(createModelFooter(msg));
+		var footer = createModelFooter(msg);
+		el.appendChild(footer);
+		void attachMessageVoiceControl({
+			messageEl: el,
+			footerEl: footer,
+			sessionKey: S.activeSessionKey,
+			text: msg.content || "",
+			runId: msg.run_id || null,
+			messageIndex: msg.historyIndex,
+			audioPath: msg.audio || null,
+			audioWarning: null,
+			forceAction: false,
+			autoplayOnGenerate: true,
+		});
 	}
 	if (msg.inputTokens || msg.outputTokens) {
 		S.sessionTokens.input += msg.inputTokens || 0;

@@ -213,6 +213,7 @@ pub trait SessionService: Send + Sync {
     async fn preview(&self, params: Value) -> ServiceResult;
     async fn resolve(&self, params: Value) -> ServiceResult;
     async fn patch(&self, params: Value) -> ServiceResult;
+    async fn voice_generate(&self, params: Value) -> ServiceResult;
     async fn share_create(&self, params: Value) -> ServiceResult;
     async fn share_list(&self, params: Value) -> ServiceResult;
     async fn share_revoke(&self, params: Value) -> ServiceResult;
@@ -244,6 +245,10 @@ impl SessionService for NoopSessionService {
 
     async fn patch(&self, _p: Value) -> ServiceResult {
         Ok(serde_json::json!({}))
+    }
+
+    async fn voice_generate(&self, _p: Value) -> ServiceResult {
+        Err("session voice generation not available".into())
     }
 
     async fn share_create(&self, _p: Value) -> ServiceResult {

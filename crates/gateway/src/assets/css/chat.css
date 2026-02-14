@@ -453,6 +453,38 @@
   color: var(--muted);
 }
 
+.msg-voice-action {
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.msg-voice-action:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.msg-voice-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.msg-voice-player-slot {
+  margin-top: 6px;
+}
+
+.msg-voice-warning {
+  margin-top: 6px;
+  max-width: 320px;
+}
+
 /* ── Waveform Audio Player ── */
 
 .waveform-player {

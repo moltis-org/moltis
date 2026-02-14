@@ -3,6 +3,7 @@ use std::sync::Arc;
 use {
     async_trait::async_trait,
     base64::{Engine, engine::general_purpose},
+    serde::Deserialize,
     serde_json::Value,
     tracing::{info, warn},
 };
@@ -18,7 +19,7 @@ use {
 };
 
 use crate::{
-    services::{ServiceResult, SessionService},
+    services::{ServiceResult, SessionService, TtsService},
     share_store::{
         ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
         SharedMapLinks, SharedMessage, SharedMessageRole,
@@ -31,6 +32,20 @@ const SHARE_PREVIEW_MAX_IMAGE_WIDTH: u32 = 430;
 const SHARE_PREVIEW_MAX_IMAGE_HEIGHT: u32 = 430;
 const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TtsStatusPayload {
+    enabled: bool,
+    #[serde(default)]
+    max_text_length: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TtsConvertPayload {
+    audio: String,
+}
+
 /// Filter out empty assistant messages from history before sending to the UI.
 ///
 /// Empty assistant messages are persisted in the session JSONL for LLM history
@@ -39,14 +54,21 @@ const SHARE_REDACTED_VALUE: &str = "[REDACTED]";
 fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
     messages
         .into_iter()
-        .filter(|msg| {
-            if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-                return true;
+        .enumerate()
+        .filter_map(|(idx, mut msg)| {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                let keep = msg
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                if !keep {
+                    return None;
+                }
             }
-            // Keep assistant messages that have non-empty content.
-            msg.get("content")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.trim().is_empty())
+            if let Some(obj) = msg.as_object_mut() {
+                obj.insert("historyIndex".to_string(), serde_json::json!(idx));
+            }
+            Some(msg)
         })
         .collect()
 }
@@ -715,6 +737,7 @@ async fn to_shared_message(
 pub struct LiveSessionService {
     store: Arc<SessionStore>,
     metadata: Arc<SqliteSessionMetadata>,
+    tts_service: Option<Arc<dyn TtsService>>,
     share_store: Option<Arc<ShareStore>>,
     sandbox_router: Option<Arc<SandboxRouter>>,
     project_store: Option<Arc<dyn ProjectStore>>,
@@ -728,6 +751,7 @@ impl LiveSessionService {
         Self {
             store,
             metadata,
+            tts_service: None,
             share_store: None,
             sandbox_router: None,
             project_store: None,
@@ -739,6 +763,11 @@ impl LiveSessionService {
 
     pub fn with_sandbox_router(mut self, router: Arc<SandboxRouter>) -> Self {
         self.sandbox_router = Some(router);
+        self
+    }
+
+    pub fn with_tts_service(mut self, tts: Arc<dyn TtsService>) -> Self {
+        self.tts_service = Some(tts);
         self
     }
 
@@ -999,6 +1028,144 @@ impl SessionService for LiveSessionService {
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
             "version": entry.version,
+        }))
+    }
+
+    async fn voice_generate(&self, params: Value) -> ServiceResult {
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let run_id = params
+            .get("runId")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let requested_index = params
+            .get("messageIndex")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .or_else(|| {
+                params
+                    .get("historyIndex")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
+            });
+        if requested_index.is_none() && run_id.is_none() {
+            return Err("missing 'messageIndex' or 'runId' parameter".to_string());
+        }
+
+        let tts = self
+            .tts_service
+            .as_ref()
+            .ok_or_else(|| "session voice generation is not configured".to_string())?;
+
+        let mut history = self.store.read(key).await.map_err(|e| e.to_string())?;
+        if history.is_empty() {
+            return Err(format!("session '{key}' has no messages"));
+        }
+
+        let mut target_index = requested_index;
+        if target_index.is_none()
+            && let Some(run_id) = run_id
+        {
+            target_index = history.iter().rposition(|msg| {
+                msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                    && msg.get("run_id").and_then(|v| v.as_str()) == Some(run_id)
+            });
+        }
+        let target_index =
+            target_index.ok_or_else(|| "target assistant message not found".to_string())?;
+        let target = history
+            .get(target_index)
+            .ok_or_else(|| format!("message index {target_index} is out of range"))?;
+        if target.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            return Err("target message is not an assistant response".to_string());
+        }
+
+        if let Some(existing_audio) = target.get("audio").and_then(|v| v.as_str())
+            && !existing_audio.trim().is_empty()
+            && let Some(filename) = media_filename(existing_audio)
+            && self.store.read_media(key, filename).await.is_ok()
+        {
+            return Ok(serde_json::json!({
+                "sessionKey": key,
+                "messageIndex": target_index,
+                "audio": existing_audio,
+                "reused": true,
+            }));
+        }
+
+        let text = message_text(target)
+            .ok_or_else(|| "assistant message has no text content to synthesize".to_string())?;
+        let sanitized = moltis_voice::tts::sanitize_text_for_tts(&text)
+            .trim()
+            .to_string();
+        if sanitized.is_empty() {
+            return Err("assistant message has no speakable text for TTS".to_string());
+        }
+
+        let status_value = tts
+            .status()
+            .await
+            .map_err(|e| format!("failed to check TTS status: {e}"))?;
+        let status: TtsStatusPayload = serde_json::from_value(status_value)
+            .map_err(|_| "invalid TTS status payload".to_string())?;
+        if !status.enabled {
+            return Err("TTS is disabled or provider is not configured".to_string());
+        }
+        if let Some(max_text_length) = status.max_text_length
+            && sanitized.len() > max_text_length
+        {
+            return Err(format!(
+                "text exceeds max length ({} > {})",
+                sanitized.len(),
+                max_text_length
+            ));
+        }
+
+        let convert_value = tts
+            .convert(serde_json::json!({
+                "text": sanitized,
+                "format": "ogg",
+            }))
+            .await
+            .map_err(|e| format!("TTS convert failed: {e}"))?;
+        let convert: TtsConvertPayload = serde_json::from_value(convert_value)
+            .map_err(|_| "invalid TTS convert payload".to_string())?;
+        let audio_bytes = general_purpose::STANDARD
+            .decode(convert.audio.trim())
+            .map_err(|_| "invalid base64 audio payload returned by TTS provider".to_string())?;
+
+        let filename = format!("voice-msg-{target_index}.ogg");
+        let audio_path = self
+            .store
+            .save_media(key, &filename, &audio_bytes)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let target_mut = history
+            .get_mut(target_index)
+            .ok_or_else(|| format!("message index {target_index} is out of range"))?;
+        let target_obj = target_mut
+            .as_object_mut()
+            .ok_or_else(|| "target message is not an object".to_string())?;
+        target_obj.insert("audio".to_string(), Value::String(audio_path.clone()));
+
+        let message_count = history.len() as u32;
+        self.store
+            .replace_history(key, history)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.metadata.touch(key, message_count).await;
+
+        Ok(serde_json::json!({
+            "sessionKey": key,
+            "messageIndex": target_index,
+            "audio": audio_path,
+            "reused": false,
         }))
     }
 
@@ -1733,6 +1900,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn to_shared_message_includes_assistant_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        store
+            .save_media("main", "voice-output.ogg", b"OggSfake")
+            .await
+            .expect("save media");
+
+        let assistant_audio_msg = serde_json::json!({
+            "role": "assistant",
+            "content": "Here you go",
+            "audio": "media/main/voice-output.ogg",
+        });
+
+        let shared = to_shared_message(&assistant_audio_msg, "main", &store)
+            .await
+            .expect("shared message");
+
+        assert!(matches!(shared.role, SharedMessageRole::Assistant));
+        assert_eq!(shared.content, "Here you go");
+        assert!(
+            shared
+                .audio_data_url
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("data:audio/ogg;base64,")
+        );
+    }
+
+    #[tokio::test]
     async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
         let dir = tempfile::tempdir().unwrap();
         let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
@@ -1893,6 +2090,206 @@ mod tests {
         assert!(!shared.content.contains("stdout-secret"));
         assert!(!shared.content.contains("voice-secret"));
         assert!(shared.content.contains(SHARE_REDACTED_VALUE));
+    }
+
+    struct MockTtsService {
+        status_payload: Value,
+        convert_payload: Option<Value>,
+        convert_error: Option<String>,
+        convert_calls: AtomicU32,
+    }
+
+    impl MockTtsService {
+        fn new(status_payload: Value, convert_payload: Option<Value>) -> Self {
+            Self {
+                status_payload,
+                convert_payload,
+                convert_error: None,
+                convert_calls: AtomicU32::new(0),
+            }
+        }
+
+        fn with_convert_error(status_payload: Value, error: &str) -> Self {
+            Self {
+                status_payload,
+                convert_payload: None,
+                convert_error: Some(error.to_string()),
+                convert_calls: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl crate::services::TtsService for MockTtsService {
+        async fn status(&self) -> crate::services::ServiceResult {
+            Ok(self.status_payload.clone())
+        }
+
+        async fn providers(&self) -> crate::services::ServiceResult {
+            Ok(serde_json::json!([]))
+        }
+
+        async fn enable(&self, _params: Value) -> crate::services::ServiceResult {
+            Err("mock".to_string())
+        }
+
+        async fn disable(&self) -> crate::services::ServiceResult {
+            Ok(serde_json::json!({}))
+        }
+
+        async fn convert(&self, _params: Value) -> crate::services::ServiceResult {
+            self.convert_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(ref error) = self.convert_error {
+                return Err(error.clone());
+            }
+            self.convert_payload
+                .clone()
+                .ok_or_else(|| "mock missing convert payload".to_string())
+        }
+
+        async fn set_provider(&self, _params: Value) -> crate::services::ServiceResult {
+            Err("mock".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn voice_generate_reuses_existing_audio_without_tts_convert() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let existing_path = store
+            .save_media("main", "voice-msg-1.ogg", b"OggSreuse")
+            .await
+            .expect("save media");
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+        store
+            .append(
+                "main",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "hi there",
+                    "audio": existing_path,
+                    "run_id": "run-abc",
+                }),
+            )
+            .await
+            .expect("append assistant");
+
+        let mock_tts = Arc::new(MockTtsService::with_convert_error(
+            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            "convert should not be called",
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+
+        let result = service
+            .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 1 }))
+            .await
+            .expect("voice generate");
+
+        assert_eq!(result["reused"], true);
+        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-1.ogg"));
+        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn voice_generate_creates_and_persists_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+        store
+            .append(
+                "main",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "here is the reply",
+                    "run_id": "run-generate",
+                }),
+            )
+            .await
+            .expect("append assistant");
+
+        let audio_bytes = b"OggSnew".to_vec();
+        let mock_tts = Arc::new(MockTtsService::new(
+            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            Some(serde_json::json!({
+                "audio": general_purpose::STANDARD.encode(&audio_bytes),
+            })),
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+
+        let result = service
+            .voice_generate(serde_json::json!({ "key": "main", "runId": "run-generate" }))
+            .await
+            .expect("voice generate");
+
+        assert_eq!(result["reused"], false);
+        let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
+        assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
+        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
+
+        let history = store.read("main").await.expect("read history");
+        assert_eq!(history[1]["audio"].as_str(), Some(audio_path.as_str()));
+
+        let filename = media_filename(&audio_path).expect("filename");
+        let saved = store
+            .read_media("main", filename)
+            .await
+            .expect("read media");
+        assert_eq!(saved, audio_bytes);
+    }
+
+    #[tokio::test]
+    async fn voice_generate_rejects_non_assistant_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+
+        let mock_tts = Arc::new(MockTtsService::new(
+            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            None,
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+
+        let error = service
+            .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 0 }))
+            .await
+            .expect_err("should reject non-assistant target");
+        assert!(error.contains("not an assistant"));
     }
 
     // --- Browser service integration tests ---

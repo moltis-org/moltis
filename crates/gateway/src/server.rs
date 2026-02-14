@@ -2025,6 +2025,7 @@ pub async fn start_gateway(
     {
         let mut session_svc =
             LiveSessionService::new(Arc::clone(&session_store), Arc::clone(&session_metadata))
+                .with_tts_service(Arc::clone(&services.tts))
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_project_store(Arc::clone(&project_store))
@@ -2837,6 +2838,10 @@ pub async fn start_gateway(
     };
     #[cfg(not(feature = "tls"))]
     let display_host = display_ip.to_string();
+    let passkey_origins = webauthn_registry
+        .as_ref()
+        .map(|registry| registry.get_all_origins())
+        .unwrap_or_default();
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),
@@ -2851,6 +2856,7 @@ pub async fn start_gateway(
                 "HTTP/1.1"
             },
         ),
+        startup_bind_line(addr),
         format!("{} methods registered", methods.method_names().len()),
         format!("llm: {}", provider_summary),
         format!(
@@ -2879,6 +2885,7 @@ pub async fn start_gateway(
         ),
         format!("data: {}", data_dir.display()),
     ];
+    lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.
     #[cfg(target_os = "macos")]
     if sandbox_router.backend_name() == "docker" {
@@ -3724,6 +3731,17 @@ fn resolve_outbound_ip(ipv6: bool) -> Option<std::net::IpAddr> {
     let socket = UdpSocket::bind(bind).ok()?;
     socket.connect(target).ok()?;
     Some(socket.local_addr().ok()?.ip())
+}
+
+fn startup_bind_line(addr: std::net::SocketAddr) -> String {
+    format!("bind (--bind): {addr}")
+}
+
+fn startup_passkey_origin_lines(origins: &[String]) -> Vec<String> {
+    origins
+        .iter()
+        .map(|origin| format!("passkey origin: {origin}"))
+        .collect()
 }
 
 /// Check whether a WebSocket `Origin` header matches the request `Host`.
@@ -6911,6 +6929,24 @@ mod tests {
             assert!(!display.ip().is_unspecified());
             assert_eq!(display.port(), 9999);
         }
+    }
+
+    #[test]
+    fn startup_bind_line_includes_bind_flag_and_address() {
+        let addr: std::net::SocketAddr = "0.0.0.0:49494".parse().unwrap();
+        assert_eq!(startup_bind_line(addr), "bind (--bind): 0.0.0.0:49494");
+    }
+
+    #[test]
+    fn startup_passkey_origin_lines_emits_clickable_urls() {
+        let lines = startup_passkey_origin_lines(&[
+            "https://localhost:49494".to_string(),
+            "https://m4max.local:49494".to_string(),
+        ]);
+        assert_eq!(lines, vec![
+            "passkey origin: https://localhost:49494",
+            "passkey origin: https://m4max.local:49494",
+        ]);
     }
 
     // ── is_local_connection / proxy header detection tests ───────────────

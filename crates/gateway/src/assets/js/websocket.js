@@ -21,6 +21,7 @@ import {
 	toolCallSummary,
 } from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
+import { attachMessageVoiceControl } from "./message-voice.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
 import { maybeRefreshFullContext, renderCompactCard } from "./page-chat.js";
@@ -39,7 +40,6 @@ import { connectWs, forceReconnect } from "./ws-connect.js";
 
 // ── Chat event handlers ──────────────────────────────────────
 
-var ttsWebStatus = null; // null = unknown, true/false = enabled state
 var pendingToolCallEnds = new Map();
 
 function toolCallLogicalId(payload) {
@@ -66,31 +66,6 @@ function clearPendingToolCallEndsForSession(sessionKey) {
 			pendingToolCallEnds.delete(key);
 		}
 	}
-}
-
-async function appendAssistantVoiceIfEnabled(msgEl, text) {
-	if (!(msgEl && text)) return false;
-
-	if (ttsWebStatus === null) {
-		var status = await sendRpc("tts.status", {});
-		ttsWebStatus = status?.ok && status.payload?.enabled === true;
-	}
-	if (!ttsWebStatus) return false;
-
-	var tts = await sendRpc("tts.convert", { text: text, format: "ogg" });
-	if (!(tts?.ok && tts.payload?.audio)) {
-		if (tts?.error) {
-			console.warn("TTS convert failed:", tts.error.message || tts.error);
-		}
-		return false;
-	}
-
-	msgEl.textContent = "";
-
-	var mimeType = tts.payload.mimeType || "audio/ogg";
-	var src = `data:${mimeType};base64,${tts.payload.audio}`;
-	renderAudioPlayer(msgEl, src, true);
-	return true;
 }
 
 function makeThinkingDots() {
@@ -359,7 +334,7 @@ function resolveFinalMessageEl(p) {
 	return null;
 }
 
-function appendFinalFooter(msgEl, p) {
+function appendFinalFooter(msgEl, p, eventSession) {
 	if (!(msgEl && p.model)) return;
 	var footer = document.createElement("div");
 	footer.className = "msg-model-footer";
@@ -375,6 +350,19 @@ function appendFinalFooter(msgEl, p) {
 		footer.appendChild(badge);
 	}
 	msgEl.appendChild(footer);
+
+	void attachMessageVoiceControl({
+		messageEl: msgEl,
+		footerEl: footer,
+		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
+		text: p.text || "",
+		runId: p.runId,
+		messageIndex: p.messageIndex,
+		audioPath: p.audio || null,
+		audioWarning: p.audioWarning || null,
+		forceAction: p.replyMedium === "voice" && !p.audio,
+		autoplayOnGenerate: true,
+	});
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
@@ -420,7 +408,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		textWrap.className = "mt-2";
 		setSafeMarkdownHtml(textWrap, p.text);
 		msgEl.appendChild(textWrap);
-		appendFinalFooter(msgEl, p);
+		appendFinalFooter(msgEl, p, eventSession);
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	} else {
 		var resolvedEl = resolveFinalMessageEl(p);
@@ -439,15 +427,10 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 				console.debug("[audio] rendering persisted audio (streamed):", fn2);
 				resolvedEl.textContent = "";
 				renderAudioPlayer(resolvedEl, src2, true);
-				appendFinalFooter(resolvedEl, p);
+				appendFinalFooter(resolvedEl, p, eventSession);
 			} else {
-				console.debug("[audio] no persisted audio, trying web TTS");
-				appendAssistantVoiceIfEnabled(resolvedEl, p.text)
-					.catch((err) => {
-						console.warn("Web UI TTS playback failed:", err);
-						return false;
-					})
-					.finally(() => appendFinalFooter(resolvedEl, p));
+				console.debug("[audio] no persisted audio, showing voice fallback action");
+				appendFinalFooter(resolvedEl, p, eventSession);
 			}
 		} else {
 			// Silent reply — attach footer to the last visible assistant element
@@ -457,7 +440,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 				var last = S.chatMsgBox?.lastElementChild;
 				if (last && !last.classList.contains("user")) target = last;
 			}
-			appendFinalFooter(target, p);
+			appendFinalFooter(target, p, eventSession);
 		}
 	}
 	if (p.inputTokens || p.outputTokens) {
