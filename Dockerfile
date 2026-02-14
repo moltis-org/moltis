@@ -19,6 +19,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
+ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
@@ -33,8 +34,10 @@ FROM debian:bookworm-slim
 # Install runtime dependencies:
 # - ca-certificates: for HTTPS connections to LLM providers
 # - chromium: headless browser for the browser tool (web search/fetch)
+# - curl: makes it possible to run healthchecks from docker
 # - sudo: allows moltis user to install packages at runtime (passwordless)
 # - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
         ca-certificates \
