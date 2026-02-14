@@ -195,6 +195,12 @@ pub struct WebAuthnRegistry {
     entries: Vec<(String, WebAuthnState)>,
 }
 
+impl Default for WebAuthnRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebAuthnRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
