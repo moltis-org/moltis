@@ -19,6 +19,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.8.27] - 2026-02-14
+
+
+### Added
+
+### Changed
+
+- **DRY voice/identity/channel utils**: Extracted shared RPC wrappers and
+  validation helpers from `onboarding-view.js` and `page-settings.js` /
+  `page-channels.js` into dedicated `voice-utils.js`, `identity-utils.js`,
+  and `channel-utils.js` modules.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Config test env isolation**: Fixed spurious
+  `save_config_to_path_removes_stale_keys_when_values_are_cleared` test
+  failure caused by `MOLTIS_IDENTITY__NAME` environment variable leaking
+  into the test via `apply_env_overrides`.
+
+### Security
+
 ## [0.8.26] - 2026-02-14
 
 
