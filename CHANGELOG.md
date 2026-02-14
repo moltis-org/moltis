@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rustls/OpenSSL migration roadmap**: Added
+  `plans/2026-02-14-rustls-migration-and-openssl-reduction.md` with a staged
+  plan to reduce OpenSSL coupling, isolate feature gates, and move default TLS
+  networking paths toward rustls.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Windows release build reliability**: The `.exe` release workflow now forces
+  Strawberry Perl (`OPENSSL_SRC_PERL`/`PERL`) so vendored OpenSSL builds do not
+  fail due to missing Git Bash Perl modules.
+
+### Security
+
+## [0.8.25] - 2026-02-14
+
+
+### Added
+
 ### Changed
 
 ### Deprecated
