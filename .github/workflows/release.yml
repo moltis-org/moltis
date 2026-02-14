@@ -708,6 +708,17 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
+      - name: Configure Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $strawberryPerl = "C:\Strawberry\perl\bin\perl.exe"
+          if (-not (Test-Path $strawberryPerl)) {
+            Write-Error "Strawberry Perl not found at $strawberryPerl"
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_SRC_PERL=$strawberryPerl"
+          Add-Content -Path $env:GITHUB_ENV -Value "PERL=$strawberryPerl"
+          & $strawberryPerl -v
+
       - name: Build release binary
         shell: bash
         run: cargo build --release --target "$BUILD_TARGET"
