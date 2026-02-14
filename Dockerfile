@@ -20,8 +20,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
 # Install build dependencies for llama-cpp-sys-2
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
 # Build release binary
@@ -35,10 +35,11 @@ FROM debian:bookworm-slim
 # - chromium: headless browser for the browser tool (web search/fetch)
 # - sudo: allows moltis user to install packages at runtime (passwordless)
 # - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends \
         ca-certificates \
         chromium \
+		curl \
         libgomp1 \
         sudo \
         docker.io && \
