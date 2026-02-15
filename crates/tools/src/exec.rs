@@ -23,6 +23,8 @@ use crate::{
     sandbox::{NoSandbox, Sandbox, SandboxId, SandboxRouter},
 };
 
+const MAX_SANDBOX_RECOVERY_RETRIES: usize = 3;
+
 /// Broadcaster that notifies connected clients about pending approval requests.
 #[async_trait]
 pub trait ApprovalBroadcaster: Send + Sync {
@@ -415,14 +417,20 @@ impl AgentTool for ExecTool {
                 backend.ensure_ready(&id, Some(&image)).await?;
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
-                if sandbox_result.exit_code != 0
-                    && is_container_not_running_exec_error(&sandbox_result.stderr)
-                {
+                for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
+                    if sandbox_result.exit_code == 0
+                        || !is_container_not_running_exec_error(&sandbox_result.stderr)
+                    {
+                        break;
+                    }
+
                     warn!(
                         session = sk,
                         sandbox_id = %id,
                         command,
-                        "sandbox exec failed because container is unavailable, reinitializing and retrying once"
+                        retry_idx,
+                        max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
+                        "sandbox exec failed because container is unavailable, reinitializing and retrying"
                     );
                     if let Err(error) = backend.cleanup(&id).await {
                         warn!(
@@ -444,13 +452,19 @@ impl AgentTool for ExecTool {
             debug!(sandbox_id = %id, command, "static sandbox running command");
             self.sandbox.ensure_ready(id, None).await?;
             let mut sandbox_result = self.sandbox.exec(id, command, &opts).await?;
-            if sandbox_result.exit_code != 0
-                && is_container_not_running_exec_error(&sandbox_result.stderr)
-            {
+            for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
+                if sandbox_result.exit_code == 0
+                    || !is_container_not_running_exec_error(&sandbox_result.stderr)
+                {
+                    break;
+                }
+
                 warn!(
                     sandbox_id = %id,
                     command,
-                    "sandbox exec failed because container is unavailable, reinitializing and retrying once"
+                    retry_idx,
+                    max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
+                    "sandbox exec failed because container is unavailable, reinitializing and retrying"
                 );
                 if let Err(error) = self.sandbox.cleanup(id).await {
                     warn!(
@@ -777,15 +791,17 @@ mod tests {
         cleanup_calls: AtomicUsize,
         exec_calls: AtomicUsize,
         cleanup_should_fail: bool,
+        failures_before_success: usize,
     }
 
     impl RetryRecoverySandbox {
-        fn new(cleanup_should_fail: bool) -> Self {
+        fn new(cleanup_should_fail: bool, failures_before_success: usize) -> Self {
             Self {
                 ensure_ready_calls: AtomicUsize::new(0),
                 cleanup_calls: AtomicUsize::new(0),
                 exec_calls: AtomicUsize::new(0),
                 cleanup_should_fail,
+                failures_before_success,
             }
         }
     }
@@ -808,7 +824,7 @@ mod tests {
             _opts: &ExecOpts,
         ) -> Result<ExecResult> {
             let call = self.exec_calls.fetch_add(1, Ordering::SeqCst);
-            if call == 0 {
+            if call < self.failures_before_success {
                 return Ok(ExecResult {
                     stdout: String::new(),
                     stderr: "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"cannot exec: container is not running\\\"\")".to_string(),
@@ -873,7 +889,7 @@ mod tests {
     async fn test_exec_tool_retries_container_not_running_with_cleanup() {
         use crate::sandbox::SandboxScope;
 
-        let sandbox = Arc::new(RetryRecoverySandbox::new(false));
+        let sandbox = Arc::new(RetryRecoverySandbox::new(false, 1));
         let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
         let id = SandboxId {
             scope: SandboxScope::Session,
@@ -896,7 +912,7 @@ mod tests {
     async fn test_exec_tool_retries_container_not_running_when_cleanup_fails() {
         use crate::sandbox::SandboxScope;
 
-        let sandbox = Arc::new(RetryRecoverySandbox::new(true));
+        let sandbox = Arc::new(RetryRecoverySandbox::new(true, 1));
         let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
         let id = SandboxId {
             scope: SandboxScope::Session,
@@ -913,6 +929,66 @@ mod tests {
         assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
         assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
         assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_retries_container_not_running_multiple_times() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(false, 2));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-multi-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
+        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_stops_after_max_container_retries() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(
+            false,
+            MAX_SANDBOX_RECOVERY_RETRIES + 1,
+        ));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-max-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 1);
+        assert!(is_container_not_running_exec_error(
+            result["stderr"].as_str().unwrap_or_default()
+        ));
+        assert_eq!(
+            sandbox.ensure_ready_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES + 1
+        );
+        assert_eq!(
+            sandbox.cleanup_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES
+        );
+        assert_eq!(
+            sandbox.exec_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES + 1
+        );
     }
 
     #[tokio::test]
