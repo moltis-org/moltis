@@ -1236,6 +1236,72 @@ impl AppleContainerSandbox {
         }
     }
 
+    async fn wait_for_container_running(name: &str) -> Result<()> {
+        const MAX_WAIT_ITERS: usize = 20;
+        const WAIT_MS: u64 = 100;
+
+        for attempt in 0..MAX_WAIT_ITERS {
+            let output = tokio::process::Command::new("container")
+                .args(["inspect", name])
+                .output()
+                .await;
+
+            match output {
+                Ok(output) if output.status.success() => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    match apple_container_status_from_inspect(&stdout) {
+                        Some("running") => return Ok(()),
+                        Some("stopped") => {
+                            anyhow::bail!("container {name} failed to stay running after startup");
+                        },
+                        _ => {},
+                    }
+
+                    // `container run -d` can return before inspect status flips to
+                    // "running". Keep polling briefly before we declare failure.
+                    if attempt + 1 < MAX_WAIT_ITERS {
+                        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await;
+                        continue;
+                    }
+
+                    anyhow::bail!("container {name} did not report running state after startup");
+                },
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if attempt + 1 < MAX_WAIT_ITERS {
+                        debug!(
+                            name,
+                            attempt,
+                            %stderr,
+                            "container inspect failed while waiting for running state, retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await;
+                        continue;
+                    }
+                    anyhow::bail!(
+                        "container inspect failed for {name} while waiting for running state: {}",
+                        stderr.trim()
+                    );
+                },
+                Err(e) => {
+                    if attempt + 1 < MAX_WAIT_ITERS {
+                        debug!(
+                            name,
+                            attempt,
+                            error = %e,
+                            "container inspect command failed while waiting for running state, retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await;
+                        continue;
+                    }
+                    return Err(e.into());
+                },
+            }
+        }
+
+        anyhow::bail!("container {name} did not become running after startup")
+    }
+
     async fn force_remove_and_wait(name: &str) {
         Self::remove_container_force(name).await;
         Self::wait_for_container_absent(name).await;
@@ -1301,6 +1367,23 @@ fn is_apple_container_service_error(stderr: &str) -> bool {
 
 fn is_apple_container_exists_error(stderr: &str) -> bool {
     stderr.contains("already exists") || stderr.contains("exists: \"container with id")
+}
+
+fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
+    let inspect = stdout.trim();
+    if inspect.is_empty() || inspect == "[]" {
+        return None;
+    }
+
+    if inspect.contains(r#""status":"running""#) {
+        return Some("running");
+    }
+
+    if inspect.contains(r#""status":"stopped""#) || inspect.contains(r#""status":"exited""#) {
+        return Some("stopped");
+    }
+
+    None
 }
 
 fn is_apple_container_corruption_error(stderr: &str) -> bool {
@@ -1613,6 +1696,7 @@ impl Sandbox for AppleContainerSandbox {
             );
         }
 
+        Self::wait_for_container_running(&name).await?;
         info!(name, image, "apple container created and running");
 
         // Skip provisioning if the image is a pre-built instance sandbox image
@@ -2714,6 +2798,22 @@ mod tests {
             "Error: container already exists"
         ));
         assert!(!is_apple_container_exists_error("Error: no such container"));
+    }
+
+    #[test]
+    fn test_apple_container_status_from_inspect() {
+        assert_eq!(
+            apple_container_status_from_inspect(
+                r#"[{"id":"abc","status":"running","configuration":{}}]"#
+            ),
+            Some("running")
+        );
+        assert_eq!(
+            apple_container_status_from_inspect(r#"[{"id":"abc","status":"stopped"}]"#),
+            Some("stopped")
+        );
+        assert_eq!(apple_container_status_from_inspect("[]"), None);
+        assert_eq!(apple_container_status_from_inspect(""), None);
     }
 
     #[test]

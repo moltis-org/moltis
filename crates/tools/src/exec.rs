@@ -309,7 +309,22 @@ impl AgentTool for ExecTool {
                 None => None,
             }
         } else {
-            explicit_working_dir
+            match explicit_working_dir {
+                // Relative paths are resolved under the sandbox home.
+                Some(ref dir) if !dir.is_absolute() => {
+                    Some(PathBuf::from("/home/sandbox").join(dir))
+                },
+                // Absolute paths are only allowed inside the sandbox home.
+                Some(ref dir) if dir.starts_with("/home/sandbox") => explicit_working_dir,
+                Some(ref dir) => {
+                    debug!(
+                        path = %dir.display(),
+                        "explicit working_dir is outside /home/sandbox while sandboxed, using default"
+                    );
+                    None
+                },
+                None => None,
+            }
         };
 
         let using_default_working_dir = validated_explicit.is_none();
@@ -553,9 +568,17 @@ fn redaction_needles(value: &str) -> Vec<String> {
 }
 
 fn is_container_not_running_exec_error(stderr: &str) -> bool {
-    stderr.contains("cannot exec: container is not running")
-        || (stderr.contains("failed to create process in container")
-            && stderr.contains("container is not running"))
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("cannot exec: container is not running")
+        || (lower.contains("failed to create process in container")
+            && lower.contains("container")
+            && lower.contains("not running"))
+        || (lower.contains("invalidstate")
+            && lower.contains("container")
+            && lower.contains("is not running"))
+        || (lower.contains("container")
+            && lower.contains("not running")
+            && lower.contains("failed to create process"))
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -806,6 +829,44 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CaptureWorkingDirSandbox {
+        last_working_dir: std::sync::Mutex<Option<PathBuf>>,
+    }
+
+    #[async_trait]
+    impl Sandbox for CaptureWorkingDirSandbox {
+        fn backend_name(&self) -> &'static str {
+            "docker"
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            let mut guard = self
+                .last_working_dir
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *guard = opts.working_dir.clone();
+            Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn test_exec_tool_retries_container_not_running_with_cleanup() {
         use crate::sandbox::SandboxScope;
@@ -966,6 +1027,9 @@ mod tests {
         assert!(is_container_not_running_exec_error(
             "cannot exec: container is not running"
         ));
+        assert!(is_container_not_running_exec_error(
+            "Error: invalidState: \"container codex-stop-12016 is not running\""
+        ));
         assert!(!is_container_not_running_exec_error(
             "permission denied: operation not permitted"
         ));
@@ -1035,6 +1099,90 @@ mod tests {
             .unwrap();
         assert_eq!(result["stdout"].as_str().unwrap().trim(), "works");
         assert_eq!(result["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_rewrites_host_absolute_working_dir() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "rewrite-host-abs-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "/Users/fabien"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox")));
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_resolves_relative_working_dir_under_home() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "rewrite-relative-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "project"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox/project")));
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_keeps_in_sandbox_absolute_working_dir() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "keep-sandbox-abs-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "/home/sandbox/work"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox/work")));
     }
 
     #[tokio::test]
