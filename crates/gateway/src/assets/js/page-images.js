@@ -242,6 +242,21 @@ var BACKEND_ICONS = {
 	docker: "\u{1F433}",
 };
 
+/** Truncate long hash suffixes: "repo:abcdef...uvwxyz" */
+function truncateHash(str) {
+	var idx = str.lastIndexOf(":");
+	if (idx !== -1) {
+		var suffix = str.slice(idx + 1);
+		if (suffix.length > 12) {
+			return `${str.slice(0, idx + 1) + suffix.slice(0, 6)}\u2026${suffix.slice(-6)}`;
+		}
+	}
+	if (str.length > 24 && str.indexOf(":") === -1) {
+		return `${str.slice(0, 6)}\u2026${str.slice(-6)}`;
+	}
+	return str;
+}
+
 function ContainerRow(props) {
 	var c = props.container;
 	var sandboxAvailable = props.sandboxAvailable;
@@ -254,7 +269,7 @@ function ContainerRow(props) {
 
 	return html`<div class="provider-item flex-col gap-1 mb-1" style="align-items:stretch;">
     <div class="flex items-center justify-between gap-2 w-full min-w-0">
-      <span class="font-mono text-xs truncate flex-1 text-[var(--text-strong)]">${c.name}</span>
+      <span class="font-mono text-xs truncate flex-1 text-[var(--text-strong)]" title="${c.name}">${truncateHash(c.name)}</span>
       <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full shrink-0"
         style="background:color-mix(in srgb, ${stateInfo.color} 15%, transparent);color:${stateInfo.color};">
         <span class="inline-block w-1.5 h-1.5 rounded-full" style="background:${stateInfo.color};"></span>
@@ -264,7 +279,7 @@ function ContainerRow(props) {
     <div class="flex items-center justify-between gap-2 w-full">
       <div class="flex items-center gap-2 text-xs text-[var(--muted)]">
         <span title="${c.backend}">${backendIcon}</span>
-        <span class="font-mono">${c.image}</span>
+        <span class="font-mono" title="${c.image}">${truncateHash(c.image)}</span>
         ${resources.length > 0 && html`<span>${resources.join(" \u00b7 ")}</span>`}
       </div>
       <div class="flex items-center gap-1">
@@ -471,7 +486,7 @@ function ImageRow(props) {
 	return html`<div class="provider-item" style="margin-bottom:4px;">
     <div style="flex:1;min-width:0;">
       <div class="flex items-center gap-2">
-        <span class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${img.tag}</span>
+        <span class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;" title="${img.tag}">${truncateHash(img.tag)}</span>
         <span class="text-[0.65rem] px-1.5 py-0.5 rounded-full" style="background:color-mix(in srgb, ${kindColor} 15%, transparent);color:${kindColor};">${kindLabel}</span>
       </div>
       <div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">

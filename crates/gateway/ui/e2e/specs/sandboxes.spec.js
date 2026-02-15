@@ -1,6 +1,45 @@
 const { expect, test } = require("@playwright/test");
 const { navigateAndWait, watchPageErrors } = require("../helpers");
 
+test.describe("Sandboxes page – Image tag truncation", () => {
+	test("long image hash tags are truncated in the cached images list", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const longHash = "78e523c6835f0d509a9da736bea2cbaeac5983c8fe5468ed062b557b74518f66";
+		const fullTag = `moltis-sandbox:${longHash}`;
+
+		// Intercept cached images API to inject a long-hash image
+		await page.route("**/api/images/cached", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						images: [
+							{ tag: fullTag, size: "764 MB", created: "2026-02-15T19:30:51Z", kind: "sandbox", skill_name: "sandbox" },
+						],
+					}),
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+
+		// The displayed text should be truncated (first 6 + … + last 6 of hash)
+		const truncated = `moltis-sandbox:${longHash.slice(0, 6)}\u2026${longHash.slice(-6)}`;
+		const tagSpan = page.locator(".provider-item-name", { hasText: truncated });
+		await expect(tagSpan).toBeVisible();
+
+		// Full tag should be in the title attribute for hover
+		await expect(tagSpan).toHaveAttribute("title", fullTag);
+
+		// The full untruncated tag should NOT appear as visible text
+		await expect(page.getByText(fullTag, { exact: true })).not.toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+});
+
 test.describe("Sandboxes page – Running Containers", () => {
 	test("running containers section renders with heading and refresh button", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);

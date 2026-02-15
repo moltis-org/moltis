@@ -10,6 +10,21 @@ function sandboxRuntimeAvailable() {
 	return (S.sandboxInfo?.backend || "none") !== "none";
 }
 
+/** Truncate long hash suffixes: "repo:abcdef…uvwxyz" */
+function truncateHash(str) {
+	var idx = str.lastIndexOf(":");
+	if (idx !== -1) {
+		var suffix = str.slice(idx + 1);
+		if (suffix.length > 12) {
+			return `${str.slice(0, idx + 1) + suffix.slice(0, 6)}\u2026${suffix.slice(-6)}`;
+		}
+	}
+	if (str.length > 24 && str.indexOf(":") === -1) {
+		return `${str.slice(0, 6)}\u2026${str.slice(-6)}`;
+	}
+	return str;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
 function applySandboxControlAvailability() {
 	var available = sandboxRuntimeAvailable();
@@ -95,7 +110,7 @@ export function updateSandboxImageUI(image) {
 		S.sandboxImageLabel.textContent = "unavailable";
 		return;
 	}
-	S.sandboxImageLabel.textContent = image || DEFAULT_IMAGE;
+	S.sandboxImageLabel.textContent = truncateHash(image || DEFAULT_IMAGE);
 }
 
 export function bindSandboxImageEvents() {
@@ -156,7 +171,8 @@ function addImageOption(tag, isActive, subtitle) {
 	}
 
 	var label = document.createElement("div");
-	label.textContent = tag;
+	label.textContent = truncateHash(tag);
+	label.title = tag;
 	opt.appendChild(label);
 
 	if (subtitle) {
