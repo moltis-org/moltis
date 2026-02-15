@@ -179,6 +179,10 @@ impl AgentTool for BrowserTool {
         let sandbox_mode = if let Some(ref router) = self.sandbox_router {
             router.is_sandboxed(session_key).await
         } else {
+            debug!(
+                session_key,
+                "browser running in host mode (no container backend)"
+            );
             false
         };
 
