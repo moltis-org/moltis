@@ -1,5 +1,9 @@
 use std::{
-    collections::HashSet, fs::OpenOptions, io::Write, net::SocketAddr, path::Path as FsPath,
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    io::Write,
+    net::SocketAddr,
+    path::Path as FsPath,
     sync::Arc,
 };
 
@@ -143,11 +147,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -261,13 +268,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -373,31 +381,30 @@ fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }
 
-/// Inject `[env]` config vars into the process environment.
-///
-/// Called early in startup before any provider discovery. Existing env vars
-/// are NOT overwritten so `docker -e` / host env always wins.
-///
-/// # Safety
-/// Uses `std::env::set_var` which is `unsafe` on Rust 1.84+. At this point
-/// in startup we are effectively single-threaded (before tokio spawns).
-#[allow(unsafe_code)]
-fn inject_config_env(env: &std::collections::HashMap<String, String>) {
-    for (key, value) in env {
-        if std::env::var(key).is_ok() {
-            debug!(key, "config [env] key already set in environment, skipping");
-        } else {
-            // SAFETY: single-threaded at this point in startup — no concurrent
-            // threads that could read env vars while we mutate.
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            info!(
-                key,
-                "injected config [env] variable into process environment"
-            );
+fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn merge_env_overrides(
+    base_overrides: &HashMap<String, String>,
+    additional: Vec<(String, String)>,
+) -> HashMap<String, String> {
+    let mut merged = base_overrides.clone();
+    for (key, value) in additional {
+        if key.trim().is_empty() || value.trim().is_empty() {
+            continue;
         }
+        merged.entry(key).or_insert(value);
     }
+    merged
 }
 
 fn log_startup_model_inventory(reg: &ProviderRegistry) {
@@ -1086,6 +1093,7 @@ pub async fn start_gateway(
 
     // Load config file (moltis.toml / .yaml / .json) if present.
     let mut config = moltis_config::discover_and_load();
+    let config_env_overrides = config.env.clone();
     let instance_slug_value = instance_slug(&config);
     let browser_container_prefix = browser_container_prefix(&instance_slug_value);
     let sandbox_container_prefix = sandbox_container_prefix(&instance_slug_value);
@@ -1094,13 +1102,6 @@ pub async fn start_gateway(
     if no_tls {
         config.tls.enabled = false;
     }
-
-    // Inject [env] config vars into process environment.
-    // This makes them available to std::env::var() for provider discovery,
-    // search APIs, embedding services, etc. — matching daemon behavior.
-    // Process env vars take precedence (no overwrite) so `docker -e` or
-    // host env still wins.
-    inject_config_env(&config.env);
 
     let base_provider_config = config.providers.clone();
 
@@ -1115,15 +1116,19 @@ pub async fn start_gateway(
     let auto_detected_provider_sources = if has_explicit_provider_settings {
         Vec::new()
     } else {
-        crate::provider_setup::detect_auto_provider_sources(
+        crate::provider_setup::detect_auto_provider_sources_with_overrides(
             &config.providers,
             deploy_platform.as_deref(),
+            &config_env_overrides,
         )
     };
 
     // Discover LLM providers from env + config + saved keys.
     let registry = Arc::new(tokio::sync::RwLock::new(
-        ProviderRegistry::from_env_with_config(&effective_providers),
+        ProviderRegistry::from_env_with_config_and_overrides(
+            &effective_providers,
+            &config_env_overrides,
+        ),
     ));
     let (provider_summary, providers_available_at_startup) = {
         let reg = registry.read().await;
@@ -1263,7 +1268,8 @@ pub async fn start_gateway(
         Arc::clone(&registry),
         config.providers.clone(),
         deploy_platform.clone(),
-    );
+    )
+    .with_env_overrides(config_env_overrides.clone());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
     services.provider_setup = Arc::new(provider_setup);
 
@@ -1281,16 +1287,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -1366,14 +1373,15 @@ pub async fn start_gateway(
             .expect("failed to init credential store"),
     );
 
-    // Inject Settings UI env vars (stored in SQLite) into the process
-    // environment so they are available to std::env::var() for web_search,
-    // web_fetch, embeddings, provider discovery, etc. — not just sandbox
-    // commands. Process env and config [env] take precedence (no overwrite).
-    if let Ok(db_env_vars) = credential_store.get_all_env_values().await {
-        let db_map: std::collections::HashMap<String, String> = db_env_vars.into_iter().collect();
-        inject_config_env(&db_map);
-    }
+    // Runtime env overrides from the settings UI (`/api/env`) layered after
+    // config `[env]`. Process env remains highest precedence.
+    let runtime_env_overrides = match credential_store.get_all_env_values().await {
+        Ok(db_env_vars) => merge_env_overrides(&config_env_overrides, db_env_vars),
+        Err(error) => {
+            warn!(%error, "failed to load persisted env overrides from credential store");
+            config_env_overrides.clone()
+        },
+    };
 
     // Initialize WebAuthn registry for passkey support.
     // Each hostname the user may access from gets its own RP ID + origins entry
@@ -1688,10 +1696,15 @@ pub async fn start_gateway(
             // Spawn async broadcast in a background task since we're in a sync callback.
             let state = Arc::clone(state);
             tokio::spawn(async move {
-                broadcast(&state, event, payload, BroadcastOpts {
-                    drop_if_slow: true,
-                    ..Default::default()
-                })
+                broadcast(
+                    &state,
+                    event,
+                    payload,
+                    BroadcastOpts {
+                        drop_if_slow: true,
+                        ..Default::default()
+                    },
+                )
                 .await;
             });
         });
@@ -2140,7 +2153,9 @@ pub async fn start_gateway(
                         .api_key
                         .as_ref()
                         .map(|k| k.expose_secret().clone())
-                        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                        .or_else(|| {
+                            env_value_with_overrides(&runtime_env_overrides, "OPENAI_API_KEY")
+                        })
                         .unwrap_or_default();
                     let mut e =
                         moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
@@ -2198,7 +2213,7 @@ pub async fn start_gateway(
             let key = effective_providers
                 .get(config_name)
                 .and_then(|e| e.api_key.as_ref().map(|k| k.expose_secret().clone()))
-                .or_else(|| std::env::var(env_key).ok())
+                .or_else(|| env_value_with_overrides(&runtime_env_overrides, env_key))
                 .filter(|k| !k.is_empty());
             if let Some(api_key) = key {
                 let base = effective_providers
@@ -2557,9 +2572,10 @@ pub async fn start_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
-        if let Some(t) =
-            moltis_tools::web_search::WebSearchTool::from_config(&config.tools.web.search)
-        {
+        if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
+            &config.tools.web.search,
+            &runtime_env_overrides,
+        ) {
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
@@ -3148,10 +3164,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -3214,12 +3235,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
@@ -3339,10 +3363,15 @@ pub async fn start_gateway(
                                 }),
                             ),
                         };
-                        broadcast(&event_state, event_name, payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &event_state,
+                            event_name,
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -3361,10 +3390,15 @@ pub async fn start_gateway(
                 match rx.recv().await {
                     Ok(entry) => {
                         if let Ok(payload) = serde_json::to_value(&entry) {
-                            broadcast(&log_state, "logs.entry", payload, BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            })
+                            broadcast(
+                                &log_state,
+                                "logs.entry",
+                                payload,
+                                BroadcastOpts {
+                                    drop_if_slow: true,
+                                    ..Default::default()
+                                },
+                            )
                             .await;
                         }
                     },
@@ -4163,7 +4197,7 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 async fn oauth_callback_handler(
     State(state): State<AppState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let Some(code) = params.get("code") else {
         return (
@@ -5501,7 +5535,7 @@ async fn api_search_handler(
 
 #[cfg(feature = "web-ui")]
 async fn api_skills_search_handler(
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let source = params.get("source").cloned().unwrap_or_default();
@@ -6456,7 +6490,10 @@ pub(crate) async fn discover_and_build_hooks(
 #[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 #[cfg(test)]
 mod tests {
-    use {super::*, std::collections::HashSet};
+    use {
+        super::*,
+        std::collections::{HashMap, HashSet},
+    };
 
     #[test]
     fn approval_manager_uses_config_values() {
@@ -7370,21 +7407,27 @@ mod tests {
             "https://localhost:49494".to_string(),
             "https://m4max.local:49494".to_string(),
         ]);
-        assert_eq!(lines, vec![
-            "passkey origin: https://localhost:49494",
-            "passkey origin: https://m4max.local:49494",
-        ]);
+        assert_eq!(
+            lines,
+            vec![
+                "passkey origin: https://localhost:49494",
+                "passkey origin: https://m4max.local:49494",
+            ]
+        );
     }
 
     #[test]
     fn startup_setup_code_lines_adds_spacers() {
         let lines = startup_setup_code_lines("493413");
-        assert_eq!(lines, vec![
-            "",
-            "setup code: 493413",
-            "enter this code to set your password or register a passkey",
-            "",
-        ]);
+        assert_eq!(
+            lines,
+            vec![
+                "",
+                "setup code: 493413",
+                "enter this code to set your password or register a passkey",
+                "",
+            ]
+        );
     }
 
     // ── is_local_connection / proxy header detection tests ───────────────
@@ -7635,29 +7678,42 @@ mod tests {
     }
 
     #[test]
-    fn inject_config_env_sets_new_vars() {
-        let unique_key = format!("MOLTIS_TEST_ENV_{}", std::process::id());
-        let env = std::collections::HashMap::from([(unique_key.clone(), "test-value".into())]);
-        inject_config_env(&env);
-        assert_eq!(std::env::var(&unique_key).unwrap(), "test-value");
-        // Clean up.
-        unsafe { std::env::remove_var(&unique_key) };
+    fn merge_env_overrides_keeps_existing_config_values() {
+        let base = HashMap::from([
+            ("OPENAI_API_KEY".to_string(), "config-openai".to_string()),
+            ("BRAVE_API_KEY".to_string(), "config-brave".to_string()),
+        ]);
+        let merged = merge_env_overrides(
+            &base,
+            vec![
+                ("OPENAI_API_KEY".to_string(), "db-openai".to_string()),
+                (
+                    "PERPLEXITY_API_KEY".to_string(),
+                    "db-perplexity".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(
+            merged.get("OPENAI_API_KEY").map(String::as_str),
+            Some("config-openai")
+        );
+        assert_eq!(
+            merged.get("PERPLEXITY_API_KEY").map(String::as_str),
+            Some("db-perplexity")
+        );
+        assert_eq!(
+            merged.get("BRAVE_API_KEY").map(String::as_str),
+            Some("config-brave")
+        );
     }
 
     #[test]
-    fn inject_config_env_does_not_overwrite_existing() {
-        let unique_key = format!("MOLTIS_TEST_NOWRITE_{}", std::process::id());
-        // Pre-set the variable.
-        unsafe { std::env::set_var(&unique_key, "original") };
-        let env =
-            std::collections::HashMap::from([(unique_key.clone(), "should-not-appear".into())]);
-        inject_config_env(&env);
+    fn env_value_with_overrides_uses_override_when_process_env_missing() {
+        let unique_key = format!("MOLTIS_TEST_LOOKUP_{}", std::process::id());
+        let overrides = HashMap::from([(unique_key.clone(), "override-value".to_string())]);
         assert_eq!(
-            std::env::var(&unique_key).unwrap(),
-            "original",
-            "inject_config_env must not overwrite existing env vars"
+            env_value_with_overrides(&overrides, &unique_key).as_deref(),
+            Some("override-value")
         );
-        // Clean up.
-        unsafe { std::env::remove_var(&unique_key) };
     }
 }

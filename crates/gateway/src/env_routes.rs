@@ -87,33 +87,6 @@ impl IntoResponse for EnvListResponse {
     }
 }
 
-// ── Process env helpers ──────────────────────────────────────────────────────
-
-/// Inject a single env var into the process environment.
-///
-/// # Safety
-/// Uses `std::env::set_var` which is `unsafe` on Rust 1.84+.
-/// The underlying libc `setenv` uses internal locking on major platforms.
-#[allow(unsafe_code)]
-fn sync_env_var(key: &str, value: &str) {
-    // SAFETY: libc setenv is internally synchronized on Linux/macOS.
-    unsafe {
-        std::env::set_var(key, value);
-    }
-}
-
-/// Remove a single env var from the process environment.
-///
-/// # Safety
-/// Uses `std::env::remove_var` which is `unsafe` on Rust 1.84+.
-#[allow(unsafe_code)]
-fn remove_env_var(key: &str) {
-    // SAFETY: libc unsetenv is internally synchronized on Linux/macOS.
-    unsafe {
-        std::env::remove_var(key);
-    }
-}
-
 // ── Route handlers ───────────────────────────────────────────────────────────
 
 /// List all environment variables (names only, no values).
@@ -168,10 +141,6 @@ pub(crate) async fn env_set(
         .await
         .map_err(ApiError::internal)?;
 
-    // Also inject into process environment so features that read
-    // std::env::var() (web search, embeddings, etc.) pick up the
-    // change immediately without requiring a restart.
-    sync_env_var(key, &value);
     Ok(OkResponse::success())
 }
 
@@ -186,12 +155,7 @@ pub(crate) async fn env_delete(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("no credential store"))?;
 
-    let key = store.delete_env_var(id).await.map_err(ApiError::internal)?;
-
-    // Remove from process environment so the change is immediate.
-    if let Some(key) = key {
-        remove_env_var(&key);
-    }
+    let _ = store.delete_env_var(id).await.map_err(ApiError::internal)?;
 
     Ok(OkResponse::success())
 }

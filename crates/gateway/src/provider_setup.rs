@@ -200,11 +200,14 @@ impl KeyStore {
             return old_format
                 .into_iter()
                 .map(|(k, v)| {
-                    (k, ProviderConfig {
-                        api_key: Some(v),
-                        base_url: None,
-                        models: Vec::new(),
-                    })
+                    (
+                        k,
+                        ProviderConfig {
+                            api_key: Some(v),
+                            base_url: None,
+                            models: Vec::new(),
+                        },
+                    )
                 })
                 .collect();
         }
@@ -848,6 +851,18 @@ fn normalize_provider_name(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
 fn ui_offered_provider_order(config: &ProvidersConfig) -> Vec<String> {
     let mut ordered = Vec::new();
     for name in &config.offered {
@@ -879,9 +894,10 @@ pub(crate) fn has_explicit_provider_settings(config: &ProvidersConfig) -> bool {
     })
 }
 
-pub(crate) fn detect_auto_provider_sources(
+pub(crate) fn detect_auto_provider_sources_with_overrides(
     config: &ProvidersConfig,
     deploy_platform: Option<&str>,
+    env_overrides: &HashMap<String, String>,
 ) -> Vec<AutoDetectedProviderSource> {
     let is_cloud = deploy_platform.is_some();
     let key_store = KeyStore::new();
@@ -907,9 +923,7 @@ pub(crate) fn detect_auto_provider_sources(
         let mut sources = Vec::new();
 
         if let Some(env_key) = provider.env_key
-            && std::env::var(env_key)
-                .ok()
-                .is_some_and(|v| !v.trim().is_empty())
+            && env_value_with_overrides(env_overrides, env_key).is_some()
         {
             sources.push(format!("env:{env_key}"));
         }
@@ -1002,6 +1016,9 @@ pub struct LiveProviderSetupService {
     priority_models: Option<Arc<RwLock<Vec<String>>>>,
     /// Monotonic sequence used to drop stale async registry refreshes.
     registry_rebuild_seq: Arc<AtomicU64>,
+    /// Static env overrides (for example config `[env]`) used when resolving
+    /// provider credentials without mutating the process environment.
+    env_overrides: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -1026,7 +1043,13 @@ impl LiveProviderSetupService {
             deploy_platform,
             priority_models: None,
             registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
+            env_overrides: HashMap::new(),
         }
+    }
+
+    pub fn with_env_overrides(mut self, env_overrides: HashMap<String, String>) -> Self {
+        self.env_overrides = env_overrides;
+        self
     }
 
     /// Wire the shared priority models handle from `LiveModelService` so
@@ -1041,6 +1064,7 @@ impl LiveProviderSetupService {
         let registry = Arc::clone(&self.registry);
         let config = Arc::clone(&self.config);
         let key_store = self.key_store.clone();
+        let env_overrides = self.env_overrides.clone();
         let provider_name = provider_name.to_string();
 
         tokio::spawn(async move {
@@ -1058,7 +1082,7 @@ impl LiveProviderSetupService {
             };
 
             let new_registry = match tokio::task::spawn_blocking(move || {
-                ProviderRegistry::from_env_with_config(&effective)
+                ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
             })
             .await
             {
@@ -1132,7 +1156,7 @@ impl LiveProviderSetupService {
 
         // Check if the provider has an API key set via env
         if let Some(env_key) = provider.env_key
-            && std::env::var(env_key).is_ok()
+            && env_value_with_overrides(&self.env_overrides, env_key).is_some()
         {
             return true;
         }
@@ -1231,6 +1255,7 @@ impl LiveProviderSetupService {
         let token_store = self.token_store.clone();
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
+        let env_overrides = self.env_overrides.clone();
         let poll_headers = extra_headers.clone();
         tokio::spawn(async move {
             let poll_extra = poll_headers.as_ref();
@@ -1252,7 +1277,10 @@ impl LiveProviderSetupService {
                         );
                         return;
                     }
-                    let new_registry = ProviderRegistry::from_env_with_config(&config);
+                    let new_registry = ProviderRegistry::from_env_with_config_and_overrides(
+                        &config,
+                        &env_overrides,
+                    );
                     let provider_summary = new_registry.provider_summary();
                     let model_count = new_registry.list_models().len();
                     let mut reg = registry.write().await;
@@ -1286,6 +1314,10 @@ impl LiveProviderSetupService {
     fn effective_config(&self) -> ProvidersConfig {
         let base = self.config_snapshot();
         config_with_saved_keys(&base, &self.key_store)
+    }
+
+    fn build_registry(&self, config: &ProvidersConfig) -> ProviderRegistry {
+        ProviderRegistry::from_env_with_config_and_overrides(config, &self.env_overrides)
     }
 
     fn has_oauth_tokens(&self, provider_name: &str) -> bool {
@@ -1511,7 +1543,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         // Rebuild the provider registry with saved keys merged into config.
         let effective = self.effective_config();
-        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let new_registry = self.build_registry(&effective);
         let provider_summary = new_registry.provider_summary();
         let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
@@ -1552,7 +1584,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         // skip launching a fresh OAuth flow and rebuild the registry immediately.
         if self.has_oauth_tokens(&provider_name) {
             let effective = self.effective_config();
-            let new_registry = ProviderRegistry::from_env_with_config(&effective);
+            let new_registry = self.build_registry(&effective);
             let provider_summary = new_registry.provider_summary();
             let model_count = new_registry.list_models().len();
             let mut reg = self.registry.write().await;
@@ -1609,6 +1641,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         let token_store = self.token_store.clone();
         let registry = Arc::clone(&self.registry);
         let config = self.effective_config();
+        let env_overrides = self.env_overrides.clone();
         tokio::spawn(async move {
             match CallbackServer::wait_for_code(port, expected_state).await {
                 Ok(code) => {
@@ -1623,7 +1656,10 @@ impl ProviderSetupService for LiveProviderSetupService {
                                 return;
                             }
                             // Rebuild registry with new tokens
-                            let new_registry = ProviderRegistry::from_env_with_config(&config);
+                            let new_registry = ProviderRegistry::from_env_with_config_and_overrides(
+                                &config,
+                                &env_overrides,
+                            );
                             let provider_summary = new_registry.provider_summary();
                             let model_count = new_registry.list_models().len();
                             let mut reg = registry.write().await;
@@ -1691,7 +1727,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         self.set_provider_enabled_in_memory(&pending.provider_name, true);
 
         let effective = self.effective_config();
-        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let new_registry = self.build_registry(&effective);
         let provider_summary = new_registry.provider_summary();
         let model_count = new_registry.list_models().len();
         let mut reg = self.registry.write().await;
@@ -1749,7 +1785,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         // Rebuild the provider registry without the removed provider.
         let effective = self.effective_config();
-        let new_registry = ProviderRegistry::from_env_with_config(&effective);
+        let new_registry = self.build_registry(&effective);
         let mut reg = self.registry.write().await;
         *reg = new_registry;
 
@@ -1868,7 +1904,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         );
 
         // Build a temporary registry from the temp config.
-        let temp_registry = ProviderRegistry::from_env_with_config(&temp_config);
+        let temp_registry = self.build_registry(&temp_config);
 
         // Filter models for this provider.
         let models: Vec<_> = temp_registry
@@ -2422,9 +2458,11 @@ mod tests {
         let mut handles = Vec::new();
         for (provider, key, models) in [
             ("openai", "sk-openai", vec!["gpt-5".to_string()]),
-            ("anthropic", "sk-anthropic", vec![
-                "claude-sonnet-4".to_string(),
-            ]),
+            (
+                "anthropic",
+                "sk-anthropic",
+                vec!["claude-sonnet-4".to_string()],
+            ),
         ] {
             let store = store.clone();
             handles.push(std::thread::spawn(move || {
@@ -2552,12 +2590,13 @@ mod tests {
             .expect("openai-codex should exist");
 
         let mut config = ProvidersConfig::default();
-        config
-            .providers
-            .insert("openai-codex".into(), ProviderEntry {
+        config.providers.insert(
+            "openai-codex".into(),
+            ProviderEntry {
                 enabled: false,
                 ..Default::default()
-            });
+            },
+        );
 
         assert!(!svc.is_provider_configured(&provider, &config));
     }
@@ -2584,10 +2623,13 @@ mod tests {
         store.save("anthropic", "sk-saved").unwrap();
 
         let mut base = ProvidersConfig::default();
-        base.providers.insert("anthropic".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-config".into())),
-            ..Default::default()
-        });
+        base.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-config".into())),
+                ..Default::default()
+            },
+        );
         let merged = config_with_saved_keys(&base, &store);
         let entry = merged.get("anthropic").unwrap();
         // Config key takes precedence over saved key.
@@ -2701,10 +2743,13 @@ mod tests {
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        config.providers.insert("anthropic".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-test".into())),
-            ..Default::default()
-        });
+        config.providers.insert(
+            "anthropic".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
         let svc = LiveProviderSetupService::new(registry, config, None);
         let result = svc.available().await.unwrap();
         let arr = result
@@ -2869,11 +2914,14 @@ mod tests {
             Some(&home)
         ));
 
-        home.save("github-copilot", &OAuthTokens {
-            access_token: Secret::new("home-token".to_string()),
-            refresh_token: None,
-            expires_at: None,
-        })
+        home.save(
+            "github-copilot",
+            &OAuthTokens {
+                access_token: Secret::new("home-token".to_string()),
+                refresh_token: None,
+                expires_at: None,
+            },
+        )
         .expect("save home token");
 
         assert!(has_oauth_tokens_for_provider(
@@ -3070,17 +3118,23 @@ mod tests {
         let mut empty = ProvidersConfig::default();
         assert!(!has_explicit_provider_settings(&empty));
 
-        empty.providers.insert("openai".into(), ProviderEntry {
-            api_key: Some(Secret::new("sk-test".into())),
-            ..Default::default()
-        });
+        empty.providers.insert(
+            "openai".into(),
+            ProviderEntry {
+                api_key: Some(Secret::new("sk-test".into())),
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&empty));
 
         let mut model_only = ProvidersConfig::default();
-        model_only.providers.insert("ollama".into(), ProviderEntry {
-            models: vec!["llama3".into()],
-            ..Default::default()
-        });
+        model_only.providers.insert(
+            "ollama".into(),
+            ProviderEntry {
+                models: vec!["llama3".into()],
+                ..Default::default()
+            },
+        );
         assert!(has_explicit_provider_settings(&model_only));
     }
 
