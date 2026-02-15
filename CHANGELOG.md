@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and auto-install via the system package manager when none is found. Requests
   can specify a preferred browser (`"browser": "brave"`) or let the system
   pick the first available one.
+- **Z.AI provider**: add Z.AI (Zhipu) as an OpenAI-compatible provider with
+  static model catalog (GLM-5, GLM-4.7, GLM-4.6, GLM-4.5 series) and dynamic
+  model discovery via `/models` endpoint. Supports tool calling, streaming,
+  vision (GLM-4.6V/4.5V), and reasoning content.
 
 ### Changed
 
