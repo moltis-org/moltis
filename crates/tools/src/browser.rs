@@ -96,6 +96,9 @@ impl AgentTool for BrowserTool {
          REQUIRED: You MUST specify an 'action' parameter. Example:\n\
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
          Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
+         BROWSER CHOICE: optionally set \"browser\" to choose one (auto, chrome, chromium, \
+         edge, brave, opera, vivaldi, arc). If no browser is installed, Moltis will try \
+         to auto-install one.\n\n\
          SESSION: The browser session is automatically tracked. After 'navigate', \
          subsequent actions will reuse the same browser. No need to pass session_id.\n\n\
          WORKFLOW:\n\
@@ -119,6 +122,11 @@ impl AgentTool for BrowserTool {
                 "session_id": {
                     "type": "string",
                     "description": "Browser session ID (omit to create new session, or reuse existing)"
+                },
+                "browser": {
+                    "type": "string",
+                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc"],
+                    "description": "Browser to use for host mode. Default: auto (first installed browser)."
                 },
                 "url": {
                     "type": "string",

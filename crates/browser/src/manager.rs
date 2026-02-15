@@ -24,7 +24,7 @@ use crate::{
     snapshot::{
         extract_snapshot, find_element_by_ref, focus_element_by_ref, scroll_element_into_view,
     },
-    types::{BrowserAction, BrowserConfig, BrowserRequest, BrowserResponse},
+    types::{BrowserAction, BrowserConfig, BrowserPreference, BrowserRequest, BrowserResponse},
 };
 
 /// Extract session_id or return an error for actions that require an existing session.
@@ -100,6 +100,7 @@ impl BrowserManager {
         info!(
             action = %request.action,
             session_id = request.session_id.as_deref().unwrap_or("(new)"),
+            browser = ?request.browser,
             execution_mode = mode,
             sandbox_image = %self.config.sandbox_image,
             "executing browser action"
@@ -110,7 +111,12 @@ impl BrowserManager {
 
         match timeout(
             timeout_duration,
-            self.execute_action(request.session_id.as_deref(), request.action, sandbox),
+            self.execute_action(
+                request.session_id.as_deref(),
+                request.action,
+                sandbox,
+                request.browser,
+            ),
         )
         .await
         {
@@ -162,17 +168,20 @@ impl BrowserManager {
         session_id: Option<&str>,
         action: BrowserAction,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         match action {
-            BrowserAction::Navigate { url } => self.navigate(session_id, &url, sandbox).await,
+            BrowserAction::Navigate { url } => {
+                self.navigate(session_id, &url, sandbox, browser).await
+            },
             BrowserAction::Screenshot {
                 full_page,
                 highlight_ref,
             } => {
-                self.screenshot(session_id, full_page, highlight_ref, sandbox)
+                self.screenshot(session_id, full_page, highlight_ref, sandbox, browser)
                     .await
             },
-            BrowserAction::Snapshot => self.snapshot(session_id, sandbox).await,
+            BrowserAction::Snapshot => self.snapshot(session_id, sandbox, browser).await,
             BrowserAction::Click { ref_ } => self.click(session_id, ref_, sandbox).await,
             BrowserAction::Type { ref_, text } => {
                 self.type_text(session_id, ref_, &text, sandbox).await
@@ -204,6 +213,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         url: &str,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         // Validate URL before navigation
         validate_url(url)?;
@@ -216,7 +226,10 @@ impl BrowserManager {
             )));
         }
 
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
         #[cfg(feature = "metrics")]
@@ -232,7 +245,7 @@ impl BrowserManager {
                 );
                 let _ = self.pool.close_session(&sid).await;
                 // Retry with a fresh session (use same sandbox mode)
-                let new_sid = self.pool.get_or_create(None, sandbox).await?;
+                let new_sid = self.pool.get_or_create(None, sandbox, browser).await?;
                 let new_page = self.pool.get_page(&new_sid).await?;
                 new_page
                     .goto(url)
@@ -280,8 +293,12 @@ impl BrowserManager {
         full_page: bool,
         highlight_ref: Option<u32>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
         // Optionally highlight an element before screenshot
@@ -351,8 +368,12 @@ impl BrowserManager {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
         // Try snapshot, retry with fresh session if connection is dead
