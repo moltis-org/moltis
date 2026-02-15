@@ -952,7 +952,17 @@ mod tests {
         let mut state = StreamingToolState::default();
         let data = r#"{"choices":[],"usage":{"input_tokens":64,"output_tokens":19,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}"#;
         let result = process_openai_sse_line(data, &mut state);
-        assert!(matches!(result, SseLineResult::Skip));
+        // Usage-only chunks emit only ProviderRaw, no content Delta
+        match result {
+            SseLineResult::Events(events) => {
+                assert!(
+                    events
+                        .iter()
+                        .all(|e| matches!(e, StreamEvent::ProviderRaw(_)))
+                );
+            },
+            _ => panic!("Expected Events with ProviderRaw"),
+        }
         assert_eq!(state.input_tokens, 64);
         assert_eq!(state.output_tokens, 19);
         assert_eq!(state.cache_read_tokens, 5);
@@ -964,7 +974,17 @@ mod tests {
         let mut state = StreamingToolState::default();
         let data = r#"{"choices":[{"usage":{"prompt_tokens":18,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4}}}]}"#;
         let result = process_openai_sse_line(data, &mut state);
-        assert!(matches!(result, SseLineResult::Skip));
+        // Usage-only chunks emit only ProviderRaw, no content Delta
+        match result {
+            SseLineResult::Events(events) => {
+                assert!(
+                    events
+                        .iter()
+                        .all(|e| matches!(e, StreamEvent::ProviderRaw(_)))
+                );
+            },
+            _ => panic!("Expected Events with ProviderRaw"),
+        }
         assert_eq!(state.input_tokens, 18);
         assert_eq!(state.output_tokens, 7);
         assert_eq!(state.cache_read_tokens, 4);
@@ -986,8 +1006,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello"));
+                // First event is always ProviderRaw, second is the Delta
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
+                assert!(matches!(&events[1], StreamEvent::Delta(s) if s == "Hello"));
             },
             _ => panic!("Expected Events"),
         }
@@ -1000,9 +1022,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ReasoningDelta(s) if s == "plan step"
                 ));
             },
@@ -1017,9 +1040,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ToolCallStart { id, name, index }
                     if id == "call_1" && name == "test" && *index == 0
                 ));
@@ -1041,9 +1065,10 @@ mod tests {
         let result = process_openai_sse_line(args_data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ToolCallArgumentsDelta { index, delta }
                     if *index == 0 && delta == "{\"x\":"
                 ));
@@ -1323,13 +1348,14 @@ mod tests {
         // First chunk: starts with partial opening tag
         let data1 = r#"{"choices":[{"delta":{"content":"<thi"}}]}"#;
         let result1 = process_openai_sse_line(data1, &mut state);
-        // Should hold back the partial tag — no Delta emitted
+        // Should hold back the partial tag — only ProviderRaw emitted, no Delta
         match result1 {
             SseLineResult::Events(events) => {
-                assert!(
-                    events.is_empty(),
-                    "partial tag should be buffered, got {events:?}"
-                );
+                let delta_count = events
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Delta(_)))
+                    .count();
+                assert_eq!(delta_count, 0, "partial tag should be buffered");
             },
             SseLineResult::Skip => {},
             _ => panic!("Expected Events or Skip"),
