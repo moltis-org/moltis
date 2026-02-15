@@ -3708,7 +3708,7 @@ fn resolve_outbound_ip(ipv6: bool) -> Option<std::net::IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
-fn startup_bind_line(addr: std::net::SocketAddr) -> String {
+fn startup_bind_line(addr: SocketAddr) -> String {
     format!("bind (--bind): {addr}")
 }
 
@@ -6931,7 +6931,7 @@ mod tests {
 
     #[test]
     fn startup_bind_line_includes_bind_flag_and_address() {
-        let addr: std::net::SocketAddr = "0.0.0.0:49494".parse().unwrap();
+        let addr: SocketAddr = "0.0.0.0:49494".parse().unwrap();
         assert_eq!(startup_bind_line(addr), "bind (--bind): 0.0.0.0:49494");
     }
 
