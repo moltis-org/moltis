@@ -1447,8 +1447,6 @@ fn is_apple_container_corruption_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     is_apple_container_service_error(stderr)
         || is_apple_container_exists_error(stderr)
-        || is_apple_container_unavailable_error(stderr)
-        || lower.contains("failed to stay running after startup")
         || lower.contains("failed to bootstrap container")
         || lower.contains("config.json")
 }
@@ -1775,43 +1773,52 @@ impl Sandbox for AppleContainerSandbox {
             );
         }
 
-        if let Err(error) = Self::wait_for_container_exec_ready(&name).await {
-            warn!(
-                name,
-                %error,
-                "apple container did not become ready after create, recreating once"
-            );
-            Self::force_remove_and_wait(&name).await;
-
-            name = self.bump_container_generation(id).await;
-            if let Some(slot) = run_args
-                .iter()
-                .position(|arg| arg == "--name")
-                .and_then(|idx| run_args.get_mut(idx + 1))
-            {
-                *slot = name.clone();
-            }
-
-            output = tokio::process::Command::new("container")
-                .args(&run_args)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if is_apple_container_service_error(&stderr) {
-                    anyhow::bail!(
-                        "apple container service is not running. \
-                         Start it with `container system start` and restart moltis"
+        const MAX_EXEC_READY_RECREATE_ATTEMPTS: usize = 4;
+        for attempt in 0..MAX_EXEC_READY_RECREATE_ATTEMPTS {
+            match Self::wait_for_container_exec_ready(&name).await {
+                Ok(()) => break,
+                Err(error) => {
+                    if attempt + 1 >= MAX_EXEC_READY_RECREATE_ATTEMPTS {
+                        return Err(error);
+                    }
+                    warn!(
+                        name,
+                        %error,
+                        attempt,
+                        max_attempts = MAX_EXEC_READY_RECREATE_ATTEMPTS,
+                        "apple container did not become exec-ready after create, recreating"
                     );
-                }
-                anyhow::bail!(
-                    "container run failed for {name} (image={image}): {}",
-                    stderr.trim()
-                );
-            }
+                    Self::force_remove_and_wait(&name).await;
 
-            Self::wait_for_container_exec_ready(&name).await?;
+                    name = self.bump_container_generation(id).await;
+                    if let Some(slot) = run_args
+                        .iter()
+                        .position(|arg| arg == "--name")
+                        .and_then(|idx| run_args.get_mut(idx + 1))
+                    {
+                        *slot = name.clone();
+                    }
+
+                    output = tokio::process::Command::new("container")
+                        .args(&run_args)
+                        .output()
+                        .await?;
+
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        if is_apple_container_service_error(&stderr) {
+                            anyhow::bail!(
+                                "apple container service is not running. \
+                                 Start it with `container system start` and restart moltis"
+                            );
+                        }
+                        anyhow::bail!(
+                            "container run failed for {name} (image={image}): {}",
+                            stderr.trim()
+                        );
+                    }
+                },
+            }
         }
 
         info!(name, image, "apple container created and running");
@@ -2952,14 +2959,11 @@ mod tests {
         assert!(is_apple_container_corruption_error(
             "failed to bootstrap container because config.json is missing"
         ));
-        assert!(is_apple_container_corruption_error(
+        assert!(!is_apple_container_corruption_error(
             "cannot exec: container is not running"
         ));
-        assert!(is_apple_container_corruption_error(
+        assert!(!is_apple_container_corruption_error(
             "invalidState: \"no sandbox client exists: container is stopped\""
-        ));
-        assert!(is_apple_container_corruption_error(
-            "container foo failed to stay running after startup"
         ));
         assert!(!is_apple_container_corruption_error("permission denied"));
     }
@@ -3010,7 +3014,7 @@ mod tests {
         let primary = Arc::new(TestSandbox::new(
             "apple-container",
             None,
-            Some("cannot exec: container is not running"),
+            Some("failed to bootstrap container: config.json missing"),
         ));
         let fallback = Arc::new(TestSandbox::new("docker", None, None));
         let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
