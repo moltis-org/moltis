@@ -2251,6 +2251,7 @@ pub async fn start_gateway(
             ("minimax", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
             ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
             ("venice", "VENICE_API_KEY", "https://api.venice.ai/api/v1"),
+            ("zaps", "ZAPS_API_KEY", "https://zaps.ai/v1"),
         ];
 
         for (config_name, env_key, default_base) in EMBEDDING_CANDIDATES {
