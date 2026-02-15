@@ -587,7 +587,7 @@ ${contextText}`;
 		headerRow.appendChild(copyBtn);
 
 		var downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
-		downloadBtn.textContent = "download";
+		downloadBtn.textContent = "Download";
 		downloadBtn.addEventListener("click", () => {
 			var lines = [];
 			for (var m of messages) {

@@ -339,7 +339,7 @@ test.describe("Chat input and slash commands", () => {
 		expect(copyBtn).not.toBeNull();
 
 		const panel = page.locator("#fullContextPanel");
-		const downloadBtn = panel.getByRole("button", { name: "download", exact: true });
+		const downloadBtn = panel.getByRole("button", { name: "Download", exact: true });
 		await expect(downloadBtn).toBeVisible();
 		await expect(downloadBtn).toHaveClass(/provider-btn-sm/);
 
