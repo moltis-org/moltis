@@ -19,6 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.8.33] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **CI**: remove unnecessary `std::path::` qualification in gateway server flagged
+  by nightly clippy.
+
+### Security
+
 ## [0.8.32] - 2026-02-15
 
 
