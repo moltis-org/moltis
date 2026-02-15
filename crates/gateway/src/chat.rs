@@ -3968,6 +3968,8 @@ async fn run_with_tools(
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        // Track reasoning text that should be persisted with the first tool call after thinking.
+        let mut tool_reasoning_map: HashMap<String, String> = HashMap::new();
         let mut latest_reasoning = String::new();
         while let Some(event) = event_rx.recv().await {
             let state = Arc::clone(&state_for_events);
@@ -3994,6 +3996,12 @@ async fn run_with_tools(
                     arguments,
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
+
+                    // Attach reasoning to the first tool call after thinking.
+                    if !latest_reasoning.is_empty() {
+                        tool_reasoning_map
+                            .insert(id.clone(), std::mem::take(&mut latest_reasoning));
+                    }
 
                     // Send tool status to channels (Telegram, etc.)
                     let state_clone = Arc::clone(&state);
@@ -4177,13 +4185,15 @@ async fn run_with_tools(
                             }
                             r
                         });
-                        let tool_result_msg = PersistedMessage::tool_result(
+                        let tracked_reasoning = tool_reasoning_map.remove(&id);
+                        let tool_result_msg = PersistedMessage::tool_result_with_reasoning(
                             id,
                             name,
                             tracked_args,
                             success,
                             persisted_result,
                             error,
+                            tracked_reasoning,
                         );
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();

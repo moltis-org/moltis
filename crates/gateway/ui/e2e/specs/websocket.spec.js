@@ -381,6 +381,77 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("thinking text is preserved as reasoning disclosure when tool call follows", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		await expectRpcOk(page, "chat.clear", {});
+
+		// 1. thinking indicator appears
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: { sessionKey: "main", state: "thinking", runId: "run-think-tool" },
+		});
+		await expect(page.locator("#thinkingIndicator")).toBeVisible();
+
+		// 2. thinking text arrives
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "thinking_text",
+				runId: "run-think-tool",
+				text: "I need to search the web for recent news",
+			},
+		});
+		await expect(page.locator("#thinkingIndicator .thinking-text")).toContainText("I need to search the web");
+
+		// 3. thinking_done — indicator should NOT be removed yet
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: { sessionKey: "main", state: "thinking_done", runId: "run-think-tool" },
+		});
+		await expect(page.locator("#thinkingIndicator")).toBeVisible();
+
+		// 4. tool_call_start — thinking text is preserved as disclosure, indicator removed
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				runId: "run-think-tool",
+				toolCallId: "tc-web-search-1",
+				toolName: "web_search",
+				arguments: { query: "top news today" },
+			},
+		});
+		await expect(page.locator("#thinkingIndicator")).toHaveCount(0);
+		// Reasoning disclosure is inside the tool card
+		const toolCard = page.locator("#tool-run-think-tool-tc-web-search-1");
+		await expect(toolCard).toBeVisible();
+		await expect(toolCard.locator(".msg-reasoning")).toBeVisible();
+		await expect(toolCard.locator(".msg-reasoning-body")).toContainText("I need to search the web for recent news");
+
+		// 5. final with same reasoning should NOT duplicate the disclosure
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "Here are the top news stories.",
+				messageIndex: 999998,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+				reasoning: "I need to search the web for recent news",
+			},
+		});
+		// Only one reasoning disclosure should exist (the preserved one, not a duplicate)
+		await expect(page.locator(".msg-reasoning")).toHaveCount(1);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("auth.credentials_changed event redirects through /login", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
