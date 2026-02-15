@@ -4451,7 +4451,7 @@ async fn run_with_tools(
             let tool_calls_made = result.tool_calls_made;
             let usage = result.usage;
             let llm_api_response = (!result.raw_llm_responses.is_empty())
-                .then(|| Value::Array(result.raw_llm_responses));
+                .then_some(Value::Array(result.raw_llm_responses));
             let display_text = result.text;
             let is_silent = display_text.trim().is_empty();
 
@@ -4856,7 +4856,7 @@ async fn run_streaming(
                         .await;
                 }
                 let llm_api_response =
-                    (!raw_llm_responses.is_empty()).then(|| Value::Array(raw_llm_responses));
+                    (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
                 return Some(AssistantTurnOutput {
                     text: accumulated,
                     input_tokens: usage.input_tokens,
