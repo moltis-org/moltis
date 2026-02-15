@@ -37,6 +37,7 @@ anyhow             = { workspace = true }
 clap               = { workspace = true }
 dotenvy            = { workspace = true }
 moltis-agents      = { workspace = true }
+moltis-browser     = { workspace = true }
 moltis-common      = { workspace = true }
 moltis-config      = { workspace = true }
 moltis-cron        = { workspace = true }

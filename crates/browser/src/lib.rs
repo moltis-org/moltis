@@ -40,5 +40,8 @@ pub mod types;
 pub use {
     error::BrowserError,
     manager::BrowserManager,
-    types::{BrowserAction, BrowserConfig, BrowserRequest, BrowserResponse},
+    types::{
+        BrowserAction, BrowserConfig, BrowserKind, BrowserPreference, BrowserRequest,
+        BrowserResponse,
+    },
 };

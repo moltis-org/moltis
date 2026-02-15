@@ -3708,7 +3708,7 @@ mod tests {
             })
             .collect();
         assert!(
-            thinking_texts.iter().any(|t| *t == "internal plan"),
+            thinking_texts.contains(&"internal plan"),
             "expected reasoning to be exposed via ThinkingText"
         );
     }

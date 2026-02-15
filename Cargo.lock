@@ -4351,6 +4351,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "moltis-agents",
+ "moltis-browser",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
