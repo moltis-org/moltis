@@ -1505,8 +1505,9 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello world"));
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
+                assert!(matches!(&events[1], StreamEvent::Delta(s) if s == "Hello world"));
             },
             _ => panic!("Expected Events"),
         }
