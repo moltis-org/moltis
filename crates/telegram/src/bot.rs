@@ -36,7 +36,7 @@ pub async fn start_polling(
     let client = teloxide::net::default_reqwest_settings()
         .timeout(std::time::Duration::from_secs(45))
         .build()?;
-    let bot = teloxide::Bot::with_client(config.token.expose_secret(), client);
+    let bot = Bot::with_client(config.token.expose_secret(), client);
 
     // Verify credentials and get bot username.
     let me = bot.get_me().await?;

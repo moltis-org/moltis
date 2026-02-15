@@ -675,7 +675,7 @@ impl LlmProvider for LazyLocalGgufProvider {
 
     fn context_window(&self) -> u32 {
         // Use model definition if available, otherwise default
-        models::find_model(&self.config.model_id)
+        find_model(&self.config.model_id)
             .map(|d| d.context_window)
             .unwrap_or(8192)
     }

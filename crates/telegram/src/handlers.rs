@@ -1174,7 +1174,7 @@ pub async fn handle_callback_query(
         (state.event_sink.clone(), Arc::clone(&state.outbound))
     };
 
-    let reply_target = moltis_channels::ChannelReplyTarget {
+    let reply_target = ChannelReplyTarget {
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),
         chat_id: chat_id.clone(),
@@ -1659,7 +1659,7 @@ mod tests {
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
-        ) -> anyhow::Result<String> {
+        ) -> Result<String> {
             Ok(String::new())
         }
 
@@ -1779,7 +1779,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
-        let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+        let bot = Bot::new("test-token").set_api_url(api_url);
 
         let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
         let outbound = Arc::new(TelegramOutbound {
@@ -1802,7 +1802,7 @@ mod tests {
                 cancel: CancellationToken::new(),
                 message_log: None,
                 event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
-                otp: std::sync::Mutex::new(OtpState::new(300)),
+                otp: Mutex::new(OtpState::new(300)),
             });
         }
 

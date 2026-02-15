@@ -28,18 +28,16 @@ use crate::{
 /// Returns Err if download failed.
 pub async fn ensure_local_model_cached(
     model_id: &str,
-    state: &Arc<crate::state::GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> Result<bool, String> {
     let cache_dir = local_gguf::models::default_models_dir();
     info!(model_id, ?cache_dir, "checking if local model is cached");
 
     // First check the unified registry
-    if let Some(def) = moltis_agents::providers::local_llm::models::find_model(model_id) {
+    if let Some(def) = local_llm::models::find_model(model_id) {
         // Determine backend type
-        let backend =
-            moltis_agents::providers::local_llm::backend::detect_backend_for_model(model_id);
-        let is_cached =
-            moltis_agents::providers::local_llm::models::is_model_cached(def, backend, &cache_dir);
+        let backend = local_llm::backend::detect_backend_for_model(model_id);
+        let is_cached = local_llm::models::is_model_cached(def, backend, &cache_dir);
 
         info!(model_id, is_cached, "found in unified registry");
 
@@ -78,10 +76,10 @@ pub async fn ensure_local_model_cached(
 
 /// Download a model from the unified registry with progress broadcasting.
 async fn download_unified_model(
-    model: &'static moltis_agents::providers::local_llm::models::LocalModelDef,
-    backend: moltis_agents::providers::local_llm::backend::BackendType,
+    model: &'static local_llm::models::LocalModelDef,
+    backend: local_llm::backend::BackendType,
     cache_dir: &std::path::Path,
-    state: &Arc<crate::state::GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> Result<bool, String> {
     use moltis_agents::providers::local_llm::models as llm_models;
 
@@ -136,13 +134,13 @@ async fn download_unified_model(
 
     // Download based on backend
     let result = match backend {
-        moltis_agents::providers::local_llm::backend::BackendType::Gguf => {
+        local_llm::backend::BackendType::Gguf => {
             llm_models::ensure_model_with_progress(model, cache_dir, |p| {
                 let _ = tx.send((p.downloaded, p.total));
             })
             .await
         },
-        moltis_agents::providers::local_llm::backend::BackendType::Mlx => {
+        local_llm::backend::BackendType::Mlx => {
             llm_models::ensure_mlx_model_with_progress(model, cache_dir, |p| {
                 let _ = tx.send((p.downloaded, p.total));
             })
@@ -192,7 +190,7 @@ async fn download_unified_model(
 async fn download_legacy_model(
     model: &'static local_gguf::models::GgufModelDef,
     cache_dir: &std::path::Path,
-    state: &Arc<crate::state::GatewayState>,
+    state: &Arc<GatewayState>,
 ) -> Result<bool, String> {
     let model_id = model.id.to_string();
     let display_name = model.display_name.to_string();

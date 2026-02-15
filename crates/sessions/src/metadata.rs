@@ -908,7 +908,7 @@ mod tests {
         // Existing metadata without sandbox_enabled should deserialize fine.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meta.json");
-        std::fs::write(
+        fs::write(
             &path,
             r#"{"main":{"id":"1","key":"main","label":null,"created_at":0,"updated_at":0,"message_count":0}}"#,
         )

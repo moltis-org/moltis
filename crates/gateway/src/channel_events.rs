@@ -694,7 +694,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
         &self,
         command: &str,
         reply_to: ChannelReplyTarget,
-    ) -> anyhow::Result<String> {
+    ) -> Result<String> {
         let state = self
             .state
             .get()

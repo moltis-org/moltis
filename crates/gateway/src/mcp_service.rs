@@ -29,11 +29,11 @@ impl AgentTool for McpToolAdapter {
         McpAgentTool::description(&self.0)
     }
 
-    fn parameters_schema(&self) -> serde_json::Value {
+    fn parameters_schema(&self) -> Value {
         McpAgentTool::parameters_schema(&self.0)
     }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
+    async fn execute(&self, params: Value) -> Result<Value> {
         McpAgentTool::execute(&self.0, params).await
     }
 }
@@ -354,11 +354,11 @@ mod tests {
             "fake"
         }
 
-        fn parameters_schema(&self) -> serde_json::Value {
+        fn parameters_schema(&self) -> Value {
             serde_json::json!({})
         }
 
-        async fn execute(&self, _params: serde_json::Value) -> Result<serde_json::Value> {
+        async fn execute(&self, _params: Value) -> Result<Value> {
             Ok(serde_json::json!({}))
         }
     }
