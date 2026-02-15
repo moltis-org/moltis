@@ -268,8 +268,11 @@ fn build_system_prompt_full(
     let has_memory_search = tool_schemas
         .iter()
         .any(|s| s["name"].as_str() == Some("memory_search"));
+    let has_memory_save = tool_schemas
+        .iter()
+        .any(|s| s["name"].as_str() == Some("memory_save"));
     let memory_content = memory_text.filter(|t| !t.is_empty());
-    if memory_content.is_some() || has_memory_search {
+    if memory_content.is_some() || has_memory_search || has_memory_save {
         prompt.push_str("## Long-Term Memory\n\n");
         if let Some(text) = memory_content {
             // Truncate to the bootstrap limit to keep the context window manageable.
@@ -280,7 +283,12 @@ fn build_system_prompt_full(
                     "\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n",
                 );
             }
-            prompt.push('\n');
+            prompt.push_str(concat!(
+                "\n\n**The information above is what you already know about the user. ",
+                "Always include it in your answers.** ",
+                "Even if a tool search returns no additional results, ",
+                "this section still contains valid, current facts.\n",
+            ));
         }
         if has_memory_search {
             prompt.push_str(concat!(
@@ -289,6 +297,14 @@ fn build_system_prompt_full(
                 "**Always search memory before claiming you don't know something.** ",
                 "The long-term memory system holds user facts, past decisions, project context, ",
                 "and anything previously stored.\n",
+            ));
+        }
+        if has_memory_save {
+            prompt.push_str(concat!(
+                "\n**When the user asks you to remember, save, or note something, ",
+                "you MUST call `memory_save` to persist it.** ",
+                "Do not just acknowledge verbally — without calling the tool, ",
+                "the information will be lost after the session.\n",
             ));
         }
         prompt.push('\n');
@@ -861,6 +877,9 @@ mod tests {
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("Lives in Paris"));
         assert!(prompt.contains("Speaks French"));
+        // Memory content should include the "already know" hint so models
+        // don't ignore it when tool searches return empty.
+        assert!(prompt.contains("information above is what you already know"));
     }
 
     #[test]
@@ -923,5 +942,95 @@ mod tests {
         assert!(prompt.contains("Important fact"));
         // Minimal prompts have no tools, so no memory_search hint
         assert!(!prompt.contains("memory_search"));
+    }
+
+    /// Helper to create a [`ToolRegistry`] with one or more named stub tools.
+    fn registry_with_tools(names: &[&'static str]) -> ToolRegistry {
+        struct NamedStub(&'static str);
+        #[async_trait::async_trait]
+        impl crate::tool_registry::AgentTool for NamedStub {
+            fn name(&self) -> &str {
+                self.0
+            }
+
+            fn description(&self) -> &str {
+                "stub"
+            }
+
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({"type": "object", "properties": {}})
+            }
+
+            async fn execute(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(serde_json::json!({}))
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        for name in names {
+            reg.register(Box::new(NamedStub(name)));
+        }
+        reg
+    }
+
+    #[test]
+    fn test_memory_save_hint_injected_when_tool_registered() {
+        let tools = registry_with_tools(&["memory_save"]);
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("MUST call `memory_save`"));
+    }
+
+    #[test]
+    fn test_memory_save_hint_absent_without_tool() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(!prompt.contains("memory_save"));
+    }
+
+    #[test]
+    fn test_memory_search_and_save_hints_both_present() {
+        let tools = registry_with_tools(&["memory_search", "memory_save"]);
+        let memory = "## User Facts\n- Likes coffee";
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory),
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("Likes coffee"));
+        assert!(prompt.contains("memory_search"));
+        assert!(prompt.contains("MUST call `memory_save`"));
     }
 }
