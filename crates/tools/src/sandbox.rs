@@ -1302,6 +1302,54 @@ impl AppleContainerSandbox {
         anyhow::bail!("container {name} did not become running after startup")
     }
 
+    async fn probe_container_exec_ready(name: &str) -> Result<()> {
+        let output = tokio::process::Command::new("container")
+            .args(["exec", name, "sh", "-c", "true"])
+            .output()
+            .await?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "container {name} failed exec readiness probe: {}",
+            stderr.trim()
+        );
+    }
+
+    async fn wait_for_container_exec_ready(name: &str) -> Result<()> {
+        const MAX_WAIT_ITERS: usize = 20;
+        const WAIT_MS: u64 = 100;
+
+        Self::wait_for_container_running(name).await?;
+
+        for attempt in 0..MAX_WAIT_ITERS {
+            match Self::probe_container_exec_ready(name).await {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    if attempt + 1 < MAX_WAIT_ITERS
+                        && is_apple_container_unavailable_error(&message)
+                    {
+                        debug!(
+                            name,
+                            attempt,
+                            %error,
+                            "container exec readiness probe failed, retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MS)).await;
+                        continue;
+                    }
+                    return Err(error);
+                },
+            }
+        }
+
+        anyhow::bail!("container {name} did not become exec-ready after startup")
+    }
+
     async fn force_remove_and_wait(name: &str) {
         Self::remove_container_force(name).await;
         Self::wait_for_container_absent(name).await;
@@ -1369,6 +1417,15 @@ fn is_apple_container_exists_error(stderr: &str) -> bool {
     stderr.contains("already exists") || stderr.contains("exists: \"container with id")
 }
 
+fn is_apple_container_unavailable_error(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("cannot exec: container is not running")
+        || lower.contains("container is not running")
+        || (lower.contains("container") && lower.contains("is not running"))
+        || lower.contains("container is stopped")
+        || lower.contains("no sandbox client exists")
+}
+
 fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
     let inspect = stdout.trim();
     if inspect.is_empty() || inspect == "[]" {
@@ -1390,9 +1447,7 @@ fn is_apple_container_corruption_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     is_apple_container_service_error(stderr)
         || is_apple_container_exists_error(stderr)
-        || lower.contains("cannot exec: container is not running")
-        || lower.contains("container is stopped")
-        || (lower.contains("no sandbox client exists") && lower.contains("container"))
+        || is_apple_container_unavailable_error(stderr)
         || lower.contains("failed to stay running after startup")
         || lower.contains("failed to bootstrap container")
         || lower.contains("config.json")
@@ -1588,7 +1643,17 @@ impl Sandbox for AppleContainerSandbox {
                 );
             } else if stdout.contains("\"running\"") {
                 info!(name, "apple container already running");
-                return Ok(());
+                match Self::wait_for_container_exec_ready(&name).await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => {
+                        warn!(
+                            name,
+                            %error,
+                            "apple container reported running but failed exec readiness probe, recreating"
+                        );
+                        Self::force_remove_and_wait(&name).await;
+                    },
+                }
             } else if stdout.contains("stopped") || stdout.contains("exited") {
                 info!(name, "apple container stopped, restarting");
                 let start = tokio::process::Command::new("container")
@@ -1601,7 +1666,17 @@ impl Sandbox for AppleContainerSandbox {
                     Self::force_remove_and_wait(&name).await;
                 } else {
                     info!(name, "apple container restarted");
-                    return Ok(());
+                    match Self::wait_for_container_exec_ready(&name).await {
+                        Ok(()) => return Ok(()),
+                        Err(error) => {
+                            warn!(
+                                name,
+                                %error,
+                                "restarted apple container failed exec readiness probe, recreating"
+                            );
+                            Self::force_remove_and_wait(&name).await;
+                        },
+                    }
                 }
             } else {
                 // Unknown state — log and recreate.
@@ -1700,7 +1775,7 @@ impl Sandbox for AppleContainerSandbox {
             );
         }
 
-        if let Err(error) = Self::wait_for_container_running(&name).await {
+        if let Err(error) = Self::wait_for_container_exec_ready(&name).await {
             warn!(
                 name,
                 %error,
@@ -1736,7 +1811,7 @@ impl Sandbox for AppleContainerSandbox {
                 );
             }
 
-            Self::wait_for_container_running(&name).await?;
+            Self::wait_for_container_exec_ready(&name).await?;
         }
 
         info!(name, image, "apple container created and running");
@@ -2840,6 +2915,20 @@ mod tests {
             "Error: container already exists"
         ));
         assert!(!is_apple_container_exists_error("Error: no such container"));
+    }
+
+    #[test]
+    fn test_is_apple_container_unavailable_error() {
+        assert!(is_apple_container_unavailable_error(
+            "cannot exec: container is not running"
+        ));
+        assert!(is_apple_container_unavailable_error(
+            "invalidState: \"container xyz is not running\""
+        ));
+        assert!(is_apple_container_unavailable_error(
+            "invalidState: \"no sandbox client exists: container is stopped\""
+        ));
+        assert!(!is_apple_container_unavailable_error("permission denied"));
     }
 
     #[test]
