@@ -466,9 +466,14 @@ function DefaultImageSelector() {
 function ImageRow(props) {
 	var img = props.image;
 	var sandboxAvailable = props.sandboxAvailable;
+	var kindLabel = img.kind === "sandbox" ? "sandbox" : "tool";
+	var kindColor = img.kind === "sandbox" ? "var(--accent)" : "var(--muted)";
 	return html`<div class="provider-item" style="margin-bottom:4px;">
     <div style="flex:1;min-width:0;">
-      <div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${img.tag}</div>
+      <div class="flex items-center gap-2">
+        <span class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${img.tag}</span>
+        <span class="text-[0.65rem] px-1.5 py-0.5 rounded-full" style="background:color-mix(in srgb, ${kindColor} 15%, transparent);color:${kindColor};">${kindLabel}</span>
+      </div>
       <div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">
         <span>${img.size}</span>
         <span>${img.created}</span>

@@ -5583,34 +5583,70 @@ async fn api_skills_search_handler(
     api_search_handler(repos, &source, &query).await
 }
 
-/// List cached tool images.
+/// List cached tool images and sandbox images.
 #[cfg(feature = "web-ui")]
 async fn api_cached_images_handler() -> impl IntoResponse {
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    match builder.list_cached().await {
-        Ok(images) => Json(serde_json::json!({ "images": images })).into_response(),
+    let (cached, sandbox) = tokio::join!(
+        builder.list_cached(),
+        moltis_tools::sandbox::list_sandbox_images(),
+    );
+
+    let mut images: Vec<serde_json::Value> = Vec::new();
+
+    // Skill tool images (moltis-cache/*).
+    match cached {
+        Ok(list) => {
+            for img in list {
+                images.push(serde_json::json!({
+                    "tag": img.tag,
+                    "size": img.size,
+                    "created": img.created,
+                    "kind": "tool",
+                }));
+            }
+        },
         Err(e) => {
-            let msg = e.to_string();
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
-            )
-                .into_response()
+            tracing::warn!("failed to list cached tool images: {e}");
         },
     }
+
+    // Sandbox images (*-sandbox:*).
+    match sandbox {
+        Ok(list) => {
+            for img in list {
+                images.push(serde_json::json!({
+                    "tag": img.tag,
+                    "size": img.size,
+                    "created": img.created,
+                    "kind": "sandbox",
+                }));
+            }
+        },
+        Err(e) => {
+            tracing::warn!("failed to list sandbox images: {e}");
+        },
+    }
+
+    Json(serde_json::json!({ "images": images })).into_response()
 }
 
-/// Delete a specific cached tool image.
+/// Delete a specific cached tool image or sandbox image.
 #[cfg(feature = "web-ui")]
 async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    // The tag comes URL-encoded; the path captures "moltis-cache/skill:hash" as a single segment.
-    let full_tag = if tag.starts_with("moltis-cache/") {
-        tag
+    // Sandbox images (*-sandbox:*) are handled by the sandbox module.
+    let result = if tag.contains("-sandbox:") {
+        moltis_tools::sandbox::remove_sandbox_image(&tag).await
     } else {
-        format!("moltis-cache/{tag}")
+        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let full_tag = if tag.starts_with("moltis-cache/") {
+            tag
+        } else {
+            format!("moltis-cache/{tag}")
+        };
+        builder.remove_cached(&full_tag).await
     };
-    match builder.remove_cached(&full_tag).await {
+    match result {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => {
             let msg = e.to_string();
@@ -5623,21 +5659,30 @@ async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl IntoRe
     }
 }
 
-/// Prune all cached tool images.
+/// Prune all cached tool images and sandbox images.
 #[cfg(feature = "web-ui")]
 async fn api_prune_cached_images_handler() -> impl IntoResponse {
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    match builder.prune_all().await {
-        Ok(count) => Json(serde_json::json!({ "pruned": count })).into_response(),
-        Err(e) => {
-            let msg = e.to_string();
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
-            )
-                .into_response()
-        },
+    let (tool_result, sandbox_result) = tokio::join!(
+        builder.prune_all(),
+        moltis_tools::sandbox::clean_sandbox_images(),
+    );
+    let mut count = 0;
+    if let Ok(n) = tool_result {
+        count += n;
     }
+    if let Ok(n) = sandbox_result {
+        count += n;
+    }
+    if let (Err(e1), Err(e2)) = (&tool_result, &sandbox_result) {
+        let msg = format!("tool images: {e1}; sandbox images: {e2}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "pruned": count })).into_response()
 }
 
 /// Check which packages already exist in a base image.
