@@ -1387,11 +1387,15 @@ fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
 }
 
 fn is_apple_container_corruption_error(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
     is_apple_container_service_error(stderr)
         || is_apple_container_exists_error(stderr)
-        || stderr.contains("cannot exec: container is not running")
-        || stderr.contains("failed to bootstrap container")
-        || stderr.contains("config.json")
+        || lower.contains("cannot exec: container is not running")
+        || lower.contains("container is stopped")
+        || (lower.contains("no sandbox client exists") && lower.contains("container"))
+        || lower.contains("failed to stay running after startup")
+        || lower.contains("failed to bootstrap container")
+        || lower.contains("config.json")
 }
 
 /// Wrapper sandbox that can fail over from a primary backend to a fallback backend.
@@ -1696,7 +1700,45 @@ impl Sandbox for AppleContainerSandbox {
             );
         }
 
-        Self::wait_for_container_running(&name).await?;
+        if let Err(error) = Self::wait_for_container_running(&name).await {
+            warn!(
+                name,
+                %error,
+                "apple container did not become ready after create, recreating once"
+            );
+            Self::force_remove_and_wait(&name).await;
+
+            name = self.bump_container_generation(id).await;
+            if let Some(slot) = run_args
+                .iter()
+                .position(|arg| arg == "--name")
+                .and_then(|idx| run_args.get_mut(idx + 1))
+            {
+                *slot = name.clone();
+            }
+
+            output = tokio::process::Command::new("container")
+                .args(&run_args)
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if is_apple_container_service_error(&stderr) {
+                    anyhow::bail!(
+                        "apple container service is not running. \
+                         Start it with `container system start` and restart moltis"
+                    );
+                }
+                anyhow::bail!(
+                    "container run failed for {name} (image={image}): {}",
+                    stderr.trim()
+                );
+            }
+
+            Self::wait_for_container_running(&name).await?;
+        }
+
         info!(name, image, "apple container created and running");
 
         // Skip provisioning if the image is a pre-built instance sandbox image
@@ -2823,6 +2865,12 @@ mod tests {
         ));
         assert!(is_apple_container_corruption_error(
             "cannot exec: container is not running"
+        ));
+        assert!(is_apple_container_corruption_error(
+            "invalidState: \"no sandbox client exists: container is stopped\""
+        ));
+        assert!(is_apple_container_corruption_error(
+            "container foo failed to stay running after startup"
         ));
         assert!(!is_apple_container_corruption_error("permission denied"));
     }

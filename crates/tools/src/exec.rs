@@ -422,7 +422,7 @@ impl AgentTool for ExecTool {
                         session = sk,
                         sandbox_id = %id,
                         command,
-                        "sandbox exec failed because container is not running, reinitializing and retrying once"
+                        "sandbox exec failed because container is unavailable, reinitializing and retrying once"
                     );
                     if let Err(error) = backend.cleanup(&id).await {
                         warn!(
@@ -450,7 +450,7 @@ impl AgentTool for ExecTool {
                 warn!(
                     sandbox_id = %id,
                     command,
-                    "sandbox exec failed because container is not running, reinitializing and retrying once"
+                    "sandbox exec failed because container is unavailable, reinitializing and retrying once"
                 );
                 if let Err(error) = self.sandbox.cleanup(id).await {
                     warn!(
@@ -570,6 +570,8 @@ fn redaction_needles(value: &str) -> Vec<String> {
 fn is_container_not_running_exec_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     lower.contains("cannot exec: container is not running")
+        || lower.contains("container is stopped")
+        || (lower.contains("no sandbox client exists") && lower.contains("container is stopped"))
         || (lower.contains("failed to create process in container")
             && lower.contains("container")
             && lower.contains("not running"))
@@ -1029,6 +1031,9 @@ mod tests {
         ));
         assert!(is_container_not_running_exec_error(
             "Error: invalidState: \"container codex-stop-12016 is not running\""
+        ));
+        assert!(is_container_not_running_exec_error(
+            "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"no sandbox client exists: container is stopped\\\"\")"
         ));
         assert!(!is_container_not_running_exec_error(
             "permission denied: operation not permitted"
