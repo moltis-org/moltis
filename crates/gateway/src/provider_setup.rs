@@ -655,6 +655,15 @@ fn known_providers() -> Vec<KnownProvider> {
             key_optional: false,
         },
         KnownProvider {
+            name: "zai",
+            display_name: "Z.AI",
+            auth_type: "api-key",
+            env_key: Some("Z_API_KEY"),
+            default_base_url: Some("https://api.z.ai/api/paas/v4"),
+            requires_model: false,
+            key_optional: false,
+        },
+        KnownProvider {
             name: "venice",
             display_name: "Venice",
             auth_type: "api-key",
@@ -2884,6 +2893,7 @@ mod tests {
         assert!(names.contains(&"cerebras"), "missing cerebras");
         assert!(names.contains(&"minimax"), "missing minimax");
         assert!(names.contains(&"moonshot"), "missing moonshot");
+        assert!(names.contains(&"zai"), "missing zai");
         assert!(names.contains(&"kimi-code"), "missing kimi-code");
         assert!(names.contains(&"venice"), "missing venice");
         assert!(names.contains(&"ollama"), "missing ollama");
@@ -2910,6 +2920,7 @@ mod tests {
             ("cerebras", "CEREBRAS_API_KEY"),
             ("minimax", "MINIMAX_API_KEY"),
             ("moonshot", "MOONSHOT_API_KEY"),
+            ("zai", "Z_API_KEY"),
             ("kimi-code", "KIMI_API_KEY"),
             ("venice", "VENICE_API_KEY"),
             ("ollama", "OLLAMA_API_KEY"),
@@ -2940,6 +2951,7 @@ mod tests {
             "cerebras",
             "minimax",
             "moonshot",
+            "zai",
             "kimi-code",
             "venice",
             "ollama",
@@ -2976,6 +2988,7 @@ mod tests {
             "cerebras",
             "minimax",
             "moonshot",
+            "zai",
             "kimi-code",
             "venice",
             "ollama",
