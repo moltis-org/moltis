@@ -37,8 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Startup container GC**: the gateway now automatically removes orphaned
   session containers on startup, preventing disk space accumulation from
   crashed or interrupted sessions.
+- **Download full context as JSONL**: the full context panel now has a
+  "Download" button that exports the conversation (including raw LLM
+  responses) as a timestamped `.jsonl` file.
+- **Sandbox images in cached images list**: the Settings > Images page
+  now merges sandbox-built images into the cached images list so all
+  container images are visible in one place.
 
 ### Changed
+
+- **Sandbox image identity**: image tags now use SHA-256 instead of
+  `DefaultHasher` for deterministic, cross-run hashing of base image +
+  packages.
 
 ### Deprecated
 
@@ -64,6 +74,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`container system stop && container system start`) before retrying; bail
   with a clear remediation message only if automatic restart fails.
   Exec-level recovery retries reduced from 3 to 1.
+- **Ghost Apple Containers**: failed container deletions are now tracked
+  in a zombie set and filtered from list output, preventing stale entries
+  from reappearing in the Running Containers panel.
+- **Container action errors preserved**: failed delete/clean/restart
+  operations now surface the original error message to the UI instead of
+  silently swallowing it.
+- **Usage parsing across OpenAI-compatible providers**: token counts now
+  handle Anthropic-style (`input_tokens`/`output_tokens`), camelCase
+  variants, cache token fields, and multiple response nesting structures
+  across diverse providers.
+- **Think tag whitespace**: leading whitespace after `</think>` close
+  tags is now stripped, preventing extra blank lines in streamed output.
+- **Token bar visible at zero**: the token usage bar no longer disappears
+  when all counts are zero; it stays visible as a baseline indicator.
 
 ### Security
 
