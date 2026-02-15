@@ -177,8 +177,11 @@ test.describe("Sandboxes page – Container error handling", () => {
 			return route.continue();
 		});
 
+		const containerListResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
+		);
 		await navigateAndWait(page, "/settings/sandboxes");
-		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+		await containerListResponse;
 
 		// Click the delete button
 		await page.getByRole("button", { name: "Delete", exact: true }).click();
@@ -240,16 +243,22 @@ test.describe("Sandboxes page – Container error handling", () => {
 			return route.continue();
 		});
 
+		const containerListResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
+		);
 		await navigateAndWait(page, "/settings/sandboxes");
-		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+		await containerListResponse;
 
-		// Click delete to trigger error
+		// Click delete to trigger error — the delete handler calls fetchContainers
+		// in .finally(), which triggers a second GET that clears the error on success.
+		const refreshResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
+		);
 		await page.getByRole("button", { name: "Delete", exact: true }).click();
 		await expect(page.locator(".alert-error-text")).toBeVisible();
 
-		// The delete handler calls fetchContainers in .finally(), which clears the error
-		// on success. Since our second mock returns empty list, the error should clear.
-		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+		// Since our second mock returns empty list, the error should clear.
+		await refreshResponse;
 		await expect(page.locator(".alert-error-text")).not.toBeVisible();
 
 		expect(pageErrors).toEqual([]);
