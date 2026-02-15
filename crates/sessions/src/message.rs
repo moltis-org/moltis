@@ -59,6 +59,9 @@ pub enum PersistedMessage {
         /// Optional provider reasoning/planning text (not final answer text).
         #[serde(skip_serializing_if = "Option::is_none")]
         reasoning: Option<String>,
+        /// Raw provider API payload captured during streaming for debugging.
+        #[serde(rename = "llmApiResponse", skip_serializing_if = "Option::is_none")]
+        llm_api_response: Option<serde_json::Value>,
         /// Relative media path for TTS audio (e.g. "media/main/run_abc.ogg").
         #[serde(skip_serializing_if = "Option::is_none")]
         audio: Option<String>,
@@ -206,6 +209,7 @@ impl PersistedMessage {
             output_tokens: Some(output_tokens),
             tool_calls: None,
             reasoning: None,
+            llm_api_response: None,
             audio,
             seq: None,
             run_id: None,
@@ -374,6 +378,7 @@ mod tests {
             output_tokens: Some(50),
             tool_calls: None,
             reasoning: None,
+            llm_api_response: None,
             audio: None,
             seq: None,
             run_id: None,

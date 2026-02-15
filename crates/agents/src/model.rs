@@ -284,6 +284,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
 pub enum StreamEvent {
     /// Text content delta.
     Delta(String),
+    /// Raw provider event payload (for debugging API responses).
+    ProviderRaw(serde_json::Value),
     /// Reasoning/planning text delta (not user-visible final answer text).
     ReasoningDelta(String),
     /// A tool call has started (content_block_start with tool_use).

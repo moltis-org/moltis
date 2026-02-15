@@ -83,6 +83,7 @@ pub struct AgentRunResult {
     pub iterations: usize,
     pub tool_calls_made: usize,
     pub usage: Usage,
+    pub raw_llm_responses: Vec<serde_json::Value>,
 }
 
 /// Callback for streaming events out of the runner.
@@ -911,6 +912,7 @@ pub async fn run_agent_loop_with_context(
                     output_tokens: total_output_tokens,
                     ..Default::default()
                 },
+                raw_llm_responses: Vec::new(),
             });
         }
 
@@ -1177,6 +1179,7 @@ pub async fn run_agent_loop_streaming(
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
     let mut retries_remaining: u8 = 1;
+    let mut raw_llm_responses: Vec<serde_json::Value> = Vec::new();
 
     loop {
         iterations += 1;
@@ -1262,6 +1265,11 @@ pub async fn run_agent_loop_streaming(
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text));
+                    }
+                },
+                StreamEvent::ProviderRaw(raw) => {
+                    if raw_llm_responses.len() < 256 {
+                        raw_llm_responses.push(raw);
                     }
                 },
                 StreamEvent::ReasoningDelta(text) => {
@@ -1492,6 +1500,7 @@ pub async fn run_agent_loop_streaming(
                     output_tokens: total_output_tokens,
                     ..Default::default()
                 },
+                raw_llm_responses,
             });
         }
 

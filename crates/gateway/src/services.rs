@@ -453,6 +453,15 @@ pub trait ChatService: Send + Sync {
     async fn raw_prompt(&self, params: Value) -> ServiceResult;
     /// Return the full messages array (system prompt + history) in OpenAI format.
     async fn full_context(&self, params: Value) -> ServiceResult;
+    /// Return session keys that currently have an active run (model generating).
+    async fn active_session_keys(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Return the accumulated thinking text for a session that has an active run,
+    /// so the frontend can restore it after a page reload.
+    async fn active_thinking_text(&self, _session_key: &str) -> Option<String> {
+        None
+    }
 }
 
 pub struct NoopChatService;

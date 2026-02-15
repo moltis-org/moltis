@@ -11,10 +11,10 @@ use tracing::{debug, trace, warn};
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
-        process_openai_sse_line, strip_think_tags, to_openai_tools,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
+        parse_tool_calls, process_openai_sse_line, strip_think_tags, to_openai_tools,
     },
-    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
 
 pub struct OpenAiProvider {
@@ -423,6 +423,39 @@ impl OpenAiProvider {
             || self.base_url.contains("moonshot.cn")
     }
 
+    fn requires_top_level_system_prompt(&self) -> bool {
+        self.model.starts_with("MiniMax-")
+            || self.provider_name.eq_ignore_ascii_case("minimax")
+            || self.base_url.to_ascii_lowercase().contains("minimax")
+    }
+
+    fn prepare_request_messages(
+        &self,
+        messages: Vec<serde_json::Value>,
+    ) -> (Vec<serde_json::Value>, Option<String>) {
+        if !self.requires_top_level_system_prompt() {
+            return (messages, None);
+        }
+
+        let mut system_parts = Vec::new();
+        let mut out = Vec::with_capacity(messages.len());
+
+        for message in messages {
+            if message.get("role").and_then(serde_json::Value::as_str) == Some("system") {
+                if let Some(content) = message.get("content").and_then(serde_json::Value::as_str)
+                    && !content.is_empty()
+                {
+                    system_parts.push(content.to_string());
+                }
+                continue;
+            }
+            out.push(message);
+        }
+
+        let system_prompt = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
+        (out, system_prompt)
+    }
+
     fn serialize_messages_for_request(&self, messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
         let mut remapped_tool_call_ids = HashMap::new();
@@ -526,11 +559,16 @@ impl LlmProvider for OpenAiProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let openai_messages = self.serialize_messages_for_request(messages);
+        let serialized_messages = self.serialize_messages_for_request(messages);
+        let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
         let mut body = serde_json::json!({
             "model": self.model,
             "messages": openai_messages,
         });
+
+        if let Some(system_prompt) = system_prompt {
+            body["system"] = serde_json::Value::String(system_prompt);
+        }
 
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
@@ -593,14 +631,7 @@ impl LlmProvider for OpenAiProvider {
         });
         let tool_calls = parse_tool_calls(message);
 
-        let usage = Usage {
-            input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: resp["usage"]["prompt_tokens_details"]["cached_tokens"]
-                .as_u64()
-                .unwrap_or(0) as u32,
-            ..Default::default()
-        };
+        let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
             text,
@@ -624,13 +655,18 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let openai_messages = self.serialize_messages_for_request(&messages);
+            let serialized_messages = self.serialize_messages_for_request(&messages);
+            let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
             let mut body = serde_json::json!({
                 "model": self.model,
                 "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
+
+            if let Some(system_prompt) = system_prompt {
+                body["system"] = serde_json::Value::String(system_prompt);
+            }
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
@@ -690,7 +726,10 @@ impl LlmProvider for OpenAiProvider {
                         continue;
                     }
 
-                    let Some(data) = line.strip_prefix("data: ") else {
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
                         continue;
                     };
 
@@ -710,6 +749,36 @@ impl LlmProvider for OpenAiProvider {
                     }
                 }
             }
+
+            // Some OpenAI-compatible providers may close the stream without
+            // an explicit [DONE] frame or trailing newline. Process any
+            // residual buffered line and always finalize on EOF so usage
+            // metadata still propagates.
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
+            }
         })
     }
 }
@@ -725,7 +794,7 @@ mod tests {
         tokio_stream::StreamExt,
     };
 
-    use crate::model::{ChatMessage, ToolCall};
+    use crate::model::{ChatMessage, ToolCall, Usage};
 
     use super::*;
 
@@ -832,6 +901,25 @@ mod tests {
     }
 
     #[test]
+    fn minimax_serialization_extracts_system_messages() {
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            "https://api.minimax.io/v1".to_string(),
+            "minimax".to_string(),
+        );
+        let serialized = provider.serialize_messages_for_request(&[
+            ChatMessage::system("sys a"),
+            ChatMessage::user("hi"),
+            ChatMessage::system("sys b"),
+        ]);
+        let (history, system_prompt) = provider.prepare_request_messages(serialized);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+        assert_eq!(system_prompt.as_deref(), Some("sys a\n\nsys b"));
+    }
+
+    #[test]
     fn openai_serialization_remaps_long_tool_call_ids() {
         let provider = OpenAiProvider::new(
             Secret::new("test-key".to_string()),
@@ -923,6 +1011,72 @@ mod tests {
         assert_eq!(history[1]["content"], "");
         assert_eq!(history[1]["reasoning_content"], "");
         assert!(history[1]["tool_calls"].is_array());
+    }
+
+    #[tokio::test]
+    async fn minimax_stream_request_uses_top_level_system_prompt() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n\
+                   data: [DONE]\n\n";
+        let (base_url, captured) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            base_url,
+            "minimax".to_string(),
+        );
+        let messages = vec![
+            ChatMessage::system("stay deterministic"),
+            ChatMessage::user("ping"),
+        ];
+
+        let mut stream = provider.stream_with_tools(messages, vec![]);
+        while stream.next().await.is_some() {}
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let body = reqs[0].body.as_ref().expect("request should have a body");
+        assert_eq!(body["system"], "stay deterministic");
+
+        let history = body["messages"]
+            .as_array()
+            .expect("messages should be an array");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+        assert!(
+            history
+                .iter()
+                .all(|entry| entry["role"].as_str() != Some("system"))
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_without_done_frame_still_emits_done_with_usage() {
+        // Some providers close SSE without [DONE] and without a trailing newline.
+        // We must still flush trailing usage and emit Done.
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5040,\"completion_tokens\":61}}"
+        );
+        let (base_url, _) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            base_url,
+            "minimax".to_string(),
+        );
+
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("tell me a joke")], vec![]);
+        let mut last_done: Option<Usage> = None;
+        while let Some(ev) = stream.next().await {
+            if let StreamEvent::Done(usage) = ev {
+                last_done = Some(usage);
+            }
+        }
+
+        let usage = last_done.expect("stream should emit Done");
+        assert_eq!(usage.input_tokens, 5040);
+        assert_eq!(usage.output_tokens, 61);
     }
 
     // ── Regression: stream_with_tools must send tools in the API body ────

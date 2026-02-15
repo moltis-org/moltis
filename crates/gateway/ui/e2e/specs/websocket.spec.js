@@ -452,6 +452,60 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("whitespace-only streamed assistant bubble is removed once tool call starts/finalizes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		// Simulate an assistant stream that emits only whitespace before deciding to call a tool.
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "delta",
+				runId: "run-whitespace-tool",
+				text: " \n\t ",
+			},
+		});
+		await expect(page.locator("#messages .msg.assistant")).toHaveCount(0);
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				runId: "run-whitespace-tool",
+				toolCallId: "tc-empty-1",
+				toolName: "exec",
+				arguments: { command: "echo $FOO" },
+			},
+		});
+
+		const toolCard = page.locator("#tool-run-whitespace-tool-tc-empty-1");
+		await expect(toolCard).toBeVisible();
+		await expect(page.locator("#messages .msg.assistant")).toHaveCount(0);
+
+		// Final text is also whitespace-only. No empty assistant bubble should be left behind.
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				runId: "run-whitespace-tool",
+				text: "\n  \t",
+				messageIndex: 999997,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+			},
+		});
+
+		await expect(page.locator("#messages .msg.assistant")).toHaveCount(0);
+		await expect(toolCard.locator(".msg-model-footer")).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("auth.credentials_changed event redirects through /login", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);

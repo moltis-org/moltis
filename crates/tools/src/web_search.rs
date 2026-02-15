@@ -51,6 +51,18 @@ enum SearchProvider {
     Perplexity { base_url: String, model: String },
 }
 
+fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
 /// A single Brave search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BraveResult {
@@ -101,6 +113,15 @@ struct PerplexityMessage {
 impl WebSearchTool {
     /// Build from config; returns `None` if disabled or no API key available.
     pub fn from_config(config: &WebSearchConfig) -> Option<Self> {
+        Self::from_config_with_env_overrides(config, &HashMap::new())
+    }
+
+    /// Build from config, with optional env overrides used as fallback after
+    /// process env. This avoids process-global env mutation in callers.
+    pub fn from_config_with_env_overrides(
+        config: &WebSearchConfig,
+        env_overrides: &HashMap<String, String>,
+    ) -> Option<Self> {
         if !config.enabled {
             return None;
         }
@@ -111,7 +132,7 @@ impl WebSearchTool {
                     .api_key
                     .as_ref()
                     .map(|s| s.expose_secret().clone())
-                    .or_else(|| std::env::var("BRAVE_API_KEY").ok())
+                    .or_else(|| env_value_with_overrides(env_overrides, "BRAVE_API_KEY"))
                     .unwrap_or_default();
                 Some(Self::new(
                     SearchProvider::Brave,
@@ -123,7 +144,8 @@ impl WebSearchTool {
                 ))
             },
             ConfigSearchProvider::Perplexity => {
-                let (api_key, base_url) = resolve_perplexity_config(&config.perplexity);
+                let (api_key, base_url) =
+                    resolve_perplexity_config(&config.perplexity, env_overrides);
                 let model = config
                     .perplexity
                     .model
@@ -381,13 +403,16 @@ impl WebSearchTool {
 }
 
 /// Resolve Perplexity API key and base URL from config / env.
-fn resolve_perplexity_config(cfg: &PerplexityConfig) -> (Secret<String>, String) {
+fn resolve_perplexity_config(
+    cfg: &PerplexityConfig,
+    env_overrides: &HashMap<String, String>,
+) -> (Secret<String>, String) {
     let api_key = cfg
         .api_key
         .as_ref()
         .map(|s| s.expose_secret().clone())
-        .or_else(|| std::env::var("PERPLEXITY_API_KEY").ok())
-        .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+        .or_else(|| env_value_with_overrides(env_overrides, "PERPLEXITY_API_KEY"))
+        .or_else(|| env_value_with_overrides(env_overrides, "OPENROUTER_API_KEY"))
         .unwrap_or_default();
 
     let base_url = cfg.base_url.clone().unwrap_or_else(|| {
@@ -767,7 +792,7 @@ mod tests {
             base_url: None,
             model: None,
         };
-        let (key, url) = resolve_perplexity_config(&cfg);
+        let (key, url) = resolve_perplexity_config(&cfg, &HashMap::new());
         assert_eq!(key.expose_secret(), "pplx-abc123");
         assert!(url.contains("perplexity.ai"));
     }
@@ -779,7 +804,7 @@ mod tests {
             base_url: None,
             model: None,
         };
-        let (key, url) = resolve_perplexity_config(&cfg);
+        let (key, url) = resolve_perplexity_config(&cfg, &HashMap::new());
         assert_eq!(key.expose_secret(), "sk-or-abc123");
         assert!(url.contains("openrouter.ai"));
     }

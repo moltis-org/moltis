@@ -553,6 +553,8 @@ function refreshFullContextPanel() {
 		headerRow.appendChild(headerText);
 
 		var messages = res.payload.messages || [];
+		var llmOutputs = res.payload.llmOutputs || [];
+		var llmOutputPanel = null;
 
 		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
 		copyBtn.textContent = "Copy";
@@ -565,7 +567,17 @@ function refreshFullContextPanel() {
 				}
 				return `[${m.role}] ${parts.join("\n")}`;
 			});
-			navigator.clipboard.writeText(lines.join("\n")).then(() => {
+			var contextText = lines.join("\n");
+			var copyText = contextText;
+			var llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
+			if (llmOutputVisible) {
+				copyText = `LLM output:
+${JSON.stringify(llmOutputs, null, 2)}
+
+Context:
+${contextText}`;
+			}
+			navigator.clipboard.writeText(copyText).then(() => {
 				copyBtn.textContent = "Copied!";
 				setTimeout(() => {
 					copyBtn.textContent = "Copy";
@@ -573,7 +585,50 @@ function refreshFullContextPanel() {
 			});
 		});
 		headerRow.appendChild(copyBtn);
+
+		var downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+		downloadBtn.textContent = "Download";
+		downloadBtn.addEventListener("click", () => {
+			var lines = [];
+			for (var m of messages) {
+				lines.push(JSON.stringify(m));
+			}
+			var blob = new Blob([`${lines.join("\n")}\n`], { type: "application/x-jsonlines" });
+			var url = URL.createObjectURL(blob);
+			var a = document.createElement("a");
+			a.href = url;
+			a.download = `context-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.jsonl`;
+			a.click();
+			URL.revokeObjectURL(url);
+		});
+		headerRow.appendChild(downloadBtn);
+
+		var llmOutputBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+		llmOutputBtn.textContent = "LLM output";
+		headerRow.appendChild(llmOutputBtn);
 		panel.appendChild(headerRow);
+
+		llmOutputPanel = ctxEl("div", "hidden mb-3");
+		var llmOutputMeta = ctxEl(
+			"div",
+			"text-xs text-[var(--muted)] mb-1",
+			`${llmOutputs.length} assistant output${llmOutputs.length === 1 ? "" : "s"}`,
+		);
+		llmOutputPanel.appendChild(llmOutputMeta);
+		var llmOutputPre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+		);
+		llmOutputPre.id = "fullContextLlmOutput";
+		llmOutputPre.textContent = JSON.stringify(llmOutputs, null, 2);
+		llmOutputPanel.appendChild(llmOutputPre);
+		panel.appendChild(llmOutputPanel);
+
+		llmOutputBtn.addEventListener("click", () => {
+			var hidden = llmOutputPanel.classList.contains("hidden");
+			llmOutputPanel.classList.toggle("hidden", !hidden);
+			llmOutputBtn.textContent = hidden ? "Hide LLM output" : "LLM output";
+		});
 
 		for (var i = 0; i < messages.length; i++) {
 			panel.appendChild(renderContextMessage(messages[i], i));

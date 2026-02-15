@@ -234,6 +234,117 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
         .unwrap_or_default()
 }
 
+fn usage_value_at_path(usage: &serde_json::Value, path: &[&str]) -> Option<u64> {
+    let mut cursor = usage;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    cursor
+        .as_u64()
+        .or_else(|| cursor.as_str().and_then(|raw| raw.parse::<u64>().ok()))
+}
+
+fn usage_field_u32(usage: &serde_json::Value, paths: &[&[&str]]) -> u32 {
+    paths
+        .iter()
+        .find_map(|path| usage_value_at_path(usage, path))
+        .unwrap_or(0) as u32
+}
+
+fn usage_object_from_payload(payload: &serde_json::Value) -> Option<&serde_json::Value> {
+    if let Some(usage) = payload.get("usage").filter(|usage| usage.is_object()) {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("delta"))
+        .and_then(|delta| delta.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    payload
+        .get("x_groq")
+        .and_then(|x_groq| x_groq.get("usage"))
+        .filter(|usage| usage.is_object())
+}
+
+/// Parse usage payloads from OpenAI-compatible backends.
+///
+/// Different providers use different field names:
+/// - OpenAI-style: `prompt_tokens`, `completion_tokens`
+/// - Anthropic/MiniMax-style: `input_tokens`, `output_tokens`
+/// - Cache fields may be top-level or nested in `*_tokens_details`.
+#[must_use]
+pub fn parse_openai_compat_usage(usage: &serde_json::Value) -> Usage {
+    Usage {
+        input_tokens: usage_field_u32(usage, &[
+            &["prompt_tokens"],
+            &["promptTokens"],
+            &["input_tokens"],
+            &["inputTokens"],
+        ]),
+        output_tokens: usage_field_u32(usage, &[
+            &["completion_tokens"],
+            &["completionTokens"],
+            &["output_tokens"],
+            &["outputTokens"],
+        ]),
+        cache_read_tokens: usage_field_u32(usage, &[
+            &["prompt_tokens_details", "cached_tokens"],
+            &["promptTokensDetails", "cachedTokens"],
+            &["cache_read_input_tokens"],
+            &["cacheReadInputTokens"],
+            &["input_tokens_details", "cache_read_input_tokens"],
+            &["inputTokensDetails", "cacheReadInputTokens"],
+        ]),
+        cache_write_tokens: usage_field_u32(usage, &[
+            &["cache_creation_input_tokens"],
+            &["cacheCreationInputTokens"],
+            &["input_tokens_details", "cache_creation_input_tokens"],
+            &["inputTokensDetails", "cacheCreationInputTokens"],
+        ]),
+    }
+}
+
+/// Parse usage from an OpenAI-compatible payload, checking common nesting variants.
+///
+/// Providers differ on where they place usage metadata:
+/// - top-level `usage`
+/// - `choices[0].usage`
+/// - `choices[0].delta.usage`
+/// - `choices[0].message.usage`
+/// - provider extension blocks (for example `x_groq.usage`)
+#[must_use]
+pub fn parse_openai_compat_usage_from_payload(payload: &serde_json::Value) -> Option<Usage> {
+    usage_object_from_payload(payload).map(parse_openai_compat_usage)
+}
+
 /// Strip `<think>...</think>` tags from content, returning `(visible, thinking)`.
 ///
 /// Models like DeepSeek R1, QwQ, and MiniMax embed chain-of-thought reasoning
@@ -276,7 +387,10 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
         }
     }
 
-    (visible, thinking.trim_start().to_string())
+    (
+        visible.trim_start().to_string(),
+        thinking.trim_start().to_string(),
+    )
 }
 
 /// State for tracking streaming tool calls.
@@ -294,6 +408,10 @@ pub struct StreamingToolState {
     /// think block. Set to `true` when entering `<think>`, cleared once
     /// non-whitespace reasoning content is emitted.
     think_strip_leading_ws: bool,
+    /// Whether we are still stripping leading whitespace from visible content
+    /// after exiting a `</think>` block. Models often emit `\n\n` between
+    /// `</think>` and the actual answer.
+    visible_strip_leading_ws: bool,
     /// Buffer for detecting `<think>` / `</think>` tags that may be split
     /// across SSE chunk boundaries.
     tag_buffer: String,
@@ -329,6 +447,26 @@ fn emit_reasoning(text: String, strip_leading_ws: &mut bool, events: &mut Vec<St
     events.push(StreamEvent::ReasoningDelta(emitted));
 }
 
+/// Emit a visible `Delta`, stripping leading whitespace after a `</think>`
+/// block so the UI doesn't show blank lines before the answer.
+fn emit_visible(text: String, strip_leading_ws: &mut bool, events: &mut Vec<StreamEvent>) {
+    if text.is_empty() {
+        return;
+    }
+    let emitted = if *strip_leading_ws {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            // Entire chunk was whitespace — keep stripping
+            return;
+        }
+        *strip_leading_ws = false;
+        trimmed.to_string()
+    } else {
+        text
+    };
+    events.push(StreamEvent::Delta(emitted));
+}
+
 /// Process streamed content through the `<think>` tag state machine.
 ///
 /// Content arriving inside `<think>...</think>` is emitted as
@@ -351,6 +489,7 @@ fn process_content_think_tags(
                     let thinking = state.tag_buffer[..pos].to_string();
                     emit_reasoning(thinking, &mut state.think_strip_leading_ws, events);
                     state.in_think_block = false;
+                    state.visible_strip_leading_ws = true;
                     let rest = state.tag_buffer[pos + "</think>".len()..].to_string();
                     state.tag_buffer = rest;
                     // Continue loop to process remaining content
@@ -378,9 +517,7 @@ fn process_content_think_tags(
             match state.tag_buffer.find("<think>") {
                 Some(pos) => {
                     let visible = state.tag_buffer[..pos].to_string();
-                    if !visible.is_empty() {
-                        events.push(StreamEvent::Delta(visible));
-                    }
+                    emit_visible(visible, &mut state.visible_strip_leading_ws, events);
                     state.in_think_block = true;
                     state.think_strip_leading_ws = true;
                     let rest = state.tag_buffer[pos + "<think>".len()..].to_string();
@@ -393,16 +530,13 @@ fn process_content_think_tags(
                     if suffix_match > 0 {
                         let safe = state.tag_buffer.len() - suffix_match;
                         let emit = state.tag_buffer[..safe].to_string();
-                        if !emit.is_empty() {
-                            events.push(StreamEvent::Delta(emit));
-                        }
+                        emit_visible(emit, &mut state.visible_strip_leading_ws, events);
                         let kept = state.tag_buffer[safe..].to_string();
                         state.tag_buffer = kept;
                     } else {
                         // No partial tag — emit everything as visible
-                        if !state.tag_buffer.is_empty() {
-                            events.push(StreamEvent::Delta(std::mem::take(&mut state.tag_buffer)));
-                        }
+                        let buf = std::mem::take(&mut state.tag_buffer);
+                        emit_visible(buf, &mut state.visible_strip_leading_ws, events);
                     }
                     break;
                 },
@@ -448,16 +582,13 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         return SseLineResult::Skip;
     };
 
-    let mut events = Vec::new();
+    let mut events = vec![StreamEvent::ProviderRaw(evt.clone())];
 
-    // Usage chunk (sent with stream_options.include_usage)
-    if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
-        state.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        state.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
-        // OpenAI reports cached tokens in prompt_tokens_details
-        if let Some(cached) = u["prompt_tokens_details"]["cached_tokens"].as_u64() {
-            state.cache_read_tokens = cached as u32;
-        }
+    if let Some(usage) = parse_openai_compat_usage_from_payload(&evt) {
+        state.input_tokens = usage.input_tokens;
+        state.output_tokens = usage.output_tokens;
+        state.cache_read_tokens = usage.cache_read_tokens;
+        state.cache_write_tokens = usage.cache_write_tokens;
     }
 
     let delta = &evt["choices"][0]["delta"];
@@ -510,11 +641,7 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         }
     }
 
-    if events.is_empty() {
-        SseLineResult::Skip
-    } else {
-        SseLineResult::Events(events)
-    }
+    SseLineResult::Events(events)
 }
 
 /// Generate the final events when stream ends (tool call completions + done).
@@ -732,6 +859,138 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_openai_compat_usage_openai_fields() {
+        let usage = serde_json::json!({
+            "prompt_tokens": 42,
+            "completion_tokens": 17,
+            "prompt_tokens_details": {
+                "cached_tokens": 9
+            }
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 42);
+        assert_eq!(parsed.output_tokens, 17);
+        assert_eq!(parsed.cache_read_tokens, 9);
+        assert_eq!(parsed.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_input_output_fields() {
+        let usage = serde_json::json!({
+            "input_tokens": 123,
+            "output_tokens": 45,
+            "cache_read_input_tokens": 7,
+            "cache_creation_input_tokens": 11
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 123);
+        assert_eq!(parsed.output_tokens, 45);
+        assert_eq!(parsed.cache_read_tokens, 7);
+        assert_eq!(parsed.cache_write_tokens, 11);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_camel_case_string_fields() {
+        let usage = serde_json::json!({
+            "promptTokens": "91",
+            "completionTokens": "27",
+            "promptTokensDetails": {
+                "cachedTokens": "14"
+            },
+            "cacheCreationInputTokens": "6"
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 91);
+        assert_eq!(parsed.output_tokens, 27);
+        assert_eq!(parsed.cache_read_tokens, 14);
+        assert_eq!(parsed.cache_write_tokens, 6);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_from_payload_choice_usage() {
+        let payload = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "index": 0,
+                "usage": {
+                    "input_tokens": 32,
+                    "output_tokens": 9
+                }
+            }]
+        });
+
+        let parsed = parse_openai_compat_usage_from_payload(&payload).expect("usage");
+        assert_eq!(parsed.input_tokens, 32);
+        assert_eq!(parsed.output_tokens, 9);
+        assert_eq!(parsed.cache_read_tokens, 0);
+        assert_eq!(parsed.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_from_payload_delta_usage() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "usage": {
+                        "prompt_tokens": 70,
+                        "completion_tokens": 12
+                    }
+                }
+            }]
+        });
+
+        let parsed = parse_openai_compat_usage_from_payload(&payload).expect("usage");
+        assert_eq!(parsed.input_tokens, 70);
+        assert_eq!(parsed.output_tokens, 12);
+    }
+
+    #[test]
+    fn test_process_sse_usage_chunk_with_input_output_fields() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[],"usage":{"input_tokens":64,"output_tokens":19,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        // Usage-only chunks emit only ProviderRaw, no content Delta
+        match result {
+            SseLineResult::Events(events) => {
+                assert!(
+                    events
+                        .iter()
+                        .all(|e| matches!(e, StreamEvent::ProviderRaw(_)))
+                );
+            },
+            _ => panic!("Expected Events with ProviderRaw"),
+        }
+        assert_eq!(state.input_tokens, 64);
+        assert_eq!(state.output_tokens, 19);
+        assert_eq!(state.cache_read_tokens, 5);
+        assert_eq!(state.cache_write_tokens, 2);
+    }
+
+    #[test]
+    fn test_process_sse_usage_chunk_with_choice_nested_usage() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"usage":{"prompt_tokens":18,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4}}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        // Usage-only chunks emit only ProviderRaw, no content Delta
+        match result {
+            SseLineResult::Events(events) => {
+                assert!(
+                    events
+                        .iter()
+                        .all(|e| matches!(e, StreamEvent::ProviderRaw(_)))
+                );
+            },
+            _ => panic!("Expected Events with ProviderRaw"),
+        }
+        assert_eq!(state.input_tokens, 18);
+        assert_eq!(state.output_tokens, 7);
+        assert_eq!(state.cache_read_tokens, 4);
+    }
+
+    #[test]
     fn test_process_sse_done() {
         let mut state = StreamingToolState::default();
         matches!(
@@ -747,8 +1006,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello"));
+                // First event is always ProviderRaw, second is the Delta
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
+                assert!(matches!(&events[1], StreamEvent::Delta(s) if s == "Hello"));
             },
             _ => panic!("Expected Events"),
         }
@@ -761,9 +1022,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ReasoningDelta(s) if s == "plan step"
                 ));
             },
@@ -778,9 +1040,10 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ToolCallStart { id, name, index }
                     if id == "call_1" && name == "test" && *index == 0
                 ));
@@ -802,9 +1065,10 @@ mod tests {
         let result = process_openai_sse_line(args_data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
                 assert!(matches!(
-                    &events[0],
+                    &events[1],
                     StreamEvent::ToolCallArgumentsDelta { index, delta }
                     if *index == 0 && delta == "{\"x\":"
                 ));
@@ -1084,13 +1348,14 @@ mod tests {
         // First chunk: starts with partial opening tag
         let data1 = r#"{"choices":[{"delta":{"content":"<thi"}}]}"#;
         let result1 = process_openai_sse_line(data1, &mut state);
-        // Should hold back the partial tag — no Delta emitted
+        // Should hold back the partial tag — only ProviderRaw emitted, no Delta
         match result1 {
             SseLineResult::Events(events) => {
-                assert!(
-                    events.is_empty(),
-                    "partial tag should be buffered, got {events:?}"
-                );
+                let delta_count = events
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Delta(_)))
+                    .count();
+                assert_eq!(delta_count, 0, "partial tag should be buffered");
             },
             SseLineResult::Skip => {},
             _ => panic!("Expected Events or Skip"),
@@ -1240,8 +1505,9 @@ mod tests {
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello world"));
+                assert_eq!(events.len(), 2);
+                assert!(matches!(&events[0], StreamEvent::ProviderRaw(_)));
+                assert!(matches!(&events[1], StreamEvent::Delta(s) if s == "Hello world"));
             },
             _ => panic!("Expected Events"),
         }
@@ -1340,6 +1606,78 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(reasoning, "actual thought");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    // ============================================================
+    // Tests for visible content whitespace stripping after </think>
+    // ============================================================
+
+    #[test]
+    fn test_strip_think_tags_trims_visible_after_think() {
+        let input = "<think>reasoning</think>\n\nHere's the answer";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "Here's the answer");
+        assert_eq!(thinking, "reasoning");
+    }
+
+    #[test]
+    fn test_stream_strips_visible_whitespace_after_think() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\nHere's the answer"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(visible, "Here's the answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_strips_visible_whitespace_across_chunks() {
+        let mut state = StreamingToolState::default();
+
+        // First chunk: think block + close tag + newlines
+        let data1 = r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\n"}}]}"#;
+        let result1 = process_openai_sse_line(data1, &mut state);
+        match result1 {
+            SseLineResult::Events(events) => {
+                let visible_count = events
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Delta(_)))
+                    .count();
+                assert_eq!(
+                    visible_count, 0,
+                    "leading whitespace after </think> should be stripped"
+                );
+            },
+            SseLineResult::Skip => {},
+            _ => panic!("Expected Events or Skip"),
+        }
+
+        // Second chunk: actual visible content
+        let data2 = r#"{"choices":[{"delta":{"content":"The answer"}}]}"#;
+        let result2 = process_openai_sse_line(data2, &mut state);
+        match result2 {
+            SseLineResult::Events(events) => {
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(visible, "The answer");
             },
             _ => panic!("Expected Events"),
         }

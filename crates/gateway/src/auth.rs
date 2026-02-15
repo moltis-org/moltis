@@ -483,13 +483,17 @@ impl CredentialStore {
         Ok(result.last_insert_rowid())
     }
 
-    /// Delete an environment variable by id.
-    pub async fn delete_env_var(&self, id: i64) -> anyhow::Result<()> {
+    /// Delete an environment variable by id. Returns the key name if found.
+    pub async fn delete_env_var(&self, id: i64) -> anyhow::Result<Option<String>> {
+        let key: Option<(String,)> = sqlx::query_as("SELECT key FROM env_variables WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
         sqlx::query("DELETE FROM env_variables WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(key.map(|(k,)| k))
     }
 
     /// Get all environment variable key-value pairs (internal use for sandbox injection).

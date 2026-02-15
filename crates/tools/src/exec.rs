@@ -23,6 +23,8 @@ use crate::{
     sandbox::{NoSandbox, Sandbox, SandboxId, SandboxRouter},
 };
 
+const MAX_SANDBOX_RECOVERY_RETRIES: usize = 1;
+
 /// Broadcaster that notifies connected clients about pending approval requests.
 #[async_trait]
 pub trait ApprovalBroadcaster: Send + Sync {
@@ -309,7 +311,22 @@ impl AgentTool for ExecTool {
                 None => None,
             }
         } else {
-            explicit_working_dir
+            match explicit_working_dir {
+                // Relative paths are resolved under the sandbox home.
+                Some(ref dir) if !dir.is_absolute() => {
+                    Some(PathBuf::from("/home/sandbox").join(dir))
+                },
+                // Absolute paths are only allowed inside the sandbox home.
+                Some(ref dir) if dir.starts_with("/home/sandbox") => explicit_working_dir,
+                Some(ref dir) => {
+                    debug!(
+                        path = %dir.display(),
+                        "explicit working_dir is outside /home/sandbox while sandboxed, using default"
+                    );
+                    None
+                },
+                None => None,
+            }
         };
 
         let using_default_working_dir = validated_explicit.is_none();
@@ -400,15 +417,29 @@ impl AgentTool for ExecTool {
                 backend.ensure_ready(&id, Some(&image)).await?;
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
-                if sandbox_result.exit_code != 0
-                    && is_container_not_running_exec_error(&sandbox_result.stderr)
-                {
+                for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
+                    if sandbox_result.exit_code == 0
+                        || !is_container_not_running_exec_error(&sandbox_result.stderr)
+                    {
+                        break;
+                    }
+
                     warn!(
                         session = sk,
                         sandbox_id = %id,
                         command,
-                        "sandbox exec failed because container is not running, reinitializing and retrying once"
+                        retry_idx,
+                        max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
+                        "sandbox exec failed because container is unavailable, reinitializing and retrying"
                     );
+                    if let Err(error) = backend.cleanup(&id).await {
+                        warn!(
+                            session = sk,
+                            sandbox_id = %id,
+                            %error,
+                            "failed to clean up stale sandbox before retry, continuing"
+                        );
+                    }
                     backend.ensure_ready(&id, Some(&image)).await?;
                     sandbox_result = backend.exec(&id, command, &opts).await?;
                 }
@@ -421,14 +452,27 @@ impl AgentTool for ExecTool {
             debug!(sandbox_id = %id, command, "static sandbox running command");
             self.sandbox.ensure_ready(id, None).await?;
             let mut sandbox_result = self.sandbox.exec(id, command, &opts).await?;
-            if sandbox_result.exit_code != 0
-                && is_container_not_running_exec_error(&sandbox_result.stderr)
-            {
+            for retry_idx in 1..=MAX_SANDBOX_RECOVERY_RETRIES {
+                if sandbox_result.exit_code == 0
+                    || !is_container_not_running_exec_error(&sandbox_result.stderr)
+                {
+                    break;
+                }
+
                 warn!(
                     sandbox_id = %id,
                     command,
-                    "sandbox exec failed because container is not running, reinitializing and retrying once"
+                    retry_idx,
+                    max_retries = MAX_SANDBOX_RECOVERY_RETRIES,
+                    "sandbox exec failed because container is unavailable, reinitializing and retrying"
                 );
+                if let Err(error) = self.sandbox.cleanup(id).await {
+                    warn!(
+                        sandbox_id = %id,
+                        %error,
+                        "failed to clean up stale sandbox before retry, continuing"
+                    );
+                }
                 self.sandbox.ensure_ready(id, None).await?;
                 sandbox_result = self.sandbox.exec(id, command, &opts).await?;
             }
@@ -538,9 +582,21 @@ fn redaction_needles(value: &str) -> Vec<String> {
 }
 
 fn is_container_not_running_exec_error(stderr: &str) -> bool {
-    stderr.contains("cannot exec: container is not running")
-        || (stderr.contains("failed to create process in container")
-            && stderr.contains("container is not running"))
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("cannot exec: container is not running")
+        || lower.contains("container is stopped")
+        || (lower.contains("no sandbox client exists") && lower.contains("container is stopped"))
+        || (lower.contains("failed to create process in container")
+            && lower.contains("container")
+            && lower.contains("not running"))
+        || (lower.contains("invalidstate")
+            && lower.contains("container")
+            && lower.contains("is not running"))
+        || (lower.contains("container")
+            && lower.contains("not running")
+            && lower.contains("failed to create process"))
+        || lower.contains("notfound")
+        || (lower.contains("not found") && lower.contains("container"))
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -548,7 +604,7 @@ fn is_container_not_running_exec_error(stderr: &str) -> bool {
 mod tests {
     use {
         super::*,
-        std::sync::atomic::{AtomicBool, Ordering},
+        std::sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     struct TestBroadcaster {
@@ -732,6 +788,188 @@ mod tests {
         assert_eq!(result["exit_code"], 0);
     }
 
+    struct RetryRecoverySandbox {
+        ensure_ready_calls: AtomicUsize,
+        cleanup_calls: AtomicUsize,
+        exec_calls: AtomicUsize,
+        cleanup_should_fail: bool,
+        failures_before_success: usize,
+    }
+
+    impl RetryRecoverySandbox {
+        fn new(cleanup_should_fail: bool, failures_before_success: usize) -> Self {
+            Self {
+                ensure_ready_calls: AtomicUsize::new(0),
+                cleanup_calls: AtomicUsize::new(0),
+                exec_calls: AtomicUsize::new(0),
+                cleanup_should_fail,
+                failures_before_success,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Sandbox for RetryRecoverySandbox {
+        fn backend_name(&self) -> &'static str {
+            "docker"
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+            self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            _opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            let call = self.exec_calls.fetch_add(1, Ordering::SeqCst);
+            if call < self.failures_before_success {
+                return Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"cannot exec: container is not running\\\"\")".to_string(),
+                    exit_code: 1,
+                });
+            }
+            Ok(ExecResult {
+                stdout: "recovered".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+            if self.cleanup_should_fail {
+                bail!("cleanup failed");
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct CaptureWorkingDirSandbox {
+        last_working_dir: std::sync::Mutex<Option<PathBuf>>,
+    }
+
+    #[async_trait]
+    impl Sandbox for CaptureWorkingDirSandbox {
+        fn backend_name(&self) -> &'static str {
+            "docker"
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            let mut guard = self
+                .last_working_dir
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *guard = opts.working_dir.clone();
+            Ok(ExecResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_retries_container_not_running_with_cleanup() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(false, 1));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
+        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_retries_container_not_running_when_cleanup_fails() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(true, 1));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-cleanup-fail-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
+        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_stops_after_max_container_retries() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(
+            false,
+            MAX_SANDBOX_RECOVERY_RETRIES + 1,
+        ));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-max-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 1);
+        assert!(is_container_not_running_exec_error(
+            result["stderr"].as_str().unwrap_or_default()
+        ));
+        assert_eq!(
+            sandbox.ensure_ready_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES + 1
+        );
+        assert_eq!(
+            sandbox.cleanup_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES
+        );
+        assert_eq!(
+            sandbox.exec_calls.load(Ordering::SeqCst),
+            MAX_SANDBOX_RECOVERY_RETRIES + 1
+        );
+    }
+
     #[tokio::test]
     async fn test_exec_tool_cleanup_no_sandbox() {
         let tool = ExecTool::default();
@@ -846,6 +1084,19 @@ mod tests {
         assert!(is_container_not_running_exec_error(
             "cannot exec: container is not running"
         ));
+        assert!(is_container_not_running_exec_error(
+            "Error: invalidState: \"container codex-stop-12016 is not running\""
+        ));
+        assert!(is_container_not_running_exec_error(
+            "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"no sandbox client exists: container is stopped\\\"\")"
+        ));
+        // notFound errors from get/inspect failures
+        assert!(is_container_not_running_exec_error(
+            "Error: notFound: \"get failed: container moltis-sandbox-main not found\""
+        ));
+        assert!(is_container_not_running_exec_error(
+            "container not found: moltis-sandbox-session-abc"
+        ));
         assert!(!is_container_not_running_exec_error(
             "permission denied: operation not permitted"
         ));
@@ -915,6 +1166,90 @@ mod tests {
             .unwrap();
         assert_eq!(result["stdout"].as_str().unwrap().trim(), "works");
         assert_eq!(result["exit_code"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_rewrites_host_absolute_working_dir() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "rewrite-host-abs-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "/Users/fabien"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox")));
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_resolves_relative_working_dir_under_home() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "rewrite-relative-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "project"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox/project")));
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_sandbox_keeps_in_sandbox_absolute_working_dir() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(CaptureWorkingDirSandbox::default());
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "keep-sandbox-abs-path".into(),
+        };
+
+        ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({
+                "command": "echo test",
+                "working_dir": "/home/sandbox/work"
+            }))
+            .await
+            .unwrap();
+
+        let captured = sandbox
+            .last_working_dir
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        assert_eq!(captured, Some(PathBuf::from("/home/sandbox/work")));
     }
 
     #[tokio::test]

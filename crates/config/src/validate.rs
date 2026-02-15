@@ -394,6 +394,7 @@ fn build_schema_map() -> KnownKeys {
                 ("rate_limit_window_secs", Leaf),
             ])),
         ),
+        ("env", Map(Box::new(Leaf))),
         (
             "voice",
             Struct(HashMap::from([
@@ -1683,6 +1684,35 @@ enabled = true
         assert!(
             warnings.is_empty(),
             "known providers should not be warned about: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn env_section_passes_validation() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+CUSTOM_VAR = "some-value"
+"#;
+        let result = validate_toml_str(toml);
+        let errors: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "env section should not produce errors: {errors:?}"
+        );
+        let unknown_fields: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-field" && d.path.starts_with("env"))
+            .collect();
+        assert!(
+            unknown_fields.is_empty(),
+            "env keys should not be flagged as unknown: {unknown_fields:?}"
         );
     }
 }

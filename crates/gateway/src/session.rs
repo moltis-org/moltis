@@ -997,6 +997,7 @@ impl SessionService for LiveSessionService {
             self.metadata.set_mcp_disabled(key, mcp_disabled).await;
         }
         if let Some(sandbox_enabled_opt) = p.sandbox_enabled {
+            let old_sandbox = entry.sandbox_enabled;
             self.metadata
                 .set_sandbox_enabled(key, sandbox_enabled_opt)
                 .await;
@@ -1005,6 +1006,26 @@ impl SessionService for LiveSessionService {
                     router.set_override(key, enabled).await;
                 } else {
                     router.remove_override(key).await;
+                }
+            }
+            // Notify the LLM when sandbox state actually changes.
+            if old_sandbox != sandbox_enabled_opt {
+                let notification = if sandbox_enabled_opt == Some(false) {
+                    "Sandbox has been disabled for this session. The `exec` tool now runs \
+                     commands directly on the host machine. Previous command outputs in this \
+                     conversation may have come from a sandboxed Linux container with a \
+                     different OS, filesystem, and environment."
+                } else if sandbox_enabled_opt == Some(true) {
+                    "Sandbox has been enabled for this session. The `exec` tool will now run \
+                     commands inside a sandboxed container. The container has a different \
+                     filesystem and environment than the host machine."
+                } else {
+                    "Sandbox override has been cleared for this session. The `exec` tool will \
+                     use the global sandbox setting."
+                };
+                let msg = PersistedMessage::system(notification);
+                if let Err(e) = self.store.append_typed(key, &msg).await {
+                    warn!(session = key, error = %e, "failed to append sandbox state notification");
                 }
             }
         }
@@ -2383,6 +2404,8 @@ mod tests {
 
     async fn sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // Projects table must exist before sessions (FK constraint).
+        moltis_projects::run_migrations(&pool).await.unwrap();
         SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
     }
@@ -2429,5 +2452,104 @@ mod tests {
 
         let result = svc.clear_all().await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_toggle_appends_system_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox — should append a system notification.
+        let result = svc
+            .patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await;
+        assert!(result.is_ok());
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 1, "should have one system notification");
+        assert_eq!(msgs[0]["role"], "system");
+        let content = msgs[0]["content"].as_str().unwrap();
+        assert!(
+            content.contains("enabled"),
+            "notification should mention enabled"
+        );
+
+        // Disable sandbox — should append another notification.
+        let result = svc
+            .patch(serde_json::json!({ "key": "main", "sandboxEnabled": false }))
+            .await;
+        assert!(result.is_ok());
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 2, "should have two system notifications");
+        assert_eq!(msgs[1]["role"], "system");
+        let content = msgs[1]["content"].as_str().unwrap();
+        assert!(
+            content.contains("disabled"),
+            "notification should mention disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_no_change_skips_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox first.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+
+        // Patch again with the same value — no new notification.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 1, "no duplicate notification for same value");
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_null_clears_override_with_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox first.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+
+        // Clear override with null.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": null }))
+            .await
+            .unwrap();
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 2, "clearing override should add notification");
+        let content = msgs[1]["content"].as_str().unwrap();
+        assert!(
+            content.contains("cleared"),
+            "notification should mention cleared"
+        );
     }
 }

@@ -1,5 +1,9 @@
 use std::{
-    collections::HashSet, fs::OpenOptions, io::Write, net::SocketAddr, path::Path as FsPath,
+    collections::{HashMap, HashSet},
+    fs::OpenOptions,
+    io::Write,
+    net::SocketAddr,
+    path::Path as FsPath,
     sync::Arc,
 };
 
@@ -373,6 +377,32 @@ fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }
 
+fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn merge_env_overrides(
+    base_overrides: &HashMap<String, String>,
+    additional: Vec<(String, String)>,
+) -> HashMap<String, String> {
+    let mut merged = base_overrides.clone();
+    for (key, value) in additional {
+        if key.trim().is_empty() || value.trim().is_empty() {
+            continue;
+        }
+        merged.entry(key).or_insert(value);
+    }
+    merged
+}
+
 fn log_startup_model_inventory(reg: &ProviderRegistry) {
     let mut model_ids: Vec<String> = reg.list_models().iter().map(|m| m.id.clone()).collect();
     model_ids.sort();
@@ -530,6 +560,27 @@ fn build_api_routes() -> Router<AppState> {
         .route(
             "/api/images/default",
             get(api_get_default_image_handler).put(api_set_default_image_handler),
+        )
+        .route(
+            "/api/sandbox/containers",
+            get(api_list_containers_handler),
+        )
+        .route(
+            "/api/sandbox/containers/clean",
+            axum::routing::post(api_clean_all_containers_handler),
+        )
+        .route(
+            "/api/sandbox/containers/{name}/stop",
+            axum::routing::post(api_stop_container_handler),
+        )
+        .route(
+            "/api/sandbox/containers/{name}",
+            axum::routing::delete(api_remove_container_handler),
+        )
+        .route("/api/sandbox/disk-usage", get(api_disk_usage_handler))
+        .route(
+            "/api/sandbox/daemon/restart",
+            axum::routing::post(api_restart_daemon_handler),
         )
         .route(
             "/api/env",
@@ -1059,6 +1110,7 @@ pub async fn start_gateway(
 
     // Load config file (moltis.toml / .yaml / .json) if present.
     let mut config = moltis_config::discover_and_load();
+    let config_env_overrides = config.env.clone();
     let instance_slug_value = instance_slug(&config);
     let browser_container_prefix = browser_container_prefix(&instance_slug_value);
     let sandbox_container_prefix = sandbox_container_prefix(&instance_slug_value);
@@ -1081,15 +1133,19 @@ pub async fn start_gateway(
     let auto_detected_provider_sources = if has_explicit_provider_settings {
         Vec::new()
     } else {
-        crate::provider_setup::detect_auto_provider_sources(
+        crate::provider_setup::detect_auto_provider_sources_with_overrides(
             &config.providers,
             deploy_platform.as_deref(),
+            &config_env_overrides,
         )
     };
 
     // Discover LLM providers from env + config + saved keys.
     let registry = Arc::new(tokio::sync::RwLock::new(
-        ProviderRegistry::from_env_with_config(&effective_providers),
+        ProviderRegistry::from_env_with_config_and_overrides(
+            &effective_providers,
+            &config_env_overrides,
+        ),
     ));
     let (provider_summary, providers_available_at_startup) = {
         let reg = registry.read().await;
@@ -1229,7 +1285,8 @@ pub async fn start_gateway(
         Arc::clone(&registry),
         config.providers.clone(),
         deploy_platform.clone(),
-    );
+    )
+    .with_env_overrides(config_env_overrides.clone());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
     services.provider_setup = Arc::new(provider_setup);
 
@@ -1331,6 +1388,16 @@ pub async fn start_gateway(
             .await
             .expect("failed to init credential store"),
     );
+
+    // Runtime env overrides from the settings UI (`/api/env`) layered after
+    // config `[env]`. Process env remains highest precedence.
+    let runtime_env_overrides = match credential_store.get_all_env_values().await {
+        Ok(db_env_vars) => merge_env_overrides(&config_env_overrides, db_env_vars),
+        Err(error) => {
+            warn!(%error, "failed to load persisted env overrides from credential store");
+            config_env_overrides.clone()
+        },
+    };
 
     // Initialize WebAuthn registry for passkey support.
     // Each hostname the user may access from gets its own RP ID + origins entry
@@ -1696,6 +1763,12 @@ pub async fn start_gateway(
 
         if should_prebuild_sandbox_image(router.mode(), &packages) {
             let deferred_for_build = Arc::clone(&deferred_state);
+            // Mark the build as in-progress so the UI can show a banner
+            // even if the WebSocket broadcast fires before the client connects.
+            sandbox_router
+                .building_flag
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let build_router = Arc::clone(&sandbox_router);
             tokio::spawn(async move {
                 // Broadcast build start event.
                 if let Some(state) = deferred_for_build.get() {
@@ -1719,6 +1792,9 @@ pub async fn start_gateway(
                             "sandbox image pre-build complete"
                         );
                         router.set_global_image(Some(result.tag.clone())).await;
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
 
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
@@ -1741,9 +1817,15 @@ pub async fn start_gateway(
                         debug!(
                             "sandbox image pre-build: no-op (no packages or unsupported backend)"
                         );
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                     },
                     Err(e) => {
                         tracing::warn!("sandbox image pre-build failed: {e}");
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
                                 state,
@@ -1841,6 +1923,24 @@ pub async fn start_gateway(
                 }
             });
         }
+    }
+
+    // Startup GC: remove orphaned session containers from previous runs.
+    // At startup no legitimate sessions exist, so any prefixed containers are stale.
+    if sandbox_router.backend_name() != "none" {
+        let prefix = sandbox_router.config().container_prefix.clone();
+        tokio::spawn(async move {
+            if let Some(prefix) = prefix {
+                match moltis_tools::sandbox::clean_all_containers(&prefix).await {
+                    Ok(0) => {},
+                    Ok(n) => info!(
+                        removed = n,
+                        "startup GC: cleaned orphaned session containers"
+                    ),
+                    Err(e) => debug!("startup GC: container cleanup skipped: {e}"),
+                }
+            }
+        });
     }
 
     // Pre-pull browser container image if browser is enabled and sandbox mode is available.
@@ -2097,7 +2197,9 @@ pub async fn start_gateway(
                         .api_key
                         .as_ref()
                         .map(|k| k.expose_secret().clone())
-                        .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                        .or_else(|| {
+                            env_value_with_overrides(&runtime_env_overrides, "OPENAI_API_KEY")
+                        })
                         .unwrap_or_default();
                     let mut e =
                         moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
@@ -2155,7 +2257,7 @@ pub async fn start_gateway(
             let key = effective_providers
                 .get(config_name)
                 .and_then(|e| e.api_key.as_ref().map(|k| k.expose_secret().clone()))
-                .or_else(|| std::env::var(env_key).ok())
+                .or_else(|| env_value_with_overrides(&runtime_env_overrides, env_key))
                 .filter(|k| !k.is_empty());
             if let Some(api_key) = key {
                 let base = effective_providers
@@ -2514,9 +2616,10 @@ pub async fn start_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
-        if let Some(t) =
-            moltis_tools::web_search::WebSearchTool::from_config(&config.tools.web.search)
-        {
+        if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
+            &config.tools.web.search,
+            &runtime_env_overrides,
+        ) {
             tool_registry.register(Box::new(t));
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
@@ -3871,6 +3974,7 @@ struct SandboxGonInfo {
     backend: String,
     os: &'static str,
     default_image: String,
+    image_building: bool,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -3992,12 +4096,16 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
             backend: router.backend_name().to_owned(),
             os: std::env::consts::OS,
             default_image: router.default_image().await,
+            image_building: router
+                .building_flag
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     } else {
         SandboxGonInfo {
             backend: "none".to_owned(),
             os: std::env::consts::OS,
             default_image: moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned(),
+            image_building: false,
         }
     };
 
@@ -4120,7 +4228,7 @@ async fn api_gon_handler(State(state): State<AppState>) -> impl IntoResponse {
 #[cfg(feature = "web-ui")]
 async fn oauth_callback_handler(
     State(state): State<AppState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let Some(code) = params.get("code") else {
         return (
@@ -5458,7 +5566,7 @@ async fn api_search_handler(
 
 #[cfg(feature = "web-ui")]
 async fn api_skills_search_handler(
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let source = params.get("source").cloned().unwrap_or_default();
@@ -5475,34 +5583,70 @@ async fn api_skills_search_handler(
     api_search_handler(repos, &source, &query).await
 }
 
-/// List cached tool images.
+/// List cached tool images and sandbox images.
 #[cfg(feature = "web-ui")]
 async fn api_cached_images_handler() -> impl IntoResponse {
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    match builder.list_cached().await {
-        Ok(images) => Json(serde_json::json!({ "images": images })).into_response(),
+    let (cached, sandbox) = tokio::join!(
+        builder.list_cached(),
+        moltis_tools::sandbox::list_sandbox_images(),
+    );
+
+    let mut images: Vec<serde_json::Value> = Vec::new();
+
+    // Skill tool images (moltis-cache/*).
+    match cached {
+        Ok(list) => {
+            for img in list {
+                images.push(serde_json::json!({
+                    "tag": img.tag,
+                    "size": img.size,
+                    "created": img.created,
+                    "kind": "tool",
+                }));
+            }
+        },
         Err(e) => {
-            let msg = e.to_string();
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
-            )
-                .into_response()
+            tracing::warn!("failed to list cached tool images: {e}");
         },
     }
+
+    // Sandbox images (*-sandbox:*).
+    match sandbox {
+        Ok(list) => {
+            for img in list {
+                images.push(serde_json::json!({
+                    "tag": img.tag,
+                    "size": img.size,
+                    "created": img.created,
+                    "kind": "sandbox",
+                }));
+            }
+        },
+        Err(e) => {
+            tracing::warn!("failed to list sandbox images: {e}");
+        },
+    }
+
+    Json(serde_json::json!({ "images": images })).into_response()
 }
 
-/// Delete a specific cached tool image.
+/// Delete a specific cached tool image or sandbox image.
 #[cfg(feature = "web-ui")]
 async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    // The tag comes URL-encoded; the path captures "moltis-cache/skill:hash" as a single segment.
-    let full_tag = if tag.starts_with("moltis-cache/") {
-        tag
+    // Sandbox images (*-sandbox:*) are handled by the sandbox module.
+    let result = if tag.contains("-sandbox:") {
+        moltis_tools::sandbox::remove_sandbox_image(&tag).await
     } else {
-        format!("moltis-cache/{tag}")
+        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let full_tag = if tag.starts_with("moltis-cache/") {
+            tag
+        } else {
+            format!("moltis-cache/{tag}")
+        };
+        builder.remove_cached(&full_tag).await
     };
-    match builder.remove_cached(&full_tag).await {
+    match result {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => {
             let msg = e.to_string();
@@ -5515,21 +5659,30 @@ async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl IntoRe
     }
 }
 
-/// Prune all cached tool images.
+/// Prune all cached tool images and sandbox images.
 #[cfg(feature = "web-ui")]
 async fn api_prune_cached_images_handler() -> impl IntoResponse {
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    match builder.prune_all().await {
-        Ok(count) => Json(serde_json::json!({ "pruned": count })).into_response(),
-        Err(e) => {
-            let msg = e.to_string();
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
-            )
-                .into_response()
-        },
+    let (tool_result, sandbox_result) = tokio::join!(
+        builder.prune_all(),
+        moltis_tools::sandbox::clean_sandbox_images(),
+    );
+    let mut count = 0;
+    if let Ok(n) = tool_result {
+        count += n;
     }
+    if let Ok(n) = sandbox_result {
+        count += n;
+    }
+    if let (Err(e1), Err(e2)) = (&tool_result, &sandbox_result) {
+        let msg = format!("tool images: {e1}; sandbox images: {e2}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "pruned": count })).into_response()
 }
 
 /// Check which packages already exist in a base image.
@@ -5627,6 +5780,148 @@ async fn api_set_default_image_handler(
             Json(serde_json::json!({ "error": "no sandbox backend available" })),
         )
             .into_response()
+    }
+}
+
+/// List running/stopped containers managed by moltis.
+#[cfg(feature = "web-ui")]
+async fn api_list_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    match moltis_tools::sandbox::list_running_containers(&prefix).await {
+        Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Stop a moltis-managed container by name.
+#[cfg(feature = "web-ui")]
+async fn api_stop_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    if !name.starts_with(&prefix) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
+        )
+            .into_response();
+    }
+    match moltis_tools::sandbox::stop_container(&name).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove a moltis-managed container by name.
+#[cfg(feature = "web-ui")]
+async fn api_remove_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    if !name.starts_with(&prefix) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
+        )
+            .into_response();
+    }
+    match moltis_tools::sandbox::remove_container(&name).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove all moltis-managed containers (stop running ones first).
+#[cfg(feature = "web-ui")]
+async fn api_clean_all_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    match moltis_tools::sandbox::clean_all_containers(&prefix).await {
+        Ok(removed) => Json(serde_json::json!({ "ok": true, "removed": removed })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get container disk usage from the sandbox backend.
+#[cfg(feature = "web-ui")]
+async fn api_disk_usage_handler() -> impl IntoResponse {
+    match moltis_tools::sandbox::container_disk_usage().await {
+        Ok(usage) => Json(serde_json::json!({ "usage": usage })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Restart the container daemon to clear corrupted state.
+#[cfg(feature = "web-ui")]
+async fn api_restart_daemon_handler() -> impl IntoResponse {
+    match moltis_tools::sandbox::restart_container_daemon().await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -6410,10 +6705,13 @@ pub(crate) async fn discover_and_build_hooks(
     (Some(Arc::new(registry)), info_list)
 }
 
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 #[cfg(test)]
 mod tests {
-    use {super::*, std::collections::HashSet};
+    use {
+        super::*,
+        std::collections::{HashMap, HashSet},
+    };
 
     #[test]
     fn approval_manager_uses_config_values() {
@@ -7589,5 +7887,42 @@ mod tests {
         assert!(csp.contains("frame-ancestors 'none'"));
         assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("connect-src 'self' ws: wss:"));
+    }
+
+    #[test]
+    fn merge_env_overrides_keeps_existing_config_values() {
+        let base = HashMap::from([
+            ("OPENAI_API_KEY".to_string(), "config-openai".to_string()),
+            ("BRAVE_API_KEY".to_string(), "config-brave".to_string()),
+        ]);
+        let merged = merge_env_overrides(&base, vec![
+            ("OPENAI_API_KEY".to_string(), "db-openai".to_string()),
+            (
+                "PERPLEXITY_API_KEY".to_string(),
+                "db-perplexity".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            merged.get("OPENAI_API_KEY").map(String::as_str),
+            Some("config-openai")
+        );
+        assert_eq!(
+            merged.get("PERPLEXITY_API_KEY").map(String::as_str),
+            Some("db-perplexity")
+        );
+        assert_eq!(
+            merged.get("BRAVE_API_KEY").map(String::as_str),
+            Some("config-brave")
+        );
+    }
+
+    #[test]
+    fn env_value_with_overrides_uses_override_when_process_env_missing() {
+        let unique_key = format!("MOLTIS_TEST_LOOKUP_{}", std::process::id());
+        let overrides = HashMap::from([(unique_key.clone(), "override-value".to_string())]);
+        assert_eq!(
+            env_value_with_overrides(&overrides, &unique_key).as_deref(),
+            Some("override-value")
+        );
     }
 }

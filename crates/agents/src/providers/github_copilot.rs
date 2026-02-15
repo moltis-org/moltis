@@ -19,10 +19,10 @@ use {
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
-        process_openai_sse_line, to_openai_tools,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
+        parse_tool_calls, process_openai_sse_line, to_openai_tools,
     },
-    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -499,14 +499,7 @@ impl LlmProvider for GitHubCopilotProvider {
         let text = message["content"].as_str().map(|s| s.to_string());
         let tool_calls = parse_tool_calls(message);
 
-        let usage = Usage {
-            input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: resp["usage"]["prompt_tokens_details"]["cached_tokens"]
-                .as_u64()
-                .unwrap_or(0) as u32,
-            ..Default::default()
-        };
+        let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
             text,
@@ -607,7 +600,10 @@ impl LlmProvider for GitHubCopilotProvider {
                         continue;
                     }
 
-                    let Some(data) = line.strip_prefix("data: ") else {
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
                         continue;
                     };
 
@@ -626,6 +622,32 @@ impl LlmProvider for GitHubCopilotProvider {
                         SseLineResult::Skip => {}
                     }
                 }
+            }
+
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
             }
         })
     }
@@ -761,11 +783,7 @@ mod tests {
             let message = &resp["choices"][0]["message"];
             let text = message["content"].as_str().map(|s| s.to_string());
             let tool_calls = parse_tool_calls(message);
-            let usage = Usage {
-                input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-                ..Default::default()
-            };
+            let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
             Ok(CompletionResponse {
                 text,
@@ -922,6 +940,32 @@ mod tests {
         assert!(resp.tool_calls.is_empty());
         assert_eq!(resp.usage.input_tokens, 10);
         assert_eq!(resp.usage.output_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn complete_parses_input_output_usage_fields() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello from Copilot!"
+                }
+            }],
+            "usage": {
+                "input_tokens": 21,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 3
+            }
+        });
+
+        let (base_url, _) = start_mock_with_capture(response).await;
+        let provider = mock_provider(&base_url, "gpt-4o");
+
+        let messages = vec![serde_json::json!({"role": "user", "content": "hi"})];
+        let resp = provider.complete(&messages, &[]).await.unwrap();
+        assert_eq!(resp.usage.input_tokens, 21);
+        assert_eq!(resp.usage.output_tokens, 8);
+        assert_eq!(resp.usage.cache_read_tokens, 3);
     }
 
     #[tokio::test]

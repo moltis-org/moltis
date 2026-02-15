@@ -202,6 +202,11 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    /// Environment variables injected into the Moltis process at startup.
+    /// Useful for API keys in Docker where you can't easily set env vars.
+    /// Process env vars take precedence (existing vars are not overwritten).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -1689,6 +1694,25 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn env_section_parses() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("BRAVE_API_KEY").unwrap(), "test-key");
+        assert_eq!(config.env.get("OPENROUTER_API_KEY").unwrap(), "sk-or-test");
+    }
+
+    #[test]
+    fn env_section_defaults_to_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.env.is_empty());
     }
 
     #[test]

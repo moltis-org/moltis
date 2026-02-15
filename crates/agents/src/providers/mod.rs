@@ -294,20 +294,30 @@ impl LlmProvider for RegistryModelProvider {
 
 /// Resolve an API key from config (Secret) or environment variable,
 /// keeping the value wrapped in `Secret<String>` to avoid leaking it.
+fn env_value(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env_overrides
+                .get(key)
+                .cloned()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+/// Resolve an API key from config (Secret) or environment variable,
+/// keeping the value wrapped in `Secret<String>` to avoid leaking it.
 fn resolve_api_key(
     config: &ProvidersConfig,
     provider: &str,
     env_key: &str,
+    env_overrides: &HashMap<String, String>,
 ) -> Option<secrecy::Secret<String>> {
     config
         .get(provider)
         .and_then(|e| e.api_key.clone())
-        .or_else(|| {
-            std::env::var(env_key)
-                .ok()
-                .filter(|k| !k.is_empty())
-                .map(secrecy::Secret::new)
-        })
+        .or_else(|| env_value(env_overrides, env_key).map(secrecy::Secret::new))
         .filter(|s| !s.expose_secret().is_empty())
 }
 
@@ -913,22 +923,32 @@ impl ProviderRegistry {
     /// 3. genai-backed providers (if `provider-genai` feature enabled, no tool support)
     /// 4. OpenAI Codex OAuth providers (if `provider-openai-codex` feature enabled)
     pub fn from_env_with_config(config: &ProvidersConfig) -> Self {
+        let env_overrides = HashMap::new();
+        Self::from_env_with_config_and_overrides(config, &env_overrides)
+    }
+
+    /// Auto-discover providers from config, process env, and optional env
+    /// overrides. Process env always wins when both are present.
+    pub fn from_env_with_config_and_overrides(
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) -> Self {
         let mut reg = Self::empty();
 
         // Built-in providers first: they support tool calling.
-        reg.register_builtin_providers(config);
-        reg.register_openai_compatible_providers(config);
+        reg.register_builtin_providers(config, env_overrides);
+        reg.register_openai_compatible_providers(config, env_overrides);
 
         #[cfg(feature = "provider-async-openai")]
         {
-            reg.register_async_openai_providers(config);
+            reg.register_async_openai_providers(config, env_overrides);
         }
 
         // GenAI providers last: they don't support tool calling,
         // so they only fill in models not already covered above.
         #[cfg(feature = "provider-genai")]
         {
-            reg.register_genai_providers(config);
+            reg.register_genai_providers(config, env_overrides);
         }
 
         #[cfg(feature = "provider-openai-codex")]
@@ -943,7 +963,7 @@ impl ProviderRegistry {
 
         #[cfg(feature = "provider-kimi-code")]
         {
-            reg.register_kimi_code_providers(config);
+            reg.register_kimi_code_providers(config, env_overrides);
         }
 
         // Local GGUF providers (no API key needed, model runs locally)
@@ -956,7 +976,11 @@ impl ProviderRegistry {
     }
 
     #[cfg(feature = "provider-genai")]
-    fn register_genai_providers(&mut self, config: &ProvidersConfig) {
+    fn register_genai_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
         // (env_key, provider_config_name, model_id, display_name)
         let genai_models: &[(&str, &str, &str, &str)] = &[
             (
@@ -993,7 +1017,8 @@ impl ProviderRegistry {
             }
 
             // Use config api_key or fall back to env var.
-            let Some(resolved_key) = resolve_api_key(config, provider_name, env_key) else {
+            let Some(resolved_key) = resolve_api_key(config, provider_name, env_key, env_overrides)
+            else {
                 continue;
             };
 
@@ -1027,19 +1052,23 @@ impl ProviderRegistry {
     }
 
     #[cfg(feature = "provider-async-openai")]
-    fn register_async_openai_providers(&mut self, config: &ProvidersConfig) {
+    fn register_async_openai_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
         if !config.is_enabled("openai") {
             return;
         }
 
-        let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY") else {
+        let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides) else {
             return;
         };
 
         let base_url = config
             .get("openai")
             .and_then(|e| e.base_url.clone())
-            .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+            .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
             .unwrap_or_else(|| "https://api.openai.com/v1".into());
 
         let model_id = configured_models_for_provider(config, "openai")
@@ -1140,12 +1169,16 @@ impl ProviderRegistry {
     }
 
     #[cfg(feature = "provider-kimi-code")]
-    fn register_kimi_code_providers(&mut self, config: &ProvidersConfig) {
+    fn register_kimi_code_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
         if !config.is_enabled("kimi-code") {
             return;
         }
 
-        let api_key = resolve_api_key(config, "kimi-code", "KIMI_API_KEY");
+        let api_key = resolve_api_key(config, "kimi-code", "KIMI_API_KEY", env_overrides);
         let has_oauth_tokens = kimi_code::has_stored_tokens();
         if api_key.is_none() && !has_oauth_tokens {
             return;
@@ -1154,7 +1187,7 @@ impl ProviderRegistry {
         let base_url = config
             .get("kimi-code")
             .and_then(|e| e.base_url.clone())
-            .or_else(|| std::env::var("KIMI_BASE_URL").ok())
+            .or_else(|| env_value(env_overrides, "KIMI_BASE_URL"))
             .unwrap_or_else(|| "https://api.kimi.com/coding/v1".into());
 
         let build_provider = |model_id: &str| -> Arc<dyn LlmProvider> {
@@ -1275,15 +1308,20 @@ impl ProviderRegistry {
         }
     }
 
-    fn register_builtin_providers(&mut self, config: &ProvidersConfig) {
+    fn register_builtin_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
         // Anthropic — register all known Claude models when API key is available.
         if config.is_enabled("anthropic")
-            && let Some(key) = resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY")
+            && let Some(key) =
+                resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY", env_overrides)
         {
             let base_url = config
                 .get("anthropic")
                 .and_then(|e| e.base_url.clone())
-                .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
+                .or_else(|| env_value(env_overrides, "ANTHROPIC_BASE_URL"))
                 .unwrap_or_else(|| "https://api.anthropic.com".into());
 
             // Get alias if configured (for metrics differentiation).
@@ -1326,12 +1364,12 @@ impl ProviderRegistry {
 
         // OpenAI — register all known OpenAI models when API key is available.
         if config.is_enabled("openai")
-            && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY")
+            && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
         {
             let base_url = config
                 .get("openai")
                 .and_then(|e| e.base_url.clone())
-                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+                .or_else(|| env_value(env_overrides, "OPENAI_BASE_URL"))
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
 
             // Get alias if configured (for metrics differentiation).
@@ -1370,13 +1408,17 @@ impl ProviderRegistry {
         }
     }
 
-    fn register_openai_compatible_providers(&mut self, config: &ProvidersConfig) {
+    fn register_openai_compatible_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+    ) {
         for def in OPENAI_COMPAT_PROVIDERS {
             if !config.is_enabled(def.config_name) {
                 continue;
             }
 
-            let key = resolve_api_key(config, def.config_name, def.env_key);
+            let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
 
             // Ollama doesn't require an API key — use a dummy value.
             let key = if def.config_name == "ollama" {
@@ -1392,7 +1434,7 @@ impl ProviderRegistry {
             let base_url = config
                 .get(def.config_name)
                 .and_then(|e| e.base_url.clone())
-                .or_else(|| std::env::var(def.env_base_url_key).ok())
+                .or_else(|| env_value(env_overrides, def.env_base_url_key))
                 .unwrap_or_else(|| def.default_base_url.into());
 
             // Get alias if configured (for metrics differentiation).
@@ -1401,9 +1443,7 @@ impl ProviderRegistry {
             let preferred = configured_models_for_provider(config, def.config_name);
             if def.config_name == "ollama" {
                 let has_explicit_entry = config.get("ollama").is_some();
-                let has_env_base_url = std::env::var(def.env_base_url_key)
-                    .ok()
-                    .is_some_and(|value| !value.trim().is_empty());
+                let has_env_base_url = env_value(env_overrides, def.env_base_url_key).is_some();
                 if !has_explicit_entry && !has_env_base_url && preferred.is_empty() {
                     continue;
                 }
@@ -2061,6 +2101,18 @@ mod tests {
             });
 
         let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
+    }
+
+    #[test]
+    fn minimax_registers_with_env_override_api_key() {
+        let config = ProvidersConfig::default();
+        let env_overrides = HashMap::from([(
+            "MINIMAX_API_KEY".to_string(),
+            "sk-test-minimax-override".to_string(),
+        )]);
+
+        let reg = ProviderRegistry::from_env_with_config_and_overrides(&config, &env_overrides);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
     }
 

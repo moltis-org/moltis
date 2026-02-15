@@ -499,11 +499,16 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
-function postHistoryLoadActions(key, searchContext, msgEls) {
+function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 	sendRpc("chat.context", {}).then((ctxRes) => {
 		if (ctxRes?.ok && ctxRes.payload) {
 			if (ctxRes.payload.tokenUsage) {
-				S.setSessionContextWindow(ctxRes.payload.tokenUsage.contextWindow || 0);
+				var tu = ctxRes.payload.tokenUsage;
+				S.setSessionContextWindow(tu.contextWindow || 0);
+				S.setSessionTokens({
+					input: tu.inputTokens || 0,
+					output: tu.outputTokens || 0,
+				});
 			}
 			S.setSessionToolsEnabled(ctxRes.payload.supportsTools !== false);
 		}
@@ -523,7 +528,14 @@ function postHistoryLoadActions(key, searchContext, msgEls) {
 		var thinkEl = document.createElement("div");
 		thinkEl.className = "msg assistant thinking";
 		thinkEl.id = "thinkingIndicator";
-		thinkEl.appendChild(makeThinkingDots());
+		if (thinkingText) {
+			var textEl = document.createElement("span");
+			textEl.className = "thinking-text";
+			textEl.textContent = thinkingText;
+			thinkEl.appendChild(textEl);
+		} else {
+			thinkEl.appendChild(makeThinkingDots());
+		}
 		S.chatMsgBox.appendChild(thinkEl);
 		scrollChatToBottom();
 	}
@@ -675,9 +687,15 @@ export function switchSession(key, searchContext, projectId) {
 				sEntry.lastSeenMessageCount = history.length;
 				sEntry._localUnread = false;
 			}
+			// Restore server-side replying state so thinking dots appear
+			// after a full page reload while the model is still generating.
+			if (res.payload.replying) {
+				setSessionReplying(key, true);
+			}
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
-			postHistoryLoadActions(key, searchContext, msgEls);
+			var thinkingText = res.payload.replying ? res.payload.thinkingText || null : null;
+			postHistoryLoadActions(key, searchContext, msgEls, thinkingText);
 			if (S.chatInput) S.chatInput.focus();
 		} else {
 			sessionStore.switchInProgress.value = false;

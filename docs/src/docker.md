@@ -186,6 +186,49 @@ docker run -d \
   ghcr.io/moltis-org/moltis:latest
 ```
 
+### API Keys and the `[env]` Section
+
+Features like web search (Brave), embeddings, and LLM provider API calls read
+keys from process environment variables (`std::env::var`). In Docker, there are
+two ways to provide these:
+
+**Option 1: `docker -e` flags** (takes precedence)
+
+```bash
+docker run -d \
+  --name moltis \
+  -e BRAVE_API_KEY=your-key \
+  -e OPENROUTER_API_KEY=sk-or-... \
+  ...
+  ghcr.io/moltis-org/moltis:latest
+```
+
+**Option 2: `[env]` section in `moltis.toml`**
+
+Add an `[env]` section to your config file. These variables are injected into
+the Moltis process at startup, making them available to all features:
+
+```toml
+[env]
+BRAVE_API_KEY = "your-brave-key"
+OPENROUTER_API_KEY = "sk-or-..."
+```
+
+If a variable is set both via `docker -e` and `[env]`, the Docker/host
+environment value wins — `[env]` never overwrites existing variables.
+
+```admonish info title="Settings UI env vars"
+Environment variables set through the Settings UI (Settings > Environment)
+are stored in SQLite. At startup, Moltis injects them into the process
+environment so they are available to all features (search, embeddings,
+provider API calls), not just sandbox commands.
+
+Precedence order (highest wins):
+1. Host / `docker -e` environment variables
+2. Config file `[env]` section
+3. Settings UI environment variables
+```
+
 ## Building Locally
 
 To build the Docker image from source:

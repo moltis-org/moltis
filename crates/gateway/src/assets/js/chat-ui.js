@@ -299,10 +299,6 @@ export function updateTokenBar() {
 	var bar = S.$("tokenBar");
 	if (!bar) return;
 	var total = S.sessionTokens.input + S.sessionTokens.output;
-	if (total === 0) {
-		bar.textContent = "";
-		return;
-	}
 	var text =
 		formatTokens(S.sessionTokens.input) +
 		" in / " +

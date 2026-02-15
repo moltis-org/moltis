@@ -222,6 +222,28 @@ test.describe("Chat input and slash commands", () => {
 		await expect(sendBtn).toBeVisible();
 	});
 
+	test("token bar stays visible at zero usage", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			state.setSessionTokens({ input: 0, output: 0 });
+			state.setSessionContextWindow(0);
+			state.setSessionToolsEnabled(true);
+			chatUi.updateTokenBar();
+		});
+
+		const tokenBar = page.locator("#tokenBar");
+		await expect(tokenBar).toBeVisible();
+		await expect(tokenBar).toHaveText("0 in / 0 out · 0 tokens");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("audio duration formatter handles invalid values", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const formatted = await page.evaluate(async () => {
@@ -261,6 +283,80 @@ test.describe("Chat input and slash commands", () => {
 		expect(copyBtn).not.toBeNull();
 		await expect(copyBtn).toBeVisible();
 		await expect(copyBtn).toHaveClass(/provider-btn-sm/);
+
+		const panel = page.locator("#fullContextPanel");
+		const llmOutputBtn = panel.getByRole("button", { name: "LLM output", exact: true });
+		await expect(llmOutputBtn).toBeVisible();
+		await expect(llmOutputBtn).toHaveClass(/provider-btn-sm/);
+		await llmOutputBtn.click();
+		const llmOutput = panel.locator("#fullContextLlmOutput");
+		await expect(llmOutput).toBeVisible();
+		const llmOutputText = (await llmOutput.textContent()) || "";
+		expect(llmOutputText).not.toBe("");
+		const stubbedClipboard = await page.evaluate(() => {
+			window.__copiedText = null;
+			try {
+				if (!navigator.clipboard) return false;
+				Object.defineProperty(navigator.clipboard, "writeText", {
+					configurable: true,
+					value: (text) => {
+						window.__copiedText = text;
+						return Promise.resolve();
+					},
+				});
+				return true;
+			} catch {
+				return false;
+			}
+		});
+		expect(stubbedClipboard).toBeTruthy();
+
+		await copyBtn.click();
+		const copied = await page.evaluate(() => window.__copiedText);
+		expect(copied).toContain("LLM output:\n");
+		expect(copied).toContain("\n\nContext:\n");
+		expect(copied).toContain(llmOutputText);
+		const contextMarker = "\n\nContext:\n";
+		const contextIndex = copied.indexOf(contextMarker);
+		expect(contextIndex).toBeGreaterThan(-1);
+		const contextSection = copied.slice(contextIndex + contextMarker.length).trim();
+		expect(contextSection.length).toBeGreaterThan(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("full context download button produces .jsonl file", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const copyBtn = await openFullContextWithRetry(page);
+		if (copyBtn === null) {
+			await expect(
+				page.locator("#fullContextPanel").getByText("Failed to build context", { exact: true }),
+			).toBeVisible();
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+		expect(copyBtn).not.toBe(false);
+		expect(copyBtn).not.toBeNull();
+
+		const panel = page.locator("#fullContextPanel");
+		const downloadBtn = panel.getByRole("button", { name: "Download", exact: true });
+		await expect(downloadBtn).toBeVisible();
+		await expect(downloadBtn).toHaveClass(/provider-btn-sm/);
+
+		const downloadPromise = page.waitForEvent("download");
+		await downloadBtn.click();
+		const download = await downloadPromise;
+		expect(download.suggestedFilename()).toMatch(/^context-.*\.jsonl$/);
+
+		const content = await (await download.createReadStream()).toArray();
+		const text = Buffer.concat(content).toString("utf-8");
+		const lines = text.trim().split("\n");
+		expect(lines.length).toBeGreaterThan(0);
+		for (const line of lines) {
+			const parsed = JSON.parse(line);
+			expect(parsed).toHaveProperty("role");
+		}
+
 		expect(pageErrors).toEqual([]);
 	});
 

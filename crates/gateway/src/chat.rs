@@ -191,6 +191,7 @@ struct AssistantTurnOutput {
     output_tokens: u32,
     audio_path: Option<String>,
     reasoning: Option<String>,
+    llm_api_response: Option<Value>,
 }
 
 fn now_ms() -> u64 {
@@ -1781,6 +1782,9 @@ pub struct LiveChatService {
     message_queue: Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
     /// Per-session last-seen client sequence number for ordering diagnostics.
     last_client_seq: Arc<RwLock<HashMap<String, u64>>>,
+    /// Per-session accumulated thinking text for active runs, so it can be
+    /// returned in `sessions.switch` after a page reload.
+    active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
     /// Failover configuration for automatic model/provider failover.
     failover_config: moltis_config::schema::FailoverConfig,
 }
@@ -1806,6 +1810,7 @@ impl LiveChatService {
             session_locks: Arc::new(RwLock::new(HashMap::new())),
             message_queue: Arc::new(RwLock::new(HashMap::new())),
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
+            active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
     }
@@ -2331,6 +2336,7 @@ impl ChatService for LiveChatService {
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
+        let active_thinking_text = Arc::clone(&self.active_thinking_text);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
         let hook_registry = self.hook_registry.clone();
@@ -2581,6 +2587,7 @@ impl ChatService for LiveChatService {
                         Some(&session_store),
                         mcp_disabled,
                         client_seq,
+                        Some(Arc::clone(&active_thinking_text)),
                     )
                     .await
                 }
@@ -2633,6 +2640,7 @@ impl ChatService for LiveChatService {
                     output_tokens: Some(assistant_output.output_tokens),
                     tool_calls: None,
                     reasoning: assistant_output.reasoning,
+                    llm_api_response: assistant_output.llm_api_response,
                     audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
@@ -2654,6 +2662,11 @@ impl ChatService for LiveChatService {
             if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
                 runs_by_session.remove(&session_key_clone);
             }
+            drop(runs_by_session);
+            active_thinking_text
+                .write()
+                .await
+                .remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
             // acquire it. Without this, every replayed `chat.send()` would
@@ -2882,6 +2895,7 @@ impl ChatService for LiveChatService {
                 Some(&self.session_store),
                 false, // send_sync: MCP tools always enabled for API calls
                 None,  // send_sync: no client seq
+                None,  // send_sync: no thinking text tracking
             )
             .await
         };
@@ -2897,6 +2911,7 @@ impl ChatService for LiveChatService {
                 output_tokens: Some(assistant_output.output_tokens),
                 tool_calls: None,
                 reasoning: assistant_output.reasoning.clone(),
+                llm_api_response: assistant_output.llm_api_response.clone(),
                 audio: assistant_output.audio_path.clone(),
                 seq: None,
                 run_id: Some(run_id.clone()),
@@ -3160,6 +3175,8 @@ impl ChatService for LiveChatService {
                 StreamEvent::ToolCallStart { .. }
                 | StreamEvent::ToolCallArgumentsDelta { .. }
                 | StreamEvent::ToolCallComplete { .. }
+                // Provider raw payloads are debug metadata, not summary text.
+                | StreamEvent::ProviderRaw(_)
                 // Ignore provider reasoning blocks; summary body should only
                 // include final answer text.
                 | StreamEvent::ReasoningDelta(_) => {},
@@ -3180,6 +3197,7 @@ impl ChatService for LiveChatService {
             output_tokens: None,
             tool_calls: None,
             reasoning: None,
+            llm_api_response: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -3719,6 +3737,14 @@ impl ChatService for LiveChatService {
 
         let system_prompt_chars = system_prompt.len();
 
+        // Keep raw assistant outputs (including provider/model/token metadata)
+        // so the UI can show a debug view of what the LLM actually returned.
+        let llm_outputs: Vec<Value> = history
+            .iter()
+            .filter(|entry| entry.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+            .cloned()
+            .collect();
+
         // Reconstruct `role: "tool"` messages from persisted `tool_result`
         // entries so the context view shows what the LLM actually saw.
         let history_with_tools: Vec<Value> = history
@@ -3761,10 +3787,28 @@ impl ChatService for LiveChatService {
 
         Ok(serde_json::json!({
             "messages": openai_messages,
+            "llmOutputs": llm_outputs,
             "messageCount": message_count,
             "systemPromptChars": system_prompt_chars,
             "totalChars": total_chars,
         }))
+    }
+
+    async fn active_session_keys(&self) -> Vec<String> {
+        self.active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    async fn active_thinking_text(&self, session_key: &str) -> Option<String> {
+        self.active_thinking_text
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
     }
 }
 
@@ -3892,6 +3936,7 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
     client_seq: Option<u64>,
+    active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
@@ -4201,6 +4246,9 @@ async fn run_with_tools(
                 },
                 RunnerEvent::ThinkingText(text) => {
                     latest_reasoning = text.clone();
+                    if let Some(ref map) = active_thinking_text {
+                        map.write().await.insert(sk.clone(), text.clone());
+                    }
                     serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -4399,13 +4447,18 @@ async fn run_with_tools(
         Ok(result) => {
             clear_unsupported_model(state, model_store, model_id).await;
 
-            let is_silent = result.text.trim().is_empty();
+            let iterations = result.iterations;
+            let tool_calls_made = result.tool_calls_made;
+            let usage = result.usage;
+            let llm_api_response = (!result.raw_llm_responses.is_empty())
+                .then_some(Value::Array(result.raw_llm_responses));
             let display_text = result.text;
+            let is_silent = display_text.trim().is_empty();
 
             info!(
                 run_id,
-                iterations = result.iterations,
-                tool_calls = result.tool_calls_made,
+                iterations,
+                tool_calls = tool_calls_made,
                 response = %display_text,
                 silent = is_silent,
                 "agent run complete"
@@ -4454,12 +4507,12 @@ async fn run_with_tools(
                 text: display_text.clone(),
                 model: provider_ref.id().to_string(),
                 provider: provider_name.to_string(),
-                input_tokens: result.usage.input_tokens,
-                output_tokens: result.usage.output_tokens,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
                 message_index: assistant_message_index,
                 reply_medium: desired_reply_medium,
-                iterations: Some(result.iterations),
-                tool_calls_made: Some(result.tool_calls_made),
+                iterations: Some(iterations),
+                tool_calls_made: Some(tool_calls_made),
                 audio: audio_path.clone(),
                 audio_warning,
                 reasoning: reasoning.clone(),
@@ -4481,10 +4534,11 @@ async fn run_with_tools(
             }
             Some(AssistantTurnOutput {
                 text: display_text,
-                input_tokens: result.usage.input_tokens,
-                output_tokens: result.usage.output_tokens,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
                 audio_path,
                 reasoning,
+                llm_api_response,
             })
         },
         Err(e) => {
@@ -4544,6 +4598,8 @@ async fn compact_session(
             StreamEvent::ToolCallStart { .. }
             | StreamEvent::ToolCallArgumentsDelta { .. }
             | StreamEvent::ToolCallComplete { .. }
+            // Provider raw payloads are debug metadata, not summary text.
+            | StreamEvent::ProviderRaw(_)
             // Ignore provider reasoning blocks; summary body should only
             // include final answer text.
             | StreamEvent::ReasoningDelta(_) => {},
@@ -4563,6 +4619,7 @@ async fn compact_session(
         output_tokens: None,
         tool_calls: None,
         reasoning: None,
+        llm_api_response: None,
         audio: None,
         seq: None,
         run_id: None,
@@ -4631,6 +4688,7 @@ async fn run_streaming(
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
     let mut accumulated_reasoning = String::new();
+    let mut raw_llm_responses: Vec<Value> = Vec::new();
 
     while let Some(event) = stream.next().await {
         match event {
@@ -4663,6 +4721,11 @@ async fn run_streaming(
                     BroadcastOpts::default(),
                 )
                 .await;
+            },
+            StreamEvent::ProviderRaw(raw) => {
+                if raw_llm_responses.len() < 256 {
+                    raw_llm_responses.push(raw);
+                }
             },
             StreamEvent::Done(usage) => {
                 clear_unsupported_model(state, model_store, model_id).await;
@@ -4792,12 +4855,15 @@ async fn run_streaming(
                     deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
                         .await;
                 }
+                let llm_api_response =
+                    (!raw_llm_responses.is_empty()).then_some(Value::Array(raw_llm_responses));
                 return Some(AssistantTurnOutput {
                     text: accumulated,
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
                     audio_path,
                     reasoning,
+                    llm_api_response,
                 });
             },
             StreamEvent::Error(msg) => {
@@ -7062,5 +7128,41 @@ mod tests {
             });
 
         assert!(extracted.is_none());
+    }
+
+    // ── active_session_keys tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn active_session_keys_empty_when_no_runs() {
+        let (_active_runs, active_runs_by_session) = make_active_run_maps();
+        let keys: Vec<String> = active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect();
+        assert!(keys.is_empty());
+    }
+
+    #[tokio::test]
+    async fn active_session_keys_returns_running_sessions() {
+        let (_active_runs, active_runs_by_session) = make_active_run_maps();
+        active_runs_by_session
+            .write()
+            .await
+            .insert("session-a".to_string(), "run-1".to_string());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("session-b".to_string(), "run-2".to_string());
+
+        let mut keys: Vec<String> = active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec!["session-a", "session-b"]);
     }
 }

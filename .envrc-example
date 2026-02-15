@@ -1,0 +1,37 @@
+# Copy to .envrc and fill in your values, then run `direnv allow`.
+# Variables use the MOLTIS_<SECTION>__<FIELD> override convention
+# which maps directly to moltis.toml config sections.
+
+# ── Identity (skip onboarding name prompts) ──────────────────────
+export MOLTIS_IDENTITY__NAME="moltis"          # bot display name
+export MOLTIS_IDENTITY__EMOJI=""               # bot emoji
+export MOLTIS_USER__NAME=""                    # your name
+
+# ── LLM Provider API keys ────────────────────────────────────────
+export ANTHROPIC_API_KEY=""
+export OPENAI_API_KEY=""
+export GOOGLE_API_KEY=""                       # Gemini
+export GROQ_API_KEY=""
+export DEEPSEEK_API_KEY=""
+export XAI_API_KEY=""
+export MISTRAL_API_KEY=""
+export OPENROUTER_API_KEY=""
+
+# ── Voice: TTS ───────────────────────────────────────────────────
+export ELEVENLABS_API_KEY=""
+# export MOLTIS_VOICE__TTS__PROVIDER="elevenlabs"
+# export MOLTIS_VOICE__TTS__ELEVENLABS__VOICE_ID=""
+
+# ── Voice: STT ───────────────────────────────────────────────────
+export DEEPGRAM_API_KEY=""
+# export MOLTIS_VOICE__STT__PROVIDER="deepgram"   # default is "whisper" (local)
+
+# ── Web search ───────────────────────────────────────────────────
+export BRAVE_API_KEY=""
+# export PERPLEXITY_API_KEY=""                     # alternative search
+
+# ── Restrict offered providers (optional) ────────────────────────
+# export MOLTIS_PROVIDERS__OFFERED='["anthropic","openai","groq"]'
+
+# ── Skip onboarding entirely (optional) ─────────────────────────
+# export SKIP_ONBOARDING=1

@@ -1263,12 +1263,30 @@ impl MethodRegistry {
             "sessions.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let mut result = ctx
+                        .state
                         .services
                         .session
                         .list()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // Inject replying state so the frontend can restore the
+                    // thinking indicator after a full page reload.
+                    let active_keys = ctx.state.chat().await.active_session_keys().await;
+                    if let Some(arr) = result.as_array_mut() {
+                        for entry in arr {
+                            let key_str =
+                                entry.get("key").and_then(|v| v.as_str()).map(String::from);
+                            if let (Some(key), Some(obj)) = (key_str, entry.as_object_mut()) {
+                                obj.insert(
+                                    "replying".to_string(),
+                                    serde_json::Value::Bool(active_keys.iter().any(|k| k == &key)),
+                                );
+                            }
+                        }
+                    }
+                    Ok(result)
                 })
             }),
         );
@@ -1321,6 +1339,7 @@ impl MethodRegistry {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let sandbox_toggled = ctx.params.get("sandboxEnabled").is_some();
                     let result = ctx
                         .state
                         .services
@@ -1340,6 +1359,29 @@ impl MethodRegistry {
                         BroadcastOpts::default(),
                     )
                     .await;
+                    if sandbox_toggled {
+                        let enabled = result
+                            .get("sandbox_enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let message = if enabled {
+                            "Sandbox enabled — commands now run in container."
+                        } else {
+                            "Sandbox disabled — commands now run on host."
+                        };
+                        broadcast(
+                            &ctx.state,
+                            "chat",
+                            serde_json::json!({
+                                "sessionKey": key,
+                                "state": "notice",
+                                "title": "Sandbox",
+                                "message": message,
+                            }),
+                            BroadcastOpts::default(),
+                        )
+                        .await;
+                    }
                     Ok(result)
                 })
             }),
@@ -2306,6 +2348,19 @@ impl MethodRegistry {
                                     tracing::warn!("auto-create worktree failed: {e}");
                                 },
                             }
+                        }
+                    }
+
+                    // Inject replying state so frontend restores thinking
+                    // indicator after page reload.
+                    let chat = ctx.state.chat().await;
+                    let active_keys = chat.active_session_keys().await;
+                    let replying = active_keys.iter().any(|k| k == key);
+                    let mut result = result;
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
+                        if replying && let Some(text) = chat.active_thinking_text(key).await {
+                            obj.insert("thinkingText".to_string(), serde_json::Value::String(text));
                         }
                     }
 

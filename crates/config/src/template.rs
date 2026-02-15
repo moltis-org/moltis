@@ -538,6 +538,23 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # ══════════════════════════════════════════════════════════════════════════════
 # Shell commands triggered by events.
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT VARIABLES
+# ══════════════════════════════════════════════════════════════════════════════
+# Variables injected into the Moltis process at startup.
+# Useful for API keys in Docker where you can't easily pass env vars.
+# Process env vars (docker -e, host env) take precedence — existing vars
+# are NOT overwritten.
+#
+# [env]
+# BRAVE_API_KEY = "..."
+# OPENROUTER_API_KEY = "sk-or-..."
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOKS
+# ══════════════════════════════════════════════════════════════════════════════
+# Shell commands triggered by events.
+
 # [hooks]
 # [[hooks.hooks]]
 # name = "my-hook"                # Hook name (for logging)

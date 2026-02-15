@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sandbox toggle notification**: when the sandbox is enabled or disabled
+  mid-session, a system message is injected into the conversation history so
+  the LLM knows the execution environment changed. A chat notice also appears
+  in the UI immediately.
+
+- **Config `[env]` section**: environment variables defined in `[env]` in
+  `moltis.toml` are injected into the Moltis process at startup. This makes
+  API keys (Brave, OpenRouter, etc.) available to features that read from
+  `std::env::var()`. Process env vars (`docker -e`, host env) take precedence.
+  Closes #107.
 - **Browser auto-detection and install**: automatically detect all installed
   Chromium-family browsers (Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc)
   and auto-install via the system package manager when none is found. Requests
@@ -18,14 +28,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   static model catalog (GLM-5, GLM-4.7, GLM-4.6, GLM-4.5 series) and dynamic
   model discovery via `/models` endpoint. Supports tool calling, streaming,
   vision (GLM-4.6V/4.5V), and reasoning content.
+- **Running Containers panel**: the Settings > Sandboxes page now shows a
+  "Running Containers" section listing all moltis-managed containers with
+  live state (running/stopped/exited), backend type (Apple Container/Docker),
+  resource info, and Stop/Delete actions. Includes disk usage display
+  (container/image counts, sizes, reclaimable space) and a "Clean All"
+  button to stop and remove all stale containers at once.
+- **Startup container GC**: the gateway now automatically removes orphaned
+  session containers on startup, preventing disk space accumulation from
+  crashed or interrupted sessions.
+- **Download full context as JSONL**: the full context panel now has a
+  "Download" button that exports the conversation (including raw LLM
+  responses) as a timestamped `.jsonl` file.
+- **Sandbox images in cached images list**: the Settings > Images page
+  now merges sandbox-built images into the cached images list so all
+  container images are visible in one place.
 
 ### Changed
+
+- **Sandbox image identity**: image tags now use SHA-256 instead of
+  `DefaultHasher` for deterministic, cross-run hashing of base image +
+  packages.
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- **Thinking indicator lost on reload**: reloading the page while the model
+  was generating no longer loses the "thinking" dots. The backend now includes
+  `replying` state in `sessions.list` and `sessions.switch` RPC responses so
+  the frontend can restore the indicator after a full page reload.
+- **Thinking text restored after reload**: reloading the page during extended
+  thinking (reasoning) now restores the accumulated thinking text instead of
+  showing only bouncing dots. The backend tracks thinking text per session and
+  returns it in the `sessions.switch` response.
+- **Apple Container recovery**: simplify container recovery to a single flat
+  retry loop (3 attempts max, down from up to 24). Name rotation now only
+  triggers on `AlreadyExists` errors, preventing orphan containers. Added
+  `notFound` error matching so exec readiness probes retry correctly.
+  Diagnostic info (running container count, service health, container logs)
+  is now included in failure messages. Detect stale Virtualization.framework
+  state (`NSPOSIXErrorDomain EINVAL`) and automatically restart the daemon
+  (`container system stop && container system start`) before retrying; bail
+  with a clear remediation message only if automatic restart fails.
+  Exec-level recovery retries reduced from 3 to 1.
+- **Ghost Apple Containers**: failed container deletions are now tracked
+  in a zombie set and filtered from list output, preventing stale entries
+  from reappearing in the Running Containers panel.
+- **Container action errors preserved**: failed delete/clean/restart
+  operations now surface the original error message to the UI instead of
+  silently swallowing it.
+- **Usage parsing across OpenAI-compatible providers**: token counts now
+  handle Anthropic-style (`input_tokens`/`output_tokens`), camelCase
+  variants, cache token fields, and multiple response nesting structures
+  across diverse providers.
+- **Think tag whitespace**: leading whitespace after `</think>` close
+  tags is now stripped, preventing extra blank lines in streamed output.
+- **Token bar visible at zero**: the token usage bar no longer disappears
+  when all counts are zero; it stays visible as a baseline indicator.
 
 ### Security
 
@@ -192,7 +254,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
-
 - **Multi-select preferred models per provider**: The LLMs page now has a
   "Preferred Models" button per provider that opens a multi-select modal.
   Selected models are pinned at the top of the session model dropdown.
@@ -237,6 +298,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Instead, the backend exposes a `keyOptional` field on provider
   metadata, making the UI provider-agnostic.
 
+### Fixed
+
+- **Settings UI env vars now available process-wide**: environment variables
+  set via Settings > Environment were previously only injected into sandbox
+  commands. They are now also injected into the Moltis process at startup,
+  making them available to web search, embeddings, and provider API calls.
 ## [0.8.14] - 2026-02-11
 
 ### Security

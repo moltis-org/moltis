@@ -186,6 +186,30 @@ enabled = true
 otlp_endpoint = "http://localhost:4317"  # OpenTelemetry collector
 ```
 
+## Process Environment Variables (`[env]`)
+
+The `[env]` section injects variables into the Moltis process at startup.
+This is useful in Docker deployments where passing individual `-e` flags is
+inconvenient, or when you want API keys stored in the config file rather
+than the host environment.
+
+```toml
+[env]
+BRAVE_API_KEY = "your-brave-key"
+OPENROUTER_API_KEY = "sk-or-..."
+ELEVENLABS_API_KEY = "..."
+```
+
+**Precedence**: existing process environment variables are never overwritten.
+If `BRAVE_API_KEY` is already set via `docker -e` or the host shell, the
+`[env]` value is skipped. This means `docker -e` always wins.
+
+```admonish info title="Settings UI vs [env]"
+Environment variables configured through the Settings UI (Settings >
+Environment) are also injected into the Moltis process at startup.
+Precedence: host/`docker -e` > config `[env]` > Settings UI.
+```
+
 ## Environment Variables
 
 All settings can be overridden via environment variables:
