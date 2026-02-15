@@ -2213,6 +2213,7 @@ fn is_apple_container_exists_error(stderr: &str) -> bool {
     stderr.contains("already exists") || stderr.contains("exists: \"container with id")
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn is_apple_container_unavailable_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     lower.contains("cannot exec: container is not running")
@@ -2266,6 +2267,7 @@ fn is_apple_container_daemon_stale_error(text: &str) -> bool {
 /// occur after macOS sleep/wake cycles, resource exhaustion, or
 /// Virtualization.framework glitches. The appropriate recovery is a full
 /// service restart, same as for daemon-stale errors.
+#[cfg(any(target_os = "macos", test))]
 fn is_apple_container_boot_failure(logs: Option<&str>) -> bool {
     match logs {
         None => true,
