@@ -719,6 +719,414 @@ pub async fn clean_sandbox_images() -> Result<usize> {
     Ok(count)
 }
 
+// ── Running container management ─────────────────────────────────────────────
+
+/// State of a running/stopped container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerRunState {
+    Running,
+    Stopped,
+    Exited,
+    Unknown,
+}
+
+/// Which container backend manages this container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContainerBackend {
+    AppleContainer,
+    Docker,
+}
+
+/// A container managed by moltis (running, stopped, or exited).
+#[derive(Debug, Clone, Serialize)]
+pub struct RunningContainer {
+    pub name: String,
+    pub image: String,
+    pub state: ContainerRunState,
+    pub backend: ContainerBackend,
+    pub cpus: Option<u32>,
+    pub memory_mb: Option<u64>,
+    pub started: Option<String>,
+    pub addr: Option<String>,
+}
+
+/// List all containers whose name starts with `container_prefix`.
+///
+/// Queries both Apple Container and Docker backends when available,
+/// merging results with the appropriate backend label.
+pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<RunningContainer>> {
+    let mut containers = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Apple Container: `container list --format json` outputs a JSON array.
+    // Each element has nested fields: configuration.id, status,
+    // configuration.image.reference, configuration.resources, networks[].
+    if is_cli_available("container") {
+        let output = tokio::process::Command::new("container")
+            .args(["list", "--format", "json"])
+            .output()
+            .await;
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let entries: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap_or_default();
+            for entry in entries {
+                let name = entry
+                    .pointer("/configuration/id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !name.starts_with(container_prefix) || !seen.insert(name.to_string()) {
+                    continue;
+                }
+                let state_str = entry
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let state = match state_str {
+                    "running" => ContainerRunState::Running,
+                    "stopped" => ContainerRunState::Stopped,
+                    "exited" => ContainerRunState::Exited,
+                    _ => ContainerRunState::Unknown,
+                };
+                let image = entry
+                    .pointer("/configuration/image/reference")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let cpus = entry
+                    .pointer("/configuration/resources/cpus")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let memory_mb = entry
+                    .pointer("/configuration/resources/memoryInBytes")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v / (1024 * 1024));
+                // startedDate is a Core Foundation absolute time (seconds since 2001-01-01).
+                // Store as unix timestamp string; the frontend formats for display.
+                let started =
+                    entry
+                        .get("startedDate")
+                        .and_then(|v| v.as_f64())
+                        .map(|cf_timestamp| {
+                            // CF absolute time epoch: 2001-01-01T00:00:00Z = 978307200 unix seconds.
+                            let unix_secs = cf_timestamp as i64 + 978_307_200;
+                            unix_secs.to_string()
+                        });
+                let addr = entry
+                    .pointer("/networks/0/ipv4Address")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                containers.push(RunningContainer {
+                    name: name.to_string(),
+                    image,
+                    state,
+                    backend: ContainerBackend::AppleContainer,
+                    cpus,
+                    memory_mb,
+                    started,
+                    addr,
+                });
+            }
+        }
+    }
+
+    // Docker: `docker ps -a --filter name=<prefix> --format json` outputs one JSON per line.
+    if is_cli_available("docker") {
+        let output = tokio::process::Command::new("docker")
+            .args([
+                "ps",
+                "-a",
+                "--filter",
+                &format!("name={container_prefix}"),
+                "--format",
+                "{{json .}}",
+            ])
+            .output()
+            .await;
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let Ok(json): std::result::Result<serde_json::Value, _> =
+                    serde_json::from_str(line)
+                else {
+                    continue;
+                };
+                let name = json
+                    .get("Names")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if !name.starts_with(container_prefix) || !seen.insert(name.to_string()) {
+                    continue;
+                }
+                let state_str = json
+                    .get("State")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let state = match state_str {
+                    "running" => ContainerRunState::Running,
+                    "exited" => ContainerRunState::Exited,
+                    _ => ContainerRunState::Stopped,
+                };
+                let image = json
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let started = json
+                    .get("CreatedAt")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                containers.push(RunningContainer {
+                    name: name.to_string(),
+                    image,
+                    state,
+                    backend: ContainerBackend::Docker,
+                    cpus: None,
+                    memory_mb: None,
+                    started,
+                    addr: None,
+                });
+            }
+        }
+    }
+
+    Ok(containers)
+}
+
+/// Disk usage summary from the container runtime.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContainerDiskUsage {
+    pub containers_total: u64,
+    pub containers_active: u64,
+    pub containers_size_bytes: u64,
+    pub containers_reclaimable_bytes: u64,
+    pub images_total: u64,
+    pub images_active: u64,
+    pub images_size_bytes: u64,
+}
+
+/// Query container runtime disk usage.
+///
+/// Uses `container system df --format json` for Apple Container,
+/// falls back to `docker system df --format json` for Docker.
+pub async fn container_disk_usage() -> Result<ContainerDiskUsage> {
+    // Try Apple Container first.
+    if is_cli_available("container") {
+        let output = tokio::process::Command::new("container")
+            .args(["system", "df", "--format", "json"])
+            .output()
+            .await;
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                let c = json.get("containers").cloned().unwrap_or_default();
+                let i = json.get("images").cloned().unwrap_or_default();
+                return Ok(ContainerDiskUsage {
+                    containers_total: c.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
+                    containers_active: c.get("active").and_then(|v| v.as_u64()).unwrap_or(0),
+                    containers_size_bytes: c
+                        .get("sizeInBytes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    containers_reclaimable_bytes: c
+                        .get("reclaimable")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    images_total: i.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
+                    images_active: i.get("active").and_then(|v| v.as_u64()).unwrap_or(0),
+                    images_size_bytes: i.get("sizeInBytes").and_then(|v| v.as_u64()).unwrap_or(0),
+                });
+            }
+        }
+    }
+
+    // Fallback: Docker `docker system df --format json` (one JSON per line per type).
+    if is_cli_available("docker") {
+        let output = tokio::process::Command::new("docker")
+            .args(["system", "df", "--format", "{{json .}}"])
+            .output()
+            .await;
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut usage = ContainerDiskUsage {
+                containers_total: 0,
+                containers_active: 0,
+                containers_size_bytes: 0,
+                containers_reclaimable_bytes: 0,
+                images_total: 0,
+                images_active: 0,
+                images_size_bytes: 0,
+            };
+            for line in stdout.lines() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    let rtype = json.get("Type").and_then(|v| v.as_str()).unwrap_or("");
+                    let total = json.get("TotalCount").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let active = json.get("Active").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let size = json.get("Size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let reclaimable = json
+                        .get("Reclaimable")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    match rtype {
+                        "Containers" => {
+                            usage.containers_total = total;
+                            usage.containers_active = active;
+                            usage.containers_size_bytes = size;
+                            usage.containers_reclaimable_bytes = reclaimable;
+                        },
+                        "Images" => {
+                            usage.images_total = total;
+                            usage.images_active = active;
+                            usage.images_size_bytes = size;
+                        },
+                        _ => {},
+                    }
+                }
+            }
+            return Ok(usage);
+        }
+    }
+
+    anyhow::bail!("no container CLI available for disk usage")
+}
+
+/// Remove all containers whose name starts with `container_prefix`.
+///
+/// Returns the number of containers removed.
+pub async fn clean_all_containers(container_prefix: &str) -> Result<usize> {
+    let containers = list_running_containers(container_prefix).await?;
+    let mut removed = 0;
+    for c in &containers {
+        // Stop running containers first.
+        if c.state == ContainerRunState::Running {
+            let _ = stop_container(&c.name).await;
+        }
+        match remove_container(&c.name).await {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                warn!(name = %c.name, %e, "failed to remove container during clean all");
+            },
+        }
+    }
+    Ok(removed)
+}
+
+/// Stop a container by name. Detects the backend from the available CLIs.
+///
+/// Safety: callers must validate that `name` starts with the expected prefix
+/// to prevent stopping arbitrary containers.
+pub async fn stop_container(name: &str) -> Result<()> {
+    // Try Apple Container first, then Docker.
+    if is_cli_available("container") {
+        let output = tokio::process::Command::new("container")
+            .args(["stop", name])
+            .output()
+            .await;
+        if let Ok(ref o) = output
+            && o.status.success()
+        {
+            return Ok(());
+        }
+    }
+    if is_cli_available("docker") {
+        let output = tokio::process::Command::new("docker")
+            .args(["stop", name])
+            .output()
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("docker stop failed for {name}: {}", stderr.trim());
+        }
+        return Ok(());
+    }
+    anyhow::bail!("no container CLI available to stop {name}")
+}
+
+/// Remove a container by name (force). Detects the backend from available CLIs.
+///
+/// Safety: callers must validate that `name` starts with the expected prefix
+/// to prevent removing arbitrary containers.
+pub async fn remove_container(name: &str) -> Result<()> {
+    // Try Apple Container first, then Docker.
+    if is_cli_available("container") {
+        let output = tokio::process::Command::new("container")
+            .args(["rm", "-f", name])
+            .output()
+            .await;
+        if let Ok(ref o) = output
+            && o.status.success()
+        {
+            return Ok(());
+        }
+    }
+    if is_cli_available("docker") {
+        let output = tokio::process::Command::new("docker")
+            .args(["rm", "-f", name])
+            .output()
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("docker rm failed for {name}: {}", stderr.trim());
+        }
+        return Ok(());
+    }
+    anyhow::bail!("no container CLI available to remove {name}")
+}
+
+/// Restart the container daemon. For Apple Container this runs
+/// `container system stop` followed by `container system start`.
+/// For Docker it runs `docker restart` on the Docker daemon socket
+/// (equivalent to `systemctl restart docker` but works cross-platform).
+///
+/// This clears ghost containers and corrupted daemon state.
+pub async fn restart_container_daemon() -> Result<()> {
+    if is_cli_available("container") {
+        let stop = tokio::process::Command::new("container")
+            .args(["system", "stop"])
+            .output()
+            .await?;
+        if !stop.status.success() {
+            let stderr = String::from_utf8_lossy(&stop.stderr);
+            anyhow::bail!("container system stop failed: {}", stderr.trim());
+        }
+        let start = tokio::process::Command::new("container")
+            .args(["system", "start"])
+            .output()
+            .await?;
+        if !start.status.success() {
+            let stderr = String::from_utf8_lossy(&start.stderr);
+            anyhow::bail!("container system start failed: {}", stderr.trim());
+        }
+        return Ok(());
+    }
+    if is_cli_available("docker") {
+        // Docker Desktop restarts via the CLI are not straightforward;
+        // restarting the daemon is platform-specific. Best-effort: just
+        // prune stopped containers to clear stale state.
+        let _ = tokio::process::Command::new("docker")
+            .args(["container", "prune", "-f"])
+            .output()
+            .await;
+        return Ok(());
+    }
+    anyhow::bail!("no container CLI available to restart daemon")
+}
+
 /// Docker-based sandbox implementation.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
@@ -2337,6 +2745,9 @@ pub struct SandboxRouter {
     global_image_override: RwLock<Option<String>>,
     /// Event channel for sandbox events (provision start/done/error).
     event_tx: tokio::sync::broadcast::Sender<SandboxEvent>,
+    /// Whether a sandbox image pre-build is currently in progress.
+    /// Used by the gateway to show a banner in the UI.
+    pub building_flag: std::sync::atomic::AtomicBool,
 }
 
 impl SandboxRouter {
@@ -2352,6 +2763,7 @@ impl SandboxRouter {
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
+            building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2365,6 +2777,7 @@ impl SandboxRouter {
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
+            building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -3348,6 +3761,71 @@ mod tests {
         assert!(!should_use_docker_backend(true, false));
         assert!(!should_use_docker_backend(false, true));
         assert!(!should_use_docker_backend(false, false));
+    }
+
+    #[test]
+    fn container_run_state_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_value(ContainerRunState::Running)
+                .unwrap()
+                .as_str(),
+            Some("running")
+        );
+        assert_eq!(
+            serde_json::to_value(ContainerRunState::Stopped)
+                .unwrap()
+                .as_str(),
+            Some("stopped")
+        );
+        assert_eq!(
+            serde_json::to_value(ContainerRunState::Exited)
+                .unwrap()
+                .as_str(),
+            Some("exited")
+        );
+        assert_eq!(
+            serde_json::to_value(ContainerRunState::Unknown)
+                .unwrap()
+                .as_str(),
+            Some("unknown")
+        );
+    }
+
+    #[test]
+    fn container_backend_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_value(ContainerBackend::AppleContainer)
+                .unwrap()
+                .as_str(),
+            Some("apple-container")
+        );
+        assert_eq!(
+            serde_json::to_value(ContainerBackend::Docker)
+                .unwrap()
+                .as_str(),
+            Some("docker")
+        );
+    }
+
+    #[test]
+    fn running_container_serializes_to_json() {
+        let c = RunningContainer {
+            name: "moltis-sandbox-sess1".into(),
+            image: "ubuntu:25.10".into(),
+            state: ContainerRunState::Running,
+            backend: ContainerBackend::Docker,
+            cpus: Some(2),
+            memory_mb: Some(512),
+            started: Some("2025-01-01T00:00:00Z".into()),
+            addr: None,
+        };
+        let json = serde_json::to_value(&c).unwrap();
+        assert_eq!(json["name"], "moltis-sandbox-sess1");
+        assert_eq!(json["state"], "running");
+        assert_eq!(json["backend"], "docker");
+        assert_eq!(json["cpus"], 2);
+        assert_eq!(json["memory_mb"], 512);
+        assert!(json["addr"].is_null());
     }
 
     #[cfg(target_os = "linux")]

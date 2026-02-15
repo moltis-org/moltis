@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   static model catalog (GLM-5, GLM-4.7, GLM-4.6, GLM-4.5 series) and dynamic
   model discovery via `/models` endpoint. Supports tool calling, streaming,
   vision (GLM-4.6V/4.5V), and reasoning content.
+- **Running Containers panel**: the Settings > Sandboxes page now shows a
+  "Running Containers" section listing all moltis-managed containers with
+  live state (running/stopped/exited), backend type (Apple Container/Docker),
+  resource info, and Stop/Delete actions. Includes disk usage display
+  (container/image counts, sizes, reclaimable space) and a "Clean All"
+  button to stop and remove all stale containers at once.
+- **Startup container GC**: the gateway now automatically removes orphaned
+  session containers on startup, preventing disk space accumulation from
+  crashed or interrupted sessions.
 
 ### Changed
 

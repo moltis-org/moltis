@@ -562,6 +562,27 @@ fn build_api_routes() -> Router<AppState> {
             get(api_get_default_image_handler).put(api_set_default_image_handler),
         )
         .route(
+            "/api/sandbox/containers",
+            get(api_list_containers_handler),
+        )
+        .route(
+            "/api/sandbox/containers/clean",
+            axum::routing::post(api_clean_all_containers_handler),
+        )
+        .route(
+            "/api/sandbox/containers/{name}/stop",
+            axum::routing::post(api_stop_container_handler),
+        )
+        .route(
+            "/api/sandbox/containers/{name}",
+            axum::routing::delete(api_remove_container_handler),
+        )
+        .route("/api/sandbox/disk-usage", get(api_disk_usage_handler))
+        .route(
+            "/api/sandbox/daemon/restart",
+            axum::routing::post(api_restart_daemon_handler),
+        )
+        .route(
             "/api/env",
             get(crate::env_routes::env_list).post(crate::env_routes::env_set),
         )
@@ -1742,6 +1763,12 @@ pub async fn start_gateway(
 
         if should_prebuild_sandbox_image(router.mode(), &packages) {
             let deferred_for_build = Arc::clone(&deferred_state);
+            // Mark the build as in-progress so the UI can show a banner
+            // even if the WebSocket broadcast fires before the client connects.
+            sandbox_router
+                .building_flag
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let build_router = Arc::clone(&sandbox_router);
             tokio::spawn(async move {
                 // Broadcast build start event.
                 if let Some(state) = deferred_for_build.get() {
@@ -1765,6 +1792,9 @@ pub async fn start_gateway(
                             "sandbox image pre-build complete"
                         );
                         router.set_global_image(Some(result.tag.clone())).await;
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
 
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
@@ -1787,9 +1817,15 @@ pub async fn start_gateway(
                         debug!(
                             "sandbox image pre-build: no-op (no packages or unsupported backend)"
                         );
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                     },
                     Err(e) => {
                         tracing::warn!("sandbox image pre-build failed: {e}");
+                        build_router
+                            .building_flag
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
                                 state,
@@ -1887,6 +1923,24 @@ pub async fn start_gateway(
                 }
             });
         }
+    }
+
+    // Startup GC: remove orphaned session containers from previous runs.
+    // At startup no legitimate sessions exist, so any prefixed containers are stale.
+    if sandbox_router.backend_name() != "none" {
+        let prefix = sandbox_router.config().container_prefix.clone();
+        tokio::spawn(async move {
+            if let Some(prefix) = prefix {
+                match moltis_tools::sandbox::clean_all_containers(&prefix).await {
+                    Ok(0) => {},
+                    Ok(n) => info!(
+                        removed = n,
+                        "startup GC: cleaned orphaned session containers"
+                    ),
+                    Err(e) => debug!("startup GC: container cleanup skipped: {e}"),
+                }
+            }
+        });
     }
 
     // Pre-pull browser container image if browser is enabled and sandbox mode is available.
@@ -3920,6 +3974,7 @@ struct SandboxGonInfo {
     backend: String,
     os: &'static str,
     default_image: String,
+    image_building: bool,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -4041,12 +4096,16 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
             backend: router.backend_name().to_owned(),
             os: std::env::consts::OS,
             default_image: router.default_image().await,
+            image_building: router
+                .building_flag
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     } else {
         SandboxGonInfo {
             backend: "none".to_owned(),
             os: std::env::consts::OS,
             default_image: moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned(),
+            image_building: false,
         }
     };
 
@@ -5676,6 +5735,148 @@ async fn api_set_default_image_handler(
             Json(serde_json::json!({ "error": "no sandbox backend available" })),
         )
             .into_response()
+    }
+}
+
+/// List running/stopped containers managed by moltis.
+#[cfg(feature = "web-ui")]
+async fn api_list_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    match moltis_tools::sandbox::list_running_containers(&prefix).await {
+        Ok(containers) => Json(serde_json::json!({ "containers": containers })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Stop a moltis-managed container by name.
+#[cfg(feature = "web-ui")]
+async fn api_stop_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    if !name.starts_with(&prefix) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
+        )
+            .into_response();
+    }
+    match moltis_tools::sandbox::stop_container(&name).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove a moltis-managed container by name.
+#[cfg(feature = "web-ui")]
+async fn api_remove_container_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    if !name.starts_with(&prefix) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "container name does not match expected prefix" })),
+        )
+            .into_response();
+    }
+    match moltis_tools::sandbox::remove_container(&name).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove all moltis-managed containers (stop running ones first).
+#[cfg(feature = "web-ui")]
+async fn api_clean_all_containers_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let prefix = state
+        .gateway
+        .sandbox_router
+        .as_ref()
+        .map(|r| {
+            r.config()
+                .container_prefix
+                .clone()
+                .unwrap_or_else(|| "moltis-sandbox".to_string())
+        })
+        .unwrap_or_else(|| "moltis-sandbox".to_string());
+    match moltis_tools::sandbox::clean_all_containers(&prefix).await {
+        Ok(removed) => Json(serde_json::json!({ "ok": true, "removed": removed })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Get container disk usage from the sandbox backend.
+#[cfg(feature = "web-ui")]
+async fn api_disk_usage_handler() -> impl IntoResponse {
+    match moltis_tools::sandbox::container_disk_usage().await {
+        Ok(usage) => Json(serde_json::json!({ "usage": usage })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// Restart the container daemon to clear corrupted state.
+#[cfg(feature = "web-ui")]
+async fn api_restart_daemon_handler() -> impl IntoResponse {
+    match moltis_tools::sandbox::restart_container_daemon().await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
     }
 }
 

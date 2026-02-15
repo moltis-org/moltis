@@ -677,16 +677,25 @@ function handleLogEntry(payload) {
 	}
 }
 
+function updateSandboxBuildingFlag(building) {
+	var info = S.sandboxInfo;
+	if (info) S.setSandboxInfo({ ...info, image_building: building });
+}
+
 function handleSandboxImageBuild(payload) {
+	var phase = payload.phase;
+	// Update the sandboxInfo signal so all pages (chat, settings) reflect the build state.
+	updateSandboxBuildingFlag(phase === "start");
+
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
-	if (payload.phase === "start") {
+	if (phase === "start") {
 		chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
-	} else if (payload.phase === "done") {
+	} else if (phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		var msg = payload.built ? `Sandbox image ready: ${payload.tag}` : `Sandbox image already cached: ${payload.tag}`;
 		chatAddMsg("system", msg);
-	} else if (payload.phase === "error") {
+	} else if (phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		chatAddMsg("error", `Sandbox image build failed: ${payload.error || "unknown"}`);
 	}
@@ -706,6 +715,7 @@ function handleSandboxImageProvision(payload) {
 	}
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Provisioning UI with multiple phases
 function handleSandboxHostProvision(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
@@ -926,6 +936,9 @@ var connectOpts = {
 			second: "2-digit",
 		});
 		chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
+		if (S.sandboxInfo?.image_building) {
+			chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
+		}
 		fetchModels();
 		fetchSessions();
 		fetchProjects();

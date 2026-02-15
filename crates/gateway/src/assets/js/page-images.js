@@ -18,6 +18,11 @@ var building = signal(false);
 var buildStatus = signal("");
 var buildWarning = signal("");
 var pruning = signal(false);
+var containers = signal([]);
+var loadingContainers = signal(false);
+var diskUsage = signal(null);
+var cleaningAll = signal(false);
+var restarting = signal(false);
 var SANDBOX_DISABLED_HINT =
 	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
 
@@ -137,6 +142,197 @@ function buildImage() {
 			// Check failed (e.g. image not pulled yet), proceed with full build
 			doBuild(name, base, pkgs);
 		});
+}
+
+function fetchContainers() {
+	loadingContainers.value = true;
+	fetch("/api/sandbox/containers")
+		.then((r) => (r.ok ? r.json() : { containers: [] }))
+		.then((data) => {
+			containers.value = data.containers || [];
+		})
+		.catch(() => {
+			containers.value = [];
+		})
+		.finally(() => {
+			loadingContainers.value = false;
+		});
+}
+
+function stopContainer(name) {
+	fetch(`/api/sandbox/containers/${encodeURIComponent(name)}/stop`, { method: "POST" })
+		.then((r) => {
+			if (r.ok) fetchContainers();
+		})
+		.catch(() => {
+			/* ignore */
+		});
+}
+
+function removeContainer(name) {
+	fetch(`/api/sandbox/containers/${encodeURIComponent(name)}`, { method: "DELETE" })
+		.then((r) => {
+			if (r.ok) fetchContainers();
+		})
+		.catch(() => {
+			/* ignore */
+		});
+}
+
+function fetchDiskUsage() {
+	fetch("/api/sandbox/disk-usage")
+		.then((r) => (r.ok ? r.json() : null))
+		.then((data) => {
+			diskUsage.value = data?.usage || null;
+		})
+		.catch(() => {
+			diskUsage.value = null;
+		});
+}
+
+function cleanAllContainers() {
+	cleaningAll.value = true;
+	fetch("/api/sandbox/containers/clean", { method: "POST" })
+		.then((r) => (r.ok ? r.json() : null))
+		.then(() => {
+			fetchContainers();
+			fetchDiskUsage();
+		})
+		.catch(() => {
+			/* ignore */
+		})
+		.finally(() => {
+			cleaningAll.value = false;
+		});
+}
+
+function restartDaemon() {
+	restarting.value = true;
+	fetch("/api/sandbox/daemon/restart", { method: "POST" })
+		.then((r) => (r.ok ? r.json() : null))
+		.then(() => {
+			fetchContainers();
+			fetchDiskUsage();
+		})
+		.catch(() => {
+			/* ignore */
+		})
+		.finally(() => {
+			restarting.value = false;
+		});
+}
+
+function formatBytes(bytes) {
+	if (bytes == null) return "—";
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+var STATE_LABELS = {
+	running: { label: "running", color: "var(--accent)" },
+	stopped: { label: "stopped", color: "var(--muted)" },
+	exited: { label: "exited", color: "var(--muted)" },
+	unknown: { label: "unknown", color: "var(--muted)" },
+};
+
+var BACKEND_ICONS = {
+	"apple-container": "\u{1F34E}",
+	docker: "\u{1F433}",
+};
+
+function ContainerRow(props) {
+	var c = props.container;
+	var sandboxAvailable = props.sandboxAvailable;
+	var stateInfo = STATE_LABELS[c.state] || STATE_LABELS.unknown;
+	var backendIcon = BACKEND_ICONS[c.backend] || "";
+	var isRunning = c.state === "running";
+	var resources = [];
+	if (c.cpus) resources.push(`${c.cpus} CPU`);
+	if (c.memory_mb) resources.push(`${c.memory_mb} MB`);
+
+	return html`<div class="provider-item flex-col gap-1 mb-1" style="align-items:stretch;">
+    <div class="flex items-center justify-between gap-2 w-full min-w-0">
+      <span class="font-mono text-xs truncate flex-1 text-[var(--text-strong)]">${c.name}</span>
+      <span class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full shrink-0"
+        style="background:color-mix(in srgb, ${stateInfo.color} 15%, transparent);color:${stateInfo.color};">
+        <span class="inline-block w-1.5 h-1.5 rounded-full" style="background:${stateInfo.color};"></span>
+        ${stateInfo.label}
+      </span>
+    </div>
+    <div class="flex items-center justify-between gap-2 w-full">
+      <div class="flex items-center gap-2 text-xs text-[var(--muted)]">
+        <span title="${c.backend}">${backendIcon}</span>
+        <span class="font-mono">${c.image}</span>
+        ${resources.length > 0 && html`<span>${resources.join(" \u00b7 ")}</span>`}
+      </div>
+      <div class="flex items-center gap-1">
+        ${
+					isRunning &&
+					html`<button class="text-xs px-2 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+          onClick=${() => stopContainer(c.name)}
+          disabled=${!sandboxAvailable}
+          title=${sandboxAvailable ? "Stop container" : SANDBOX_DISABLED_HINT}>Stop</button>`
+				}
+        <button class="text-xs text-white border border-[var(--error)] px-2 py-0.5 rounded bg-[var(--error)] hover:opacity-80 transition-colors cursor-pointer"
+          onClick=${() => removeContainer(c.name)}
+          disabled=${!sandboxAvailable}
+          title=${sandboxAvailable ? "Delete container" : SANDBOX_DISABLED_HINT}>Delete</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function DiskUsageBar() {
+	var du = diskUsage.value;
+	if (!du) return null;
+
+	return html`<div class="text-xs text-[var(--muted)] flex flex-wrap gap-x-4 gap-y-1 mt-1 mb-2">
+    <span>Containers: ${du.containers_total} total, ${du.containers_active} active \u00b7 ${formatBytes(du.containers_size_bytes)} (${formatBytes(du.containers_reclaimable_bytes)} reclaimable)</span>
+    <span>Images: ${du.images_total} total, ${du.images_active} active \u00b7 ${formatBytes(du.images_size_bytes)}</span>
+  </div>`;
+}
+
+function RunningContainersSection() {
+	var sandboxAvailable = sandboxRuntimeAvailable();
+	var list = containers.value;
+
+	return html`<div class="max-w-form">
+    <div class="flex items-center gap-3 mb-2">
+      <h3 class="text-sm font-medium text-[var(--text-strong)]">Running Containers${list.length > 0 ? ` (${list.length})` : ""}</h3>
+      <button class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
+        onClick=${restartDaemon}
+        disabled=${restarting.value || !sandboxAvailable}
+        title=${sandboxAvailable ? "Restart container daemon" : SANDBOX_DISABLED_HINT}>
+        ${restarting.value ? "Restarting\u2026" : "Restart"}
+      </button>
+      <button class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
+        onClick=${() => {
+					fetchContainers();
+					fetchDiskUsage();
+				}}
+        disabled=${loadingContainers.value || !sandboxAvailable}
+        title=${sandboxAvailable ? "Refresh" : SANDBOX_DISABLED_HINT}>
+        ${loadingContainers.value ? "Loading\u2026" : "Refresh"}
+      </button>
+      ${
+				list.length > 0 &&
+				html`
+        <button class="text-xs text-white border border-[var(--error)] px-2 py-0.5 rounded-md bg-[var(--error)] hover:opacity-80 transition-colors cursor-pointer"
+          onClick=${cleanAllContainers}
+          disabled=${cleaningAll.value || !sandboxAvailable}
+          title=${sandboxAvailable ? "Stop and remove all containers" : SANDBOX_DISABLED_HINT}>
+          ${cleaningAll.value ? "Cleaning\u2026" : "Clean All"}
+        </button>
+      `
+			}
+    </div>
+    <${DiskUsageBar} />
+    ${loadingContainers.value && list.length === 0 && html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`}
+    ${!loadingContainers.value && list.length === 0 && html`<div class="text-xs text-[var(--muted)]" style="padding:4px 0;">No containers found.</div>`}
+    ${list.map((c) => html`<${ContainerRow} key=${c.name} container=${c} sandboxAvailable=${sandboxAvailable} />`)}
+  </div>`;
 }
 
 var BACKEND_LABELS = {
@@ -287,6 +483,8 @@ function ImageRow(props) {
 function ImagesPage() {
 	useEffect(() => {
 		fetchImages();
+		fetchContainers();
+		fetchDiskUsage();
 	}, []);
 
 	return html`
@@ -309,6 +507,8 @@ function ImagesPage() {
       </p>
 
       <${SandboxBanner} />
+
+      <${RunningContainersSection} />
 
       <${DefaultImageSelector} />
 
@@ -376,6 +576,8 @@ export function initImages(container) {
 	_imagesContainer = container;
 	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
 	images.value = [];
+	containers.value = [];
+	diskUsage.value = null;
 	defaultImage.value = sandboxInfo.value?.default_image || "";
 	buildStatus.value = "";
 	buildWarning.value = "";
