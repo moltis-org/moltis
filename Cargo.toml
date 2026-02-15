@@ -43,7 +43,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.8.33"
+version      = "0.8.34"
 
 [workspace.dependencies]
 # Async runtime

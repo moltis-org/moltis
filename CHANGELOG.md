@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.34] - 2026-02-15
+
+
+### Added
+
 - Add explicit `memory_save` hint in system prompt so weaker models (MiniMax, etc.) call the tool when asked to remember something
 - Add anchor text after memory content so models don't ignore known facts when `memory_search` returns empty
 - Add `zai` to default offered providers in config template
