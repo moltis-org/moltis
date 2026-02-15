@@ -409,6 +409,14 @@ impl AgentTool for ExecTool {
                         command,
                         "sandbox exec failed because container is not running, reinitializing and retrying once"
                     );
+                    if let Err(error) = backend.cleanup(&id).await {
+                        warn!(
+                            session = sk,
+                            sandbox_id = %id,
+                            %error,
+                            "failed to clean up stale sandbox before retry, continuing"
+                        );
+                    }
                     backend.ensure_ready(&id, Some(&image)).await?;
                     sandbox_result = backend.exec(&id, command, &opts).await?;
                 }
@@ -429,6 +437,13 @@ impl AgentTool for ExecTool {
                     command,
                     "sandbox exec failed because container is not running, reinitializing and retrying once"
                 );
+                if let Err(error) = self.sandbox.cleanup(id).await {
+                    warn!(
+                        sandbox_id = %id,
+                        %error,
+                        "failed to clean up stale sandbox before retry, continuing"
+                    );
+                }
                 self.sandbox.ensure_ready(id, None).await?;
                 sandbox_result = self.sandbox.exec(id, command, &opts).await?;
             }
@@ -548,7 +563,7 @@ fn is_container_not_running_exec_error(stderr: &str) -> bool {
 mod tests {
     use {
         super::*,
-        std::sync::atomic::{AtomicBool, Ordering},
+        std::sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     struct TestBroadcaster {
@@ -730,6 +745,111 @@ mod tests {
             .unwrap();
         assert_eq!(result["stdout"].as_str().unwrap().trim(), "sandboxed");
         assert_eq!(result["exit_code"], 0);
+    }
+
+    struct RetryRecoverySandbox {
+        ensure_ready_calls: AtomicUsize,
+        cleanup_calls: AtomicUsize,
+        exec_calls: AtomicUsize,
+        cleanup_should_fail: bool,
+    }
+
+    impl RetryRecoverySandbox {
+        fn new(cleanup_should_fail: bool) -> Self {
+            Self {
+                ensure_ready_calls: AtomicUsize::new(0),
+                cleanup_calls: AtomicUsize::new(0),
+                exec_calls: AtomicUsize::new(0),
+                cleanup_should_fail,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Sandbox for RetryRecoverySandbox {
+        fn backend_name(&self) -> &'static str {
+            "docker"
+        }
+
+        async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+            self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn exec(
+            &self,
+            _id: &SandboxId,
+            _command: &str,
+            _opts: &ExecOpts,
+        ) -> Result<ExecResult> {
+            let call = self.exec_calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Ok(ExecResult {
+                    stdout: String::new(),
+                    stderr: "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"cannot exec: container is not running\\\"\")".to_string(),
+                    exit_code: 1,
+                });
+            }
+            Ok(ExecResult {
+                stdout: "recovered".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+
+        async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+            self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
+            if self.cleanup_should_fail {
+                bail!("cleanup failed");
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_retries_container_not_running_with_cleanup() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(false));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
+        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_exec_tool_retries_container_not_running_when_cleanup_fails() {
+        use crate::sandbox::SandboxScope;
+
+        let sandbox = Arc::new(RetryRecoverySandbox::new(true));
+        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "retry-cleanup-fail-session".into(),
+        };
+        let result = ExecTool::default()
+            .with_sandbox(sandbox_dyn, id)
+            .execute(serde_json::json!({ "command": "echo hi" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
+        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

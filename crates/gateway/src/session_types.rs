@@ -22,15 +22,15 @@ pub struct PatchParams {
     pub label: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option", alias = "project_id")]
     pub project_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option", alias = "worktree_branch")]
     pub worktree_branch: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option", alias = "sandbox_image")]
     pub sandbox_image: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option", alias = "mcp_disabled")]
     pub mcp_disabled: Option<Option<bool>>,
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option", alias = "sandbox_enabled")]
     pub sandbox_enabled: Option<Option<bool>>,
 }
 
@@ -142,22 +142,21 @@ mod tests {
     }
 
     #[test]
-    fn patch_params_snake_case_fields_ignored() {
-        // Ensure snake_case field names are NOT accepted (rename_all = camelCase).
+    fn patch_params_accepts_legacy_snake_case_fields() {
         let p: PatchParams = serde_json::from_value(json!({
             "key": "main",
-            "sandbox_enabled": true,
-            "mcp_disabled": true,
             "project_id": "proj-1",
-            "sandbox_image": "img:1",
-            "worktree_branch": "feat/x",
+            "worktree_branch": "feature/abc",
+            "sandbox_image": "custom:latest",
+            "sandbox_enabled": false,
+            "mcp_disabled": true,
         }))
         .unwrap();
-        assert!(p.sandbox_enabled.is_none());
-        assert!(p.mcp_disabled.is_none());
-        assert!(p.project_id.is_none());
-        assert!(p.sandbox_image.is_none());
-        assert!(p.worktree_branch.is_none());
+        assert_eq!(p.project_id, Some(Some("proj-1".to_string())));
+        assert_eq!(p.worktree_branch, Some(Some("feature/abc".to_string())));
+        assert_eq!(p.sandbox_image, Some(Some("custom:latest".to_string())));
+        assert_eq!(p.sandbox_enabled, Some(Some(false)));
+        assert_eq!(p.mcp_disabled, Some(Some(true)));
     }
 
     #[test]

@@ -327,6 +327,10 @@ function setSafeMarkdownHtml(el, text) {
 	el.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
 }
 
+function hasNonWhitespaceContent(text) {
+	return String(text || "").trim().length > 0;
+}
+
 function handleChatDelta(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	if (!p.text) return;
@@ -374,13 +378,15 @@ function isPureToolOutputEcho(finalText, toolOutput) {
 }
 
 function resolveFinalMessageEl(p) {
-	var isEcho = isPureToolOutputEcho(p.text, S.lastToolOutput);
+	var finalText = String(p.text || "");
+	var hasFinalText = hasNonWhitespaceContent(finalText);
+	var isEcho = hasFinalText && isPureToolOutputEcho(finalText, S.lastToolOutput);
 	if (!isEcho) {
-		if (p.text && S.streamEl) {
-			setSafeMarkdownHtml(S.streamEl, p.text);
+		if (hasFinalText && S.streamEl) {
+			setSafeMarkdownHtml(S.streamEl, finalText);
 			return S.streamEl;
 		}
-		if (p.text) return chatAddMsg("assistant", renderMarkdown(p.text), true);
+		if (hasFinalText) return chatAddMsg("assistant", renderMarkdown(finalText), true);
 		// No text (silent reply) — remove any leftover stream element.
 		if (S.streamEl) S.streamEl.remove();
 		return null;
@@ -461,11 +467,13 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 			console.debug("[audio] rendering persisted audio:", filename);
 			renderAudioPlayer(msgEl, audioSrc, true);
 		}
-		// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
-		var textWrap = document.createElement("div");
-		textWrap.className = "mt-2";
-		setSafeMarkdownHtml(textWrap, p.text);
-		msgEl.appendChild(textWrap);
+		if (hasNonWhitespaceContent(p.text)) {
+			// Safe: renderMarkdown calls esc() first — all user input is HTML-escaped.
+			var textWrap = document.createElement("div");
+			textWrap.className = "mt-2";
+			setSafeMarkdownHtml(textWrap, p.text);
+			msgEl.appendChild(textWrap);
+		}
 		if (p.reasoning && !isReasoningAlreadyShown(p.reasoning)) {
 			appendReasoningDisclosure(msgEl, p.reasoning);
 		}
