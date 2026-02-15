@@ -163,6 +163,8 @@ struct ChatFinalBroadcast {
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_warning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
 }
 
@@ -176,6 +178,14 @@ struct ChatErrorBroadcast {
     error: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
+}
+
+struct AssistantTurnOutput {
+    text: String,
+    input_tokens: u32,
+    output_tokens: u32,
+    audio_path: Option<String>,
+    reasoning: Option<String>,
 }
 
 fn now_ms() -> u64 {
@@ -1759,6 +1769,7 @@ pub struct LiveChatService {
     model_store: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<GatewayState>,
     active_runs: Arc<RwLock<HashMap<String, AbortHandle>>>,
+    active_runs_by_session: Arc<RwLock<HashMap<String, String>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     session_store: Arc<SessionStore>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -1786,6 +1797,7 @@ impl LiveChatService {
             model_store,
             state,
             active_runs: Arc::new(RwLock::new(HashMap::new())),
+            active_runs_by_session: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
             session_store,
             session_metadata,
@@ -1851,6 +1863,42 @@ impl LiveChatService {
                 .entry(key.to_string())
                 .or_insert_with(|| Arc::new(Semaphore::new(1))),
         )
+    }
+
+    async fn abort_run_handle(
+        active_runs: &Arc<RwLock<HashMap<String, AbortHandle>>>,
+        active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
+        run_id: Option<&str>,
+        session_key: Option<&str>,
+    ) -> (Option<String>, bool) {
+        let resolved_run_id = if let Some(id) = run_id {
+            Some(id.to_string())
+        } else if let Some(key) = session_key {
+            active_runs_by_session.read().await.get(key).cloned()
+        } else {
+            None
+        };
+
+        let Some(target_run_id) = resolved_run_id.clone() else {
+            return (None, false);
+        };
+
+        let aborted = if let Some(handle) = active_runs.write().await.remove(&target_run_id) {
+            handle.abort();
+            true
+        } else {
+            false
+        };
+
+        let mut by_session = active_runs_by_session.write().await;
+        if let Some(key) = session_key
+            && by_session.get(key).is_some_and(|id| id == &target_run_id)
+        {
+            by_session.remove(key);
+        }
+        by_session.retain(|_, id| id != &target_run_id);
+
+        (resolved_run_id, aborted)
     }
 
     /// Resolve a provider from session metadata, history, or first registered.
@@ -2281,6 +2329,7 @@ impl ChatService for LiveChatService {
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
+        let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
         let hook_registry = self.hook_registry.clone();
@@ -2577,16 +2626,17 @@ impl ChatService for LiveChatService {
             };
 
             // Persist assistant response (even empty ones — needed for LLM history coherence).
-            if let Some((response_text, input_tokens, output_tokens, audio_path)) = assistant_text {
+            if let Some(assistant_output) = assistant_text {
                 let assistant_msg = PersistedMessage::Assistant {
-                    content: response_text,
+                    content: assistant_output.text,
                     created_at: Some(now_ms()),
                     model: Some(model_id.clone()),
                     provider: Some(provider_name.clone()),
-                    input_tokens: Some(input_tokens),
-                    output_tokens: Some(output_tokens),
+                    input_tokens: Some(assistant_output.input_tokens),
+                    output_tokens: Some(assistant_output.output_tokens),
                     tool_calls: None,
-                    audio: audio_path,
+                    reasoning: assistant_output.reasoning,
+                    audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
                 };
@@ -2603,6 +2653,10 @@ impl ChatService for LiveChatService {
             }
 
             active_runs.write().await.remove(&run_id_clone);
+            let mut runs_by_session = active_runs_by_session.write().await;
+            if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
+                runs_by_session.remove(&session_key_clone);
+            }
 
             // Release the semaphore *before* draining so replayed sends can
             // acquire it. Without this, every replayed `chat.send()` would
@@ -2673,6 +2727,10 @@ impl ChatService for LiveChatService {
             .write()
             .await
             .insert(run_id.clone(), handle.abort_handle());
+        self.active_runs_by_session
+            .write()
+            .await
+            .insert(session_key.clone(), run_id.clone());
 
         Ok(serde_json::json!({ "runId": run_id }))
     }
@@ -2832,16 +2890,17 @@ impl ChatService for LiveChatService {
         };
 
         // Persist assistant response (even empty ones — needed for LLM history coherence).
-        if let Some((ref response_text, input_tokens, output_tokens, ref audio_path)) = result {
+        if let Some(ref assistant_output) = result {
             let assistant_msg = PersistedMessage::Assistant {
-                content: response_text.clone(),
+                content: assistant_output.text.clone(),
                 created_at: Some(now_ms()),
                 model: Some(model_id.clone()),
                 provider: Some(provider_name.clone()),
-                input_tokens: Some(input_tokens),
-                output_tokens: Some(output_tokens),
+                input_tokens: Some(assistant_output.input_tokens),
+                output_tokens: Some(assistant_output.output_tokens),
                 tool_calls: None,
-                audio: audio_path.clone(),
+                reasoning: assistant_output.reasoning.clone(),
+                audio: assistant_output.audio_path.clone(),
                 seq: None,
                 run_id: Some(run_id.clone()),
             };
@@ -2859,13 +2918,11 @@ impl ChatService for LiveChatService {
         }
 
         match result {
-            Some((response_text, input_tokens, output_tokens, _audio_path)) => {
-                Ok(serde_json::json!({
-                    "text": response_text,
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                }))
-            },
+            Some(assistant_output) => Ok(serde_json::json!({
+                "text": assistant_output.text,
+                "inputTokens": assistant_output.input_tokens,
+                "outputTokens": assistant_output.output_tokens,
+            })),
             None => {
                 // Check the last broadcast for this run to get the actual error message.
                 let error_msg = state
@@ -2890,15 +2947,27 @@ impl ChatService for LiveChatService {
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {
-        let run_id = params
-            .get("runId")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'runId'".to_string())?;
-
-        if let Some(handle) = self.active_runs.write().await.remove(run_id) {
-            handle.abort();
+        let run_id = params.get("runId").and_then(|v| v.as_str());
+        let session_key = params.get("sessionKey").and_then(|v| v.as_str());
+        if run_id.is_none() && session_key.is_none() {
+            return Err("missing 'runId' or 'sessionKey'".to_string());
         }
-        Ok(serde_json::json!({}))
+
+        let (resolved_run_id, aborted) = Self::abort_run_handle(
+            &self.active_runs,
+            &self.active_runs_by_session,
+            run_id,
+            session_key,
+        )
+        .await;
+        info!(
+            requested_run_id = ?run_id,
+            session_key = ?session_key,
+            resolved_run_id = ?resolved_run_id,
+            aborted,
+            "chat.abort"
+        );
+        Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
     }
 
     async fn cancel_queued(&self, params: Value) -> ServiceResult {
@@ -3094,7 +3163,10 @@ impl ChatService for LiveChatService {
                 // Tool events not expected in summarization stream.
                 StreamEvent::ToolCallStart { .. }
                 | StreamEvent::ToolCallArgumentsDelta { .. }
-                | StreamEvent::ToolCallComplete { .. } => {},
+                | StreamEvent::ToolCallComplete { .. }
+                // Ignore provider reasoning blocks; summary body should only
+                // include final answer text.
+                | StreamEvent::ReasoningDelta(_) => {},
             }
         }
 
@@ -3111,6 +3183,7 @@ impl ChatService for LiveChatService {
             input_tokens: None,
             output_tokens: None,
             tool_calls: None,
+            reasoning: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -3823,7 +3896,7 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
     client_seq: Option<u64>,
-) -> Option<(String, u32, u32, Option<String>)> {
+) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
@@ -3890,6 +3963,7 @@ async fn run_with_tools(
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        let mut latest_reasoning = String::new();
         while let Some(event) = event_rx.recv().await {
             let state = Arc::clone(&state_for_events);
             let run_id = run_id_for_events.clone();
@@ -4120,13 +4194,16 @@ async fn run_with_tools(
 
                     payload
                 },
-                RunnerEvent::ThinkingText(text) => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "thinking_text",
-                    "text": text,
-                    "seq": seq,
-                }),
+                RunnerEvent::ThinkingText(text) => {
+                    latest_reasoning = text.clone();
+                    serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "thinking_text",
+                        "text": text,
+                        "seq": seq,
+                    })
+                },
                 RunnerEvent::TextDelta(text) => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
@@ -4176,6 +4253,7 @@ async fn run_with_tools(
             };
             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
         }
+        latest_reasoning
     });
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
@@ -4300,9 +4378,17 @@ async fn run_with_tools(
     // Ensure all runner events (including deltas) are broadcast in order before
     // emitting terminal final/error frames.
     drop(on_event);
-    if let Err(e) = event_forwarder.await {
-        warn!(run_id, error = %e, "runner event forwarder task failed");
-    }
+    let reasoning_text = match event_forwarder.await {
+        Ok(reasoning) => reasoning,
+        Err(e) => {
+            warn!(run_id, error = %e, "runner event forwarder task failed");
+            String::new()
+        },
+    };
+    let reasoning = {
+        let trimmed = reasoning_text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
 
     match result {
         Ok(result) => {
@@ -4371,6 +4457,7 @@ async fn run_with_tools(
                 tool_calls_made: Some(result.tool_calls_made),
                 audio: audio_path.clone(),
                 audio_warning,
+                reasoning: reasoning.clone(),
                 seq: client_seq,
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4387,12 +4474,13 @@ async fn run_with_tools(
                 deliver_channel_replies(state, session_key, &display_text, desired_reply_medium)
                     .await;
             }
-            Some((
-                display_text,
-                result.usage.input_tokens,
-                result.usage.output_tokens,
+            Some(AssistantTurnOutput {
+                text: display_text,
+                input_tokens: result.usage.input_tokens,
+                output_tokens: result.usage.output_tokens,
                 audio_path,
-            ))
+                reasoning,
+            })
         },
         Err(e) => {
             let error_str = e.to_string();
@@ -4450,7 +4538,10 @@ async fn compact_session(
             // Tool events not expected in summarization stream.
             StreamEvent::ToolCallStart { .. }
             | StreamEvent::ToolCallArgumentsDelta { .. }
-            | StreamEvent::ToolCallComplete { .. } => {},
+            | StreamEvent::ToolCallComplete { .. }
+            // Ignore provider reasoning blocks; summary body should only
+            // include final answer text.
+            | StreamEvent::ReasoningDelta(_) => {},
         }
     }
 
@@ -4466,6 +4557,7 @@ async fn compact_session(
         input_tokens: None,
         output_tokens: None,
         tool_calls: None,
+        reasoning: None,
         audio: None,
         seq: None,
         run_id: None,
@@ -4499,7 +4591,7 @@ async fn run_streaming(
     runtime_context: Option<&PromptRuntimeContext>,
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
-) -> Option<(String, u32, u32, Option<String>)> {
+) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
@@ -4533,6 +4625,7 @@ async fn run_streaming(
 
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
+    let mut accumulated_reasoning = String::new();
 
     while let Some(event) = stream.next().await {
         match event {
@@ -4546,6 +4639,21 @@ async fn run_streaming(
                         "sessionKey": session_key,
                         "state": "delta",
                         "text": delta,
+                    }),
+                    BroadcastOpts::default(),
+                )
+                .await;
+            },
+            StreamEvent::ReasoningDelta(delta) => {
+                accumulated_reasoning.push_str(&delta);
+                broadcast(
+                    state,
+                    "chat",
+                    serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": session_key,
+                        "state": "thinking_text",
+                        "text": accumulated_reasoning.clone(),
                     }),
                     BroadcastOpts::default(),
                 )
@@ -4597,6 +4705,10 @@ async fn run_streaming(
                 }
 
                 let is_silent = accumulated.trim().is_empty();
+                let reasoning = {
+                    let trimmed = accumulated_reasoning.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                };
 
                 info!(
                     run_id,
@@ -4658,6 +4770,7 @@ async fn run_streaming(
                     tool_calls_made: None,
                     audio: audio_path.clone(),
                     audio_warning,
+                    reasoning: reasoning.clone(),
                     seq: client_seq,
                 };
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4674,12 +4787,13 @@ async fn run_streaming(
                     deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
                         .await;
                 }
-                return Some((
-                    accumulated,
-                    usage.input_tokens,
-                    usage.output_tokens,
+                return Some(AssistantTurnOutput {
+                    text: accumulated,
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
                     audio_path,
-                ));
+                    reasoning,
+                });
             },
             StreamEvent::Error(msg) => {
                 warn!(run_id, error = %msg, "chat stream error");
@@ -5597,6 +5711,16 @@ mod tests {
         )
     }
 
+    fn make_active_run_maps() -> (
+        Arc<RwLock<HashMap<String, AbortHandle>>>,
+        Arc<RwLock<HashMap<String, String>>>,
+    ) {
+        (
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
     #[tokio::test]
     async fn same_session_runs_are_serialized() {
         let locks = make_session_locks();
@@ -5665,6 +5789,72 @@ mod tests {
         .await
         .expect("permit should be available after abort")
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_run_handle_resolves_run_from_session_key() {
+        let (active_runs, active_runs_by_session) = make_active_run_maps();
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        active_runs
+            .write()
+            .await
+            .insert("run-a".to_string(), task.abort_handle());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("main".to_string(), "run-a".to_string());
+
+        let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
+            &active_runs,
+            &active_runs_by_session,
+            None,
+            Some("main"),
+        )
+        .await;
+        assert_eq!(resolved_run_id.as_deref(), Some("run-a"));
+        assert!(aborted);
+        assert!(active_runs.read().await.is_empty());
+        assert!(active_runs_by_session.read().await.is_empty());
+
+        let err = task.await.expect_err("task should be cancelled");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn abort_run_handle_by_run_id_clears_session_lookup() {
+        let (active_runs, active_runs_by_session) = make_active_run_maps();
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        active_runs
+            .write()
+            .await
+            .insert("run-b".to_string(), task.abort_handle());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("main".to_string(), "run-b".to_string());
+
+        let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
+            &active_runs,
+            &active_runs_by_session,
+            Some("run-b"),
+            None,
+        )
+        .await;
+        assert_eq!(resolved_run_id.as_deref(), Some("run-b"));
+        assert!(aborted);
+        assert!(active_runs.read().await.is_empty());
+        assert!(active_runs_by_session.read().await.is_empty());
+
+        let err = task.await.expect_err("task should be cancelled");
+        assert!(err.is_cancelled());
     }
 
     #[tokio::test]

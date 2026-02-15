@@ -57,10 +57,19 @@ fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
         .enumerate()
         .filter_map(|(idx, mut msg)| {
             if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-                let keep = msg
+                let has_content = msg
                     .get("content")
                     .and_then(|v| v.as_str())
                     .is_some_and(|s| !s.trim().is_empty());
+                let has_reasoning = msg
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let has_audio = msg
+                    .get("audio")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let keep = has_content || has_reasoning || has_audio;
                 if !keep {
                     return None;
                 }
@@ -169,6 +178,12 @@ fn message_text_for_share(msg: &Value) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
     let trimmed = joined.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn message_reasoning_for_share(msg: &Value) -> Option<String> {
+    let reasoning = msg.get("reasoning").and_then(|v| v.as_str())?;
+    let trimmed = reasoning.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
@@ -638,6 +653,13 @@ async fn to_shared_message(
         },
         SharedMessageRole::System | SharedMessageRole::Notice => String::new(),
     };
+    let reasoning = match role {
+        SharedMessageRole::Assistant => message_reasoning_for_share(msg),
+        SharedMessageRole::User
+        | SharedMessageRole::ToolResult
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
     let audio_data_url = match role {
         SharedMessageRole::User | SharedMessageRole::Assistant => {
             message_audio_data_url_for_share(msg, session_key, store).await
@@ -698,7 +720,12 @@ async fn to_shared_message(
         | SharedMessageRole::Notice => None,
     };
 
-    if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
+    if content.is_empty()
+        && reasoning.is_none()
+        && audio_data_url.is_none()
+        && image.is_none()
+        && map_links.is_none()
+    {
         return None;
     }
     let created_at = value_u64(msg, "created_at");
@@ -720,6 +747,7 @@ async fn to_shared_message(
     Some(SharedMessage {
         role,
         content,
+        reasoning,
         audio_data_url,
         image,
         image_data_url: None,
@@ -1067,17 +1095,17 @@ impl SessionService for LiveSessionService {
             return Err(format!("session '{key}' has no messages"));
         }
 
-        let mut target_index = requested_index;
-        if target_index.is_none()
-            && let Some(run_id) = run_id
-        {
-            target_index = history.iter().rposition(|msg| {
+        // Prefer `runId` when provided because it is stable across inserted
+        // tool_result messages, while message indices can shift.
+        let run_id_index = run_id.and_then(|id| {
+            history.iter().rposition(|msg| {
                 msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                    && msg.get("run_id").and_then(|v| v.as_str()) == Some(run_id)
-            });
-        }
-        let target_index =
-            target_index.ok_or_else(|| "target assistant message not found".to_string())?;
+                    && msg.get("run_id").and_then(|v| v.as_str()) == Some(id)
+            })
+        });
+        let target_index = run_id_index
+            .or(requested_index)
+            .ok_or_else(|| "target assistant message not found".to_string())?;
         let target = history
             .get(target_index)
             .ok_or_else(|| format!("message index {target_index} is out of range"))?;
@@ -1659,6 +1687,17 @@ mod tests {
         assert_eq!(filtered.len(), 3);
     }
 
+    #[test]
+    fn filter_ui_history_keeps_reasoning_only_assistant() {
+        let messages = vec![
+            serde_json::json!({"role": "assistant", "content": "", "reasoning": "internal plan"}),
+        ];
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["role"], "assistant");
+        assert_eq!(filtered[0]["reasoning"], "internal plan");
+    }
+
     // --- Preview extraction tests ---
 
     #[test]
@@ -1927,6 +1966,26 @@ mod tests {
                 .unwrap_or_default()
                 .starts_with("data:audio/ogg;base64,")
         );
+    }
+
+    #[tokio::test]
+    async fn to_shared_message_includes_assistant_reasoning_without_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let assistant_msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning": "step one\nstep two",
+        });
+
+        let shared = to_shared_message(&assistant_msg, "main", &store)
+            .await
+            .expect("shared message");
+
+        assert!(matches!(shared.role, SharedMessageRole::Assistant));
+        assert!(shared.content.is_empty());
+        assert_eq!(shared.reasoning.as_deref(), Some("step one\nstep two"));
+        assert!(shared.audio_data_url.is_none());
     }
 
     #[tokio::test]
@@ -2290,6 +2349,66 @@ mod tests {
             .await
             .expect_err("should reject non-assistant target");
         assert!(error.contains("not an assistant"));
+    }
+
+    #[tokio::test]
+    async fn voice_generate_prefers_run_id_over_non_assistant_message_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(moltis_sessions::store::SessionStore::new(
+            dir.path().to_path_buf(),
+        ));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let existing_path = store
+            .save_media("main", "voice-msg-2.ogg", b"OggSreuse")
+            .await
+            .expect("save media");
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "tool_result", "content": "tool output" }),
+            )
+            .await
+            .expect("append tool_result");
+        store
+            .append(
+                "main",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "assistant answer",
+                    "audio": existing_path,
+                    "run_id": "run-target",
+                }),
+            )
+            .await
+            .expect("append assistant");
+
+        let mock_tts = Arc::new(MockTtsService::with_convert_error(
+            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            "convert should not be called",
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+
+        let result = service
+            .voice_generate(
+                serde_json::json!({ "key": "main", "runId": "run-target", "messageIndex": 1 }),
+            )
+            .await
+            .expect("voice generate");
+
+        assert_eq!(result["reused"], true);
+        assert_eq!(result["messageIndex"], 2);
+        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-2.ogg"));
+        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
     // --- Browser service integration tests ---

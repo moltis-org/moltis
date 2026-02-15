@@ -56,6 +56,9 @@ pub enum PersistedMessage {
         output_tokens: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<PersistedToolCall>>,
+        /// Optional provider reasoning/planning text (not final answer text).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
         /// Relative media path for TTS audio (e.g. "media/main/run_abc.ogg").
         #[serde(skip_serializing_if = "Option::is_none")]
         audio: Option<String>,
@@ -199,6 +202,7 @@ impl PersistedMessage {
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
             tool_calls: None,
+            reasoning: None,
             audio,
             seq: None,
             run_id: None,
@@ -343,6 +347,7 @@ mod tests {
             input_tokens: Some(100),
             output_tokens: Some(50),
             tool_calls: None,
+            reasoning: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -477,6 +482,7 @@ mod tests {
                 provider,
                 input_tokens,
                 output_tokens,
+                reasoning,
                 audio,
                 ..
             } => {
@@ -485,6 +491,7 @@ mod tests {
                 assert_eq!(provider.as_deref(), Some("openai"));
                 assert_eq!(input_tokens, Some(100));
                 assert_eq!(output_tokens, Some(50));
+                assert!(reasoning.is_none());
                 assert!(audio.is_none());
             },
             _ => panic!("expected Assistant message"),

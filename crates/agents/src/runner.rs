@@ -1239,8 +1239,9 @@ pub async fn run_agent_loop_streaming(
         let iter_start = std::time::Instant::now();
         let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
 
-        // Accumulate text and tool calls from the stream.
+        // Accumulate answer text, reasoning text, and tool calls from the stream.
         let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         // Map streaming index → accumulated JSON args string.
         let mut tool_call_args: std::collections::HashMap<usize, String> =
@@ -1261,6 +1262,12 @@ pub async fn run_agent_loop_streaming(
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text));
+                    }
+                },
+                StreamEvent::ReasoningDelta(text) => {
+                    accumulated_reasoning.push_str(&text);
+                    if let Some(cb) = on_event {
+                        cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
                 StreamEvent::ToolCallStart { id, name, index } => {
@@ -1489,13 +1496,18 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Append assistant message with tool calls.
-        let text_for_msg = if accumulated_text.is_empty() {
+        let planning_text = if accumulated_reasoning.is_empty() {
+            accumulated_text.clone()
+        } else {
+            accumulated_reasoning
+        };
+        let text_for_msg = if planning_text.is_empty() {
             None
         } else {
             if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(accumulated_text.clone()));
+                cb(RunnerEvent::ThinkingText(planning_text.clone()));
             }
-            Some(accumulated_text)
+            Some(planning_text)
         };
         messages.push(ChatMessage::assistant_with_tools(
             text_for_msg,
@@ -3492,7 +3504,7 @@ mod tests {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if count == 0 {
                 Box::pin(tokio_stream::iter(vec![
-                    StreamEvent::Delta("I can summarize that command output.".into()),
+                    StreamEvent::ReasoningDelta("I can summarize that command output.".into()),
                     StreamEvent::Done(Usage {
                         input_tokens: 10,
                         output_tokens: 10,
@@ -3594,6 +3606,111 @@ mod tests {
         let (name, args) = tool_start.unwrap();
         assert_eq!(name, "exec");
         assert_eq!(args["command"], "uname -a");
+    }
+
+    struct ReasoningThenAnswerStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for ReasoningThenAnswerStreamProvider {
+        fn name(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        fn id(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::ReasoningDelta("internal plan".into()),
+                StreamEvent::Delta("visible answer".into()),
+                StreamEvent::Done(Usage {
+                    input_tokens: 2,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            ]))
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream(messages)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_reasoning_not_in_final_text() {
+        let provider = Arc::new(ReasoningThenAnswerStreamProvider);
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("hello".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "visible answer");
+        assert!(!result.text.contains("internal plan"));
+
+        let evts = events.lock().unwrap();
+        let text_deltas: String = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::TextDelta(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(text_deltas, "visible answer");
+
+        let thinking_texts: Vec<&str> = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::ThinkingText(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            thinking_texts.iter().any(|t| *t == "internal plan"),
+            "expected reasoning to be exposed via ThinkingText"
+        );
     }
 
     // ── Streaming tool-call index mapping tests ─────────────────────

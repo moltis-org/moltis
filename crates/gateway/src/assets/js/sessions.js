@@ -2,6 +2,7 @@
 
 import {
 	appendChannelFooter,
+	appendReasoningDisclosure,
 	chatAddMsg,
 	chatAddMsgWithImages,
 	highlightAndScroll,
@@ -85,7 +86,11 @@ export function clearActiveSession() {
 			updateTokenBar();
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			var session = sessionStore.getByKey(activeKey);
-			if (session) session.syncCounts(0, 0);
+			if (session) {
+				session.syncCounts(0, 0);
+				session.replying.value = false;
+				session.activeRunId.value = null;
+			}
 			fetchSessions();
 			return res;
 		}
@@ -124,6 +129,13 @@ export function setSessionReplying(key, replying) {
 	// Dual-write: update plain S.sessions object
 	var entry = S.sessions.find((s) => s.key === key);
 	if (entry) entry._replying = replying;
+}
+
+export function setSessionActiveRunId(key, runId) {
+	var session = sessionStore.getByKey(key);
+	if (session) session.activeRunId.value = runId || null;
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry) entry._activeRunId = runId || null;
 }
 
 export function setSessionUnread(key, unread) {
@@ -357,9 +369,15 @@ function renderHistoryAssistantMessage(msg) {
 				textWrap.innerHTML = renderMarkdown(msg.content); // eslint-disable-line no-unsanitized/property
 				el.appendChild(textWrap);
 			}
+			if (msg.reasoning) {
+				appendReasoningDisclosure(el, msg.reasoning);
+			}
 		}
 	} else {
 		el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
+		if (el && msg.reasoning) {
+			appendReasoningDisclosure(el, msg.reasoning);
+		}
 	}
 	if (el && msg.model) {
 		var footer = createModelFooter(msg);

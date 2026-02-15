@@ -285,17 +285,20 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
 
     let delta = &evt["choices"][0]["delta"];
 
-    // Handle text content. Some OpenAI-compatible backends (for example
-    // Moonshot/Kimi reasoning mode) stream planning text in
-    // `reasoning_content` instead of `content`.
+    // Handle user-visible text content.
     if let Some(content) = delta["content"].as_str()
         && !content.is_empty()
     {
         events.push(StreamEvent::Delta(content.to_string()));
-    } else if let Some(reasoning_content) = delta["reasoning_content"].as_str()
+    }
+
+    // Some OpenAI-compatible backends stream planning text in
+    // `reasoning_content`. Surface it separately so UI can show it in the
+    // thinking area without polluting final assistant text.
+    if let Some(reasoning_content) = delta["reasoning_content"].as_str()
         && !reasoning_content.is_empty()
     {
-        events.push(StreamEvent::Delta(reasoning_content.to_string()));
+        events.push(StreamEvent::ReasoningDelta(reasoning_content.to_string()));
     }
 
     // Handle tool calls
@@ -569,7 +572,10 @@ mod tests {
         match result {
             SseLineResult::Events(events) => {
                 assert_eq!(events.len(), 1);
-                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "plan step"));
+                assert!(matches!(
+                    &events[0],
+                    StreamEvent::ReasoningDelta(s) if s == "plan step"
+                ));
             },
             _ => panic!("Expected Events"),
         }
@@ -628,9 +634,10 @@ mod tests {
 
         let events = finalize_stream(&state);
         assert_eq!(events.len(), 2);
-        assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
-            index: 0
-        }));
+        assert!(matches!(
+            &events[0],
+            StreamEvent::ToolCallComplete { index: 0 }
+        ));
         assert!(matches!(
             &events[1],
             StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5

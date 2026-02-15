@@ -284,6 +284,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
 pub enum StreamEvent {
     /// Text content delta.
     Delta(String),
+    /// Reasoning/planning text delta (not user-visible final answer text).
+    ReasoningDelta(String),
     /// A tool call has started (content_block_start with tool_use).
     ToolCallStart {
         /// Tool call ID from the provider.
@@ -475,11 +477,14 @@ mod tests {
 
     #[test]
     fn to_openai_assistant_with_tools() {
-        let msg = ChatMessage::assistant_with_tools(Some("thinking".into()), vec![ToolCall {
-            id: "call_1".into(),
-            name: "exec".into(),
-            arguments: serde_json::json!({"cmd": "ls"}),
-        }]);
+        let msg = ChatMessage::assistant_with_tools(
+            Some("thinking".into()),
+            vec![ToolCall {
+                id: "call_1".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({"cmd": "ls"}),
+            }],
+        );
         let val = msg.to_openai_value();
         assert_eq!(val["role"], "assistant");
         assert_eq!(val["content"], "thinking");

@@ -20,6 +20,7 @@ import {
 	bumpSessionCount,
 	clearActiveSession,
 	seedSessionPreviewFromUserText,
+	setSessionActiveRunId,
 	setSessionReplying,
 	switchSession,
 } from "./sessions.js";
@@ -745,6 +746,9 @@ function sendChat() {
 	seedSessionPreviewFromUserText(S.activeSessionKey, text);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
+		if (res?.ok && res.payload?.runId) {
+			setSessionActiveRunId(S.activeSessionKey, res.payload.runId);
+		}
 		if (res?.payload?.queued) {
 			markMessageQueued(userEl, S.activeSessionKey);
 		} else if (res && !res.ok && res.error) {

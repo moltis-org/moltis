@@ -196,6 +196,56 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("final event is rendered even if switchInProgress gets stuck", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const sessionStoreModule = await import(`${prefix}js/stores/session-store.js`);
+			const stateModule = await import(`${prefix}js/state.js`);
+			sessionStoreModule.sessionStore.switchInProgress.value = true;
+			stateModule.setSessionSwitchInProgress(true);
+		});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "render this final despite stale switch flag",
+				messageIndex: 991001,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+				runId: "run-stuck-switch-final",
+			},
+		});
+
+		await expect(
+			page.locator("#messages .msg.assistant").filter({ hasText: "render this final despite stale switch flag" }),
+		).toBeVisible();
+		await expect
+			.poll(() =>
+				page.evaluate(async () => {
+					const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					if (!appScript) return null;
+					const appUrl = new URL(appScript.src, window.location.origin);
+					const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					const sessionStoreModule = await import(`${prefix}js/stores/session-store.js`);
+					return sessionStoreModule.sessionStore.switchInProgress.value;
+				}),
+			)
+			.toBe(false);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("out-of-order tool events still resolve exec card", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");

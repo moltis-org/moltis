@@ -283,6 +283,45 @@ main {
   line-height: 1.55;
   color: var(--text);
 }
+.msg-reasoning {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+.msg-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  padding: 7px 10px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  user-select: none;
+}
+.msg-reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+.msg-reasoning-summary::before {
+  content: "▸";
+  font-size: 0.72rem;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+.msg-reasoning[open] .msg-reasoning-summary::before {
+  transform: rotate(90deg);
+}
+.msg-reasoning-body {
+  margin: 0 10px 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
 .msg-tool-content {
   margin: 0;
   max-height: 360px;
@@ -671,6 +710,14 @@ main {
               <div class="msg-content">{{ message.content }}</div>
             {% endif %}
           {% endif %}
+          {% match message.reasoning %}
+            {% when Some with (reasoning) %}
+              <details class="msg-reasoning">
+                <summary class="msg-reasoning-summary">Reasoning</summary>
+                <div class="msg-reasoning-body">{{ reasoning }}</div>
+              </details>
+            {% when None %}
+          {% endmatch %}
           {% match message.footer %}
             {% when Some with (footer) %}
               <div class="msg-footer">{{ footer }}</div>

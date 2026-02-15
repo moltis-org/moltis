@@ -143,11 +143,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -261,13 +264,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -1240,16 +1244,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -3107,10 +3112,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -3173,12 +3183,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
@@ -4450,6 +4463,12 @@ fn map_share_message_views(
                 role_class,
                 role_label,
                 content: msg.content.clone(),
+                reasoning: msg
+                    .reasoning
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
                 audio_data_url: msg.audio_data_url.clone(),
                 image_preview_data_url,
                 image_link_data_url,
@@ -4711,6 +4730,7 @@ struct ShareMessageView {
     role_class: &'static str,
     role_label: String,
     content: String,
+    reasoning: Option<String>,
     audio_data_url: Option<String>,
     image_preview_data_url: Option<String>,
     image_link_data_url: Option<String>,
@@ -6548,6 +6568,7 @@ mod tests {
             role_class: "assistant",
             role_label: "🤖 Moltis".to_string(),
             content: "Audio response".to_string(),
+            reasoning: Some("Step 1\nStep 2".to_string()),
             audio_data_url: Some("data:audio/ogg;base64,T2dnUw==".to_string()),
             image_preview_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
             image_link_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
@@ -6606,6 +6627,8 @@ mod tests {
         assert!(html.contains("src=\"/assets/icons/map-google-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-apple-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-openstreetmap.svg\""));
+        assert!(html.contains("class=\"msg-reasoning\""));
+        assert!(html.contains("Reasoning"));
     }
 
     #[cfg(feature = "web-ui")]
@@ -6626,6 +6649,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::User,
                     content: "hi".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6640,6 +6664,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::System,
                     content: "system warning".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6654,6 +6679,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::Notice,
                     content: "share boundary".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6668,6 +6694,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::Assistant,
                     content: "hello".to_string(),
+                    reasoning: Some("internal plan".to_string()),
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6686,6 +6713,7 @@ mod tests {
         assert_eq!(views.len(), 2);
         assert_eq!(views[0].role_class, "user");
         assert_eq!(views[1].role_class, "assistant");
+        assert_eq!(views[1].reasoning.as_deref(), Some("internal plan"));
     }
 
     #[cfg(feature = "web-ui")]
@@ -6705,6 +6733,7 @@ mod tests {
             messages: vec![crate::share_store::SharedMessage {
                 role: crate::share_store::SharedMessageRole::ToolResult,
                 content: "Tartine Bakery".to_string(),
+                reasoning: None,
                 audio_data_url: None,
                 image: Some(crate::share_store::SharedImageSet {
                     preview: crate::share_store::SharedImageAsset {
@@ -6774,6 +6803,7 @@ mod tests {
             messages: vec![crate::share_store::SharedMessage {
                 role: crate::share_store::SharedMessageRole::ToolResult,
                 content: "{\n  \"ok\": true\n}".to_string(),
+                reasoning: None,
                 audio_data_url: None,
                 image: None,
                 image_data_url: None,
@@ -6950,21 +6980,27 @@ mod tests {
             "https://localhost:49494".to_string(),
             "https://m4max.local:49494".to_string(),
         ]);
-        assert_eq!(lines, vec![
-            "passkey origin: https://localhost:49494",
-            "passkey origin: https://m4max.local:49494",
-        ]);
+        assert_eq!(
+            lines,
+            vec![
+                "passkey origin: https://localhost:49494",
+                "passkey origin: https://m4max.local:49494",
+            ]
+        );
     }
 
     #[test]
     fn startup_setup_code_lines_adds_spacers() {
         let lines = startup_setup_code_lines("493413");
-        assert_eq!(lines, vec![
-            "",
-            "setup code: 493413",
-            "enter this code to set your password or register a passkey",
-            "",
-        ]);
+        assert_eq!(
+            lines,
+            vec![
+                "",
+                "setup code: 493413",
+                "enter this code to set your password or register a passkey",
+                "",
+            ]
+        );
     }
 
     // ── is_local_connection / proxy header detection tests ───────────────

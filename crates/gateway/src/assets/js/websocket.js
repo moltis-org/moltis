@@ -2,6 +2,7 @@
 
 import {
 	appendChannelFooter,
+	appendReasoningDisclosure,
 	chatAddErrorCard,
 	chatAddErrorMsg,
 	chatAddMsg,
@@ -31,6 +32,7 @@ import {
 	appendLastMessageTimestamp,
 	bumpSessionCount,
 	fetchSessions,
+	setSessionActiveRunId,
 	setSessionReplying,
 	setSessionUnread,
 } from "./sessions.js";
@@ -73,6 +75,11 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
+function updateSessionRunId(sessionKey, runId) {
+	if (!runId) return;
+	setSessionActiveRunId(sessionKey, runId);
+}
+
 function moveFirstQueuedToChat() {
 	var tray = document.getElementById("queuedMessages");
 	if (!tray) return;
@@ -88,7 +95,9 @@ function moveFirstQueuedToChat() {
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
 
-function handleChatThinking(_p, isActive, isChatPage) {
+function handleChatThinking(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
+	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
 	var thinkEl = document.createElement("div");
@@ -99,7 +108,9 @@ function handleChatThinking(_p, isActive, isChatPage) {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
-function handleChatThinkingText(p, isActive, isChatPage) {
+function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
+	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
 	var indicator = document.getElementById("thinkingIndicator");
 	if (indicator) {
@@ -127,6 +138,7 @@ function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
 }
 
 function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
 	// Update per-session signal
 	var session = sessionStore.getByKey(eventSession);
 	if (session) session.streamText.value = "";
@@ -243,6 +255,7 @@ function clearStaleRunningToolCards() {
 }
 
 function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
 	// Always bump badge — the server persists a tool_result message for each call.
 	bumpSessionCount(eventSession, 1);
 	if (!(isActive && isChatPage)) return;
@@ -281,6 +294,7 @@ function setSafeMarkdownHtml(el, text) {
 }
 
 function handleChatDelta(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
 	if (!p.text) return;
 	// Update per-session signal
 	var session = sessionStore.getByKey(eventSession);
@@ -368,6 +382,7 @@ function appendFinalFooter(msgEl, p, eventSession) {
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
+	updateSessionRunId(eventSession, p.runId);
 	// Always bump badge — the server persists the final assistant message.
 	bumpSessionCount(eventSession, 1);
 	// Compare against the per-session history index so cross-session
@@ -376,9 +391,11 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	var lastIdx = evtSession ? evtSession.lastHistoryIndex.value : S.lastHistoryIndex;
 	if (p.messageIndex !== undefined && p.messageIndex <= lastIdx) {
 		setSessionReplying(eventSession, false);
+		setSessionActiveRunId(eventSession, null);
 		return;
 	}
 	setSessionReplying(eventSession, false);
+	setSessionActiveRunId(eventSession, null);
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
 	}
@@ -408,10 +425,17 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		textWrap.className = "mt-2";
 		setSafeMarkdownHtml(textWrap, p.text);
 		msgEl.appendChild(textWrap);
+		if (p.reasoning) appendReasoningDisclosure(msgEl, p.reasoning);
 		appendFinalFooter(msgEl, p, eventSession);
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	} else {
 		var resolvedEl = resolveFinalMessageEl(p);
+		if (!resolvedEl && p.reasoning) {
+			resolvedEl = chatAddMsg("assistant", "", false);
+		}
+		if (resolvedEl && p.reasoning) {
+			appendReasoningDisclosure(resolvedEl, p.reasoning);
+		}
 		if (resolvedEl && p.text && p.replyMedium === "voice") {
 			console.debug(
 				"[audio] streamed path, audio:",
@@ -482,6 +506,7 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 function handleChatError(p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
 	setSessionReplying(eventSession, false);
+	setSessionActiveRunId(eventSession, null);
 	// Reset per-session stream state
 	var errSession = sessionStore.getByKey(eventSession);
 	if (errSession) errSession.resetStreamState();
@@ -522,6 +547,7 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 
 function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
+	setSessionActiveRunId(eventSession, null);
 	// Reset badge, unread state, and history index for every client.
 	var session = sessionStore.getByKey(eventSession);
 	if (session) {
@@ -561,7 +587,17 @@ function handleChatEvent(p) {
 	var isActive = eventSession === sessionStore.activeSessionKey.value;
 	var isChatPage = currentPrefix === "/chats";
 
-	if (isActive && sessionStore.switchInProgress.value) return;
+	if (isActive && sessionStore.switchInProgress.value) {
+		// If session switching got stuck (e.g. lost RPC response), do not drop
+		// terminal frames. Unstick and process final/error so replies still show
+		// without requiring a full page reload.
+		if (p.state === "final" || p.state === "error") {
+			sessionStore.switchInProgress.value = false;
+			S.setSessionSwitchInProgress(false);
+		} else {
+			return;
+		}
+	}
 
 	if (p.sessionKey && !sessionStore.getByKey(p.sessionKey)) {
 		fetchSessions();

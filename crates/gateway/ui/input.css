@@ -304,6 +304,45 @@
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
   }
+  .msg-reasoning {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+  }
+  .msg-reasoning-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    list-style: none;
+    padding: 6px 9px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    user-select: none;
+  }
+  .msg-reasoning-summary::-webkit-details-marker {
+    display: none;
+  }
+  .msg-reasoning-summary::before {
+    content: "▸";
+    font-size: 0.72rem;
+    line-height: 1;
+    transition: transform 0.15s;
+  }
+  .msg-reasoning[open] .msg-reasoning-summary::before {
+    transform: rotate(90deg);
+  }
+  .msg-reasoning-body {
+    margin: 0 9px 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.78rem;
+    line-height: 1.42;
+    color: var(--muted);
+  }
   .msg.tool-event {
     font-family: var(--font-mono);
     font-size: 0.78rem;

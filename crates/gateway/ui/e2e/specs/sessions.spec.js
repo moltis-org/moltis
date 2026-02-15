@@ -157,6 +157,33 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("stop action appears for active run and clears after abort", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/");
+		await waitForWsConnected(page);
+		await expectPageContentMounted(page);
+
+		const stopBtn = page.locator('button[title="Stop generation"]');
+		await expect(stopBtn).toHaveCount(0);
+		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "thinking",
+				runId: "run-stop-e2e",
+			},
+		});
+
+		await expect(stopBtn).toBeVisible();
+		await stopBtn.click();
+		await expect(stopBtn).toHaveCount(0);
+		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("share button creates cutoff notice and copyable link", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
