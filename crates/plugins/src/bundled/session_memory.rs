@@ -19,6 +19,11 @@ fn utc_date_string() -> String {
     format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
 }
 
+#[must_use]
+fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
+    &text[..text.floor_char_boundary(max_bytes)]
+}
+
 /// Saves session conversation log to `<workspace>/memory/session-<key>-<date>.md`
 /// on session reset/new. The raw conversation is saved as markdown so the memory
 /// system's chunker + embeddings will make it searchable.
@@ -118,7 +123,10 @@ impl HookHandler for SessionMemoryHook {
             let text = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             // Truncate very long messages to keep the memory file manageable.
             let truncated = if text.len() > 2000 {
-                format!("{}...\n\n_(truncated)_", &text[..2000])
+                format!(
+                    "{}...\n\n_(truncated)_",
+                    truncate_at_char_boundary(text, 2000)
+                )
             } else {
                 text.to_string()
             };
@@ -262,5 +270,13 @@ mod tests {
         assert!(content.contains("_(truncated)_"));
         // Should not contain the full 5000 chars
         assert!(content.len() < 4000);
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_handles_multibyte_boundary() {
+        let text = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
+        let truncated = truncate_at_char_boundary(&text, 2000);
+        assert_eq!(truncated.len(), 1999);
+        assert!(truncated.chars().all(|c| c == 'a'));
     }
 }

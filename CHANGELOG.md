@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser auto-detection and install**: automatically detect all installed
+  Chromium-family browsers (Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc)
+  and auto-install via the system package manager when none is found. Requests
+  can specify a preferred browser (`"browser": "brave"`) or let the system
+  pick the first available one.
+
 ### Changed
 
 ### Deprecated
