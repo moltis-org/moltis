@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.31] - 2026-02-15
+
+
+### Added
+
 - **Sandbox toggle notification**: when the sandbox is enabled or disabled
   mid-session, a system message is injected into the conversation history so
   the LLM knows the execution environment changed. A chat notice also appears
