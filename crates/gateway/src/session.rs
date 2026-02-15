@@ -20,9 +20,14 @@ use {
 
 use crate::{
     services::{ServiceResult, SessionService, TtsService},
+    session_types::{
+        BranchesParams, DeleteParams, ForkParams, PatchParams, PreviewParams, ResetParams,
+        ResolveParams, SearchParams, ShareCreateParams, ShareListParams, ShareRevokeParams,
+        VoiceGenerateParams, VoiceTarget, parse_params,
+    },
     share_store::{
-        ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
-        SharedMapLinks, SharedMessage, SharedMessageRole,
+        ShareSnapshot, ShareStore, SharedImageAsset, SharedImageSet, SharedMapLinks, SharedMessage,
+        SharedMessageRole,
     },
 };
 
@@ -882,25 +887,19 @@ impl SessionService for LiveSessionService {
     }
 
     async fn preview(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        let p: PreviewParams = parse_params(params)?;
 
         let messages = self
             .store
-            .read_last_n(key, limit)
+            .read_last_n(&p.key, p.limit)
             .await
             .map_err(|e| e.to_string())?;
         Ok(serde_json::json!({ "messages": filter_ui_history(messages) }))
     }
 
     async fn resolve(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let p: ResolveParams = parse_params(params)?;
+        let key = &p.key;
 
         let entry = self
             .metadata
@@ -952,64 +951,38 @@ impl SessionService for LiveSessionService {
     }
 
     async fn patch(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let label = params
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let model = params
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let p: PatchParams = parse_params(params)?;
+        let key = &p.key;
 
         let entry = self
             .metadata
             .get(key)
             .await
             .ok_or_else(|| format!("session '{key}' not found"))?;
-        if label.is_some() {
+        if p.label.is_some() {
             if entry.channel_binding.is_some() {
                 return Err("cannot rename a channel-bound session".to_string());
             }
-            let _ = self.metadata.upsert(key, label).await;
+            let _ = self.metadata.upsert(key, p.label).await;
         }
-        if model.is_some() {
-            self.metadata.set_model(key, model).await;
+        if p.model.is_some() {
+            self.metadata.set_model(key, p.model).await;
         }
-        if params.get("project_id").is_some() {
-            let project_id = params
-                .get("project_id")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(project_id_opt) = p.project_id {
+            let project_id = project_id_opt.filter(|s| !s.is_empty());
             self.metadata.set_project_id(key, project_id).await;
         }
-        // Update worktree_branch if provided.
-        if params.get("worktree_branch").is_some() {
-            let worktree_branch = params
-                .get("worktree_branch")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(worktree_branch_opt) = p.worktree_branch {
+            let worktree_branch = worktree_branch_opt.filter(|s| !s.is_empty());
             self.metadata
                 .set_worktree_branch(key, worktree_branch)
                 .await;
         }
-
-        // Update sandbox_image if provided.
-        if params.get("sandbox_image").is_some() {
-            let sandbox_image = params
-                .get("sandbox_image")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(sandbox_image_opt) = p.sandbox_image {
+            let sandbox_image = sandbox_image_opt.filter(|s| !s.is_empty());
             self.metadata
                 .set_sandbox_image(key, sandbox_image.clone())
                 .await;
-            // Push image override to sandbox router.
             if let Some(ref router) = self.sandbox_router {
                 if let Some(ref img) = sandbox_image {
                     router.set_image_override(key, img.clone()).await;
@@ -1018,22 +991,15 @@ impl SessionService for LiveSessionService {
                 }
             }
         }
-
-        // Update mcp_disabled if provided.
-        if params.get("mcp_disabled").is_some() {
-            let mcp_disabled = params.get("mcp_disabled").and_then(|v| v.as_bool());
+        if let Some(mcp_disabled) = p.mcp_disabled {
             self.metadata.set_mcp_disabled(key, mcp_disabled).await;
         }
-
-        // Update sandbox_enabled if provided.
-        if params.get("sandbox_enabled").is_some() {
-            let sandbox_enabled = params.get("sandbox_enabled").and_then(|v| v.as_bool());
+        if let Some(sandbox_enabled_opt) = p.sandbox_enabled {
             self.metadata
-                .set_sandbox_enabled(key, sandbox_enabled)
+                .set_sandbox_enabled(key, sandbox_enabled_opt)
                 .await;
-            // Push override to sandbox router.
             if let Some(ref router) = self.sandbox_router {
-                if let Some(enabled) = sandbox_enabled {
+                if let Some(enabled) = sandbox_enabled_opt {
                     router.set_override(key, enabled).await;
                 } else {
                     router.remove_override(key).await;
@@ -1060,30 +1026,9 @@ impl SessionService for LiveSessionService {
     }
 
     async fn voice_generate(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let run_id = params
-            .get("runId")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-        let requested_index = params
-            .get("messageIndex")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .or_else(|| {
-                params
-                    .get("historyIndex")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize)
-            });
-        if requested_index.is_none() && run_id.is_none() {
-            return Err("missing 'messageIndex' or 'runId' parameter".to_string());
-        }
+        let p: VoiceGenerateParams = parse_params(params)?;
+        let key = &p.key;
+        let target = p.target().map_err(|e| e.to_string())?;
 
         let tts = self
             .tts_service
@@ -1095,25 +1040,24 @@ impl SessionService for LiveSessionService {
             return Err(format!("session '{key}' has no messages"));
         }
 
-        // Prefer `runId` when provided because it is stable across inserted
-        // tool_result messages, while message indices can shift.
-        let run_id_index = run_id.and_then(|id| {
-            history.iter().rposition(|msg| {
-                msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                    && msg.get("run_id").and_then(|v| v.as_str()) == Some(id)
-            })
-        });
-        let target_index = run_id_index
-            .or(requested_index)
-            .ok_or_else(|| "target assistant message not found".to_string())?;
-        let target = history
+        let target_index = match &target {
+            VoiceTarget::ByRunId(id) => history
+                .iter()
+                .rposition(|msg| {
+                    msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                        && msg.get("run_id").and_then(|v| v.as_str()) == Some(id)
+                })
+                .ok_or_else(|| "target assistant message not found".to_string())?,
+            VoiceTarget::ByMessageIndex(idx) => *idx,
+        };
+        let target_msg = history
             .get(target_index)
             .ok_or_else(|| format!("message index {target_index} is out of range"))?;
-        if target.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+        if target_msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
             return Err("target message is not an assistant response".to_string());
         }
 
-        if let Some(existing_audio) = target.get("audio").and_then(|v| v.as_str())
+        if let Some(existing_audio) = target_msg.get("audio").and_then(|v| v.as_str())
             && !existing_audio.trim().is_empty()
             && let Some(filename) = media_filename(existing_audio)
             && self.store.read_media(key, filename).await.is_ok()
@@ -1126,7 +1070,7 @@ impl SessionService for LiveSessionService {
             }));
         }
 
-        let text = message_text(target)
+        let text = message_text(target_msg)
             .ok_or_else(|| "assistant message has no text content to synthesize".to_string())?;
         let sanitized = moltis_voice::tts::sanitize_text_for_tts(&text)
             .trim()
@@ -1198,16 +1142,9 @@ impl SessionService for LiveSessionService {
     }
 
     async fn share_create(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-
-        let visibility = params
-            .get("visibility")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<ShareVisibility>().ok())
-            .unwrap_or(ShareVisibility::Public);
+        let p: ShareCreateParams = parse_params(params)?;
+        let key = &p.key;
+        let visibility = p.visibility;
 
         let share_store = self
             .share_store
@@ -1295,10 +1232,8 @@ impl SessionService for LiveSessionService {
     }
 
     async fn share_list(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let p: ShareListParams = parse_params(params)?;
+        let key = &p.key;
 
         let share_store = self
             .share_store
@@ -1328,10 +1263,8 @@ impl SessionService for LiveSessionService {
     }
 
     async fn share_revoke(&self, params: Value) -> ServiceResult {
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'id' parameter".to_string())?;
+        let p: ShareRevokeParams = parse_params(params)?;
+        let id = &p.id;
 
         let share_store = self
             .share_store
@@ -1343,10 +1276,8 @@ impl SessionService for LiveSessionService {
     }
 
     async fn reset(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let p: ResetParams = parse_params(params)?;
+        let key = &p.key;
 
         self.store.clear(key).await.map_err(|e| e.to_string())?;
         self.metadata.touch(key, 0).await;
@@ -1356,19 +1287,14 @@ impl SessionService for LiveSessionService {
     }
 
     async fn delete(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let p: DeleteParams = parse_params(params)?;
+        let key = &p.key;
 
         if key == "main" {
             return Err("cannot delete the main session".to_string());
         }
 
-        let force = params
-            .get("force")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let force = p.force;
 
         // Check for worktree cleanup before deleting metadata.
         if let Some(entry) = self.metadata.get(key).await
@@ -1443,14 +1369,8 @@ impl SessionService for LiveSessionService {
     }
 
     async fn fork(&self, params: Value) -> ServiceResult {
-        let parent_key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let label = params
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let p: ForkParams = parse_params(params)?;
+        let parent_key = &p.key;
 
         let messages = self
             .store
@@ -1459,11 +1379,7 @@ impl SessionService for LiveSessionService {
             .map_err(|e| e.to_string())?;
         let msg_count = messages.len();
 
-        let fork_point = params
-            .get("forkPoint")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .unwrap_or(msg_count);
+        let fork_point = p.fork_point.unwrap_or(msg_count);
 
         if fork_point > msg_count {
             return Err(format!(
@@ -1481,7 +1397,7 @@ impl SessionService for LiveSessionService {
 
         let _entry = self
             .metadata
-            .upsert(&new_key, label)
+            .upsert(&new_key, p.label)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1530,10 +1446,8 @@ impl SessionService for LiveSessionService {
     }
 
     async fn branches(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
+        let p: BranchesParams = parse_params(params)?;
+        let key = &p.key;
 
         let children = self.metadata.list_children(key).await;
         let items: Vec<Value> = children
@@ -1552,17 +1466,14 @@ impl SessionService for LiveSessionService {
     }
 
     async fn search(&self, params: Value) -> ServiceResult {
-        let query = params
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
+        let p: SearchParams = parse_params(params)?;
+        let query = p.query.trim();
 
         if query.is_empty() {
             return Ok(serde_json::json!([]));
         }
 
-        let max = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+        let max = p.limit;
 
         let results = self
             .store
