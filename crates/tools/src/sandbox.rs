@@ -4,6 +4,7 @@ use {
     anyhow::Result,
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
+    sha2::{Digest, Sha256},
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
 };
@@ -522,21 +523,38 @@ pub trait Sandbox: Send + Sync {
     }
 }
 
+fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
+    let mut canonical: Vec<String> = packages
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    canonical.sort();
+    canonical.dedup();
+    canonical
+}
+
+fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
+    let pkg_list = canonical_sandbox_packages(packages).join(" ");
+    format!(
+        "FROM {base}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
+    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
+RUN mkdir -p /home/sandbox\n\
+ENV HOME=/home/sandbox\n\
+ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
+WORKDIR /home/sandbox\n"
+    )
+}
+
 /// Compute the content-hash tag for a pre-built sandbox image.
 /// Pure function — independent of any specific container CLI.
 pub fn sandbox_image_tag(repo: &str, base: &str, packages: &[String]) -> String {
-    use std::hash::Hasher;
-    let mut h = std::hash::DefaultHasher::new();
-    // Bump this when the Dockerfile template changes to force a rebuild.
-    h.write(b"v4");
-    h.write(repo.as_bytes());
-    h.write(base.as_bytes());
-    let mut sorted: Vec<&String> = packages.iter().collect();
-    sorted.sort();
-    for p in &sorted {
-        h.write(p.as_bytes());
-    }
-    format!("{repo}:{:016x}", h.finish())
+    let dockerfile = sandbox_image_dockerfile(base, packages);
+    let digest = Sha256::digest(dockerfile.as_bytes());
+    format!("{repo}:{digest:x}")
 }
 
 fn is_sandbox_image_tag(tag: &str) -> bool {
@@ -1337,17 +1355,8 @@ impl Sandbox for DockerSandbox {
             std::env::temp_dir().join(format!("moltis-sandbox-build-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir)?;
 
-        let pkg_list = packages.join(" ");
-        let dockerfile = format!(
-            "FROM {base}\n\
-RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
-RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
-    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
-RUN mkdir -p /home/sandbox\n\
-ENV HOME=/home/sandbox\n\
-ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
-WORKDIR /home/sandbox\n"
-        );
+        let pkg_list = canonical_sandbox_packages(packages).join(" ");
+        let dockerfile = sandbox_image_dockerfile(base, packages);
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
 
@@ -2141,6 +2150,11 @@ fn is_apple_container_unavailable_error(stderr: &str) -> bool {
         || (lower.contains("not found") && lower.contains("container"))
 }
 
+#[cfg(target_os = "macos")]
+fn should_restart_after_readiness_error(error_text: &str, state: ContainerState) -> bool {
+    is_apple_container_unavailable_error(error_text) && state == ContainerState::Stopped
+}
+
 fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
     let inspect = stdout.trim();
     if inspect.is_empty() || inspect == "[]" {
@@ -2473,6 +2487,53 @@ impl Sandbox for AppleContainerSandbox {
                     return Ok(());
                 },
                 Err(error) => {
+                    let error_message = format!("{error:#}");
+                    let state = Self::inspect_container_state(&name).await;
+                    if should_restart_after_readiness_error(&error_message, state) {
+                        warn!(
+                            name,
+                            %error,
+                            attempt,
+                            "apple container stopped during readiness probe, restarting once"
+                        );
+                        if Self::try_restart_container(&name).await {
+                            match Self::wait_for_container_exec_ready(&name).await {
+                                Ok(()) => {
+                                    info!(
+                                        name,
+                                        image = %image,
+                                        "apple container recovered after readiness restart"
+                                    );
+                                    let is_prebuilt =
+                                        image.starts_with(&format!("{}:", self.image_repo()));
+                                    if !is_prebuilt {
+                                        provision_packages(
+                                            "container",
+                                            &name,
+                                            &self.config.packages,
+                                        )
+                                        .await?;
+                                    }
+                                    return Ok(());
+                                },
+                                Err(restart_error) => {
+                                    warn!(
+                                        name,
+                                        %restart_error,
+                                        attempt,
+                                        "apple container restart after readiness failure did not recover"
+                                    );
+                                },
+                            }
+                        } else {
+                            warn!(
+                                name,
+                                attempt,
+                                "apple container restart after readiness failure was unsuccessful"
+                            );
+                        }
+                    }
+
                     // Capture logs before removing — this tells us WHY the
                     // entrypoint exited (missing binary, image issue, etc.).
                     let logs = Self::capture_container_logs(&name, 5).await;
@@ -2617,17 +2678,8 @@ impl Sandbox for AppleContainerSandbox {
             std::env::temp_dir().join(format!("moltis-sandbox-build-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir)?;
 
-        let pkg_list = packages.join(" ");
-        let dockerfile = format!(
-            "FROM {base}\n\
-RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
-RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
-    && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
-RUN mkdir -p /home/sandbox\n\
-ENV HOME=/home/sandbox\n\
-ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
-WORKDIR /home/sandbox\n"
-        );
+        let pkg_list = canonical_sandbox_packages(packages).join(" ");
+        let dockerfile = sandbox_image_dockerfile(base, packages);
         let dockerfile_path = tmp_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &dockerfile)?;
 
@@ -3449,6 +3501,16 @@ mod tests {
     }
 
     #[test]
+    fn test_docker_image_tag_normalizes_whitespace_and_duplicates() {
+        let p1 = vec!["curl".into(), "git".into(), "curl".into()];
+        let p2 = vec![" git ".into(), "curl".into()];
+        assert_eq!(
+            sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p1),
+            sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p2),
+        );
+    }
+
+    #[test]
     fn test_docker_image_tag_changes_with_base() {
         let packages = vec!["curl".into()];
         let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
@@ -3678,6 +3740,23 @@ mod tests {
             "container not found: moltis-sandbox-session-abc"
         ));
         assert!(!is_apple_container_unavailable_error("permission denied"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_should_restart_after_readiness_error() {
+        assert!(should_restart_after_readiness_error(
+            "cannot exec: container is not running",
+            ContainerState::Stopped
+        ));
+        assert!(!should_restart_after_readiness_error(
+            "cannot exec: container is not running",
+            ContainerState::Running
+        ));
+        assert!(!should_restart_after_readiness_error(
+            "permission denied",
+            ContainerState::Stopped
+        ));
     }
 
     #[test]
