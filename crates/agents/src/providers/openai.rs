@@ -11,7 +11,7 @@ use tracing::{debug, trace, warn};
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
         parse_tool_calls, process_openai_sse_line, strip_think_tags, to_openai_tools,
     },
     crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
@@ -631,7 +631,7 @@ impl LlmProvider for OpenAiProvider {
         });
         let tool_calls = parse_tool_calls(message);
 
-        let usage = parse_openai_compat_usage(&resp["usage"]);
+        let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
             text,
@@ -726,7 +726,10 @@ impl LlmProvider for OpenAiProvider {
                         continue;
                     }
 
-                    let Some(data) = line.strip_prefix("data: ") else {
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
                         continue;
                     };
 
@@ -746,6 +749,36 @@ impl LlmProvider for OpenAiProvider {
                     }
                 }
             }
+
+            // Some OpenAI-compatible providers may close the stream without
+            // an explicit [DONE] frame or trailing newline. Process any
+            // residual buffered line and always finalize on EOF so usage
+            // metadata still propagates.
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
+            }
         })
     }
 }
@@ -761,7 +794,7 @@ mod tests {
         tokio_stream::StreamExt,
     };
 
-    use crate::model::{ChatMessage, ToolCall};
+    use crate::model::{ChatMessage, ToolCall, Usage};
 
     use super::*;
 
@@ -836,14 +869,11 @@ mod tests {
             "https://api.moonshot.ai/v1".to_string(),
             "moonshot".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -859,14 +889,11 @@ mod tests {
             "gpt-4o".to_string(),
             "https://api.openai.com/v1".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -901,14 +928,13 @@ mod tests {
         );
         let long_id = "forced-123e4567-e89b-12d3-a456-426614174000";
         let messages = vec![
-            ChatMessage::assistant_with_tools(
-                Some("running command".to_string()),
-                vec![ToolCall {
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
                     id: long_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                }],
-            ),
+                },
+            ]),
             ChatMessage::tool(long_id, "ok"),
         ];
 
@@ -933,14 +959,13 @@ mod tests {
         );
         let short_id = "call_abc";
         let messages = vec![
-            ChatMessage::assistant_with_tools(
-                Some("running command".to_string()),
-                vec![ToolCall {
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
                     id: short_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                }],
-            ),
+                },
+            ]),
             ChatMessage::tool(short_id, "ok"),
         ];
 
@@ -965,14 +990,11 @@ mod tests {
         );
         let messages = vec![
             ChatMessage::user("run uname"),
-            ChatMessage::assistant_with_tools(
-                None,
-                vec![ToolCall {
-                    id: "exec:0".into(),
-                    name: "exec".into(),
-                    arguments: serde_json::json!({ "command": "uname -a" }),
-                }],
-            ),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "exec:0".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }]),
             ChatMessage::tool("exec:0", "Linux host 6.0"),
         ];
 
@@ -1025,6 +1047,36 @@ mod tests {
                 .iter()
                 .all(|entry| entry["role"].as_str() != Some("system"))
         );
+    }
+
+    #[tokio::test]
+    async fn stream_without_done_frame_still_emits_done_with_usage() {
+        // Some providers close SSE without [DONE] and without a trailing newline.
+        // We must still flush trailing usage and emit Done.
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5040,\"completion_tokens\":61}}"
+        );
+        let (base_url, _) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            base_url,
+            "minimax".to_string(),
+        );
+
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("tell me a joke")], vec![]);
+        let mut last_done: Option<Usage> = None;
+        while let Some(ev) = stream.next().await {
+            if let StreamEvent::Done(usage) = ev {
+                last_done = Some(usage);
+            }
+        }
+
+        let usage = last_done.expect("stream should emit Done");
+        assert_eq!(usage.input_tokens, 5040);
+        assert_eq!(usage.output_tokens, 61);
     }
 
     // ── Regression: stream_with_tools must send tools in the API body ────
@@ -1252,16 +1304,13 @@ mod tests {
         let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
         // Only chat-capable models pass; non-chat (image, TTS, whisper,
         // embedding, moderation, audio, realtime, transcribe) are excluded.
-        assert_eq!(
-            ids,
-            vec![
-                "gpt-5.2",
-                "gpt-5.2-2025-12-11",
-                "o4-mini-deep-research",
-                "kimi-k2.5",
-                "moonshot-v1-8k",
-            ]
-        );
+        assert_eq!(ids, vec![
+            "gpt-5.2",
+            "gpt-5.2-2025-12-11",
+            "o4-mini-deep-research",
+            "kimi-k2.5",
+            "moonshot-v1-8k",
+        ]);
     }
 
     #[test]
@@ -1319,13 +1368,10 @@ mod tests {
     #[test]
     fn merge_with_fallback_uses_fallback_when_discovery_is_empty() {
         use crate::providers::DiscoveredModel;
-        let merged = crate::providers::merge_discovered_with_fallback_catalog(
-            Vec::new(),
-            vec![
-                DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
-                DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
-            ],
-        );
+        let merged = crate::providers::merge_discovered_with_fallback_catalog(Vec::new(), vec![
+            DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
+            DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
+        ]);
         let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["gpt-5.2", "gpt-5-mini"]);
     }

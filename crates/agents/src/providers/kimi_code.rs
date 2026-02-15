@@ -16,7 +16,7 @@ use {
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
         parse_tool_calls, process_openai_sse_line, to_openai_tools,
     },
     crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
@@ -252,7 +252,7 @@ impl LlmProvider for KimiCodeProvider {
         let text = message["content"].as_str().map(|s| s.to_string());
         let tool_calls = parse_tool_calls(message);
 
-        let usage = parse_openai_compat_usage(&resp["usage"]);
+        let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
         Ok(CompletionResponse {
             text,
@@ -361,7 +361,10 @@ impl LlmProvider for KimiCodeProvider {
                         continue;
                     }
 
-                    let Some(data) = line.strip_prefix("data: ") else {
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
                         continue;
                     };
 
@@ -380,6 +383,32 @@ impl LlmProvider for KimiCodeProvider {
                         SseLineResult::Skip => {}
                     }
                 }
+            }
+
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
             }
         })
     }
@@ -501,7 +530,7 @@ mod tests {
             let message = &resp["choices"][0]["message"];
             let text = message["content"].as_str().map(|s| s.to_string());
             let tool_calls = parse_tool_calls(message);
-            let usage = parse_openai_compat_usage(&resp["usage"]);
+            let usage = parse_openai_compat_usage_from_payload(&resp).unwrap_or_default();
 
             Ok(CompletionResponse {
                 text,

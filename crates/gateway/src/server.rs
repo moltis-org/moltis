@@ -147,14 +147,11 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(
-                request_id.clone(),
-                crate::state::PendingInvoke {
-                    request_id: request_id.clone(),
-                    sender: tx,
-                    created_at: std::time::Instant::now(),
-                },
-            );
+            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
+                request_id: request_id.clone(),
+                sender: tx,
+                created_at: std::time::Instant::now(),
+            });
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -268,14 +265,13 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner.pending_invokes.insert(
-                pending_key.clone(),
-                crate::state::PendingInvoke {
+            inner
+                .pending_invokes
+                .insert(pending_key.clone(), crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                },
-            );
+                });
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -1308,17 +1304,16 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged.servers.insert(
-                    name.clone(),
-                    moltis_mcp::McpServerConfig {
+                merged
+                    .servers
+                    .insert(name.clone(), moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    },
-                );
+                    });
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -1717,15 +1712,10 @@ pub async fn start_gateway(
             // Spawn async broadcast in a background task since we're in a sync callback.
             let state = Arc::clone(state);
             tokio::spawn(async move {
-                broadcast(
-                    &state,
-                    event,
-                    payload,
-                    BroadcastOpts {
-                        drop_if_slow: true,
-                        ..Default::default()
-                    },
-                )
+                broadcast(&state, event, payload, BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                })
                 .await;
             });
         });
@@ -3218,15 +3208,10 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(
-                            &update_state,
-                            "update.available",
-                            payload,
-                            BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            },
-                        )
+                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
                         .await;
                     }
                 },
@@ -3289,15 +3274,12 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (
-                                name.clone(),
-                                moltis_metrics::ProviderTokens {
-                                    input_tokens: metrics.input_tokens,
-                                    output_tokens: metrics.output_tokens,
-                                    completions: metrics.completions,
-                                    errors: metrics.errors,
-                                },
-                            )
+                            (name.clone(), moltis_metrics::ProviderTokens {
+                                input_tokens: metrics.input_tokens,
+                                output_tokens: metrics.output_tokens,
+                                completions: metrics.completions,
+                                errors: metrics.errors,
+                            })
                         })
                         .collect();
 
@@ -3417,15 +3399,10 @@ pub async fn start_gateway(
                                 }),
                             ),
                         };
-                        broadcast(
-                            &event_state,
-                            event_name,
-                            payload,
-                            BroadcastOpts {
-                                drop_if_slow: true,
-                                ..Default::default()
-                            },
-                        )
+                        broadcast(&event_state, event_name, payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
                         .await;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -3444,15 +3421,10 @@ pub async fn start_gateway(
                 match rx.recv().await {
                     Ok(entry) => {
                         if let Ok(payload) = serde_json::to_value(&entry) {
-                            broadcast(
-                                &log_state,
-                                "logs.entry",
-                                payload,
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
+                            broadcast(&log_state, "logs.entry", payload, BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            })
                             .await;
                         }
                     },
@@ -7653,27 +7625,21 @@ mod tests {
             "https://localhost:49494".to_string(),
             "https://m4max.local:49494".to_string(),
         ]);
-        assert_eq!(
-            lines,
-            vec![
-                "passkey origin: https://localhost:49494",
-                "passkey origin: https://m4max.local:49494",
-            ]
-        );
+        assert_eq!(lines, vec![
+            "passkey origin: https://localhost:49494",
+            "passkey origin: https://m4max.local:49494",
+        ]);
     }
 
     #[test]
     fn startup_setup_code_lines_adds_spacers() {
         let lines = startup_setup_code_lines("493413");
-        assert_eq!(
-            lines,
-            vec![
-                "",
-                "setup code: 493413",
-                "enter this code to set your password or register a passkey",
-                "",
-            ]
-        );
+        assert_eq!(lines, vec![
+            "",
+            "setup code: 493413",
+            "enter this code to set your password or register a passkey",
+            "",
+        ]);
     }
 
     // ── is_local_connection / proxy header detection tests ───────────────
@@ -7929,16 +7895,13 @@ mod tests {
             ("OPENAI_API_KEY".to_string(), "config-openai".to_string()),
             ("BRAVE_API_KEY".to_string(), "config-brave".to_string()),
         ]);
-        let merged = merge_env_overrides(
-            &base,
-            vec![
-                ("OPENAI_API_KEY".to_string(), "db-openai".to_string()),
-                (
-                    "PERPLEXITY_API_KEY".to_string(),
-                    "db-perplexity".to_string(),
-                ),
-            ],
-        );
+        let merged = merge_env_overrides(&base, vec![
+            ("OPENAI_API_KEY".to_string(), "db-openai".to_string()),
+            (
+                "PERPLEXITY_API_KEY".to_string(),
+                "db-perplexity".to_string(),
+            ),
+        ]);
         assert_eq!(
             merged.get("OPENAI_API_KEY").map(String::as_str),
             Some("config-openai")

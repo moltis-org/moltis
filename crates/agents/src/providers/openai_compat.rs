@@ -239,7 +239,9 @@ fn usage_value_at_path(usage: &serde_json::Value, path: &[&str]) -> Option<u64> 
     for key in path {
         cursor = cursor.get(*key)?;
     }
-    cursor.as_u64()
+    cursor
+        .as_u64()
+        .or_else(|| cursor.as_str().and_then(|raw| raw.parse::<u64>().ok()))
 }
 
 fn usage_field_u32(usage: &serde_json::Value, paths: &[&[&str]]) -> u32 {
@@ -247,6 +249,49 @@ fn usage_field_u32(usage: &serde_json::Value, paths: &[&[&str]]) -> u32 {
         .iter()
         .find_map(|path| usage_value_at_path(usage, path))
         .unwrap_or(0) as u32
+}
+
+fn usage_object_from_payload(payload: &serde_json::Value) -> Option<&serde_json::Value> {
+    if let Some(usage) = payload.get("usage").filter(|usage| usage.is_object()) {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("delta"))
+        .and_then(|delta| delta.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    if let Some(usage) = payload
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("usage"))
+        .filter(|usage| usage.is_object())
+    {
+        return Some(usage);
+    }
+
+    payload
+        .get("x_groq")
+        .and_then(|x_groq| x_groq.get("usage"))
+        .filter(|usage| usage.is_object())
 }
 
 /// Parse usage payloads from OpenAI-compatible backends.
@@ -258,24 +303,46 @@ fn usage_field_u32(usage: &serde_json::Value, paths: &[&[&str]]) -> u32 {
 #[must_use]
 pub fn parse_openai_compat_usage(usage: &serde_json::Value) -> Usage {
     Usage {
-        input_tokens: usage_field_u32(usage, &[&["prompt_tokens"], &["input_tokens"]]),
-        output_tokens: usage_field_u32(usage, &[&["completion_tokens"], &["output_tokens"]]),
-        cache_read_tokens: usage_field_u32(
-            usage,
-            &[
-                &["prompt_tokens_details", "cached_tokens"],
-                &["cache_read_input_tokens"],
-                &["input_tokens_details", "cache_read_input_tokens"],
-            ],
-        ),
-        cache_write_tokens: usage_field_u32(
-            usage,
-            &[
-                &["cache_creation_input_tokens"],
-                &["input_tokens_details", "cache_creation_input_tokens"],
-            ],
-        ),
+        input_tokens: usage_field_u32(usage, &[
+            &["prompt_tokens"],
+            &["promptTokens"],
+            &["input_tokens"],
+            &["inputTokens"],
+        ]),
+        output_tokens: usage_field_u32(usage, &[
+            &["completion_tokens"],
+            &["completionTokens"],
+            &["output_tokens"],
+            &["outputTokens"],
+        ]),
+        cache_read_tokens: usage_field_u32(usage, &[
+            &["prompt_tokens_details", "cached_tokens"],
+            &["promptTokensDetails", "cachedTokens"],
+            &["cache_read_input_tokens"],
+            &["cacheReadInputTokens"],
+            &["input_tokens_details", "cache_read_input_tokens"],
+            &["inputTokensDetails", "cacheReadInputTokens"],
+        ]),
+        cache_write_tokens: usage_field_u32(usage, &[
+            &["cache_creation_input_tokens"],
+            &["cacheCreationInputTokens"],
+            &["input_tokens_details", "cache_creation_input_tokens"],
+            &["inputTokensDetails", "cacheCreationInputTokens"],
+        ]),
     }
+}
+
+/// Parse usage from an OpenAI-compatible payload, checking common nesting variants.
+///
+/// Providers differ on where they place usage metadata:
+/// - top-level `usage`
+/// - `choices[0].usage`
+/// - `choices[0].delta.usage`
+/// - `choices[0].message.usage`
+/// - provider extension blocks (for example `x_groq.usage`)
+#[must_use]
+pub fn parse_openai_compat_usage_from_payload(payload: &serde_json::Value) -> Option<Usage> {
+    usage_object_from_payload(payload).map(parse_openai_compat_usage)
 }
 
 /// Strip `<think>...</think>` tags from content, returning `(visible, thinking)`.
@@ -492,11 +559,9 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         return SseLineResult::Skip;
     };
 
-    let mut events = Vec::new();
+    let mut events = vec![StreamEvent::ProviderRaw(evt.clone())];
 
-    // Usage chunk (sent with stream_options.include_usage)
-    if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
-        let usage = parse_openai_compat_usage(u);
+    if let Some(usage) = parse_openai_compat_usage_from_payload(&evt) {
         state.input_tokens = usage.input_tokens;
         state.output_tokens = usage.output_tokens;
         state.cache_read_tokens = usage.cache_read_tokens;
@@ -553,11 +618,7 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
         }
     }
 
-    if events.is_empty() {
-        SseLineResult::Skip
-    } else {
-        SseLineResult::Events(events)
-    }
+    SseLineResult::Events(events)
 }
 
 /// Generate the final events when stream ends (tool call completions + done).
@@ -808,6 +869,62 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_openai_compat_usage_camel_case_string_fields() {
+        let usage = serde_json::json!({
+            "promptTokens": "91",
+            "completionTokens": "27",
+            "promptTokensDetails": {
+                "cachedTokens": "14"
+            },
+            "cacheCreationInputTokens": "6"
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 91);
+        assert_eq!(parsed.output_tokens, 27);
+        assert_eq!(parsed.cache_read_tokens, 14);
+        assert_eq!(parsed.cache_write_tokens, 6);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_from_payload_choice_usage() {
+        let payload = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "index": 0,
+                "usage": {
+                    "input_tokens": 32,
+                    "output_tokens": 9
+                }
+            }]
+        });
+
+        let parsed = parse_openai_compat_usage_from_payload(&payload).expect("usage");
+        assert_eq!(parsed.input_tokens, 32);
+        assert_eq!(parsed.output_tokens, 9);
+        assert_eq!(parsed.cache_read_tokens, 0);
+        assert_eq!(parsed.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_from_payload_delta_usage() {
+        let payload = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "usage": {
+                        "prompt_tokens": 70,
+                        "completion_tokens": 12
+                    }
+                }
+            }]
+        });
+
+        let parsed = parse_openai_compat_usage_from_payload(&payload).expect("usage");
+        assert_eq!(parsed.input_tokens, 70);
+        assert_eq!(parsed.output_tokens, 12);
+    }
+
+    #[test]
     fn test_process_sse_usage_chunk_with_input_output_fields() {
         let mut state = StreamingToolState::default();
         let data = r#"{"choices":[],"usage":{"input_tokens":64,"output_tokens":19,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}"#;
@@ -817,6 +934,17 @@ mod tests {
         assert_eq!(state.output_tokens, 19);
         assert_eq!(state.cache_read_tokens, 5);
         assert_eq!(state.cache_write_tokens, 2);
+    }
+
+    #[test]
+    fn test_process_sse_usage_chunk_with_choice_nested_usage() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"usage":{"prompt_tokens":18,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":4}}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        assert!(matches!(result, SseLineResult::Skip));
+        assert_eq!(state.input_tokens, 18);
+        assert_eq!(state.output_tokens, 7);
+        assert_eq!(state.cache_read_tokens, 4);
     }
 
     #[test]
@@ -912,10 +1040,9 @@ mod tests {
 
         let events = finalize_stream(&mut state);
         assert_eq!(events.len(), 2);
-        assert!(matches!(
-            &events[0],
-            StreamEvent::ToolCallComplete { index: 0 }
-        ));
+        assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
+            index: 0
+        }));
         assert!(matches!(
             &events[1],
             StreamEvent::Done(usage) if usage.input_tokens == 10 && usage.output_tokens == 5

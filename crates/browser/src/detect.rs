@@ -610,16 +610,13 @@ async fn auto_install_for_targets(targets: &[BrowserKind]) -> AutoInstallResult 
     let mut errors = Vec::new();
     for target in targets {
         for id in windows_package_ids(*target) {
-            let command = InstallCommand::new(
-                "winget",
-                &[
-                    "install",
-                    "--id",
-                    id,
-                    "--accept-package-agreements",
-                    "--accept-source-agreements",
-                ],
-            );
+            let command = InstallCommand::new("winget", &[
+                "install",
+                "--id",
+                id,
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ]);
 
             match run_command(&command).await {
                 Ok(()) => {

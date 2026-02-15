@@ -191,6 +191,7 @@ struct AssistantTurnOutput {
     output_tokens: u32,
     audio_path: Option<String>,
     reasoning: Option<String>,
+    llm_api_response: Option<Value>,
 }
 
 fn now_ms() -> u64 {
@@ -2639,6 +2640,7 @@ impl ChatService for LiveChatService {
                     output_tokens: Some(assistant_output.output_tokens),
                     tool_calls: None,
                     reasoning: assistant_output.reasoning,
+                    llm_api_response: assistant_output.llm_api_response,
                     audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
@@ -2909,6 +2911,7 @@ impl ChatService for LiveChatService {
                 output_tokens: Some(assistant_output.output_tokens),
                 tool_calls: None,
                 reasoning: assistant_output.reasoning.clone(),
+                llm_api_response: assistant_output.llm_api_response.clone(),
                 audio: assistant_output.audio_path.clone(),
                 seq: None,
                 run_id: Some(run_id.clone()),
@@ -3172,6 +3175,8 @@ impl ChatService for LiveChatService {
                 StreamEvent::ToolCallStart { .. }
                 | StreamEvent::ToolCallArgumentsDelta { .. }
                 | StreamEvent::ToolCallComplete { .. }
+                // Provider raw payloads are debug metadata, not summary text.
+                | StreamEvent::ProviderRaw(_)
                 // Ignore provider reasoning blocks; summary body should only
                 // include final answer text.
                 | StreamEvent::ReasoningDelta(_) => {},
@@ -3192,6 +3197,7 @@ impl ChatService for LiveChatService {
             output_tokens: None,
             tool_calls: None,
             reasoning: None,
+            llm_api_response: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -3731,6 +3737,14 @@ impl ChatService for LiveChatService {
 
         let system_prompt_chars = system_prompt.len();
 
+        // Keep raw assistant outputs (including provider/model/token metadata)
+        // so the UI can show a debug view of what the LLM actually returned.
+        let llm_outputs: Vec<Value> = history
+            .iter()
+            .filter(|entry| entry.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+            .cloned()
+            .collect();
+
         // Reconstruct `role: "tool"` messages from persisted `tool_result`
         // entries so the context view shows what the LLM actually saw.
         let history_with_tools: Vec<Value> = history
@@ -3773,6 +3787,7 @@ impl ChatService for LiveChatService {
 
         Ok(serde_json::json!({
             "messages": openai_messages,
+            "llmOutputs": llm_outputs,
             "messageCount": message_count,
             "systemPromptChars": system_prompt_chars,
             "totalChars": total_chars,
@@ -4432,13 +4447,18 @@ async fn run_with_tools(
         Ok(result) => {
             clear_unsupported_model(state, model_store, model_id).await;
 
-            let is_silent = result.text.trim().is_empty();
+            let iterations = result.iterations;
+            let tool_calls_made = result.tool_calls_made;
+            let usage = result.usage;
+            let llm_api_response = (!result.raw_llm_responses.is_empty())
+                .then(|| Value::Array(result.raw_llm_responses));
             let display_text = result.text;
+            let is_silent = display_text.trim().is_empty();
 
             info!(
                 run_id,
-                iterations = result.iterations,
-                tool_calls = result.tool_calls_made,
+                iterations,
+                tool_calls = tool_calls_made,
                 response = %display_text,
                 silent = is_silent,
                 "agent run complete"
@@ -4487,12 +4507,12 @@ async fn run_with_tools(
                 text: display_text.clone(),
                 model: provider_ref.id().to_string(),
                 provider: provider_name.to_string(),
-                input_tokens: result.usage.input_tokens,
-                output_tokens: result.usage.output_tokens,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
                 message_index: assistant_message_index,
                 reply_medium: desired_reply_medium,
-                iterations: Some(result.iterations),
-                tool_calls_made: Some(result.tool_calls_made),
+                iterations: Some(iterations),
+                tool_calls_made: Some(tool_calls_made),
                 audio: audio_path.clone(),
                 audio_warning,
                 reasoning: reasoning.clone(),
@@ -4514,10 +4534,11 @@ async fn run_with_tools(
             }
             Some(AssistantTurnOutput {
                 text: display_text,
-                input_tokens: result.usage.input_tokens,
-                output_tokens: result.usage.output_tokens,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
                 audio_path,
                 reasoning,
+                llm_api_response,
             })
         },
         Err(e) => {
@@ -4577,6 +4598,8 @@ async fn compact_session(
             StreamEvent::ToolCallStart { .. }
             | StreamEvent::ToolCallArgumentsDelta { .. }
             | StreamEvent::ToolCallComplete { .. }
+            // Provider raw payloads are debug metadata, not summary text.
+            | StreamEvent::ProviderRaw(_)
             // Ignore provider reasoning blocks; summary body should only
             // include final answer text.
             | StreamEvent::ReasoningDelta(_) => {},
@@ -4596,6 +4619,7 @@ async fn compact_session(
         output_tokens: None,
         tool_calls: None,
         reasoning: None,
+        llm_api_response: None,
         audio: None,
         seq: None,
         run_id: None,
@@ -4664,6 +4688,7 @@ async fn run_streaming(
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
     let mut accumulated_reasoning = String::new();
+    let mut raw_llm_responses: Vec<Value> = Vec::new();
 
     while let Some(event) = stream.next().await {
         match event {
@@ -4696,6 +4721,11 @@ async fn run_streaming(
                     BroadcastOpts::default(),
                 )
                 .await;
+            },
+            StreamEvent::ProviderRaw(raw) => {
+                if raw_llm_responses.len() < 256 {
+                    raw_llm_responses.push(raw);
+                }
             },
             StreamEvent::Done(usage) => {
                 clear_unsupported_model(state, model_store, model_id).await;
@@ -4825,12 +4855,15 @@ async fn run_streaming(
                     deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
                         .await;
                 }
+                let llm_api_response =
+                    (!raw_llm_responses.is_empty()).then(|| Value::Array(raw_llm_responses));
                 return Some(AssistantTurnOutput {
                     text: accumulated,
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
                     audio_path,
                     reasoning,
+                    llm_api_response,
                 });
             },
             StreamEvent::Error(msg) => {
