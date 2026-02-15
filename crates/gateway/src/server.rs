@@ -2156,7 +2156,7 @@ pub async fn start_gateway(
                         let cache_dir = mem_cfg
                             .base_url
                             .as_ref()
-                            .map(std::path::PathBuf::from)
+                            .map(PathBuf::from)
                             .unwrap_or_else(
                                 moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::default_cache_dir,
                             );
