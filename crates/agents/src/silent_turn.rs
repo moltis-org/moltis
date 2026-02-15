@@ -35,6 +35,11 @@ Write to these paths:
 Format files as clean Markdown. Be concise but preserve important context.
 Do NOT respond to the user. Only use the write_file tool to save memories."#;
 
+#[must_use]
+fn truncate_at_char_boundary(content: &str, max_bytes: usize) -> &str {
+    &content[..content.floor_char_boundary(max_bytes)]
+}
+
 /// A thin `AgentTool` wrapper around `dyn MemoryWriter` that tracks written locations.
 struct MemoryWriteFileTool {
     writer: Arc<dyn MemoryWriter>,
@@ -165,11 +170,7 @@ pub async fn run_silent_memory_turn(
             ChatMessage::Tool { content, .. } => ("tool", content.as_str()),
         };
         // Skip very long messages (tool results, etc.)
-        let truncated = if content.len() > 2000 {
-            &content[..2000]
-        } else {
-            content
-        };
+        let truncated = truncate_at_char_boundary(content, 2000);
         conversation_text.push_str(&format!("{role}: {truncated}\n\n"));
     }
 
@@ -354,5 +355,16 @@ mod tests {
 
         // Should succeed even with empty conversation (provider still writes)
         assert!(!paths.is_empty());
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_handles_multibyte_boundary() {
+        let content = format!("{}л{}", "a".repeat(1999), "z".repeat(20));
+
+        let truncated = truncate_at_char_boundary(&content, 2000);
+
+        assert_eq!(truncated.len(), 1999);
+        assert!(content.is_char_boundary(truncated.len()));
+        assert!(truncated.chars().all(|c| c == 'a'));
     }
 }

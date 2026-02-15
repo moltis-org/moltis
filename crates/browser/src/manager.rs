@@ -842,7 +842,7 @@ fn validate_url(url: &str) -> Result<(), BrowserError> {
 /// Truncate a URL for error messages (to avoid huge garbage URLs in logs).
 fn truncate_url(url: &str) -> String {
     if url.len() > 100 {
-        format!("{}...", &url[..100])
+        format!("{}...", &url[..url.floor_char_boundary(100)])
     } else {
         url.to_string()
     }
@@ -904,6 +904,16 @@ mod tests {
     fn test_validate_url_malformed() {
         assert!(validate_url("not a url").is_err());
         assert!(validate_url("://missing.scheme").is_err());
+    }
+
+    #[test]
+    fn test_truncate_url_handles_multibyte_boundary() {
+        let url = format!("https://{}л{}", "a".repeat(91), "tail");
+        let truncated = truncate_url(&url);
+        let prefix = truncated.strip_suffix("...").unwrap_or("");
+        assert_eq!(prefix.len(), 99);
+        assert!(!prefix.contains('л'));
+        assert!(prefix.ends_with('a'));
     }
 
     #[tokio::test]

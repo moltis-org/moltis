@@ -24,6 +24,16 @@ pub struct SessionStore {
     pub base_dir: PathBuf,
 }
 
+#[must_use]
+fn slice_on_char_boundaries(content: &str, start: usize, end: usize) -> &str {
+    let bounded_start = content.floor_char_boundary(start.min(content.len()));
+    let bounded_end = content.floor_char_boundary(end.min(content.len()));
+    if bounded_start >= bounded_end {
+        return "";
+    }
+    &content[bounded_start..bounded_end]
+}
+
 impl SessionStore {
     pub fn new(base_dir: PathBuf) -> Self {
         Self { base_dir }
@@ -233,8 +243,8 @@ impl SessionStore {
                         let lower = content.to_lowercase();
                         let pos = lower.find(&query).unwrap_or(0);
                         let start = pos.saturating_sub(40);
-                        let end = (pos + query.len() + 60).min(content.len());
-                        let snippet = content[start..end].to_string();
+                        let end = pos.saturating_add(query.len()).saturating_add(60);
+                        let snippet = slice_on_char_boundaries(content, start, end).to_string();
 
                         results.push(SearchResult {
                             session_key: session_key.clone(),
@@ -311,6 +321,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::new(dir.path().to_path_buf());
         (store, dir)
+    }
+
+    #[test]
+    fn slice_on_char_boundaries_handles_multibyte_boundary() {
+        let content = format!("{}л{}", "a".repeat(39), "z".repeat(20));
+        let snippet = slice_on_char_boundaries(&content, 0, 40);
+        assert_eq!(snippet.len(), 39);
+        assert!(snippet.chars().all(|c| c == 'a'));
     }
 
     #[tokio::test]

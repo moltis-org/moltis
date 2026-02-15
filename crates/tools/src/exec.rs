@@ -64,6 +64,14 @@ impl Default for ExecOpts {
     }
 }
 
+fn truncate_output_for_display(output: &mut String, max_output_bytes: usize) {
+    if output.len() <= max_output_bytes {
+        return;
+    }
+    output.truncate(output.floor_char_boundary(max_output_bytes));
+    output.push_str("\n... [output truncated]");
+}
+
 /// Execute a shell command with timeout and output limits.
 pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> {
     debug!(
@@ -110,14 +118,8 @@ pub async fn exec_command(command: &str, opts: &ExecOpts) -> Result<ExecResult> 
             let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
             // Truncate if exceeding limit.
-            if stdout.len() > opts.max_output_bytes {
-                stdout.truncate(opts.max_output_bytes);
-                stdout.push_str("\n... [output truncated]");
-            }
-            if stderr.len() > opts.max_output_bytes {
-                stderr.truncate(opts.max_output_bytes);
-                stderr.push_str("\n... [output truncated]");
-            }
+            truncate_output_for_display(&mut stdout, opts.max_output_bytes);
+            truncate_output_for_display(&mut stderr, opts.max_output_bytes);
 
             let exit_code = output.status.code().unwrap_or(-1);
             debug!(
@@ -537,6 +539,14 @@ mod tests {
                 called: AtomicBool::new(false),
             }
         }
+    }
+
+    #[test]
+    fn truncate_output_for_display_handles_multibyte_boundary() {
+        let mut output = format!("{}л{}", "a".repeat(1999), "z".repeat(10));
+        truncate_output_for_display(&mut output, 2000);
+        assert!(output.contains("[output truncated]"));
+        assert!(!output.contains('л'));
     }
 
     #[async_trait]

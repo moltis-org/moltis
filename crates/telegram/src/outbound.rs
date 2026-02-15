@@ -605,11 +605,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
                     if last_edit.elapsed() >= throttle {
                         let html = markdown::markdown_to_telegram_html(&accumulated);
                         // Telegram rejects edits with identical content; truncate to limit.
-                        let display = if html.len() > TELEGRAM_MAX_MESSAGE_LEN {
-                            &html[..TELEGRAM_MAX_MESSAGE_LEN]
-                        } else {
-                            &html
-                        };
+                        let display =
+                            markdown::truncate_at_char_boundary(&html, TELEGRAM_MAX_MESSAGE_LEN);
                         let _ = bot
                             .edit_message_text(chat_id, msg_id, display)
                             .parse_mode(ParseMode::Html)
