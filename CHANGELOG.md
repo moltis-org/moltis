@@ -19,6 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.8.32] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **CI**: gate macOS-only sandbox helper functions with `#[cfg]` to fix dead-code
+  errors on Linux CI.
+
+### Security
+
 ## [0.8.31] - 2026-02-15
 
 
