@@ -65,6 +65,7 @@ const READ_METHODS: &[&str] = &[
     "sessions.preview",
     "sessions.search",
     "sessions.branches",
+    "sessions.share.list",
     "projects.list",
     "projects.get",
     "projects.context",
@@ -142,7 +143,10 @@ const WRITE_METHODS: &[&str] = &[
     "channels.senders.deny",
     "sessions.switch",
     "sessions.fork",
+    "sessions.voice.generate",
     "sessions.clear_all",
+    "sessions.share.create",
+    "sessions.share.revoke",
     "projects.upsert",
     "projects.delete",
     "projects.detect",
@@ -1341,6 +1345,19 @@ impl MethodRegistry {
             }),
         );
         self.register(
+            "sessions.voice.generate",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .voice_generate(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
             "sessions.reset",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -1414,6 +1431,45 @@ impl MethodRegistry {
                         .services
                         .session
                         .branches(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "sessions.share.create",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .share_create(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "sessions.share.list",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .share_list(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "sessions.share.revoke",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .share_revoke(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

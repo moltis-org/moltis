@@ -4,7 +4,7 @@ use std::{
     sync::Mutex,
 };
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     env_subst::substitute_env,
@@ -127,12 +127,25 @@ pub fn discover_and_load() -> MoltisConfig {
             },
         }
     } else {
-        debug!("no config file found, writing default config with random port");
+        let default_path = find_or_default_config_path();
+        debug!(
+            path = %default_path.display(),
+            "no config file found, writing default config with random port"
+        );
         let mut config = MoltisConfig::default();
         // Generate a unique port for this installation
         config.server.port = generate_random_port();
-        if let Err(e) = write_default_config(&config) {
-            warn!(error = %e, "failed to write default config file");
+        if let Err(e) = write_default_config(&default_path, &config) {
+            warn!(
+                path = %default_path.display(),
+                error = %e,
+                "failed to write default config file, continuing with in-memory defaults"
+            );
+        } else {
+            info!(
+                path = %default_path.display(),
+                "wrote default config template"
+            );
         }
         return apply_env_overrides(config);
     }
@@ -265,6 +278,11 @@ pub fn tools_path() -> PathBuf {
 /// Path to workspace heartbeat markdown.
 pub fn heartbeat_path() -> PathBuf {
     data_dir().join("HEARTBEAT.md")
+}
+
+/// Path to the workspace `MEMORY.md` file.
+pub fn memory_path() -> PathBuf {
+    data_dir().join("MEMORY.md")
 }
 
 /// Load identity values from `IDENTITY.md` frontmatter if present.
@@ -401,6 +419,11 @@ pub fn load_tools_md() -> Option<String> {
 /// Load HEARTBEAT.md from the workspace root (`data_dir`) if present and non-empty.
 pub fn load_heartbeat_md() -> Option<String> {
     load_workspace_markdown(heartbeat_path())
+}
+
+/// Load MEMORY.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_memory_md() -> Option<String> {
+    load_workspace_markdown(memory_path())
 }
 
 /// Persist SOUL.md in the workspace root (`data_dir`).
@@ -790,8 +813,7 @@ fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
 /// Write the default config file to the user-global config path.
 /// Only called when no config file exists yet.
 /// Uses a comprehensive template with all options documented.
-fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
-    let path = find_or_default_config_path();
+fn write_default_config(path: &Path, config: &MoltisConfig) -> anyhow::Result<()> {
     if path.exists() {
         return Ok(());
     }
@@ -800,7 +822,7 @@ fn write_default_config(config: &MoltisConfig) -> anyhow::Result<()> {
     }
     // Use the documented template instead of plain serialization
     let toml_str = crate::template::default_config_template(config.server.port);
-    std::fs::write(&path, &toml_str)?;
+    std::fs::write(path, &toml_str)?;
     debug!(path = %path.display(), "wrote default config file with template");
     Ok(())
 }
@@ -1125,6 +1147,36 @@ mod tests {
     }
 
     #[test]
+    fn write_default_config_writes_template_to_requested_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("moltis.toml");
+        let mut config = MoltisConfig::default();
+        config.server.port = 23456;
+
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read generated config");
+        assert!(
+            raw.contains("port = 23456"),
+            "generated template should include selected server port"
+        );
+    }
+
+    #[test]
+    fn write_default_config_does_not_overwrite_existing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("moltis.toml");
+        std::fs::write(&path, "existing = true\n").expect("seed config");
+
+        let mut config = MoltisConfig::default();
+        config.server.port = 34567;
+        write_default_config(&path, &config).expect("write default config");
+
+        let raw = std::fs::read_to_string(&path).expect("read seeded config");
+        assert_eq!(raw, "existing = true\n");
+    }
+
+    #[test]
     fn save_config_to_path_preserves_provider_and_voice_comment_blocks() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("moltis.toml");
@@ -1161,11 +1213,16 @@ name = "Rex"
         )
         .expect("write seed config");
 
-        let mut config = load_config(&path).expect("load seed config");
+        // Use parse_config directly to avoid env-override pollution
+        // (e.g. MOLTIS_IDENTITY__NAME in the process environment).
+        let raw = std::fs::read_to_string(&path).expect("read seed");
+        let mut config: MoltisConfig = parse_config(&raw, &path).expect("parse seed config");
         config.identity.name = None;
+
         save_config_to_path(&path, &config).expect("save config");
 
-        let reloaded = load_config(&path).expect("reload config");
+        let saved = std::fs::read_to_string(&path).expect("read saved file");
+        let reloaded: MoltisConfig = parse_config(&saved, &path).expect("reload config");
         assert!(
             reloaded.identity.name.is_none(),
             "identity.name should be removed when cleared"
@@ -1353,6 +1410,47 @@ name = "Rex"
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "\n# Heartbeat\n- ping\n").unwrap();
         assert_eq!(load_heartbeat_md().as_deref(), Some("# Heartbeat\n- ping"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(
+            dir.path().join("MEMORY.md"),
+            "\n## User Facts\n- Lives in Paris\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_memory_md().as_deref(),
+            Some("## User Facts\n- Lives in Paris")
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_returns_none_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(load_memory_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn memory_path_is_under_data_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(memory_path(), dir.path().join("MEMORY.md"));
 
         clear_data_dir();
     }

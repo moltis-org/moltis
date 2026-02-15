@@ -4,6 +4,7 @@ import { signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
@@ -15,7 +16,7 @@ import { ConfirmDialog, Modal, ModelSelect, requestConfirm, showToast } from "./
 var channels = signal([]);
 
 export function prefetchChannels() {
-	sendRpc("channels.status", {}).then((res) => {
+	fetchChannelStatus().then((res) => {
 		if (res?.ok) {
 			var ch = res.payload?.channels || [];
 			channels.value = ch;
@@ -30,7 +31,7 @@ var editingChannel = signal(null);
 var sendersAccount = signal("");
 
 function loadChannels() {
-	sendRpc("channels.status", {}).then((res) => {
+	fetchChannelStatus().then((res) => {
 		if (res?.ok) {
 			var ch = res.payload?.channels || [];
 			channels.value = ch;
@@ -255,12 +256,9 @@ function AddChannelModal() {
 		var form = e.target.closest(".channel-form");
 		var accountId = form.querySelector("[data-field=accountId]").value.trim();
 		var token = form.querySelector("[data-field=token]").value.trim();
-		if (!accountId) {
-			error.value = "Bot username is required.";
-			return;
-		}
-		if (!token) {
-			error.value = "Bot token is required.";
+		var v = validateChannelFields(accountId, token);
+		if (!v.valid) {
+			error.value = v.error;
 			return;
 		}
 		error.value = "";
@@ -276,11 +274,7 @@ function AddChannelModal() {
 			var found = modelsSig.value.find((x) => x.id === addModel.value);
 			if (found?.provider) addConfig.model_provider = found.provider;
 		}
-		sendRpc("channels.add", {
-			type: "telegram",
-			account_id: accountId,
-			config: addConfig,
-		}).then((res) => {
+		addChannel("telegram", accountId, addConfig).then((res) => {
 			saving.value = false;
 			if (res?.ok) {
 				showAddModal.value = false;

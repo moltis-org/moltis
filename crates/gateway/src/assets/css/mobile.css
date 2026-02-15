@@ -32,10 +32,12 @@ body {
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     padding-top: var(--safe-top);
     padding-bottom: var(--safe-bottom);
+    pointer-events: none;
   }
 
   .nav-panel.open {
     transform: translateX(0);
+    pointer-events: auto;
   }
 
   /* Navigation overlay */
@@ -46,12 +48,14 @@ body {
     z-index: 99;
     opacity: 0;
     visibility: hidden;
+    pointer-events: none;
     transition: opacity 0.25s, visibility 0.25s;
   }
 
   .nav-overlay.visible {
     opacity: 1;
     visibility: visible;
+    pointer-events: auto;
   }
 
   /* Larger touch targets for nav links */
@@ -105,10 +109,14 @@ body {
     border-right: none;
     border-top: 1px solid var(--border);
     padding-bottom: var(--safe-bottom);
+    pointer-events: none;
+    visibility: hidden;
   }
 
   #sessionsPanel.open {
     transform: translateY(0);
+    pointer-events: auto;
+    visibility: visible;
   }
 
   /* Bottom sheet drag handle */
@@ -132,12 +140,14 @@ body {
     z-index: 89;
     opacity: 0;
     visibility: hidden;
+    pointer-events: none;
     transition: opacity 0.25s, visibility 0.25s;
   }
 
   .sessions-overlay.visible {
     opacity: 1;
     visibility: visible;
+    pointer-events: auto;
   }
 
   /* Larger session items on mobile */
@@ -174,41 +184,115 @@ body {
 
 @media (max-width: 767px) {
   header {
-    padding-left: calc(12px + var(--safe-left));
-    padding-right: calc(12px + var(--safe-right));
+    padding-left: calc(6px + var(--safe-left));
+    padding-right: calc(6px + var(--safe-right));
   }
 
-  /* Smaller title link on mobile */
-  #titleLink {
-    font-size: 0.9rem;
-  }
-
-  /* Theme toggle more compact on mobile */
-  .theme-toggle {
-    gap: 1px;
-    padding: 1px;
-  }
-
-  .theme-btn {
-    width: 26px;
-    height: 26px;
-  }
-
-  .theme-btn svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  .header-actions {
-    gap: 6px;
-  }
-
-  .header-link-btn {
-    padding: 7px;
-  }
-
-  .header-link-label {
+  /* Hide bot name on mobile, keep emoji only */
+  #titleName {
     display: none;
+  }
+
+  #memoryInfo,
+  #statusText {
+    display: none;
+  }
+
+  /* Hide theme toggle on mobile */
+  .theme-toggle {
+    display: none;
+  }
+
+  /* Replace desktop header actions with a compact mobile menu. */
+  .header-actions,
+  #logoutBtn {
+    display: none;
+  }
+
+  #mobileMenuBtn {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    width: 42px;
+    height: 30px;
+    min-height: 0;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+  }
+
+  #mobileMenuBtn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+  }
+
+  .mobile-menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 92;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s, visibility 0.2s;
+  }
+
+  .mobile-menu-overlay.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .mobile-menu-panel {
+    position: fixed;
+    top: calc(var(--safe-top) + 48px);
+    right: calc(6px + var(--safe-right));
+    z-index: 93;
+    min-width: 160px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .mobile-menu-panel.open {
+    display: flex;
+  }
+
+  .mobile-menu-item {
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .mobile-menu-item:last-child {
+    border-bottom: none;
+  }
+
+  .mobile-menu-panel.logout-hidden #mobileMenuSettingsBtn {
+    border-bottom: none;
+  }
+
+  .mobile-menu-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .mobile-menu-item-danger {
+    color: var(--error);
   }
 }
 
@@ -233,14 +317,113 @@ body {
 
   /* Larger touch target for send button */
   #sendBtn {
-    min-width: 44px;
-    min-height: 44px;
+    display: none;
   }
 
   /* Approval cards full width on mobile */
   .approval-card {
     max-width: 100%;
   }
+
+  .chat-toolbar {
+    flex-wrap: nowrap;
+    column-gap: 6px;
+    row-gap: 6px;
+    min-width: 0;
+    padding-left: calc(6px + var(--safe-left)) !important;
+    padding-right: calc(6px + var(--safe-right)) !important;
+    border-radius: 0 !important;
+  }
+
+  .chat-toolbar.mobile-expanded {
+    flex-wrap: wrap;
+  }
+
+  .chat-toolbar > * {
+    flex-shrink: 0;
+  }
+
+  .chat-toolbar #modelCombo {
+    flex: 1 1 auto;
+    min-width: 0;
+    order: 1;
+  }
+
+  .chat-toolbar #modelComboBtn {
+    width: 100%;
+    max-width: none;
+    justify-content: space-between;
+  }
+
+  .chat-input-row {
+    padding-left: calc(6px + var(--safe-left)) !important;
+    padding-right: calc(6px + var(--safe-right)) !important;
+    border-radius: 0 !important;
+  }
+
+  .mobile-controls-btn {
+    margin-left: auto;
+    order: 2;
+    width: 38px;
+    height: 30px;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    justify-content: center;
+    align-items: center;
+    display: inline-flex !important;
+  }
+
+  .mobile-controls-btn .icon-menu-dots-horizontal {
+    width: 18px;
+    height: 18px;
+  }
+
+  .mobile-controls-btn.active {
+    color: var(--accent) !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  .chat-toolbar .mobile-toolbar-extra {
+    display: none !important;
+  }
+
+  .chat-toolbar.mobile-expanded .mobile-toolbar-extra {
+    display: inline-flex !important;
+    order: 4;
+    flex: 0 0 auto;
+  }
+
+  .chat-toolbar.mobile-expanded .mobile-toolbar-extra.mobile-toolbar-extra-block {
+    display: inline-block !important;
+    order: 4;
+    flex: 0 0 auto;
+  }
+
+  .chat-toolbar.mobile-expanded .mobile-toolbar-break {
+    display: block !important;
+    order: 3;
+    width: 100%;
+    flex: 0 0 100%;
+    height: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .chat-toolbar .mobile-toolbar-hide {
+    display: none !important;
+  }
+
+  #queuedMessages,
+  .media-preview-strip {
+    display: none !important;
+  }
+
+  #sessionHeaderMount { display: none !important; }
 }
 
 /* ── Settings Sidebar Mobile ── */
@@ -248,13 +431,69 @@ body {
 @media (max-width: 767px) {
   .settings-layout {
     flex-direction: column;
+    min-height: 0;
+  }
+
+  .settings-layout.settings-layout-mobile-collapsed .settings-sidebar {
+    display: none;
+  }
+
+  .settings-mobile-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .settings-mobile-chat-btn {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .settings-mobile-chat-btn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+  }
+
+  .settings-mobile-menu-btn {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .settings-mobile-menu-btn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
   }
 
   .settings-sidebar {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .settings-sidebar-nav {
@@ -262,6 +501,10 @@ body {
     flex-wrap: wrap;
     gap: 4px;
     padding: 8px;
+    align-content: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(8px + var(--safe-bottom));
   }
 
   .settings-group-label {
@@ -385,42 +628,23 @@ body {
 
 /* ── Mobile Sessions Toggle Button ── */
 
+@media (min-width: 768px) {
+  #mobileMenuBtn,
+  .mobile-menu-overlay,
+  .mobile-menu-panel {
+    display: none;
+  }
+
+  .mobile-controls-btn { display: none !important; }
+}
+
 .sessions-toggle-btn {
-  display: none;
+  display: none !important;
 }
 
 @media (max-width: 767px) {
   .sessions-toggle-btn {
-    display: flex;
-    position: fixed;
-    bottom: calc(16px + var(--safe-bottom));
-    right: calc(16px + var(--safe-right));
-    z-index: 80;
-    width: 56px;
-    height: 56px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 50%;
-    align-items: center;
-    justify-content: center;
-    box-shadow: var(--shadow-lg);
-    cursor: pointer;
-    transition: transform 0.2s, background 0.2s;
-  }
-
-  .sessions-toggle-btn:hover {
-    background: var(--accent-hover);
-    transform: scale(1.05);
-  }
-
-  .sessions-toggle-btn:active {
-    transform: scale(0.95);
-  }
-
-  /* Hide when sessions panel is open */
-  .sessions-toggle-btn.hidden {
-    display: none;
+    display: none !important;
   }
 }
 

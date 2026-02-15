@@ -294,21 +294,53 @@ async function extractWaveform(audioSrc, barCount) {
 	}
 }
 
-function formatAudioDuration(seconds) {
-	var m = Math.floor(seconds / 60);
-	var s = Math.floor(seconds % 60);
-	return `${m}:${s < 10 ? "0" : ""}${s}`;
+export function formatAudioDuration(seconds) {
+	if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
+	var totalSeconds = Math.floor(seconds);
+	var m = Math.floor(totalSeconds / 60);
+	var s = totalSeconds % 60;
+	return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 function createPlaySvg() {
-	var el = document.createElement("span");
-	el.className = "icon icon-play";
+	var NS = "http://www.w3.org/2000/svg";
+	var el = document.createElementNS(NS, "svg");
+	el.setAttribute("viewBox", "0 0 24 24");
+	el.setAttribute("aria-hidden", "true");
+	el.setAttribute("focusable", "false");
+	el.setAttribute("fill", "currentColor");
+	el.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+	var path = document.createElementNS(NS, "path");
+	path.setAttribute("d", "M8 5v14l11-7z");
+	el.appendChild(path);
 	return el;
 }
 
 function createPauseSvg() {
-	var el = document.createElement("span");
-	el.className = "icon icon-pause";
+	var NS = "http://www.w3.org/2000/svg";
+	var el = document.createElementNS(NS, "svg");
+	el.setAttribute("viewBox", "0 0 24 24");
+	el.setAttribute("aria-hidden", "true");
+	el.setAttribute("focusable", "false");
+	el.setAttribute("fill", "currentColor");
+	el.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+	var left = document.createElementNS(NS, "rect");
+	left.setAttribute("x", "6");
+	left.setAttribute("y", "4");
+	left.setAttribute("width", "4");
+	left.setAttribute("height", "16");
+	left.setAttribute("rx", "1");
+	el.appendChild(left);
+
+	var right = document.createElementNS(NS, "rect");
+	right.setAttribute("x", "14");
+	right.setAttribute("y", "4");
+	right.setAttribute("width", "4");
+	right.setAttribute("height", "16");
+	right.setAttribute("rx", "1");
+	el.appendChild(right);
 	return el;
 }
 
@@ -381,7 +413,7 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 
 	var durEl = document.createElement("span");
 	durEl.className = "waveform-duration";
-	durEl.textContent = "";
+	durEl.textContent = "00:00";
 
 	wrap.appendChild(playBtn);
 	wrap.appendChild(barsWrap);
@@ -409,9 +441,14 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 			}
 		});
 
-	audio.addEventListener("loadedmetadata", () => {
+	function syncDurationLabel() {
+		if (!Number.isFinite(audio.duration) || audio.duration < 0) return;
 		durEl.textContent = formatAudioDuration(audio.duration);
-	});
+	}
+
+	audio.addEventListener("loadedmetadata", syncDurationLabel);
+	audio.addEventListener("durationchange", syncDurationLabel);
+	audio.addEventListener("canplay", syncDurationLabel);
 
 	playBtn.onclick = () => {
 		if (audio.paused) {
@@ -425,7 +462,7 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 	var prevPlayed = -1;
 
 	function tick() {
-		if (!audio.duration) {
+		if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
 			rafId = requestAnimationFrame(tick);
 			return;
 		}
@@ -461,11 +498,13 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 		cancelAnimationFrame(rafId);
 		for (var b of bars) b.classList.remove("played");
 		prevPlayed = -1;
-		if (audio.duration) durEl.textContent = formatAudioDuration(audio.duration);
+		if (Number.isFinite(audio.duration) && audio.duration >= 0) {
+			durEl.textContent = formatAudioDuration(audio.duration);
+		}
 	});
 
 	barsWrap.onclick = (e) => {
-		if (!audio.duration) return;
+		if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
 		var rect = barsWrap.getBoundingClientRect();
 		var fraction = (e.clientX - rect.left) / rect.width;
 		audio.currentTime = Math.max(0, Math.min(1, fraction)) * audio.duration;
@@ -506,14 +545,35 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
  * @param {object} links - { google_maps, apple_maps, openstreetmap }
  * @param {string} [label] - optional location label
  */
+var MAP_SERVICE_ICONS = {
+	google_maps: "map-google-maps.svg",
+	apple_maps: "map-apple-maps.svg",
+	openstreetmap: "map-openstreetmap.svg",
+};
+
+function createMapServiceIcon(serviceKey) {
+	var iconFile = MAP_SERVICE_ICONS[serviceKey];
+	if (!iconFile) return null;
+
+	var icon = document.createElement("img");
+	icon.src = new URL(`../icons/${iconFile}`, import.meta.url).toString();
+	icon.alt = "";
+	icon.width = 14;
+	icon.height = 14;
+	icon.className = "map-service-icon";
+	icon.setAttribute("aria-hidden", "true");
+	icon.setAttribute("decoding", "async");
+	return icon;
+}
+
 export function renderMapLinks(container, links, label) {
 	var row = document.createElement("div");
 	row.className = "flex flex-wrap gap-2 mt-2";
 
 	var services = [
-		{ key: "google_maps", name: "Google Maps", icon: "\uD83C\uDF0D" },
-		{ key: "apple_maps", name: "Apple Maps", icon: "\uD83D\uDDFA\uFE0F" },
-		{ key: "openstreetmap", name: "OpenStreetMap", icon: "\uD83D\uDCCD" },
+		{ key: "google_maps", name: "Google Maps" },
+		{ key: "apple_maps", name: "Apple Maps" },
+		{ key: "openstreetmap", name: "OpenStreetMap" },
 	];
 
 	for (var svc of services) {
@@ -523,8 +583,12 @@ export function renderMapLinks(container, links, label) {
 		btn.href = url;
 		btn.target = "_blank";
 		btn.rel = "noopener noreferrer";
-		btn.className = "provider-btn provider-btn-secondary text-xs";
-		btn.textContent = `${svc.icon} ${svc.name}`;
+		btn.className = "provider-btn provider-btn-secondary text-xs inline-flex items-center gap-1.5";
+		var icon = createMapServiceIcon(svc.key);
+		if (icon) btn.appendChild(icon);
+		var labelEl = document.createElement("span");
+		labelEl.textContent = svc.name;
+		btn.appendChild(labelEl);
 		if (label) btn.title = `Open "${label}" in ${svc.name}`;
 		row.appendChild(btn);
 	}

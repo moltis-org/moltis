@@ -213,6 +213,7 @@ test.describe("Settings navigation", () => {
 			"Memory",
 			"Notifications",
 			"Crons",
+			"Heartbeat",
 			"Security",
 			"Tailscale",
 			"Channels",

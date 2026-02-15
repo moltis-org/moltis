@@ -103,6 +103,26 @@ export function removeThinking() {
 	if (el) el.remove();
 }
 
+export function appendReasoningDisclosure(messageEl, reasoningText) {
+	if (!messageEl) return null;
+	var normalized = String(reasoningText || "").trim();
+	if (!normalized) return null;
+	var existing = messageEl.querySelector(".msg-reasoning");
+	if (existing) existing.remove();
+	var details = document.createElement("details");
+	details.className = "msg-reasoning";
+	var summary = document.createElement("summary");
+	summary.className = "msg-reasoning-summary";
+	summary.textContent = "Reasoning";
+	details.appendChild(summary);
+	var body = document.createElement("div");
+	body.className = "msg-reasoning-body";
+	body.textContent = normalized;
+	details.appendChild(body);
+	messageEl.appendChild(details);
+	return details;
+}
+
 export function chatAddErrorCard(err) {
 	if (!S.chatMsgBox) return;
 	var el = document.createElement("div");

@@ -88,6 +88,19 @@ pub struct AgentRunResult {
 /// Callback for streaming events out of the runner.
 pub type OnEvent = Box<dyn Fn(RunnerEvent) + Send + Sync>;
 
+/// Keep synthetic tool-call IDs OpenAI-compatible (`maxLength: 40`).
+const SYNTHETIC_TOOL_CALL_ID_MAX_LEN: usize = 40;
+
+fn new_synthetic_tool_call_id(prefix: &str) -> String {
+    let mut id = String::new();
+    let _ = write!(&mut id, "{prefix}_{}", uuid::Uuid::new_v4().simple());
+    if id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN {
+        return id;
+    }
+    id.truncate(SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+    id
+}
+
 /// Events emitted during the agent run.
 #[derive(Debug, Clone)]
 pub enum RunnerEvent {
@@ -251,7 +264,7 @@ fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<Stri
         .cloned()
         .unwrap_or(serde_json::json!({}));
 
-    let id = format!("text-{}", uuid::Uuid::new_v4());
+    let id = new_synthetic_tool_call_id("text");
 
     // Collect any text outside the tool_call block.
     let before = text[..start].trim();
@@ -328,7 +341,7 @@ fn parse_function_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<St
         return None;
     }
 
-    let id = format!("text-{}", uuid::Uuid::new_v4());
+    let id = new_synthetic_tool_call_id("text");
     let before = trim_tool_call_wrappers(text[..start].trim());
     let after_start = body_start + body_end_rel + "</function>".len();
     let after = trim_tool_call_wrappers(text.get(after_start..).unwrap_or("").trim());
@@ -825,7 +838,7 @@ pub async fn run_agent_loop_with_context(
             // tool-call message. Some providers (e.g. Moonshot thinking mode)
             // require this history field for follow-up tool turns.
             response.tool_calls = vec![ToolCall {
-                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
@@ -1226,8 +1239,9 @@ pub async fn run_agent_loop_streaming(
         let iter_start = std::time::Instant::now();
         let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
 
-        // Accumulate text and tool calls from the stream.
+        // Accumulate answer text, reasoning text, and tool calls from the stream.
         let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         // Map streaming index → accumulated JSON args string.
         let mut tool_call_args: std::collections::HashMap<usize, String> =
@@ -1248,6 +1262,12 @@ pub async fn run_agent_loop_streaming(
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
                         cb(RunnerEvent::TextDelta(text));
+                    }
+                },
+                StreamEvent::ReasoningDelta(text) => {
+                    accumulated_reasoning.push_str(&text);
+                    if let Some(cb) = on_event {
+                        cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
                 StreamEvent::ToolCallStart { id, name, index } => {
@@ -1407,7 +1427,7 @@ pub async fn run_agent_loop_streaming(
             // message so providers that validate thinking history accept the
             // next iteration.
             tool_calls = vec![ToolCall {
-                id: format!("forced-{}", uuid::Uuid::new_v4()),
+                id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
             }];
@@ -1476,13 +1496,18 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Append assistant message with tool calls.
-        let text_for_msg = if accumulated_text.is_empty() {
+        let planning_text = if accumulated_reasoning.is_empty() {
+            accumulated_text.clone()
+        } else {
+            accumulated_reasoning
+        };
+        let text_for_msg = if planning_text.is_empty() {
             None
         } else {
             if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(accumulated_text.clone()));
+                cb(RunnerEvent::ThinkingText(planning_text.clone()));
             }
-            Some(accumulated_text)
+            Some(planning_text)
         };
         messages.push(ChatMessage::assistant_with_tools(
             text_for_msg,
@@ -1679,6 +1704,7 @@ mod tests {
         let (tc, remaining) = parse_tool_call_from_text(text).unwrap();
         assert_eq!(tc.name, "exec");
         assert_eq!(tc.arguments["command"], "ls");
+        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
         assert!(remaining.is_none());
     }
 
@@ -1711,7 +1737,20 @@ mod tests {
         assert_eq!(tc.name, "process");
         assert_eq!(tc.arguments["action"], "start");
         assert_eq!(tc.arguments["command"], "pwd");
+        assert!(tc.id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
         assert!(remaining.is_none());
+    }
+
+    #[test]
+    fn test_new_synthetic_tool_call_id_is_openai_compatible() {
+        let id = new_synthetic_tool_call_id("forced");
+        assert!(id.starts_with("forced_"));
+        assert!(id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
+
+        let long_prefix_id = new_synthetic_tool_call_id(
+            "prefix_that_is_intentionally_way_too_long_for_openai_tool_call_ids",
+        );
+        assert!(long_prefix_id.len() <= SYNTHETIC_TOOL_CALL_ID_MAX_LEN);
     }
 
     #[test]
@@ -3465,7 +3504,7 @@ mod tests {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if count == 0 {
                 Box::pin(tokio_stream::iter(vec![
-                    StreamEvent::Delta("I can summarize that command output.".into()),
+                    StreamEvent::ReasoningDelta("I can summarize that command output.".into()),
                     StreamEvent::Done(Usage {
                         input_tokens: 10,
                         output_tokens: 10,
@@ -3567,6 +3606,111 @@ mod tests {
         let (name, args) = tool_start.unwrap();
         assert_eq!(name, "exec");
         assert_eq!(args["command"], "uname -a");
+    }
+
+    struct ReasoningThenAnswerStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for ReasoningThenAnswerStreamProvider {
+        fn name(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        fn id(&self) -> &str {
+            "mock-reasoning-then-answer"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::ReasoningDelta("internal plan".into()),
+                StreamEvent::Delta("visible answer".into()),
+                StreamEvent::Done(Usage {
+                    input_tokens: 2,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            ]))
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream(messages)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_streaming_reasoning_not_in_final_text() {
+        let provider = Arc::new(ReasoningThenAnswerStreamProvider);
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("hello".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "visible answer");
+        assert!(!result.text.contains("internal plan"));
+
+        let evts = events.lock().unwrap();
+        let text_deltas: String = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::TextDelta(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(text_deltas, "visible answer");
+
+        let thinking_texts: Vec<&str> = evts
+            .iter()
+            .filter_map(|e| {
+                if let RunnerEvent::ThinkingText(t) = e {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            thinking_texts.iter().any(|t| *t == "internal plan"),
+            "expected reasoning to be exposed via ThinkingText"
+        );
     }
 
     // ── Streaming tool-call index mapping tests ─────────────────────

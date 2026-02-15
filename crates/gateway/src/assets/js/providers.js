@@ -9,6 +9,7 @@ import { startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
+	saveProviderKey,
 	testModel,
 	validateProviderKey,
 } from "./provider-validation.js";
@@ -428,7 +429,7 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 
 	var savePromise = skipSave
 		? Promise.resolve({ ok: true })
-		: sendRpc("providers.save_key", buildSavePayload(provider.name, keyVal, endpointVal, effectiveModelVal));
+		: saveProviderKey(provider.name, keyVal, endpointVal, effectiveModelVal);
 
 	savePromise
 		.then(async (res) => {
@@ -464,13 +465,6 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 		.catch((err) => {
 			showError(err?.message || "Failed to save credentials.");
 		});
-}
-
-function buildSavePayload(providerName, keyVal, endpointVal, modelVal) {
-	var payload = { provider: providerName, apiKey: keyVal };
-	if (endpointVal) payload.baseUrl = endpointVal;
-	if (modelVal) payload.model = modelVal;
-	return payload;
 }
 
 export function showOAuthFlow(provider) {

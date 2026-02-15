@@ -84,6 +84,7 @@ pub fn build_system_prompt(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -99,6 +100,7 @@ pub fn build_system_prompt_with_session_runtime(
     agents_text: Option<&str>,
     tools_text: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
+    memory_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         tools,
@@ -112,6 +114,7 @@ pub fn build_system_prompt_with_session_runtime(
         tools_text,
         runtime_context,
         true, // include_tools
+        memory_text,
     )
 }
 
@@ -124,6 +127,7 @@ pub fn build_system_prompt_minimal_runtime(
     agents_text: Option<&str>,
     tools_text: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
+    memory_text: Option<&str>,
 ) -> String {
     build_system_prompt_full(
         &ToolRegistry::new(),
@@ -137,8 +141,13 @@ pub fn build_system_prompt_minimal_runtime(
         tools_text,
         runtime_context,
         false, // include_tools
+        memory_text,
     )
 }
+
+/// Maximum number of characters from `MEMORY.md` injected into the system
+/// prompt. Matches OpenClaw's `bootstrapMaxChars`.
+const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 20_000;
 
 /// Internal: build system prompt with full control over what's included.
 fn build_system_prompt_full(
@@ -153,6 +162,7 @@ fn build_system_prompt_full(
     tools_text: Option<&str>,
     runtime_context: Option<&PromptRuntimeContext>,
     include_tools: bool,
+    memory_text: Option<&str>,
 ) -> String {
     let tool_schemas = if include_tools {
         tools.list_schemas()
@@ -254,17 +264,34 @@ fn build_system_prompt_full(
         }
     }
 
-    // If memory tools are registered, add a hint about them.
-    let has_memory = tool_schemas
+    // Inject long-term memory content and/or search hints.
+    let has_memory_search = tool_schemas
         .iter()
         .any(|s| s["name"].as_str() == Some("memory_search"));
-    if has_memory {
-        prompt.push_str(concat!(
-            "## Long-Term Memory\n\n",
-            "You have access to a long-term memory system. Use `memory_search` to recall ",
-            "past conversations, decisions, and context. Search proactively when the user ",
-            "references previous work or when context would help.\n\n",
-        ));
+    let memory_content = memory_text.filter(|t| !t.is_empty());
+    if memory_content.is_some() || has_memory_search {
+        prompt.push_str("## Long-Term Memory\n\n");
+        if let Some(text) = memory_content {
+            // Truncate to the bootstrap limit to keep the context window manageable.
+            let truncated = truncate_prompt_text(text, MEMORY_BOOTSTRAP_MAX_CHARS);
+            prompt.push_str(&truncated);
+            if text.len() > MEMORY_BOOTSTRAP_MAX_CHARS {
+                prompt.push_str(
+                    "\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n",
+                );
+            }
+            prompt.push('\n');
+        }
+        if has_memory_search {
+            prompt.push_str(concat!(
+                "\nYou also have `memory_search` to find additional details from ",
+                "`memory/*.md` files and past session history beyond what is shown above. ",
+                "**Always search memory before claiming you don't know something.** ",
+                "The long-term memory system holds user facts, past decisions, project context, ",
+                "and anything previously stored.\n",
+            ));
+        }
+        prompt.push('\n');
     }
 
     if !tool_schemas.is_empty() {
@@ -520,7 +547,7 @@ mod tests {
             source: None,
         }];
         let prompt = build_system_prompt_with_session_runtime(
-            &tools, true, None, &skills, None, None, None, None, None, None,
+            &tools, true, None, &skills, None, None, None, None, None, None, None,
         );
         assert!(prompt.contains("<available_skills>"));
         assert!(prompt.contains("commit"));
@@ -534,6 +561,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -569,6 +597,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
         assert!(prompt.contains("You are a parrot."));
@@ -597,6 +626,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(prompt.contains("## Soul"));
         assert!(prompt.contains("loyal companion who loves fetch"));
@@ -611,6 +641,7 @@ mod tests {
             true,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -636,6 +667,7 @@ mod tests {
             None,
             Some("Follow workspace agent instructions."),
             Some("Prefer read-only tools first."),
+            None,
             None,
         );
         assert!(prompt.contains("## Workspace Files"));
@@ -687,6 +719,7 @@ mod tests {
             None,
             None,
             Some(&runtime),
+            None,
         );
 
         assert!(prompt.contains("## Runtime"));
@@ -727,6 +760,7 @@ mod tests {
             None,
             None,
             Some(&runtime),
+            None,
         );
 
         assert!(prompt.contains("location=48.8566,2.3522"));
@@ -755,6 +789,7 @@ mod tests {
             None,
             None,
             Some(&runtime),
+            None,
         );
 
         assert!(!prompt.contains("location="));
@@ -773,8 +808,16 @@ mod tests {
             }),
         };
 
-        let prompt =
-            build_system_prompt_minimal_runtime(None, None, None, None, None, None, Some(&runtime));
+        let prompt = build_system_prompt_minimal_runtime(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
@@ -793,7 +836,92 @@ mod tests {
 
     #[test]
     fn test_silent_replies_not_in_minimal_prompt() {
-        let prompt = build_system_prompt_minimal_runtime(None, None, None, None, None, None, None);
+        let prompt =
+            build_system_prompt_minimal_runtime(None, None, None, None, None, None, None, None);
         assert!(!prompt.contains("## Silent Replies"));
+    }
+
+    #[test]
+    fn test_memory_text_injected_into_prompt() {
+        let tools = ToolRegistry::new();
+        let memory = "## User Facts\n- Lives in Paris\n- Speaks French";
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory),
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("Lives in Paris"));
+        assert!(prompt.contains("Speaks French"));
+    }
+
+    #[test]
+    fn test_memory_text_truncated_at_limit() {
+        let tools = ToolRegistry::new();
+        // Create content larger than MEMORY_BOOTSTRAP_MAX_CHARS
+        let large_memory = "x".repeat(MEMORY_BOOTSTRAP_MAX_CHARS + 500);
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&large_memory),
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("MEMORY.md truncated"));
+        // The full content should NOT be present
+        assert!(!prompt.contains(&large_memory));
+    }
+
+    #[test]
+    fn test_no_memory_section_without_memory_or_tools() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(!prompt.contains("## Long-Term Memory"));
+    }
+
+    #[test]
+    fn test_memory_text_in_minimal_prompt() {
+        let memory = "## Notes\n- Important fact";
+        let prompt = build_system_prompt_minimal_runtime(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory),
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("Important fact"));
+        // Minimal prompts have no tools, so no memory_search hint
+        assert!(!prompt.contains("memory_search"));
     }
 }

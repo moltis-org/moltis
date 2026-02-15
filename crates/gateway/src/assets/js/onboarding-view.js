@@ -7,20 +7,32 @@
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
 import { EmojiPicker } from "./emoji-picker.js";
 import { get as getGon, refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { updateIdentity, validateIdentityFields } from "./identity-utils.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import { providerApiKeyHelp } from "./provider-key-help.js";
 import { startProviderOAuth } from "./provider-oauth.js";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
+	saveProviderKey,
 	testModel,
 	validateProviderKey,
 } from "./provider-validation.js";
 import * as S from "./state.js";
 import { fetchPhrase } from "./tts-phrases.js";
+import {
+	decodeBase64Safe,
+	fetchVoiceProviders,
+	saveVoiceKey,
+	testTts,
+	toggleVoiceProvider,
+	transcribeAudio,
+	VOICE_COUNTERPART_IDS,
+} from "./voice-utils.js";
 import { connectWs } from "./ws-connect.js";
 
 var wsStarted = false;
@@ -32,8 +44,8 @@ function ensureWsConnected() {
 
 // ── Step indicator ──────────────────────────────────────────
 
-var BASE_STEP_LABELS = ["Security", "Identity", "LLM", "Channel", "Summary"];
-var VOICE_STEP_LABELS = ["Security", "Identity", "LLM", "Voice", "Channel", "Summary"];
+var BASE_STEP_LABELS = ["Security", "LLM", "Channel", "Identity", "Summary"];
+var VOICE_STEP_LABELS = ["Security", "LLM", "Voice", "Channel", "Identity", "Summary"];
 
 function preferredChatPath() {
 	var key = localStorage.getItem("moltis-session") || "main";
@@ -47,7 +59,13 @@ function ErrorPanel({ message }) {
 }
 
 function StepIndicator({ steps, current }) {
-	return html`<div class="onboarding-steps">
+	var ref = useRef(null);
+	useEffect(() => {
+		if (!ref.current) return;
+		var active = ref.current.querySelector(".onboarding-step.active");
+		if (active) active.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+	}, [current]);
+	return html`<div class="onboarding-steps" ref=${ref}>
 		${steps.map((label, i) => {
 			var state = i < current ? "completed" : i === current ? "active" : "";
 			var isLast = i === steps.length - 1;
@@ -109,6 +127,8 @@ function AuthStep({ onNext, skippable }) {
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
 	var passkeyEnabled = webauthnAvailable && browserSupportsWebauthn && !isIpAddress;
 
+	var [setupComplete, setSetupComplete] = useState(false);
+
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => r.json())
@@ -117,6 +137,7 @@ function AuthStep({ onNext, skippable }) {
 				if (data.localhost_only) setLocalhostOnly(true);
 				if (data.webauthn_available) setWebauthnAvailable(true);
 				if (data.passkey_origins) setPasskeyOrigins(data.passkey_origins);
+				if (data.setup_complete) setSetupComplete(true);
 				setLoading(false);
 			})
 			.catch(() => setLoading(false));
@@ -178,6 +199,7 @@ function AuthStep({ onNext, skippable }) {
 		}
 		setSaving(true);
 		var codeBody = codeRequired ? { setup_code: setupCode.trim() } : {};
+		var requestedRpId = null;
 		fetch("/api/auth/setup/passkey/register/begin", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -189,6 +211,7 @@ function AuthStep({ onNext, skippable }) {
 			})
 			.then((data) => {
 				var options = data.options;
+				requestedRpId = options.publicKey.rp?.id || null;
 				options.publicKey.challenge = base64ToBuffer(options.publicKey.challenge);
 				options.publicKey.user.id = base64ToBuffer(options.publicKey.user.id);
 				if (options.publicKey.excludeCredentials) {
@@ -237,7 +260,11 @@ function AuthStep({ onNext, skippable }) {
 				if (err.name === "NotAllowedError") {
 					setError("Passkey registration was cancelled.");
 				} else {
-					setError(err.message || "Passkey registration failed");
+					var msg = err.message || "Passkey registration failed";
+					if (requestedRpId) {
+						msg += ` (RPID: "${requestedRpId}", current origin: "${location.origin}")`;
+					}
+					setError(msg);
 				}
 				setSaving(false);
 			});
@@ -281,6 +308,23 @@ function AuthStep({ onNext, skippable }) {
 		return html`<div class="text-sm text-[var(--muted)]">Checking authentication\u2026</div>`;
 	}
 
+	// Setup already complete (passkeys/password configured) — let user proceed.
+	if (setupComplete) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<span class="icon icon-checkmark"></span>
+				Authentication is already configured.
+			</div>
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" onClick=${() => {
+					ensureWsConnected();
+					onNext();
+				}}>Next</button>
+			</div>
+		</div>`;
+	}
+
 	var passkeyDisabledReason = webauthnAvailable
 		? browserSupportsWebauthn
 			? isIpAddress
@@ -320,7 +364,7 @@ function AuthStep({ onNext, skippable }) {
 						placeholder="Repeat password" />
 				</div>
 				${error && html`<${ErrorPanel} message=${error} />`}
-				<div class="flex items-center gap-3 mt-1">
+				<div class="flex flex-wrap items-center gap-3 mt-1">
 					<button type="submit" class="provider-btn" disabled=${optPwSaving}>
 						${optPwSaving ? "Setting\u2026" : "Set password & continue"}
 					</button>
@@ -354,9 +398,9 @@ function AuthStep({ onNext, skippable }) {
 		<div class="flex flex-col gap-2">
 			<div class=${`backend-card ${method === "passkey" ? "selected" : ""} ${passkeyEnabled ? "" : "disabled"}`}
 				onClick=${passkeyEnabled ? () => setMethod("passkey") : null}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Passkey</span>
-					<div class="flex gap-2">
+					<div class="flex flex-wrap gap-2 justify-end">
 						${passkeyEnabled ? html`<span class="recommended-badge">Recommended</span>` : null}
 						${passkeyDisabledReason ? html`<span class="tier-badge">${passkeyDisabledReason}</span>` : null}
 					</div>
@@ -365,7 +409,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			<div class=${`backend-card ${method === "password" ? "selected" : ""}`}
 				onClick=${() => setMethod("password")}>
-				<div class="flex items-center justify-between">
+				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
 				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
@@ -383,7 +427,7 @@ function AuthStep({ onNext, skippable }) {
 			</div>
 			${originsHint && html`<div class="text-xs text-[var(--muted)]">Passkeys will work when visiting: ${originsHint}</div>`}
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="button" class="provider-btn" disabled=${saving} onClick=${onPasskeyRegister}>
 					${saving ? "Registering\u2026" : "Register passkey"}
 				</button>
@@ -408,7 +452,7 @@ function AuthStep({ onNext, skippable }) {
 					placeholder="Repeat password" />
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 				</button>
@@ -419,7 +463,7 @@ function AuthStep({ onNext, skippable }) {
 
 		${
 			method === null &&
-			html`<div class="flex items-center gap-3 mt-1">
+			html`<div class="flex flex-wrap items-center gap-3 mt-1">
 			${skippable && html`<button type="button" class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>`}
 		</div>`
 		}
@@ -440,17 +484,14 @@ function IdentityStep({ onNext, onBack }) {
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!userName.trim()) {
-			setError("Your name is required.");
-			return;
-		}
-		if (!name.trim()) {
-			setError("Agent name is required.");
+		var v = validateIdentityFields(name, userName);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
 		setSaving(true);
-		sendRpc("agent.identity.update", {
+		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
 			creature: creature.trim() || "",
@@ -479,32 +520,36 @@ function IdentityStep({ onNext, onBack }) {
 					placeholder="e.g. Alice" autofocus />
 			</div>
 			<!-- Agent section -->
-			<div class="grid grid-cols-2 gap-x-4 gap-y-3">
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${name} onInput=${(e) => setName(e.target.value)}
-						placeholder="e.g. Rex" />
+			<div class="flex flex-col gap-3">
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:gap-x-4">
+					<div class="min-w-0">
+						<div class="text-xs text-[var(--muted)] mb-1">Agent name *</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${name} onInput=${(e) => setName(e.target.value)}
+							placeholder="e.g. Rex" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
+						<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
+					</div>
 				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Emoji</div>
-					<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${creature} onInput=${(e) => setCreature(e.target.value)}
-						placeholder="e.g. dog" />
-				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${vibe} onInput=${(e) => setVibe(e.target.value)}
-						placeholder="e.g. chill" />
+				<div class="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-x-4">
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${creature} onInput=${(e) => setCreature(e.target.value)}
+							placeholder="e.g. dog" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${vibe} onInput=${(e) => setVibe(e.target.value)}
+							placeholder="e.g. chill" />
+					</div>
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
-			<div class="flex items-center gap-3 mt-1">
+			<div class="flex flex-wrap items-center gap-3 mt-1">
 				${onBack && html`<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>`}
 				<button type="submit" class="provider-btn" disabled=${saving}>
 					${saving ? "Saving\u2026" : "Continue"}
@@ -521,9 +566,9 @@ var BYOM_PROVIDERS = ["openrouter", "venice"];
 
 function ModelSelectCard({ model, selected, probe, onToggle }) {
 	return html`<div class="model-card ${selected ? "selected" : ""}" onClick=${onToggle}>
-		<div class="flex items-center justify-between">
+		<div class="flex flex-wrap items-center justify-between gap-2">
 			<span class="text-sm font-medium text-[var(--text)]">${model.displayName}</span>
-			<div class="flex gap-2">
+			<div class="flex flex-wrap gap-2 justify-end">
 				${model.supportsTools ? html`<span class="recommended-badge">Tools</span>` : null}
 				${probe === "probing" ? html`<span class="tier-badge">Probing\u2026</span>` : null}
 				${probe && probe !== "ok" && probe !== "probing" ? html`<span class="provider-item-badge warning" title=${probe.error || ""}>Unsupported</span>` : null}
@@ -756,9 +801,9 @@ function OnboardingProviderRow({
 										onClick=${() => {
 											if (b.available) setSelectedBackend(b.id);
 										}}>
-										<div class="flex items-center justify-between">
+										<div class="flex flex-wrap items-center justify-between gap-2">
 											<span class="text-sm font-medium text-[var(--text)]">${b.name}</span>
-											<div class="flex gap-2">
+											<div class="flex flex-wrap gap-2 justify-end">
 												${b.id === sysInfo.recommendedBackend && b.available ? html`<span class="recommended-badge">Recommended</span>` : null}
 												${b.available ? null : html`<span class="tier-badge">Not installed</span>`}
 											</div>
@@ -779,9 +824,9 @@ function OnboardingProviderRow({
 											.filter((m) => m.backend === selectedBackend)
 											.map(
 												(mdl) => html`<div key=${mdl.id} class="model-card" onClick=${() => onConfigureLocalModel(mdl)}>
-											<div class="flex items-center justify-between">
+											<div class="flex flex-wrap items-center justify-between gap-2">
 												<span class="text-sm font-medium text-[var(--text)]">${mdl.displayName}</span>
-												<div class="flex gap-2">
+												<div class="flex flex-wrap gap-2 justify-end">
 													<span class="tier-badge">${mdl.minRamGb}GB</span>
 													${mdl.suggested ? html`<span class="recommended-badge">Recommended</span>` : null}
 												</div>
@@ -1019,7 +1064,7 @@ function ProviderStep({ onNext, onBack }) {
 		var modelVal = model.trim() || null;
 
 		validateProviderKey(p.name, keyVal, endpointVal, modelVal)
-			.then((result) => {
+			.then(async (result) => {
 				if (!result.valid) {
 					// Validation failed — stay on the form.
 					setPhase("form");
@@ -1031,6 +1076,15 @@ function ProviderStep({ onNext, onBack }) {
 				// so save immediately without showing the model selector.
 				if (BYOM_PROVIDERS.includes(p.name)) {
 					return saveAndFinishByom(p.name, keyVal, endpointVal, modelVal);
+				}
+
+				// Persist credentials before opening model selection so probes
+				// and follow-up actions use an initialized provider registry.
+				var saveRes = await saveProviderKey(p.name, keyVal, endpointVal, modelVal);
+				if (!saveRes?.ok) {
+					setPhase("form");
+					setError(saveRes?.error?.message || "Failed to save credentials.");
+					return;
 				}
 
 				// Regular providers: show the model selector.
@@ -1075,24 +1129,21 @@ function ProviderStep({ onNext, onBack }) {
 		});
 	}
 
-	function buildSaveKeyPayload(providerName, modelIds) {
+	function resolveCredentials(providerName, modelIds) {
 		var p = providers.find((pr) => pr.name === providerName);
 		if (!p) return null;
 		var keyVal = apiKey.trim() || p.name;
 		var endpointVal = endpoint.trim() || null;
 		var modelVal = model.trim() || null;
 		var effectiveModelVal = p.keyOptional && modelIds.length > 0 ? modelIds[0] : modelVal;
-		var payload = { provider: providerName, apiKey: keyVal };
-		if (endpointVal) payload.baseUrl = endpointVal;
-		if (effectiveModelVal) payload.model = effectiveModelVal;
-		return payload;
+		return { keyVal, endpointVal, modelVal: effectiveModelVal };
 	}
 
 	async function saveProviderKeyIfNeeded(providerName, modelIds) {
 		if (modelSelectProvider) return true;
-		var payload = buildSaveKeyPayload(providerName, modelIds);
-		if (!payload) return false;
-		var res = await sendRpc("providers.save_key", payload);
+		var creds = resolveCredentials(providerName, modelIds);
+		if (!creds) return false;
+		var res = await saveProviderKey(providerName, creds.keyVal, creds.endpointVal, creds.modelVal);
 		if (!res?.ok) {
 			setPhase("form");
 			setError(res?.error?.message || "Failed to save credentials.");
@@ -1146,11 +1197,7 @@ function ProviderStep({ onNext, onBack }) {
 
 	// BYOM-only save path (no model selector shown for these providers).
 	function saveAndFinishByom(providerName, keyVal, endpointVal, modelVal) {
-		var payload = { provider: providerName, apiKey: keyVal };
-		if (endpointVal) payload.baseUrl = endpointVal;
-		if (modelVal) payload.model = modelVal;
-
-		sendRpc("providers.save_key", payload)
+		saveProviderKey(providerName, keyVal, endpointVal, modelVal)
 			.then(async (res) => {
 				if (!res?.ok) {
 					setPhase("form");
@@ -1380,7 +1427,7 @@ function ProviderStep({ onNext, onBack }) {
 			)}
 		</div>
 		${error && !configuring && !oauthProvider && !localProvider ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<button class="provider-btn" onClick=${onContinue} disabled=${phase === "validating" || savingModels}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
@@ -1389,21 +1436,6 @@ function ProviderStep({ onNext, onBack }) {
 }
 
 // ── Voice helpers ────────────────────────────────────────────
-
-function decodeBase64Safe(input) {
-	if (!input) return new Uint8Array();
-	var normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-	while (normalized.length % 4) normalized += "=";
-	var binary = "";
-	try {
-		binary = atob(normalized);
-	} catch (_err) {
-		throw new Error("Invalid base64 audio payload");
-	}
-	var bytes = new Uint8Array(binary.length);
-	for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return bytes;
-}
 
 // ── Voice provider row for onboarding ────────────────────────
 
@@ -1554,7 +1586,7 @@ function VoiceStep({ onNext, onBack }) {
 	var [enableSaving, setEnableSaving] = useState(false);
 
 	function fetchProviders() {
-		return sendRpc("voice.providers.all", {}).then((res) => {
+		return fetchVoiceProviders().then((res) => {
 			if (res?.ok) {
 				setAllProviders(res.payload || { tts: [], stt: [] });
 			}
@@ -1568,7 +1600,7 @@ function VoiceStep({ onNext, onBack }) {
 
 		function load() {
 			if (cancelled) return;
-			sendRpc("voice.providers.all", {}).then((res) => {
+			fetchVoiceProviders().then((res) => {
 				if (cancelled) return;
 				if (res?.ok) {
 					setAllProviders(res.payload || { tts: [], stt: [] });
@@ -1608,8 +1640,8 @@ function VoiceStep({ onNext, onBack }) {
 		var firstStt = allProviders.stt.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var firstTts = allProviders.tts.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
 		var toggles = [];
-		if (firstStt) toggles.push(sendRpc("voice.provider.toggle", { provider: firstStt.id, enabled: true, type: "stt" }));
-		if (firstTts) toggles.push(sendRpc("voice.provider.toggle", { provider: firstTts.id, enabled: true, type: "tts" }));
+		if (firstStt) toggles.push(toggleVoiceProvider(firstStt.id, true, "stt"));
+		if (firstTts) toggles.push(toggleVoiceProvider(firstTts.id, true, "tts"));
 		if (toggles.length === 0) {
 			setEnableSaving(false);
 			return;
@@ -1646,18 +1678,12 @@ function VoiceStep({ onNext, onBack }) {
 		setError(null);
 		setSaving(true);
 		var providerId = configuring;
-		sendRpc("voice.config.save_key", { provider: providerId, api_key: apiKey.trim() }).then(async (res) => {
+		saveVoiceKey(providerId, apiKey.trim()).then(async (res) => {
 			if (res?.ok) {
 				// Auto-enable in onboarding: toggle on for each type this provider appears in.
 				// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
 				// so also check the counterpart ID.
-				var COUNTERPART_IDS = {
-					elevenlabs: "elevenlabs-stt",
-					"elevenlabs-stt": "elevenlabs",
-					"google-tts": "google",
-					google: "google-tts",
-				};
-				var counterId = COUNTERPART_IDS[providerId];
+				var counterId = VOICE_COUNTERPART_IDS[providerId];
 				var toggles = [];
 				var sttMatch =
 					allProviders.stt.find((p) => p.id === providerId) ||
@@ -1666,10 +1692,10 @@ function VoiceStep({ onNext, onBack }) {
 					allProviders.tts.find((p) => p.id === providerId) ||
 					(counterId && allProviders.tts.find((p) => p.id === counterId));
 				if (sttMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: sttMatch.id, enabled: true, type: "stt" }));
+					toggles.push(toggleVoiceProvider(sttMatch.id, true, "stt"));
 				}
 				if (ttsMatch) {
-					toggles.push(sendRpc("voice.provider.toggle", { provider: ttsMatch.id, enabled: true, type: "tts" }));
+					toggles.push(toggleVoiceProvider(ttsMatch.id, true, "tts"));
 				}
 				await Promise.all(toggles);
 				setSaving(false);
@@ -1704,7 +1730,7 @@ function VoiceStep({ onNext, onBack }) {
 		// Auto-enable the provider if it's available but not yet enabled
 		var prov = (type === "stt" ? allProviders.stt : allProviders.tts).find((p) => p.id === providerId);
 		if (prov?.available && !prov?.enabled) {
-			var toggleRes = await sendRpc("voice.provider.toggle", { provider: providerId, enabled: true, type });
+			var toggleRes = await toggleVoiceProvider(providerId, true, type);
 			if (!toggleRes?.ok) {
 				setVoiceTestResults((prev) => ({
 					...prev,
@@ -1714,20 +1740,12 @@ function VoiceStep({ onNext, onBack }) {
 				return;
 			}
 			// ElevenLabs/Google share API keys — enable the counterpart too.
-			// IDs differ between TTS and STT (e.g. "elevenlabs" vs "elevenlabs-stt"),
-			// so map to the counterpart ID before looking it up.
 			var counterType = type === "stt" ? "tts" : "stt";
 			var counterList = type === "stt" ? allProviders.tts : allProviders.stt;
-			var COUNTERPART_IDS = {
-				elevenlabs: "elevenlabs-stt",
-				"elevenlabs-stt": "elevenlabs",
-				"google-tts": "google",
-				google: "google-tts",
-			};
-			var counterId = COUNTERPART_IDS[providerId] || providerId;
+			var counterId = VOICE_COUNTERPART_IDS[providerId] || providerId;
 			var counterProv = counterList.find((p) => p.id === counterId);
 			if (counterProv?.available && !counterProv?.enabled) {
-				await sendRpc("voice.provider.toggle", { provider: counterId, enabled: true, type: counterType });
+				await toggleVoiceProvider(counterId, true, counterType);
 			}
 			// Refresh provider list in background
 			fetchProviders();
@@ -1739,10 +1757,7 @@ function VoiceStep({ onNext, onBack }) {
 				var user = identity?.user_name || "friend";
 				var bot = identity?.name || "Moltis";
 				var ttsText = await fetchPhrase("onboarding", user, bot);
-				var res = await sendRpc("tts.convert", {
-					text: ttsText,
-					provider: providerId,
-				});
+				var res = await testTts(ttsText, providerId);
 				if (res?.ok && res.payload?.audio) {
 					var bytes = decodeBase64Safe(res.payload.audio);
 					var audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
@@ -1801,14 +1816,7 @@ function VoiceStep({ onNext, onBack }) {
 					var audioBlob = new Blob(audioChunks, { type: "audio/webm" });
 
 					try {
-						var resp = await fetch(
-							`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true&provider=${encodeURIComponent(providerId)}`,
-							{
-								method: "POST",
-								headers: { "Content-Type": audioBlob.type || "audio/webm" },
-								body: audioBlob,
-							},
-						);
+						var resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
 						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
 							var sttRes = await resp.json();
@@ -1946,7 +1954,7 @@ function VoiceStep({ onNext, onBack }) {
 		}
 
 		${error && !configuring ? html`<${ErrorPanel} message=${error} />` : null}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<button class="provider-btn" onClick=${onNext}>Continue</button>
 			<button class="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline" onClick=${onNext}>Skip for now</button>
@@ -1968,12 +1976,9 @@ function ChannelStep({ onNext, onBack }) {
 
 	function onSubmit(e) {
 		e.preventDefault();
-		if (!accountId.trim()) {
-			setError("Bot username is required.");
-			return;
-		}
-		if (!token.trim()) {
-			setError("Bot token is required.");
+		var v = validateChannelFields(accountId, token);
+		if (!v.valid) {
+			setError(v.error);
 			return;
 		}
 		setError(null);
@@ -1983,15 +1988,11 @@ function ChannelStep({ onNext, onBack }) {
 			.split(/\n/)
 			.map((s) => s.trim())
 			.filter(Boolean);
-		sendRpc("channels.add", {
-			type: "telegram",
-			account_id: accountId.trim(),
-			config: {
-				token: token.trim(),
-				dm_policy: dmPolicy,
-				mention_mode: "mention",
-				allowlist: allowlistEntries,
-			},
+		addChannel("telegram", accountId.trim(), {
+			token: token.trim(),
+			dm_policy: dmPolicy,
+			mention_mode: "mention",
+			allowlist: allowlistEntries,
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
@@ -2063,7 +2064,7 @@ function ChannelStep({ onNext, onBack }) {
 				${error && html`<${ErrorPanel} message=${error} />`}
 			</form>`
 		}
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button type="button" class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			${
 				connected
@@ -2130,11 +2131,11 @@ function SummaryStep({ onBack, onFinish }) {
 
 			var [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
 				sendRpc("providers.available", {}).catch(() => null),
-				sendRpc("channels.status", {}).catch(() => null),
+				fetchChannelStatus().catch(() => null),
 				fetch("/api/tailscale/status")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
-				voiceEnabled ? sendRpc("voice.providers.all", {}).catch(() => null) : Promise.resolve(null),
+				voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
 				fetch("/api/bootstrap")
 					.then((r) => (r.ok ? r.json() : null))
 					.catch(() => null),
@@ -2304,7 +2305,7 @@ function SummaryStep({ onBack, onFinish }) {
 			}
 		</div>
 
-		<div class="flex items-center gap-3 mt-1">
+		<div class="flex flex-wrap items-center gap-3 mt-1">
 			<button class="provider-btn provider-btn-secondary" onClick=${onBack}>Back</button>
 			<div class="flex-1" />
 			<button class="provider-btn" onClick=${onFinish}>${data.identity?.emoji || ""} ${data.identity?.name || "Your agent"}, reporting for duty</button>
@@ -2407,18 +2408,20 @@ function OnboardingPage() {
 	}
 
 	// Determine which component to show for each step
-	var channelStep = voiceAvailable ? 4 : 3;
-	var voiceStep = voiceAvailable ? 3 : -1;
+	// Order: Auth(0) → LLM(1) → Voice(2)? → Channel → Identity → Summary
+	var voiceStep = voiceAvailable ? 2 : -1;
+	var channelStep = voiceAvailable ? 3 : 2;
+	var identityStep = voiceAvailable ? 4 : 3;
 	var summaryStep = voiceAvailable ? 5 : 4;
 
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
 			${step === 0 && html`<${AuthStep} onNext=${goNext} skippable=${authSkippable} />`}
-			${step === 1 && html`<${IdentityStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
-			${step === 2 && html`<${ProviderStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === 1 && html`<${ProviderStep} onNext=${goNext} onBack=${authNeeded ? goBack : null} />`}
 			${step === voiceStep && html`<${VoiceStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === channelStep && html`<${ChannelStep} onNext=${goNext} onBack=${goBack} />`}
+			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
 	</div>`;
@@ -2430,7 +2433,8 @@ var containerRef = null;
 
 export function mountOnboarding(container) {
 	containerRef = container;
-	container.style.cssText = "display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;";
+	container.style.cssText =
+		"display:flex;align-items:center;justify-content:center;min-height:100vh;padding:max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));box-sizing:border-box;width:100%;max-width:100vw;overflow-x:hidden;";
 	render(html`<${OnboardingPage} />`, container);
 }
 

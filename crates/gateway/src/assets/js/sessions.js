@@ -2,6 +2,7 @@
 
 import {
 	appendChannelFooter,
+	appendReasoningDisclosure,
 	chatAddMsg,
 	chatAddMsgWithImages,
 	highlightAndScroll,
@@ -19,6 +20,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
+import { attachMessageVoiceControl } from "./message-voice.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -84,7 +86,11 @@ export function clearActiveSession() {
 			updateTokenBar();
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			var session = sessionStore.getByKey(activeKey);
-			if (session) session.syncCounts(0, 0);
+			if (session) {
+				session.syncCounts(0, 0);
+				session.replying.value = false;
+				session.activeRunId.value = null;
+			}
 			fetchSessions();
 			return res;
 		}
@@ -123,6 +129,13 @@ export function setSessionReplying(key, replying) {
 	// Dual-write: update plain S.sessions object
 	var entry = S.sessions.find((s) => s.key === key);
 	if (entry) entry._replying = replying;
+}
+
+export function setSessionActiveRunId(key, runId) {
+	var session = sessionStore.getByKey(key);
+	if (session) session.activeRunId.value = runId || null;
+	var entry = S.sessions.find((s) => s.key === key);
+	if (entry) entry._activeRunId = runId || null;
 }
 
 export function setSessionUnread(key, unread) {
@@ -283,14 +296,47 @@ function parseMultimodalContent(blocks) {
 }
 
 function renderHistoryUserMessage(msg) {
-	var el;
+	var text = "";
+	var images = [];
 	if (Array.isArray(msg.content)) {
 		var parsed = parseMultimodalContent(msg.content);
-		var text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
-		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", parsed.images);
+		text = msg.channel ? stripChannelPrefix(parsed.text) : parsed.text;
+		images = parsed.images;
 	} else {
-		var userContent = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
-		el = chatAddMsg("user", renderMarkdown(userContent), true);
+		text = msg.channel ? stripChannelPrefix(msg.content || "") : msg.content || "";
+	}
+
+	var el;
+	if (msg.audio) {
+		el = chatAddMsg("user", "", true);
+		if (el) {
+			var filename = msg.audio.split("/").pop();
+			var audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+			renderAudioPlayer(el, audioSrc);
+			if (text) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown escapes user input before formatting tags.
+				textWrap.innerHTML = renderMarkdown(text); // eslint-disable-line no-unsanitized/property
+				el.appendChild(textWrap);
+			}
+			if (images.length > 0) {
+				var thumbRow = document.createElement("div");
+				thumbRow.className = "msg-image-row";
+				for (var img of images) {
+					var thumb = document.createElement("img");
+					thumb.className = "msg-image-thumb";
+					thumb.src = img.dataUrl;
+					thumb.alt = img.name;
+					thumbRow.appendChild(thumb);
+				}
+				el.appendChild(thumbRow);
+			}
+		}
+	} else if (images.length > 0) {
+		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
+	} else {
+		el = chatAddMsg("user", renderMarkdown(text), true);
 	}
 	if (el && msg.channel) appendChannelFooter(el, msg.channel);
 	return el;
@@ -323,12 +369,31 @@ function renderHistoryAssistantMessage(msg) {
 				textWrap.innerHTML = renderMarkdown(msg.content); // eslint-disable-line no-unsanitized/property
 				el.appendChild(textWrap);
 			}
+			if (msg.reasoning) {
+				appendReasoningDisclosure(el, msg.reasoning);
+			}
 		}
 	} else {
 		el = chatAddMsg("assistant", renderMarkdown(msg.content || ""), true);
+		if (el && msg.reasoning) {
+			appendReasoningDisclosure(el, msg.reasoning);
+		}
 	}
 	if (el && msg.model) {
-		el.appendChild(createModelFooter(msg));
+		var footer = createModelFooter(msg);
+		el.appendChild(footer);
+		void attachMessageVoiceControl({
+			messageEl: el,
+			footerEl: footer,
+			sessionKey: S.activeSessionKey,
+			text: msg.content || "",
+			runId: msg.run_id || null,
+			messageIndex: msg.historyIndex,
+			audioPath: msg.audio || null,
+			audioWarning: null,
+			forceAction: false,
+			autoplayOnGenerate: true,
+		});
 	}
 	if (msg.inputTokens || msg.outputTokens) {
 		S.sessionTokens.input += msg.inputTokens || 0;
@@ -564,6 +629,8 @@ export function switchSession(key, searchContext, projectId) {
 					msgEls.push(renderHistoryUserMessage(msg));
 				} else if (msg.role === "assistant") {
 					msgEls.push(renderHistoryAssistantMessage(msg));
+				} else if (msg.role === "notice") {
+					msgEls.push(chatAddMsg("system", renderMarkdown(msg.content || ""), true));
 				} else if (msg.role === "tool_result") {
 					msgEls.push(renderHistoryToolResult(msg));
 				} else {

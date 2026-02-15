@@ -161,6 +161,10 @@ struct ChatFinalBroadcast {
     #[serde(skip_serializing_if = "Option::is_none")]
     audio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    audio_warning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
 }
 
@@ -174,6 +178,14 @@ struct ChatErrorBroadcast {
     error: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     seq: Option<u64>,
+}
+
+struct AssistantTurnOutput {
+    text: String,
+    input_tokens: u32,
+    output_tokens: u32,
+    audio_path: Option<String>,
+    reasoning: Option<String>,
 }
 
 fn now_ms() -> u64 {
@@ -633,6 +645,34 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+fn is_safe_user_audio_filename(filename: &str) -> bool {
+    !filename.is_empty()
+        && filename.len() <= 255
+        && filename
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+}
+
+fn user_audio_path_from_params(params: &Value, session_key: &str) -> Option<String> {
+    let filename = params
+        .get("_audio_filename")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    if !is_safe_user_audio_filename(filename) {
+        warn!(
+            session = %session_key,
+            filename = filename,
+            "ignoring invalid user audio filename"
+        );
+        return None;
+    }
+
+    let key = SessionStore::key_to_filename(session_key);
+    Some(format!("media/{key}/{filename}"))
+}
+
 fn detect_runtime_shell() -> Option<String> {
     let candidate = std::env::var("SHELL")
         .ok()
@@ -702,6 +742,7 @@ struct PromptPersona {
     soul_text: Option<String>,
     agents_text: Option<String>,
     tools_text: Option<String>,
+    memory_text: Option<String>,
 }
 
 /// Load identity, user profile, soul, and workspace text from config + data files.
@@ -741,6 +782,7 @@ fn load_prompt_persona() -> PromptPersona {
         soul_text: moltis_config::load_soul(),
         agents_text: moltis_config::load_agents_md(),
         tools_text: moltis_config::load_tools_md(),
+        memory_text: moltis_config::load_memory_md(),
     }
 }
 
@@ -1039,6 +1081,115 @@ impl LiveModelService {
     }
 }
 
+fn normalize_model_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn model_id_provider(model_id: &str) -> Option<&str> {
+    model_id.split_once("::").map(|(provider, _)| provider)
+}
+
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    if a.is_empty() {
+        return b.chars().count();
+    }
+    if b.is_empty() {
+        return a.chars().count();
+    }
+
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_chars: Vec<char> = a.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0; b_chars.len() + 1];
+
+    for (i, a_ch) in a_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, b_ch) in b_chars.iter().enumerate() {
+            let cost = usize::from(a_ch != b_ch);
+            let deletion = prev[j + 1] + 1;
+            let insertion = curr[j] + 1;
+            let substitution = prev[j] + cost;
+            curr[j + 1] = deletion.min(insertion).min(substitution);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[b_chars.len()]
+}
+
+fn suggest_model_ids(
+    requested_model_id: &str,
+    available_model_ids: &[String],
+    limit: usize,
+) -> Vec<String> {
+    if requested_model_id.trim().is_empty() || available_model_ids.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let requested_provider = model_id_provider(requested_model_id).map(str::to_ascii_lowercase);
+    let requested_raw = raw_model_id(requested_model_id);
+    let requested_norm = normalize_model_lookup_key(requested_model_id);
+    let requested_raw_norm = normalize_model_lookup_key(requested_raw);
+
+    let mut ranked: Vec<(String, bool, usize, usize, usize)> = available_model_ids
+        .iter()
+        .filter_map(|candidate| {
+            let candidate_provider = model_id_provider(candidate).map(str::to_ascii_lowercase);
+            let provider_match = requested_provider
+                .as_deref()
+                .zip(candidate_provider.as_deref())
+                .is_some_and(|(left, right)| left == right);
+
+            let candidate_raw = raw_model_id(candidate);
+            let candidate_norm = normalize_model_lookup_key(candidate);
+            let candidate_raw_norm = normalize_model_lookup_key(candidate_raw);
+
+            let raw_distance = levenshtein_distance(&requested_raw_norm, &candidate_raw_norm);
+            let full_distance = levenshtein_distance(&requested_norm, &candidate_norm);
+            let contains = requested_raw_norm.contains(&candidate_raw_norm)
+                || candidate_raw_norm.contains(&requested_raw_norm)
+                || requested_norm.contains(&candidate_norm)
+                || candidate_norm.contains(&requested_norm);
+
+            // Keep nearest neighbors and strong substring matches. This trims
+            // unrelated model IDs from suggestion logs/responses.
+            let distance_cap = requested_raw_norm
+                .len()
+                .max(candidate_raw_norm.len())
+                .max(3)
+                / 2
+                + 2;
+            if !contains && raw_distance > distance_cap {
+                return None;
+            }
+
+            Some((
+                candidate.clone(),
+                provider_match,
+                raw_distance,
+                full_distance,
+                requested_raw_norm.len().abs_diff(candidate_raw_norm.len()),
+            ))
+        })
+        .collect();
+
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1) // provider match first
+            .then(left.2.cmp(&right.2)) // nearest raw model id
+            .then(left.3.cmp(&right.3)) // nearest full model id
+            .then(left.4.cmp(&right.4)) // similar length
+            .then(left.0.cmp(&right.0))
+    });
+
+    ranked.into_iter().map(|(id, ..)| id).take(limit).collect()
+}
+
 #[async_trait]
 impl ModelService for LiveModelService {
     async fn list(&self) -> ServiceResult {
@@ -1053,6 +1204,8 @@ impl ModelService for LiveModelService {
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(model_count = model_ids.len(), model_ids = ?model_ids, "models.list response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1085,6 +1238,12 @@ impl ModelService for LiveModelService {
             reg.list_models()
                 .iter()
                 .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
+        );
+        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
+        info!(
+            model_count = model_ids.len(),
+            model_ids = ?model_ids,
+            "models.list_all response"
         );
         let models: Vec<_> = prioritized
             .iter()
@@ -1508,9 +1667,29 @@ impl ModelService for LiveModelService {
 
         let provider = {
             let reg = self.providers.read().await;
-            reg.get(model_id)
-                .ok_or_else(|| format!("unknown model: {model_id}"))?
+            if let Some(provider) = reg.get(model_id) {
+                provider
+            } else {
+                let available_model_ids: Vec<String> =
+                    reg.list_models().iter().map(|m| m.id.clone()).collect();
+                let suggestions = suggest_model_ids(model_id, &available_model_ids, 5);
+                warn!(
+                    model_id,
+                    available_model_count = available_model_ids.len(),
+                    available_model_ids = ?available_model_ids,
+                    suggested_model_ids = ?suggestions,
+                    "models.test received unknown model id"
+                );
+                let suggestion_hint = if suggestions.is_empty() {
+                    String::new()
+                } else {
+                    format!(". did you mean: {}", suggestions.join(", "))
+                };
+                return Err(format!("unknown model: {model_id}{suggestion_hint}"));
+            }
         };
+        let started = Instant::now();
+        info!(model_id, provider = provider.name(), "model probe started");
 
         // Use streaming and return as soon as the first token arrives.
         // Dropping the stream closes the HTTP connection, which tells the
@@ -1536,7 +1715,12 @@ impl ModelService for LiveModelService {
 
         match result {
             Ok(Ok(())) => {
-                info!(model_id, "model probe succeeded");
+                info!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe succeeded"
+                );
                 Ok(serde_json::json!({
                     "ok": true,
                     "modelId": model_id,
@@ -1550,11 +1734,22 @@ impl ModelService for LiveModelService {
                     .unwrap_or(&err)
                     .to_string();
 
-                warn!(model_id, error = %detail, "model probe failed");
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    error = %detail,
+                    "model probe failed"
+                );
                 Err(detail)
             },
             Err(_) => {
-                warn!(model_id, "model probe timed out after 10s");
+                warn!(
+                    model_id,
+                    provider = provider.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model probe timed out after 10s"
+                );
                 Err("Connection timed out after 10 seconds".to_string())
             },
         }
@@ -1574,6 +1769,7 @@ pub struct LiveChatService {
     model_store: Arc<RwLock<DisabledModelsStore>>,
     state: Arc<GatewayState>,
     active_runs: Arc<RwLock<HashMap<String, AbortHandle>>>,
+    active_runs_by_session: Arc<RwLock<HashMap<String, String>>>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     session_store: Arc<SessionStore>,
     session_metadata: Arc<SqliteSessionMetadata>,
@@ -1601,6 +1797,7 @@ impl LiveChatService {
             model_store,
             state,
             active_runs: Arc::new(RwLock::new(HashMap::new())),
+            active_runs_by_session: Arc::new(RwLock::new(HashMap::new())),
             tool_registry: Arc::new(RwLock::new(ToolRegistry::new())),
             session_store,
             session_metadata,
@@ -1666,6 +1863,42 @@ impl LiveChatService {
                 .entry(key.to_string())
                 .or_insert_with(|| Arc::new(Semaphore::new(1))),
         )
+    }
+
+    async fn abort_run_handle(
+        active_runs: &Arc<RwLock<HashMap<String, AbortHandle>>>,
+        active_runs_by_session: &Arc<RwLock<HashMap<String, String>>>,
+        run_id: Option<&str>,
+        session_key: Option<&str>,
+    ) -> (Option<String>, bool) {
+        let resolved_run_id = if let Some(id) = run_id {
+            Some(id.to_string())
+        } else if let Some(key) = session_key {
+            active_runs_by_session.read().await.get(key).cloned()
+        } else {
+            None
+        };
+
+        let Some(target_run_id) = resolved_run_id.clone() else {
+            return (None, false);
+        };
+
+        let aborted = if let Some(handle) = active_runs.write().await.remove(&target_run_id) {
+            handle.abort();
+            true
+        } else {
+            false
+        };
+
+        let mut by_session = active_runs_by_session.write().await;
+        if let Some(key) = session_key
+            && by_session.get(key).is_some_and(|id| id == &target_run_id)
+        {
+            by_session.remove(key);
+        }
+        by_session.retain(|_, id| id != &target_run_id);
+
+        (resolved_run_id, aborted)
     }
 
     /// Resolve a provider from session metadata, history, or first registered.
@@ -1997,9 +2230,11 @@ impl ChatService for LiveChatService {
         // know the message won't be queued — avoids double-persist when a
         // queued message is replayed via send()).
         let channel_meta = params.get("channel").cloned();
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         let user_msg = PersistedMessage::User {
             content: message_content,
             created_at: Some(now_ms()),
+            audio: user_audio,
             channel: channel_meta,
             seq: client_seq,
             run_id: Some(run_id.clone()),
@@ -2094,6 +2329,7 @@ impl ChatService for LiveChatService {
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
+        let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
         let hook_registry = self.hook_registry.clone();
@@ -2390,16 +2626,17 @@ impl ChatService for LiveChatService {
             };
 
             // Persist assistant response (even empty ones — needed for LLM history coherence).
-            if let Some((response_text, input_tokens, output_tokens, audio_path)) = assistant_text {
+            if let Some(assistant_output) = assistant_text {
                 let assistant_msg = PersistedMessage::Assistant {
-                    content: response_text,
+                    content: assistant_output.text,
                     created_at: Some(now_ms()),
                     model: Some(model_id.clone()),
                     provider: Some(provider_name.clone()),
-                    input_tokens: Some(input_tokens),
-                    output_tokens: Some(output_tokens),
+                    input_tokens: Some(assistant_output.input_tokens),
+                    output_tokens: Some(assistant_output.output_tokens),
                     tool_calls: None,
-                    audio: audio_path,
+                    reasoning: assistant_output.reasoning,
+                    audio: assistant_output.audio_path,
                     seq: client_seq,
                     run_id: Some(run_id_clone.clone()),
                 };
@@ -2416,6 +2653,10 @@ impl ChatService for LiveChatService {
             }
 
             active_runs.write().await.remove(&run_id_clone);
+            let mut runs_by_session = active_runs_by_session.write().await;
+            if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
+                runs_by_session.remove(&session_key_clone);
+            }
 
             // Release the semaphore *before* draining so replayed sends can
             // acquire it. Without this, every replayed `chat.send()` would
@@ -2486,6 +2727,10 @@ impl ChatService for LiveChatService {
             .write()
             .await
             .insert(run_id.clone(), handle.abort_handle());
+        self.active_runs_by_session
+            .write()
+            .await
+            .insert(session_key.clone(), run_id.clone());
 
         Ok(serde_json::json!({ "runId": run_id }))
     }
@@ -2522,8 +2767,16 @@ impl ChatService for LiveChatService {
             }
         };
 
+        let user_audio = user_audio_path_from_params(&params, &session_key);
         // Persist the user message.
-        let user_msg = PersistedMessage::user(&text);
+        let user_msg = PersistedMessage::User {
+            content: MessageContent::Text(text.clone()),
+            created_at: Some(now_ms()),
+            audio: user_audio,
+            channel: None,
+            seq: None,
+            run_id: None,
+        };
         if let Err(e) = self
             .session_store
             .append(&session_key, &user_msg.to_value())
@@ -2637,16 +2890,17 @@ impl ChatService for LiveChatService {
         };
 
         // Persist assistant response (even empty ones — needed for LLM history coherence).
-        if let Some((ref response_text, input_tokens, output_tokens, ref audio_path)) = result {
+        if let Some(ref assistant_output) = result {
             let assistant_msg = PersistedMessage::Assistant {
-                content: response_text.clone(),
+                content: assistant_output.text.clone(),
                 created_at: Some(now_ms()),
                 model: Some(model_id.clone()),
                 provider: Some(provider_name.clone()),
-                input_tokens: Some(input_tokens),
-                output_tokens: Some(output_tokens),
+                input_tokens: Some(assistant_output.input_tokens),
+                output_tokens: Some(assistant_output.output_tokens),
                 tool_calls: None,
-                audio: audio_path.clone(),
+                reasoning: assistant_output.reasoning.clone(),
+                audio: assistant_output.audio_path.clone(),
                 seq: None,
                 run_id: Some(run_id.clone()),
             };
@@ -2664,13 +2918,11 @@ impl ChatService for LiveChatService {
         }
 
         match result {
-            Some((response_text, input_tokens, output_tokens, _audio_path)) => {
-                Ok(serde_json::json!({
-                    "text": response_text,
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                }))
-            },
+            Some(assistant_output) => Ok(serde_json::json!({
+                "text": assistant_output.text,
+                "inputTokens": assistant_output.input_tokens,
+                "outputTokens": assistant_output.output_tokens,
+            })),
             None => {
                 // Check the last broadcast for this run to get the actual error message.
                 let error_msg = state
@@ -2695,15 +2947,27 @@ impl ChatService for LiveChatService {
     }
 
     async fn abort(&self, params: Value) -> ServiceResult {
-        let run_id = params
-            .get("runId")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'runId'".to_string())?;
-
-        if let Some(handle) = self.active_runs.write().await.remove(run_id) {
-            handle.abort();
+        let run_id = params.get("runId").and_then(|v| v.as_str());
+        let session_key = params.get("sessionKey").and_then(|v| v.as_str());
+        if run_id.is_none() && session_key.is_none() {
+            return Err("missing 'runId' or 'sessionKey'".to_string());
         }
-        Ok(serde_json::json!({}))
+
+        let (resolved_run_id, aborted) = Self::abort_run_handle(
+            &self.active_runs,
+            &self.active_runs_by_session,
+            run_id,
+            session_key,
+        )
+        .await;
+        info!(
+            requested_run_id = ?run_id,
+            session_key = ?session_key,
+            resolved_run_id = ?resolved_run_id,
+            aborted,
+            "chat.abort"
+        );
+        Ok(serde_json::json!({ "aborted": aborted, "runId": resolved_run_id }))
     }
 
     async fn cancel_queued(&self, params: Value) -> ServiceResult {
@@ -2844,33 +3108,30 @@ impl ChatService for LiveChatService {
         }
 
         // Run silent memory turn before summarization — saves important memories to disk.
-        // Write into the data directory (e.g. ~/.moltis/) so files don't end up in cwd.
-        if let Some(ref mm) = self.state.memory_manager {
-            let memory_dir = moltis_config::data_dir();
-            if let Ok(provider) = self.resolve_provider(&session_key, &history).await {
-                let chat_history_for_memory = values_to_chat_messages(&history);
-                match moltis_agents::silent_turn::run_silent_memory_turn(
-                    provider,
-                    &chat_history_for_memory,
-                    &memory_dir,
-                )
-                .await
-                {
-                    Ok(paths) => {
-                        for path in &paths {
-                            if let Err(e) = mm.sync_path(path).await {
-                                warn!(path = %path.display(), error = %e, "compact: memory sync of written file failed");
-                            }
-                        }
-                        if !paths.is_empty() {
-                            info!(
-                                files = paths.len(),
-                                "compact: silent memory turn wrote files"
-                            );
-                        }
-                    },
-                    Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
-                }
+        // The manager implements MemoryWriter directly (with path validation, size limits,
+        // and automatic re-indexing), so no manual sync_path is needed after the turn.
+        if let Some(ref mm) = self.state.memory_manager
+            && let Ok(provider) = self.resolve_provider(&session_key, &history).await
+        {
+            let chat_history_for_memory = values_to_chat_messages(&history);
+            let writer: std::sync::Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
+                std::sync::Arc::clone(mm) as _;
+            match moltis_agents::silent_turn::run_silent_memory_turn(
+                provider,
+                &chat_history_for_memory,
+                writer,
+            )
+            .await
+            {
+                Ok(paths) => {
+                    if !paths.is_empty() {
+                        info!(
+                            files = paths.len(),
+                            "compact: silent memory turn wrote files"
+                        );
+                    }
+                },
+                Err(e) => warn!(error = %e, "compact: silent memory turn failed"),
             }
         }
 
@@ -2902,7 +3163,10 @@ impl ChatService for LiveChatService {
                 // Tool events not expected in summarization stream.
                 StreamEvent::ToolCallStart { .. }
                 | StreamEvent::ToolCallArgumentsDelta { .. }
-                | StreamEvent::ToolCallComplete { .. } => {},
+                | StreamEvent::ToolCallComplete { .. }
+                // Ignore provider reasoning blocks; summary body should only
+                // include final answer text.
+                | StreamEvent::ReasoningDelta(_) => {},
             }
         }
 
@@ -2919,6 +3183,7 @@ impl ChatService for LiveChatService {
             input_tokens: None,
             output_tokens: None,
             tool_calls: None,
+            reasoning: None,
             audio: None,
             seq: None,
             run_id: None,
@@ -3312,6 +3577,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3322,6 +3588,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3439,6 +3706,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         } else {
             build_system_prompt_minimal_runtime(
@@ -3449,6 +3717,7 @@ impl ChatService for LiveChatService {
                 persona.agents_text.as_deref(),
                 persona.tools_text.as_deref(),
                 Some(&runtime_context),
+                persona.memory_text.as_deref(),
             )
         };
 
@@ -3627,7 +3896,7 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
     client_seq: Option<u64>,
-) -> Option<(String, u32, u32, Option<String>)> {
+) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
@@ -3655,6 +3924,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     } else {
         // Minimal prompt without tools for local LLMs
@@ -3666,6 +3936,7 @@ async fn run_with_tools(
             persona.agents_text.as_deref(),
             persona.tools_text.as_deref(),
             runtime_context,
+            persona.memory_text.as_deref(),
         )
     };
 
@@ -3676,7 +3947,7 @@ async fn run_with_tools(
         system_prompt
     };
 
-    // Determine if this session is sandboxed (for browser tool execution mode)
+    // Determine sandbox mode for this session.
     let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
         router.is_sandboxed(session_key).await
     } else {
@@ -3692,6 +3963,7 @@ async fn run_with_tools(
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        let mut latest_reasoning = String::new();
         while let Some(event) = event_rx.recv().await {
             let state = Arc::clone(&state_for_events);
             let run_id = run_id_for_events.clone();
@@ -3922,13 +4194,16 @@ async fn run_with_tools(
 
                     payload
                 },
-                RunnerEvent::ThinkingText(text) => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "thinking_text",
-                    "text": text,
-                    "seq": seq,
-                }),
+                RunnerEvent::ThinkingText(text) => {
+                    latest_reasoning = text.clone();
+                    serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "thinking_text",
+                        "text": text,
+                        "seq": seq,
+                    })
+                },
                 RunnerEvent::TextDelta(text) => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
@@ -3978,6 +4253,7 @@ async fn run_with_tools(
             };
             broadcast(&state, "chat", payload, BroadcastOpts::default()).await;
         }
+        latest_reasoning
     });
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
@@ -3988,12 +4264,10 @@ async fn run_with_tools(
         Some(chat_history)
     };
 
-    // Inject session key, sandbox mode, and accept-language into tool call params so tools can
+    // Inject session key and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    // The browser tool uses _sandbox to determine whether to run in a container.
     let mut tool_context = serde_json::json!({
         "_session_key": session_key,
-        "_sandbox": session_is_sandboxed,
     });
     if let Some(lang) = accept_language.as_deref() {
         tool_context["_accept_language"] = serde_json::json!(lang);
@@ -4104,9 +4378,17 @@ async fn run_with_tools(
     // Ensure all runner events (including deltas) are broadcast in order before
     // emitting terminal final/error frames.
     drop(on_event);
-    if let Err(e) = event_forwarder.await {
-        warn!(run_id, error = %e, "runner event forwarder task failed");
-    }
+    let reasoning_text = match event_forwarder.await {
+        Ok(reasoning) => reasoning,
+        Err(e) => {
+            warn!(run_id, error = %e, "runner event forwarder task failed");
+            String::new()
+        },
+    };
+    let reasoning = {
+        let trimmed = reasoning_text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
 
     match result {
         Ok(result) => {
@@ -4126,22 +4408,35 @@ async fn run_with_tools(
             let assistant_message_index = user_message_index + 1;
 
             // Generate & persist TTS audio for voice-medium web UI replies.
+            let mut audio_warning: Option<String> = None;
             let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                if let Some(bytes) = generate_tts_audio(state, session_key, &display_text).await {
-                    let filename = format!("{run_id}.ogg");
-                    if let Some(store) = session_store {
-                        match store.save_media(session_key, &filename, &bytes).await {
-                            Ok(path) => Some(path),
-                            Err(e) => {
-                                warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                None
-                            },
+                match generate_tts_audio(state, session_key, &display_text).await {
+                    Ok(bytes) => {
+                        let filename = format!("{run_id}.ogg");
+                        if let Some(store) = session_store {
+                            match store.save_media(session_key, &filename, &bytes).await {
+                                Ok(path) => Some(path),
+                                Err(e) => {
+                                    let warning =
+                                        format!("TTS audio generated but failed to save: {e}");
+                                    warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                    audio_warning = Some(warning);
+                                    None
+                                },
+                            }
+                        } else {
+                            audio_warning = Some(
+                                "TTS audio generated but session media storage is unavailable"
+                                    .to_string(),
+                            );
+                            None
                         }
-                    } else {
+                    },
+                    Err(error) => {
+                        warn!(run_id, error = %error, "voice reply generation skipped");
+                        audio_warning = Some(error);
                         None
-                    }
-                } else {
-                    None
+                    },
                 }
             } else {
                 None
@@ -4161,6 +4456,8 @@ async fn run_with_tools(
                 iterations: Some(result.iterations),
                 tool_calls_made: Some(result.tool_calls_made),
                 audio: audio_path.clone(),
+                audio_warning,
+                reasoning: reasoning.clone(),
                 seq: client_seq,
             };
             #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4177,12 +4474,13 @@ async fn run_with_tools(
                 deliver_channel_replies(state, session_key, &display_text, desired_reply_medium)
                     .await;
             }
-            Some((
-                display_text,
-                result.usage.input_tokens,
-                result.usage.output_tokens,
+            Some(AssistantTurnOutput {
+                text: display_text,
+                input_tokens: result.usage.input_tokens,
+                output_tokens: result.usage.output_tokens,
                 audio_path,
-            ))
+                reasoning,
+            })
         },
         Err(e) => {
             let error_str = e.to_string();
@@ -4240,7 +4538,10 @@ async fn compact_session(
             // Tool events not expected in summarization stream.
             StreamEvent::ToolCallStart { .. }
             | StreamEvent::ToolCallArgumentsDelta { .. }
-            | StreamEvent::ToolCallComplete { .. } => {},
+            | StreamEvent::ToolCallComplete { .. }
+            // Ignore provider reasoning blocks; summary body should only
+            // include final answer text.
+            | StreamEvent::ReasoningDelta(_) => {},
         }
     }
 
@@ -4256,6 +4557,7 @@ async fn compact_session(
         input_tokens: None,
         output_tokens: None,
         tool_calls: None,
+        reasoning: None,
         audio: None,
         seq: None,
         run_id: None,
@@ -4289,7 +4591,7 @@ async fn run_streaming(
     runtime_context: Option<&PromptRuntimeContext>,
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
-) -> Option<(String, u32, u32, Option<String>)> {
+) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
@@ -4300,6 +4602,7 @@ async fn run_streaming(
         persona.agents_text.as_deref(),
         persona.tools_text.as_deref(),
         runtime_context,
+        persona.memory_text.as_deref(),
     );
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
@@ -4322,6 +4625,7 @@ async fn run_streaming(
 
     let mut stream = provider.stream(messages);
     let mut accumulated = String::new();
+    let mut accumulated_reasoning = String::new();
 
     while let Some(event) = stream.next().await {
         match event {
@@ -4335,6 +4639,21 @@ async fn run_streaming(
                         "sessionKey": session_key,
                         "state": "delta",
                         "text": delta,
+                    }),
+                    BroadcastOpts::default(),
+                )
+                .await;
+            },
+            StreamEvent::ReasoningDelta(delta) => {
+                accumulated_reasoning.push_str(&delta);
+                broadcast(
+                    state,
+                    "chat",
+                    serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": session_key,
+                        "state": "thinking_text",
+                        "text": accumulated_reasoning.clone(),
                     }),
                     BroadcastOpts::default(),
                 )
@@ -4386,6 +4705,10 @@ async fn run_streaming(
                 }
 
                 let is_silent = accumulated.trim().is_empty();
+                let reasoning = {
+                    let trimmed = accumulated_reasoning.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                };
 
                 info!(
                     run_id,
@@ -4398,23 +4721,35 @@ async fn run_streaming(
                 let assistant_message_index = user_message_index + 1;
 
                 // Generate & persist TTS audio for voice-medium web UI replies.
+                let mut audio_warning: Option<String> = None;
                 let audio_path = if !is_silent && desired_reply_medium == ReplyMedium::Voice {
-                    if let Some(bytes) = generate_tts_audio(state, session_key, &accumulated).await
-                    {
-                        let filename = format!("{run_id}.ogg");
-                        if let Some(store) = session_store {
-                            match store.save_media(session_key, &filename, &bytes).await {
-                                Ok(path) => Some(path),
-                                Err(e) => {
-                                    warn!(run_id, error = %e, "failed to save TTS audio to media dir");
-                                    None
-                                },
+                    match generate_tts_audio(state, session_key, &accumulated).await {
+                        Ok(bytes) => {
+                            let filename = format!("{run_id}.ogg");
+                            if let Some(store) = session_store {
+                                match store.save_media(session_key, &filename, &bytes).await {
+                                    Ok(path) => Some(path),
+                                    Err(e) => {
+                                        let warning =
+                                            format!("TTS audio generated but failed to save: {e}");
+                                        warn!(run_id, error = %warning, "failed to save TTS audio to media dir");
+                                        audio_warning = Some(warning);
+                                        None
+                                    },
+                                }
+                            } else {
+                                audio_warning = Some(
+                                    "TTS audio generated but session media storage is unavailable"
+                                        .to_string(),
+                                );
+                                None
                             }
-                        } else {
+                        },
+                        Err(error) => {
+                            warn!(run_id, error = %error, "voice reply generation skipped");
+                            audio_warning = Some(error);
                             None
-                        }
-                    } else {
-                        None
+                        },
                     }
                 } else {
                     None
@@ -4434,6 +4769,8 @@ async fn run_streaming(
                     iterations: None,
                     tool_calls_made: None,
                     audio: audio_path.clone(),
+                    audio_warning,
+                    reasoning: reasoning.clone(),
                     seq: client_seq,
                 };
                 #[allow(clippy::unwrap_used)] // serializing known-valid struct
@@ -4450,12 +4787,13 @@ async fn run_streaming(
                     deliver_channel_replies(state, session_key, &accumulated, desired_reply_medium)
                         .await;
                 }
-                return Some((
-                    accumulated,
-                    usage.input_tokens,
-                    usage.output_tokens,
+                return Some(AssistantTurnOutput {
+                    text: accumulated,
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
                     audio_path,
-                ));
+                    reasoning,
+                });
             },
             StreamEvent::Error(msg) => {
                 warn!(run_id, error = %msg, "chat stream error");
@@ -4796,17 +5134,27 @@ async fn generate_tts_audio(
     state: &Arc<GatewayState>,
     session_key: &str,
     text: &str,
-) -> Option<Vec<u8>> {
+) -> Result<Vec<u8>, String> {
     use base64::Engine;
 
-    let tts_status = state.services.tts.status().await.ok()?;
-    let status: TtsStatusResponse = serde_json::from_value(tts_status).ok()?;
+    let tts_status = state
+        .services
+        .tts
+        .status()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status: TtsStatusResponse =
+        serde_json::from_value(tts_status).map_err(|_| "invalid tts.status response")?;
     if !status.enabled {
-        return None;
+        return Err("TTS is disabled or not configured".to_string());
     }
 
     // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("response has no speakable text".to_string());
+    }
 
     let session_override = {
         state
@@ -4819,24 +5167,27 @@ async fn generate_tts_audio(
     };
 
     let request = TtsConvertRequest {
-        text: &text,
+        text,
         format: "ogg",
         provider: session_override.as_ref().and_then(|o| o.provider.clone()),
         voice_id: session_override.as_ref().and_then(|o| o.voice_id.clone()),
         model: session_override.as_ref().and_then(|o| o.model.clone()),
     };
 
+    let request_value = serde_json::to_value(request)
+        .map_err(|_| "failed to build tts.convert request".to_string())?;
     let tts_result = state
         .services
         .tts
-        .convert(serde_json::to_value(request).ok()?)
+        .convert(request_value)
         .await
-        .ok()?;
+        .map_err(|e| e.to_string())?;
 
-    let response: TtsConvertResponse = serde_json::from_value(tts_result).ok()?;
+    let response: TtsConvertResponse =
+        serde_json::from_value(tts_result).map_err(|_| "invalid tts.convert response")?;
     base64::engine::general_purpose::STANDARD
         .decode(&response.audio)
-        .ok()
+        .map_err(|_| "invalid base64 audio returned by TTS provider".to_string())
 }
 
 async fn build_tts_payload(
@@ -5219,6 +5570,31 @@ mod tests {
         delay: Duration,
     }
 
+    #[test]
+    fn is_safe_user_audio_filename_allows_sanitized_names() {
+        assert!(is_safe_user_audio_filename("voice-123.webm"));
+        assert!(is_safe_user_audio_filename("recording_1.ogg"));
+    }
+
+    #[test]
+    fn user_audio_path_from_params_builds_session_scoped_media_path() {
+        let params = serde_json::json!({
+            "_audio_filename": "voice-123.webm",
+        });
+        assert_eq!(
+            user_audio_path_from_params(&params, "session:abc"),
+            Some("media/session_abc/voice-123.webm".to_string())
+        );
+    }
+
+    #[test]
+    fn user_audio_path_from_params_rejects_invalid_filename() {
+        let params = serde_json::json!({
+            "_audio_filename": "../secret.webm",
+        });
+        assert!(user_audio_path_from_params(&params, "main").is_none());
+    }
+
     #[async_trait]
     impl moltis_channels::plugin::ChannelOutbound for MockChannelOutbound {
         async fn send_text(
@@ -5335,6 +5711,16 @@ mod tests {
         )
     }
 
+    fn make_active_run_maps() -> (
+        Arc<RwLock<HashMap<String, AbortHandle>>>,
+        Arc<RwLock<HashMap<String, String>>>,
+    ) {
+        (
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
     #[tokio::test]
     async fn same_session_runs_are_serialized() {
         let locks = make_session_locks();
@@ -5403,6 +5789,72 @@ mod tests {
         .await
         .expect("permit should be available after abort")
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_run_handle_resolves_run_from_session_key() {
+        let (active_runs, active_runs_by_session) = make_active_run_maps();
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        active_runs
+            .write()
+            .await
+            .insert("run-a".to_string(), task.abort_handle());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("main".to_string(), "run-a".to_string());
+
+        let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
+            &active_runs,
+            &active_runs_by_session,
+            None,
+            Some("main"),
+        )
+        .await;
+        assert_eq!(resolved_run_id.as_deref(), Some("run-a"));
+        assert!(aborted);
+        assert!(active_runs.read().await.is_empty());
+        assert!(active_runs_by_session.read().await.is_empty());
+
+        let err = task.await.expect_err("task should be cancelled");
+        assert!(err.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn abort_run_handle_by_run_id_clears_session_lookup() {
+        let (active_runs, active_runs_by_session) = make_active_run_maps();
+
+        let task = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        active_runs
+            .write()
+            .await
+            .insert("run-b".to_string(), task.abort_handle());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("main".to_string(), "run-b".to_string());
+
+        let (resolved_run_id, aborted) = LiveChatService::abort_run_handle(
+            &active_runs,
+            &active_runs_by_session,
+            Some("run-b"),
+            None,
+        )
+        .await;
+        assert_eq!(resolved_run_id.as_deref(), Some("run-b"));
+        assert!(aborted);
+        assert!(active_runs.read().await.is_empty());
+        assert!(active_runs_by_session.read().await.is_empty());
+
+        let err = task.await.expect_err("task should be cancelled");
+        assert!(err.is_cancelled());
     }
 
     #[tokio::test]
@@ -6293,6 +6745,74 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown model"));
+    }
+
+    #[tokio::test]
+    async fn model_test_unknown_model_includes_suggestion() {
+        let mut registry = ProviderRegistry::empty();
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5.2-codex".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5.2 Codex".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5.2-codex".to_string(),
+            }),
+        );
+        registry.register(
+            moltis_agents::providers::ModelInfo {
+                id: "openai::gpt-5".to_string(),
+                provider: "openai".to_string(),
+                display_name: "GPT 5".to_string(),
+                created_at: None,
+            },
+            Arc::new(StaticProvider {
+                name: "openai".to_string(),
+                id: "openai::gpt-5".to_string(),
+            }),
+        );
+
+        let service = LiveModelService::new(
+            Arc::new(RwLock::new(registry)),
+            Arc::new(RwLock::new(DisabledModelsStore::default())),
+            vec![],
+        );
+        let result = service
+            .test(serde_json::json!({"modelId": "openai::gpt-5.2"}))
+            .await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("unknown model: openai::gpt-5.2"));
+        assert!(error.contains("did you mean"));
+        assert!(error.contains("openai::gpt-5.2-codex"));
+    }
+
+    #[test]
+    fn suggest_model_ids_prefers_provider_and_similarity() {
+        let available = vec![
+            "openai::gpt-5.2-codex".to_string(),
+            "openai::gpt-5".to_string(),
+            "openai-codex::gpt-5.2-codex".to_string(),
+            "anthropic::claude-sonnet-4".to_string(),
+        ];
+
+        let suggestions = suggest_model_ids("openai::gpt-5.2", &available, 3);
+
+        assert!(!suggestions.is_empty());
+        assert!(
+            suggestions.iter().any(|id| id == "openai::gpt-5.2-codex"),
+            "close provider-prefixed match should be included"
+        );
+        assert!(
+            suggestions
+                .iter()
+                .all(|id| id != "anthropic::claude-sonnet-4"),
+            "unrelated models should not be suggested"
+        );
     }
 
     #[tokio::test]

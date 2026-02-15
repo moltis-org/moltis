@@ -19,6 +19,7 @@
 - [LLM Providers](providers.md)
 - [MCP Servers](mcp.md)
 - [Memory](memory.md)
+  - [Moltis vs OpenClaw](memory-comparison.md)
 - [Hooks](hooks.md)
 - [Local LLMs](local-llm.md)
 - [Sandbox](sandbox.md)

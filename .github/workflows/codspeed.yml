@@ -54,7 +54,7 @@ jobs:
         run: cargo codspeed build -p benchmarks --bench boot
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@37e4be5af911eb58190ab54b9cd1d60848a58985 # v4
+        uses: CodSpeedHQ/action@4deb3275dd364fb96fb074c953133d29ec96f80f # v4
         with:
           mode: simulation
           run: cargo codspeed run

@@ -137,7 +137,7 @@ impl LlmProvider for GenaiProvider {
                     }
                     Ok(ChatStreamEvent::ReasoningChunk(chunk)) => {
                         if !chunk.content.is_empty() {
-                            yield StreamEvent::Delta(chunk.content);
+                            yield StreamEvent::ReasoningDelta(chunk.content);
                         }
                     }
                     Ok(ChatStreamEvent::End(end)) => {

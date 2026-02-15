@@ -175,7 +175,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: amd64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             os: ubuntu-24.04-arm
@@ -201,10 +201,29 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Sync Cargo workspace version to release version
+      - name: Verify Cargo workspace version matches release version
         env:
           VERSION: ${{ steps.release_version.outputs.version }}
-        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
+        run: |
+          CARGO_VERSION=$(awk '
+            $0 == "[workspace.package]" { in_section = 1; next }
+            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
+            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
+              if (match($0, /"[^"]+"/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+                exit
+              }
+            }
+          ' Cargo.toml)
+          if [[ -z "$CARGO_VERSION" ]]; then
+            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
+            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -252,7 +271,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
             os: ubuntu-24.04-arm
@@ -278,10 +297,29 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Sync Cargo workspace version to release version
+      - name: Verify Cargo workspace version matches release version
         env:
           VERSION: ${{ steps.release_version.outputs.version }}
-        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
+        run: |
+          CARGO_VERSION=$(awk '
+            $0 == "[workspace.package]" { in_section = 1; next }
+            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
+            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
+              if (match($0, /"[^"]+"/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+                exit
+              }
+            }
+          ' Cargo.toml)
+          if [[ -z "$CARGO_VERSION" ]]; then
+            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
+            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -329,7 +367,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
             os: ubuntu-24.04-arm
@@ -418,7 +456,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             arch: x86_64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             appimagetool_arch: x86_64
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
@@ -554,7 +592,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - uses: snapcore/action-build@b391f430cb2650fd359ed4d2cfe88b2c481800e0 # v1
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: build-snap
 
       - name: Sign with Sigstore and generate checksums
@@ -583,7 +621,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
 
@@ -646,6 +684,79 @@ jobs:
             *.tar.gz.sig
             *.tar.gz.crt
 
+  build-windows-exe:
+    needs: [clippy, test, e2e]
+    runs-on: windows-latest
+    name: Build .exe (x86_64)
+    permissions:
+      contents: read
+      id-token: write # Required for Sigstore keyless signing
+    env:
+      BUILD_TARGET: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
+        with:
+          toolchain: stable
+          targets: ${{ env.BUILD_TARGET }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Configure Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $strawberryPerl = "C:\Strawberry\perl\bin\perl.exe"
+          if (-not (Test-Path $strawberryPerl)) {
+            Write-Error "Strawberry Perl not found at $strawberryPerl"
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_SRC_PERL=$strawberryPerl"
+          Add-Content -Path $env:GITHUB_ENV -Value "PERL=$strawberryPerl"
+          & $strawberryPerl -v
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --target "$BUILD_TARGET"
+
+      - name: Determine package version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Package .exe
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp "target/$BUILD_TARGET/release/moltis.exe" "moltis-${VERSION}-${BUILD_TARGET}.exe"
+
+      - name: Sign with Sigstore and generate checksums
+        uses: ./.github/actions/sign-artifacts
+        with:
+          files: moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: moltis-${{ env.BUILD_TARGET }}.exe
+          path: |
+            *.exe
+            *.exe.sha256
+            *.exe.sha512
+            *.exe.sig
+            *.exe.crt
+
   build-docker:
     needs: [clippy, test, e2e]
     strategy:
@@ -683,10 +794,29 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Sync Cargo workspace version to release version
+      - name: Verify Cargo workspace version matches release version
         env:
           VERSION: ${{ steps.release_version.outputs.version }}
-        run: sed -Ei "s/^version[[:space:]]*=.*/version    = \"${VERSION}\"/" Cargo.toml
+        run: |
+          CARGO_VERSION=$(awk '
+            $0 == "[workspace.package]" { in_section = 1; next }
+            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
+            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
+              if (match($0, /"[^"]+"/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+                exit
+              }
+            }
+          ' Cargo.toml)
+          if [[ -z "$CARGO_VERSION" ]]; then
+            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
+            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
@@ -836,6 +966,7 @@ jobs:
       - build-appimage
       - build-snap
       - build-homebrew-binaries
+      - build-windows-exe
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     name: Upload release assets
@@ -860,7 +991,7 @@ jobs:
           mkdir -p release-files
           find artifacts -type f \( \
             -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
-            -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' \
+            -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' -o -name '*.exe' \
             -o -name '*.sha256' -o -name '*.sha512' -o -name '*.sig' -o -name '*.crt' \
           \) -exec cp {} release-files/ \;
           echo "Files to upload:"
