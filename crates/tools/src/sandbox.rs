@@ -546,6 +546,26 @@ fn is_sandbox_image_tag(tag: &str) -> bool {
     repo.ends_with("-sandbox")
 }
 
+/// Return the deterministic image tag for the current sandbox config when the
+/// requested image points to a local pre-built sandbox repository.
+///
+/// This allows recover-on-demand behavior when users delete local pre-built
+/// images from the UI while Moltis is still running.
+fn rebuildable_sandbox_image_tag(
+    requested_image: &str,
+    image_repo: &str,
+    base_image: &str,
+    packages: &[String],
+) -> Option<String> {
+    if packages.is_empty() {
+        return None;
+    }
+    if !requested_image.starts_with(&format!("{image_repo}:")) {
+        return None;
+    }
+    Some(sandbox_image_tag(image_repo, base_image, packages))
+}
+
 /// Check whether a container image exists locally.
 /// `cli` is the container CLI binary (e.g. `"docker"` or `"container"`).
 async fn sandbox_image_exists(cli: &str, tag: &str) -> bool {
@@ -1189,6 +1209,41 @@ impl DockerSandbox {
             WorkspaceMount::None => Vec::new(),
         }
     }
+
+    async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
+        if sandbox_image_exists("docker", requested_image).await {
+            return Ok(requested_image.to_string());
+        }
+
+        let base_image = self.image().to_string();
+        let packages = self.config.packages.clone();
+        let Some(rebuild_tag) = rebuildable_sandbox_image_tag(
+            requested_image,
+            self.image_repo(),
+            &base_image,
+            &packages,
+        ) else {
+            return Ok(requested_image.to_string());
+        };
+
+        if requested_image == rebuild_tag {
+            info!(
+                image = requested_image,
+                "sandbox image missing locally, rebuilding on demand"
+            );
+        } else {
+            warn!(
+                requested = requested_image,
+                rebuilt = %rebuild_tag,
+                "requested sandbox image missing locally, using deterministic tag from current config"
+            );
+        }
+
+        let Some(result) = self.build_image(&base_image, &packages).await? else {
+            return Ok(requested_image.to_string());
+        };
+        Ok(result.tag)
+    }
 }
 
 #[async_trait]
@@ -1232,8 +1287,9 @@ impl Sandbox for DockerSandbox {
         args.extend(self.resource_args());
         args.extend(self.workspace_args());
 
-        let image = image_override.unwrap_or_else(|| self.image());
-        args.push(image.to_string());
+        let requested_image = image_override.unwrap_or_else(|| self.image());
+        let image = self.resolve_local_image(requested_image).await?;
+        args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
         let output = tokio::process::Command::new("docker")
@@ -1584,6 +1640,41 @@ impl AppleContainerSandbox {
 
     fn image_repo(&self) -> &str {
         self.container_prefix()
+    }
+
+    async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
+        if sandbox_image_exists("container", requested_image).await {
+            return Ok(requested_image.to_string());
+        }
+
+        let base_image = self.image().to_string();
+        let packages = self.config.packages.clone();
+        let Some(rebuild_tag) = rebuildable_sandbox_image_tag(
+            requested_image,
+            self.image_repo(),
+            &base_image,
+            &packages,
+        ) else {
+            return Ok(requested_image.to_string());
+        };
+
+        if requested_image == rebuild_tag {
+            info!(
+                image = requested_image,
+                "apple sandbox image missing locally, rebuilding on demand"
+            );
+        } else {
+            warn!(
+                requested = requested_image,
+                rebuilt = %rebuild_tag,
+                "requested apple sandbox image missing locally, using deterministic tag from current config"
+            );
+        }
+
+        let Some(result) = self.build_image(&base_image, &packages).await? else {
+            return Ok(requested_image.to_string());
+        };
+        Ok(result.tag)
     }
 
     /// Check whether the `container` CLI is available.
@@ -2257,7 +2348,8 @@ impl Sandbox for AppleContainerSandbox {
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         let mut name = self.container_name(id).await;
-        let image = image_override.unwrap_or_else(|| self.image());
+        let requested_image = image_override.unwrap_or_else(|| self.image());
+        let image = self.resolve_local_image(requested_image).await?;
         let tz = self.config.timezone.as_deref();
 
         const MAX_ATTEMPTS: usize = 3;
@@ -2314,8 +2406,8 @@ impl Sandbox for AppleContainerSandbox {
             }
 
             // Phase 2: Create a new container.
-            info!(name, image, attempt, "creating apple container");
-            match Self::run_container(&name, image, tz).await {
+            info!(name, image = %image, attempt, "creating apple container");
+            match Self::run_container(&name, &image, tz).await {
                 Ok(()) => {},
                 Err(CreateError::AlreadyExists) => {
                     warn!(
@@ -2370,7 +2462,7 @@ impl Sandbox for AppleContainerSandbox {
             // Phase 3: Wait for exec readiness (do NOT rotate name on failure).
             match Self::wait_for_container_exec_ready(&name).await {
                 Ok(()) => {
-                    info!(name, image, "apple container created and running");
+                    info!(name, image = %image, "apple container created and running");
 
                     // Skip provisioning for pre-built sandbox images.
                     let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
@@ -3065,14 +3157,10 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(args, vec![
-            "--memory",
-            "256M",
-            "--cpus",
-            "0.5",
-            "--pids-limit",
-            "50"
-        ]);
+        assert_eq!(
+            args,
+            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
+        );
     }
 
     #[test]
@@ -3375,6 +3463,47 @@ mod tests {
         let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p1);
         let t2 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &p2);
         assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn test_rebuildable_sandbox_image_tag_requires_packages() {
+        let tag = rebuildable_sandbox_image_tag(
+            "moltis-main-sandbox:deadbeef",
+            "moltis-main-sandbox",
+            "ubuntu:25.10",
+            &[],
+        );
+        assert!(tag.is_none());
+    }
+
+    #[test]
+    fn test_rebuildable_sandbox_image_tag_requires_local_repo_prefix() {
+        let tag = rebuildable_sandbox_image_tag(
+            "ubuntu:25.10",
+            "moltis-main-sandbox",
+            "ubuntu:25.10",
+            &["curl".into()],
+        );
+        assert!(tag.is_none());
+    }
+
+    #[test]
+    fn test_rebuildable_sandbox_image_tag_returns_deterministic_tag() {
+        let packages = vec!["curl".into(), "git".into()];
+        let tag = rebuildable_sandbox_image_tag(
+            "moltis-main-sandbox:oldtag",
+            "moltis-main-sandbox",
+            "ubuntu:25.10",
+            &packages,
+        );
+        assert_eq!(
+            tag,
+            Some(sandbox_image_tag(
+                "moltis-main-sandbox",
+                "ubuntu:25.10",
+                &packages
+            ))
+        );
     }
 
     #[tokio::test]
@@ -3707,28 +3836,30 @@ mod tests {
 
     #[test]
     fn test_host_package_name_candidates_t64_to_base() {
-        assert_eq!(host_package_name_candidates("libgtk-3-0t64"), vec![
-            "libgtk-3-0t64".to_string(),
-            "libgtk-3-0".to_string()
-        ]);
+        assert_eq!(
+            host_package_name_candidates("libgtk-3-0t64"),
+            vec!["libgtk-3-0t64".to_string(), "libgtk-3-0".to_string()]
+        );
     }
 
     #[test]
     fn test_host_package_name_candidates_base_to_t64_for_soname() {
-        assert_eq!(host_package_name_candidates("libcups2"), vec![
-            "libcups2".to_string(),
-            "libcups2t64".to_string()
-        ]);
+        assert_eq!(
+            host_package_name_candidates("libcups2"),
+            vec!["libcups2".to_string(), "libcups2t64".to_string()]
+        );
     }
 
     #[test]
     fn test_host_package_name_candidates_non_library_stays_single() {
-        assert_eq!(host_package_name_candidates("curl"), vec![
-            "curl".to_string()
-        ]);
-        assert_eq!(host_package_name_candidates("libreoffice-core"), vec![
-            "libreoffice-core".to_string()
-        ]);
+        assert_eq!(
+            host_package_name_candidates("curl"),
+            vec!["curl".to_string()]
+        );
+        assert_eq!(
+            host_package_name_candidates("libreoffice-core"),
+            vec!["libreoffice-core".to_string()]
+        );
     }
 
     #[tokio::test]

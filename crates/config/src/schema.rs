@@ -1718,10 +1718,13 @@ OPENROUTER_API_KEY = "sk-or-test"
     #[test]
     fn providers_config_local_alias_maps_local_llm_to_local() {
         let mut config = ProvidersConfig::default();
-        config.providers.insert("local-llm".into(), ProviderEntry {
-            enabled: false,
-            ..ProviderEntry::default()
-        });
+        config.providers.insert(
+            "local-llm".into(),
+            ProviderEntry {
+                enabled: false,
+                ..ProviderEntry::default()
+            },
+        );
 
         assert!(!config.is_enabled("local"));
         assert!(!config.is_enabled("local-llm"));
@@ -1731,14 +1734,20 @@ OPENROUTER_API_KEY = "sk-or-test"
     #[test]
     fn providers_config_local_alias_prefers_exact_key() {
         let mut config = ProvidersConfig::default();
-        config.providers.insert("local".into(), ProviderEntry {
-            enabled: false,
-            ..ProviderEntry::default()
-        });
-        config.providers.insert("local-llm".into(), ProviderEntry {
-            enabled: true,
-            ..ProviderEntry::default()
-        });
+        config.providers.insert(
+            "local".into(),
+            ProviderEntry {
+                enabled: false,
+                ..ProviderEntry::default()
+            },
+        );
+        config.providers.insert(
+            "local-llm".into(),
+            ProviderEntry {
+                enabled: true,
+                ..ProviderEntry::default()
+            },
+        );
 
         assert!(!config.is_enabled("local"));
         assert!(config.is_enabled("local-llm"));
@@ -1770,10 +1779,13 @@ OPENROUTER_API_KEY = "sk-or-test"
             offered: vec!["openai".into()],
             ..ProvidersConfig::default()
         };
-        config.providers.insert("openai".into(), ProviderEntry {
-            enabled: false,
-            ..ProviderEntry::default()
-        });
+        config.providers.insert(
+            "openai".into(),
+            ProviderEntry {
+                enabled: false,
+                ..ProviderEntry::default()
+            },
+        );
         assert!(!config.is_enabled("openai"));
     }
 

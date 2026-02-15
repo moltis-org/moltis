@@ -423,6 +423,39 @@ impl OpenAiProvider {
             || self.base_url.contains("moonshot.cn")
     }
 
+    fn requires_top_level_system_prompt(&self) -> bool {
+        self.model.starts_with("MiniMax-")
+            || self.provider_name.eq_ignore_ascii_case("minimax")
+            || self.base_url.to_ascii_lowercase().contains("minimax")
+    }
+
+    fn prepare_request_messages(
+        &self,
+        messages: Vec<serde_json::Value>,
+    ) -> (Vec<serde_json::Value>, Option<String>) {
+        if !self.requires_top_level_system_prompt() {
+            return (messages, None);
+        }
+
+        let mut system_parts = Vec::new();
+        let mut out = Vec::with_capacity(messages.len());
+
+        for message in messages {
+            if message.get("role").and_then(serde_json::Value::as_str) == Some("system") {
+                if let Some(content) = message.get("content").and_then(serde_json::Value::as_str)
+                    && !content.is_empty()
+                {
+                    system_parts.push(content.to_string());
+                }
+                continue;
+            }
+            out.push(message);
+        }
+
+        let system_prompt = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
+        (out, system_prompt)
+    }
+
     fn serialize_messages_for_request(&self, messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
         let mut remapped_tool_call_ids = HashMap::new();
@@ -526,11 +559,16 @@ impl LlmProvider for OpenAiProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let openai_messages = self.serialize_messages_for_request(messages);
+        let serialized_messages = self.serialize_messages_for_request(messages);
+        let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
         let mut body = serde_json::json!({
             "model": self.model,
             "messages": openai_messages,
         });
+
+        if let Some(system_prompt) = system_prompt {
+            body["system"] = serde_json::Value::String(system_prompt);
+        }
 
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_openai_tools(tools));
@@ -624,13 +662,18 @@ impl LlmProvider for OpenAiProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
-            let openai_messages = self.serialize_messages_for_request(&messages);
+            let serialized_messages = self.serialize_messages_for_request(&messages);
+            let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
             let mut body = serde_json::json!({
                 "model": self.model,
                 "messages": openai_messages,
                 "stream": true,
                 "stream_options": { "include_usage": true },
             });
+
+            if let Some(system_prompt) = system_prompt {
+                body["system"] = serde_json::Value::String(system_prompt);
+            }
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
@@ -800,11 +843,14 @@ mod tests {
             "https://api.moonshot.ai/v1".to_string(),
             "moonshot".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
-            id: "call_1".into(),
-            name: "exec".into(),
-            arguments: serde_json::json!({ "command": "uname -a" }),
-        }])];
+        let messages = vec![ChatMessage::assistant_with_tools(
+            None,
+            vec![ToolCall {
+                id: "call_1".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }],
+        )];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -820,15 +866,37 @@ mod tests {
             "gpt-4o".to_string(),
             "https://api.openai.com/v1".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
-            id: "call_1".into(),
-            name: "exec".into(),
-            arguments: serde_json::json!({ "command": "uname -a" }),
-        }])];
+        let messages = vec![ChatMessage::assistant_with_tools(
+            None,
+            vec![ToolCall {
+                id: "call_1".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }],
+        )];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
         assert!(serialized[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn minimax_serialization_extracts_system_messages() {
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            "https://api.minimax.io/v1".to_string(),
+            "minimax".to_string(),
+        );
+        let serialized = provider.serialize_messages_for_request(&[
+            ChatMessage::system("sys a"),
+            ChatMessage::user("hi"),
+            ChatMessage::system("sys b"),
+        ]);
+        let (history, system_prompt) = provider.prepare_request_messages(serialized);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+        assert_eq!(system_prompt.as_deref(), Some("sys a\n\nsys b"));
     }
 
     #[test]
@@ -840,13 +908,14 @@ mod tests {
         );
         let long_id = "forced-123e4567-e89b-12d3-a456-426614174000";
         let messages = vec![
-            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
-                ToolCall {
+            ChatMessage::assistant_with_tools(
+                Some("running command".to_string()),
+                vec![ToolCall {
                     id: long_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                },
-            ]),
+                }],
+            ),
             ChatMessage::tool(long_id, "ok"),
         ];
 
@@ -871,13 +940,14 @@ mod tests {
         );
         let short_id = "call_abc";
         let messages = vec![
-            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
-                ToolCall {
+            ChatMessage::assistant_with_tools(
+                Some("running command".to_string()),
+                vec![ToolCall {
                     id: short_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                },
-            ]),
+                }],
+            ),
             ChatMessage::tool(short_id, "ok"),
         ];
 
@@ -902,11 +972,14 @@ mod tests {
         );
         let messages = vec![
             ChatMessage::user("run uname"),
-            ChatMessage::assistant_with_tools(None, vec![ToolCall {
-                id: "exec:0".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }]),
+            ChatMessage::assistant_with_tools(
+                None,
+                vec![ToolCall {
+                    id: "exec:0".into(),
+                    name: "exec".into(),
+                    arguments: serde_json::json!({ "command": "uname -a" }),
+                }],
+            ),
             ChatMessage::tool("exec:0", "Linux host 6.0"),
         ];
 
@@ -923,6 +996,42 @@ mod tests {
         assert_eq!(history[1]["content"], "");
         assert_eq!(history[1]["reasoning_content"], "");
         assert!(history[1]["tool_calls"].is_array());
+    }
+
+    #[tokio::test]
+    async fn minimax_stream_request_uses_top_level_system_prompt() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n\
+                   data: [DONE]\n\n";
+        let (base_url, captured) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new_with_name(
+            Secret::new("test-key".to_string()),
+            "MiniMax-M2.1".to_string(),
+            base_url,
+            "minimax".to_string(),
+        );
+        let messages = vec![
+            ChatMessage::system("stay deterministic"),
+            ChatMessage::user("ping"),
+        ];
+
+        let mut stream = provider.stream_with_tools(messages, vec![]);
+        while stream.next().await.is_some() {}
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 1);
+        let body = reqs[0].body.as_ref().expect("request should have a body");
+        assert_eq!(body["system"], "stay deterministic");
+
+        let history = body["messages"]
+            .as_array()
+            .expect("messages should be an array");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["role"], "user");
+        assert!(
+            history
+                .iter()
+                .all(|entry| entry["role"].as_str() != Some("system"))
+        );
     }
 
     // ── Regression: stream_with_tools must send tools in the API body ────
@@ -1150,13 +1259,16 @@ mod tests {
         let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
         // Only chat-capable models pass; non-chat (image, TTS, whisper,
         // embedding, moderation, audio, realtime, transcribe) are excluded.
-        assert_eq!(ids, vec![
-            "gpt-5.2",
-            "gpt-5.2-2025-12-11",
-            "o4-mini-deep-research",
-            "kimi-k2.5",
-            "moonshot-v1-8k",
-        ]);
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-5.2",
+                "gpt-5.2-2025-12-11",
+                "o4-mini-deep-research",
+                "kimi-k2.5",
+                "moonshot-v1-8k",
+            ]
+        );
     }
 
     #[test]
@@ -1214,10 +1326,13 @@ mod tests {
     #[test]
     fn merge_with_fallback_uses_fallback_when_discovery_is_empty() {
         use crate::providers::DiscoveredModel;
-        let merged = crate::providers::merge_discovered_with_fallback_catalog(Vec::new(), vec![
-            DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
-            DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
-        ]);
+        let merged = crate::providers::merge_discovered_with_fallback_catalog(
+            Vec::new(),
+            vec![
+                DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
+                DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
+            ],
+        );
         let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["gpt-5.2", "gpt-5-mini"]);
     }
