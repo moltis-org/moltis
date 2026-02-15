@@ -1263,12 +1263,30 @@ impl MethodRegistry {
             "sessions.list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let mut result = ctx
+                        .state
                         .services
                         .session
                         .list()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+
+                    // Inject replying state so the frontend can restore the
+                    // thinking indicator after a full page reload.
+                    let active_keys = ctx.state.chat().await.active_session_keys().await;
+                    if let Some(arr) = result.as_array_mut() {
+                        for entry in arr {
+                            let key_str =
+                                entry.get("key").and_then(|v| v.as_str()).map(String::from);
+                            if let (Some(key), Some(obj)) = (key_str, entry.as_object_mut()) {
+                                obj.insert(
+                                    "replying".to_string(),
+                                    serde_json::Value::Bool(active_keys.iter().any(|k| k == &key)),
+                                );
+                            }
+                        }
+                    }
+                    Ok(result)
                 })
             }),
         );
@@ -2307,6 +2325,15 @@ impl MethodRegistry {
                                 },
                             }
                         }
+                    }
+
+                    // Inject replying state so frontend restores thinking
+                    // indicator after page reload.
+                    let active_keys = ctx.state.chat().await.active_session_keys().await;
+                    let replying = active_keys.iter().any(|k| k == key);
+                    let mut result = result;
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
                     }
 
                     Ok(result)

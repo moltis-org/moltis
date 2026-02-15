@@ -145,12 +145,12 @@ export function setAll(serverSessions) {
 			prev.update(data);
 			// Preserve client-side flags from old patched objects
 			if (data._localUnread) prev.localUnread.value = true;
-			if (data._replying) prev.replying.value = true;
+			if (data._replying || data.replying) prev.replying.value = true;
 			result.push(prev);
 		} else {
 			var session = new Session(data);
 			if (data._localUnread) session.localUnread.value = true;
-			if (data._replying) session.replying.value = true;
+			if (data._replying || data.replying) session.replying.value = true;
 			result.push(session);
 		}
 	}

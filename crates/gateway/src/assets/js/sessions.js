@@ -680,6 +680,11 @@ export function switchSession(key, searchContext, projectId) {
 				sEntry.lastSeenMessageCount = history.length;
 				sEntry._localUnread = false;
 			}
+			// Restore server-side replying state so thinking dots appear
+			// after a full page reload while the model is still generating.
+			if (res.payload.replying) {
+				setSessionReplying(key, true);
+			}
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
 			postHistoryLoadActions(key, searchContext, msgEls);

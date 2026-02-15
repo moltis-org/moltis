@@ -3766,6 +3766,15 @@ impl ChatService for LiveChatService {
             "totalChars": total_chars,
         }))
     }
+
+    async fn active_session_keys(&self) -> Vec<String> {
+        self.active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect()
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -7062,5 +7071,41 @@ mod tests {
             });
 
         assert!(extracted.is_none());
+    }
+
+    // ── active_session_keys tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn active_session_keys_empty_when_no_runs() {
+        let (_active_runs, active_runs_by_session) = make_active_run_maps();
+        let keys: Vec<String> = active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect();
+        assert!(keys.is_empty());
+    }
+
+    #[tokio::test]
+    async fn active_session_keys_returns_running_sessions() {
+        let (_active_runs, active_runs_by_session) = make_active_run_maps();
+        active_runs_by_session
+            .write()
+            .await
+            .insert("session-a".to_string(), "run-1".to_string());
+        active_runs_by_session
+            .write()
+            .await
+            .insert("session-b".to_string(), "run-2".to_string());
+
+        let mut keys: Vec<String> = active_runs_by_session
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec!["session-a", "session-b"]);
     }
 }

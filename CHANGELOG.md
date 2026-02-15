@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Thinking indicator lost on reload**: reloading the page while the model
+  was generating no longer loses the "thinking" dots. The backend now includes
+  `replying` state in `sessions.list` and `sessions.switch` RPC responses so
+  the frontend can restore the indicator after a full page reload.
 - **Apple Container recovery**: simplify container recovery to a single flat
   retry loop (3 attempts max, down from up to 24). Name rotation now only
   triggers on `AlreadyExists` errors, preventing orphan containers. Added
