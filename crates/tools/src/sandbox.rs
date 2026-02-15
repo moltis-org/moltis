@@ -790,6 +790,39 @@ pub struct RunningContainer {
     pub addr: Option<String>,
 }
 
+/// Containers that failed removal but are no longer truly present in the
+/// runtime. These ghosts appear in `container list` after a failed
+/// `container rm -f` and cannot be deleted until the daemon restarts.
+/// Filtering them out of list results gives the UI a consistent view.
+static ZOMBIE_CONTAINERS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashSet::new()));
+
+fn mark_zombie(name: &str) {
+    if let Ok(mut set) = ZOMBIE_CONTAINERS.write() {
+        set.insert(name.to_string());
+    }
+}
+
+fn unmark_zombie(name: &str) {
+    if let Ok(mut set) = ZOMBIE_CONTAINERS.write() {
+        set.remove(name);
+    }
+}
+
+fn clear_zombies() {
+    if let Ok(mut set) = ZOMBIE_CONTAINERS.write() {
+        set.clear();
+    }
+}
+
+fn is_zombie(name: &str) -> bool {
+    ZOMBIE_CONTAINERS
+        .read()
+        .map(|set| set.contains(name))
+        .unwrap_or(false)
+}
+
 /// List all containers whose name starts with `container_prefix`.
 ///
 /// Queries both Apple Container and Docker backends when available,
@@ -939,6 +972,7 @@ pub async fn list_running_containers(container_prefix: &str) -> Result<Vec<Runni
         }
     }
 
+    containers.retain(|c| !is_zombie(&c.name));
     Ok(containers)
 }
 
@@ -1109,7 +1143,45 @@ pub async fn remove_container(name: &str) -> Result<()> {
         if let Ok(ref o) = output
             && o.status.success()
         {
+            unmark_zombie(name);
             return Ok(());
+        }
+
+        // rm failed — inspect to classify the ghost container.
+        let inspect = tokio::process::Command::new("container")
+            .args(["inspect", name, "--format", "json"])
+            .output()
+            .await;
+        match inspect {
+            Ok(ref ins) if ins.status.success() => {
+                let stdout = String::from_utf8_lossy(&ins.stdout);
+                let status = apple_container_status_from_inspect(&stdout);
+                if status == Some("running") {
+                    // Container is genuinely running — return the rm error.
+                    let stderr = output
+                        .as_ref()
+                        .map(|o| String::from_utf8_lossy(&o.stderr).to_string())
+                        .unwrap_or_default();
+                    anyhow::bail!(
+                        "container rm failed for running container {name}: {}",
+                        stderr.trim()
+                    );
+                }
+                // Stopped/exited/unknown — ghost container, mark as zombie.
+                tracing::warn!(
+                    name,
+                    ?status,
+                    "container rm -f failed for stopped container, marking as zombie"
+                );
+                mark_zombie(name);
+                return Ok(());
+            },
+            _ => {
+                // Inspect failed (not found) — container is already gone,
+                // mark as zombie so it's filtered from stale list results.
+                mark_zombie(name);
+                return Ok(());
+            },
         }
     }
     if is_cli_available("docker") {
@@ -1121,6 +1193,7 @@ pub async fn remove_container(name: &str) -> Result<()> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!("docker rm failed for {name}: {}", stderr.trim());
         }
+        unmark_zombie(name);
         return Ok(());
     }
     anyhow::bail!("no container CLI available to remove {name}")
@@ -1150,6 +1223,7 @@ pub async fn restart_container_daemon() -> Result<()> {
             let stderr = String::from_utf8_lossy(&start.stderr);
             anyhow::bail!("container system start failed: {}", stderr.trim());
         }
+        clear_zombies();
         return Ok(());
     }
     if is_cli_available("docker") {
@@ -2399,7 +2473,10 @@ impl Sandbox for AppleContainerSandbox {
                 ContainerState::Running => {
                     info!(name, "apple container already running");
                     match Self::wait_for_container_exec_ready(&name).await {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            unmark_zombie(&name);
+                            return Ok(());
+                        },
                         Err(error) => {
                             warn!(
                                 name,
@@ -2416,7 +2493,10 @@ impl Sandbox for AppleContainerSandbox {
                     if Self::try_restart_container(&name).await {
                         info!(name, "apple container restarted");
                         match Self::wait_for_container_exec_ready(&name).await {
-                            Ok(()) => return Ok(()),
+                            Ok(()) => {
+                                unmark_zombie(&name);
+                                return Ok(());
+                            },
                             Err(error) => {
                                 warn!(
                                     name,
@@ -2499,6 +2579,7 @@ impl Sandbox for AppleContainerSandbox {
             match Self::wait_for_container_exec_ready(&name).await {
                 Ok(()) => {
                     info!(name, image = %image, "apple container created and running");
+                    unmark_zombie(&name);
 
                     // Skip provisioning for pre-built sandbox images.
                     let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
@@ -2526,6 +2607,7 @@ impl Sandbox for AppleContainerSandbox {
                                         image = %image,
                                         "apple container recovered after readiness restart"
                                     );
+                                    unmark_zombie(&name);
                                     let is_prebuilt =
                                         image.starts_with(&format!("{}:", self.image_repo()));
                                     if !is_prebuilt {
@@ -4137,6 +4219,39 @@ mod tests {
         assert_eq!(json["cpus"], 2);
         assert_eq!(json["memory_mb"], 512);
         assert!(json["addr"].is_null());
+    }
+
+    #[test]
+    fn test_zombie_set_lifecycle() {
+        // Fresh state: nothing is a zombie.
+        assert!(!is_zombie("ghost-1"));
+
+        // Mark as zombie.
+        mark_zombie("ghost-1");
+        assert!(is_zombie("ghost-1"));
+
+        // Marking again is idempotent.
+        mark_zombie("ghost-1");
+        assert!(is_zombie("ghost-1"));
+
+        // A different name is not a zombie.
+        assert!(!is_zombie("ghost-2"));
+
+        // Unmark clears the zombie.
+        unmark_zombie("ghost-1");
+        assert!(!is_zombie("ghost-1"));
+
+        // Unmarking a non-zombie is a no-op.
+        unmark_zombie("ghost-1");
+
+        // Clear removes all zombies.
+        mark_zombie("ghost-a");
+        mark_zombie("ghost-b");
+        assert!(is_zombie("ghost-a"));
+        assert!(is_zombie("ghost-b"));
+        clear_zombies();
+        assert!(!is_zombie("ghost-a"));
+        assert!(!is_zombie("ghost-b"));
     }
 
     #[cfg(target_os = "linux")]

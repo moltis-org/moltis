@@ -23,6 +23,7 @@ var loadingContainers = signal(false);
 var diskUsage = signal(null);
 var cleaningAll = signal(false);
 var restarting = signal(false);
+var containerError = signal("");
 var SANDBOX_DISABLED_HINT =
 	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
 
@@ -150,6 +151,7 @@ function fetchContainers() {
 		.then((r) => (r.ok ? r.json() : { containers: [] }))
 		.then((data) => {
 			containers.value = data.containers || [];
+			containerError.value = "";
 		})
 		.catch(() => {
 			containers.value = [];
@@ -172,10 +174,17 @@ function stopContainer(name) {
 function removeContainer(name) {
 	fetch(`/api/sandbox/containers/${encodeURIComponent(name)}`, { method: "DELETE" })
 		.then((r) => {
-			if (r.ok) fetchContainers();
+			if (!r.ok) {
+				return r.text().then((t) => {
+					containerError.value = `Failed to delete ${name}: ${t || r.statusText}`;
+				});
+			}
 		})
-		.catch(() => {
-			/* ignore */
+		.catch((e) => {
+			containerError.value = `Failed to delete ${name}: ${e.message}`;
+		})
+		.finally(() => {
+			fetchContainers();
 		});
 }
 
@@ -193,32 +202,40 @@ function fetchDiskUsage() {
 function cleanAllContainers() {
 	cleaningAll.value = true;
 	fetch("/api/sandbox/containers/clean", { method: "POST" })
-		.then((r) => (r.ok ? r.json() : null))
-		.then(() => {
-			fetchContainers();
-			fetchDiskUsage();
+		.then((r) => {
+			if (!r.ok) {
+				return r.text().then((t) => {
+					containerError.value = `Failed to clean containers: ${t || r.statusText}`;
+				});
+			}
 		})
-		.catch(() => {
-			/* ignore */
+		.catch((e) => {
+			containerError.value = `Failed to clean containers: ${e.message}`;
 		})
 		.finally(() => {
 			cleaningAll.value = false;
+			fetchContainers();
+			fetchDiskUsage();
 		});
 }
 
 function restartDaemon() {
 	restarting.value = true;
 	fetch("/api/sandbox/daemon/restart", { method: "POST" })
-		.then((r) => (r.ok ? r.json() : null))
-		.then(() => {
-			fetchContainers();
-			fetchDiskUsage();
+		.then((r) => {
+			if (!r.ok) {
+				return r.text().then((t) => {
+					containerError.value = `Failed to restart daemon: ${t || r.statusText}`;
+				});
+			}
 		})
-		.catch(() => {
-			/* ignore */
+		.catch((e) => {
+			containerError.value = `Failed to restart daemon: ${e.message}`;
 		})
 		.finally(() => {
 			restarting.value = false;
+			fetchContainers();
+			fetchDiskUsage();
 		});
 }
 
@@ -344,6 +361,7 @@ function RunningContainersSection() {
 			}
     </div>
     <${DiskUsageBar} />
+    ${containerError.value && html`<div class="alert-error-text mb-2">${containerError.value}</div>`}
     ${loadingContainers.value && list.length === 0 && html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`}
     ${!loadingContainers.value && list.length === 0 && html`<div class="text-xs text-[var(--muted)]" style="padding:4px 0;">No containers found.</div>`}
     ${list.map((c) => html`<${ContainerRow} key=${c.name} container=${c} sandboxAvailable=${sandboxAvailable} />`)}
@@ -601,6 +619,7 @@ export function initImages(container) {
 	defaultImage.value = sandboxInfo.value?.default_image || "";
 	buildStatus.value = "";
 	buildWarning.value = "";
+	containerError.value = "";
 	render(html`<${ImagesPage} />`, container);
 }
 

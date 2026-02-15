@@ -135,3 +135,123 @@ test.describe("Sandboxes page – Running Containers", () => {
 		expect(pageErrors).toEqual([]);
 	});
 });
+
+test.describe("Sandboxes page – Container error handling", () => {
+	test("delete failure shows error message that clears on refresh", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		// Mock container list with one container
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({
+						containers: [
+							{
+								name: "moltis-sandbox-ghost",
+								image: "ubuntu:25.10",
+								state: "stopped",
+								backend: "apple-container",
+								cpus: null,
+								memory_mb: null,
+								started: null,
+								addr: null,
+							},
+						],
+					}),
+				});
+			}
+			return route.continue();
+		});
+
+		// Mock DELETE to return 500
+		await page.route("**/api/sandbox/containers/moltis-sandbox-ghost", (route, request) => {
+			if (request.method() === "DELETE") {
+				return route.fulfill({
+					status: 500,
+					contentType: "text/plain",
+					body: "container rm failed: ghost container",
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+
+		// Click the delete button
+		await page.getByRole("button", { name: "Delete", exact: true }).click();
+
+		// Error message should appear
+		const errorDiv = page.locator(".alert-error-text");
+		await expect(errorDiv).toBeVisible();
+		await expect(errorDiv).toContainText("Failed to delete moltis-sandbox-ghost");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("error clears on successful container refresh", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		var callCount = 0;
+
+		// First call returns a container, subsequent calls return empty
+		await page.route("**/api/sandbox/containers", (route, request) => {
+			if (request.method() === "GET") {
+				callCount++;
+				if (callCount <= 1) {
+					return route.fulfill({
+						status: 200,
+						contentType: "application/json",
+						body: JSON.stringify({
+							containers: [
+								{
+									name: "moltis-sandbox-ghost",
+									image: "ubuntu:25.10",
+									state: "stopped",
+									backend: "apple-container",
+									cpus: null,
+									memory_mb: null,
+									started: null,
+									addr: null,
+								},
+							],
+						}),
+					});
+				}
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
+			}
+			return route.continue();
+		});
+
+		// Mock DELETE to fail
+		await page.route("**/api/sandbox/containers/moltis-sandbox-ghost", (route, request) => {
+			if (request.method() === "DELETE") {
+				return route.fulfill({
+					status: 500,
+					contentType: "text/plain",
+					body: "ghost container",
+				});
+			}
+			return route.continue();
+		});
+
+		await navigateAndWait(page, "/settings/sandboxes");
+		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+
+		// Click delete to trigger error
+		await page.getByRole("button", { name: "Delete", exact: true }).click();
+		await expect(page.locator(".alert-error-text")).toBeVisible();
+
+		// The delete handler calls fetchContainers in .finally(), which clears the error
+		// on success. Since our second mock returns empty list, the error should clear.
+		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers") && r.method() === "GET");
+		await expect(page.locator(".alert-error-text")).not.toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+});
