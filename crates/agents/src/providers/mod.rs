@@ -343,6 +343,10 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
     if model_id.starts_with("kimi-") {
         return 128_000;
     }
+    // MiniMax M2/M2.1/M2.5: 204,800.
+    if model_id.starts_with("MiniMax-") {
+        return 204_800;
+    }
     // Default fallback.
     200_000
 }
@@ -482,7 +486,13 @@ const CEREBRAS_MODELS: &[(&str, &str)] =
     &[("llama-4-scout-17b-16e-instruct", "Llama 4 Scout (Cerebras)")];
 
 /// Known MiniMax models.
-const MINIMAX_MODELS: &[(&str, &str)] = &[("MiniMax-M2.1", "MiniMax M2.1")];
+/// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
+const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M2.5", "MiniMax M2.5"),
+    ("MiniMax-M2.5-highspeed", "MiniMax M2.5 Highspeed"),
+    ("MiniMax-M2.1", "MiniMax M2.1"),
+    ("MiniMax-M2", "MiniMax M2"),
+];
 
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
@@ -494,6 +504,11 @@ struct OpenAiCompatDef {
     env_base_url_key: &'static str,
     default_base_url: &'static str,
     models: &'static [(&'static str, &'static str)],
+    /// Whether to attempt `/models` discovery by default. Providers whose API
+    /// does not expose a models endpoint (e.g. MiniMax returns 404) should set
+    /// this to `false` so the static catalog is used without a noisy warning.
+    /// Users can still override via `fetch_models = true` in config.
+    supports_model_discovery: bool,
 }
 
 const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
@@ -503,6 +518,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MISTRAL_BASE_URL",
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "openrouter",
@@ -510,6 +526,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
         models: &[],
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "cerebras",
@@ -517,13 +534,16 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "CEREBRAS_BASE_URL",
         default_base_url: "https://api.cerebras.ai/v1",
         models: CEREBRAS_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "minimax",
         env_key: "MINIMAX_API_KEY",
         env_base_url_key: "MINIMAX_BASE_URL",
-        default_base_url: "https://api.minimax.chat/v1",
+        default_base_url: "https://api.minimax.io/v1",
         models: MINIMAX_MODELS,
+        // MiniMax API does not expose a /models endpoint (returns 404).
+        supports_model_discovery: false,
     },
     OpenAiCompatDef {
         config_name: "moonshot",
@@ -531,6 +551,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MOONSHOT_BASE_URL",
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "venice",
@@ -538,6 +559,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "VENICE_BASE_URL",
         default_base_url: "https://api.venice.ai/api/v1",
         models: &[],
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "ollama",
@@ -545,6 +567,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OLLAMA_BASE_URL",
         default_base_url: "http://127.0.0.1:11434/v1",
         models: &[],
+        supports_model_discovery: true,
     },
 ];
 
@@ -1343,41 +1366,55 @@ impl ProviderRegistry {
             // configured models) skip discovery — the user must pick a model.
             let skip_discovery =
                 def.models.is_empty() && preferred.is_empty() && def.config_name != "ollama";
-            let discovered = if !skip_discovery && should_fetch_models(config, def.config_name) {
-                if def.config_name == "ollama" {
-                    match discover_ollama_models(&base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
+            // Respect `supports_model_discovery`: providers whose API lacks a
+            // /models endpoint (e.g. MiniMax) skip live fetch unless the user
+            // explicitly opted in via `fetch_models = true` in config.
+            let user_opted_in = config
+                .get(def.config_name)
+                .is_some_and(|entry| entry.fetch_models);
+            let try_fetch = def.supports_model_discovery || user_opted_in;
+            let discovered =
+                if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
+                    if def.config_name == "ollama" {
+                        match discover_ollama_models(&base_url) {
+                            Ok(models) => models,
+                            Err(err) => {
+                                tracing::warn!(
+                                    provider = def.config_name,
+                                    error = %err,
+                                    "failed to fetch live models for provider"
+                                );
+                                def.models
+                                    .iter()
+                                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                    .collect()
+                            },
+                        }
+                    } else {
+                        match openai::live_models(&key, &base_url) {
+                            Ok(models) => models,
+                            Err(err) => {
+                                tracing::warn!(
+                                    provider = def.config_name,
+                                    error = %err,
+                                    "failed to fetch live models for provider"
+                                );
+                                def.models
+                                    .iter()
+                                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                    .collect()
+                            },
+                        }
                     }
+                } else if !def.supports_model_discovery && !def.models.is_empty() {
+                    // Provider has no /models endpoint — use the static catalog.
+                    def.models
+                        .iter()
+                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                        .collect()
                 } else {
-                    match openai::live_models(&key, &base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
-                    }
-                }
-            } else {
-                Vec::new()
-            };
+                    Vec::new()
+                };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
             for model in models {
                 let (model_id, display_name, created_at) =

@@ -2147,7 +2147,7 @@ pub async fn start_gateway(
             ("xai", "XAI_API_KEY", "https://api.x.ai"),
             ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com"),
             ("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
-            ("minimax", "MINIMAX_API_KEY", "https://api.minimax.chat/v1"),
+            ("minimax", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
             ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
             ("venice", "VENICE_API_KEY", "https://api.venice.ai/api/v1"),
         ];

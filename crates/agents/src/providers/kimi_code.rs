@@ -374,7 +374,7 @@ impl LlmProvider for KimiCodeProvider {
 
                     match process_openai_sse_line(data, &mut state) {
                         SseLineResult::Done => {
-                            for event in finalize_stream(&state) {
+                            for event in finalize_stream(&mut state) {
                                 yield event;
                             }
                             return;

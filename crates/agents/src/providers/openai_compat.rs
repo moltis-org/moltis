@@ -234,6 +234,51 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
         .unwrap_or_default()
 }
 
+/// Strip `<think>...</think>` tags from content, returning `(visible, thinking)`.
+///
+/// Models like DeepSeek R1, QwQ, and MiniMax embed chain-of-thought reasoning
+/// inside `<think>` tags in the `content` field rather than using a separate
+/// `reasoning_content` field.  This helper splits content into the visible
+/// answer text and the thinking text so callers can handle them appropriately.
+///
+/// Edge cases handled:
+/// - Multiple `<think>` blocks interspersed with answer text
+/// - Unclosed `<think>` tag (remainder treated as reasoning)
+/// - Empty `<think></think>` blocks
+/// - Nested angle brackets inside thinking text
+pub fn strip_think_tags(content: &str) -> (String, String) {
+    let mut visible = String::new();
+    let mut thinking = String::new();
+    let mut remaining = content;
+
+    loop {
+        match remaining.find("<think>") {
+            Some(start) => {
+                // Text before <think> is visible
+                visible.push_str(&remaining[..start]);
+                let after_open = &remaining[start + "<think>".len()..];
+                match after_open.find("</think>") {
+                    Some(end) => {
+                        thinking.push_str(&after_open[..end]);
+                        remaining = &after_open[end + "</think>".len()..];
+                    },
+                    None => {
+                        // Unclosed <think> — treat rest as reasoning
+                        thinking.push_str(after_open);
+                        break;
+                    },
+                }
+            },
+            None => {
+                visible.push_str(remaining);
+                break;
+            },
+        }
+    }
+
+    (visible, thinking.trim_start().to_string())
+}
+
 /// State for tracking streaming tool calls.
 #[derive(Default)]
 pub struct StreamingToolState {
@@ -243,6 +288,15 @@ pub struct StreamingToolState {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
+    /// Whether we are currently inside a `<think>` block in streamed content.
+    in_think_block: bool,
+    /// Whether we are still stripping leading whitespace at the start of a
+    /// think block. Set to `true` when entering `<think>`, cleared once
+    /// non-whitespace reasoning content is emitted.
+    think_strip_leading_ws: bool,
+    /// Buffer for detecting `<think>` / `</think>` tags that may be split
+    /// across SSE chunk boundaries.
+    tag_buffer: String,
 }
 
 /// Result of processing a single SSE line.
@@ -255,6 +309,124 @@ pub enum SseLineResult {
     Events(Vec<StreamEvent>),
 }
 
+/// Emit a `ReasoningDelta`, stripping leading whitespace at the start of a
+/// think block so the UI doesn't show a blank prefix.
+fn emit_reasoning(text: String, strip_leading_ws: &mut bool, events: &mut Vec<StreamEvent>) {
+    if text.is_empty() {
+        return;
+    }
+    let emitted = if *strip_leading_ws {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            // Entire chunk was whitespace — keep stripping
+            return;
+        }
+        *strip_leading_ws = false;
+        trimmed.to_string()
+    } else {
+        text
+    };
+    events.push(StreamEvent::ReasoningDelta(emitted));
+}
+
+/// Process streamed content through the `<think>` tag state machine.
+///
+/// Content arriving inside `<think>...</think>` is emitted as
+/// `ReasoningDelta`; content outside is emitted as `Delta`.
+/// Tags may be split across SSE chunks — `tag_buffer` accumulates
+/// partial tag fragments until they can be resolved.
+/// Leading whitespace at the start of each think block is stripped.
+fn process_content_think_tags(
+    content: &str,
+    state: &mut StreamingToolState,
+    events: &mut Vec<StreamEvent>,
+) {
+    state.tag_buffer.push_str(content);
+
+    loop {
+        if state.in_think_block {
+            // Look for </think> to exit think mode
+            match state.tag_buffer.find("</think>") {
+                Some(pos) => {
+                    let thinking = state.tag_buffer[..pos].to_string();
+                    emit_reasoning(thinking, &mut state.think_strip_leading_ws, events);
+                    state.in_think_block = false;
+                    let rest = state.tag_buffer[pos + "</think>".len()..].to_string();
+                    state.tag_buffer = rest;
+                    // Continue loop to process remaining content
+                },
+                None => {
+                    // Check if buffer ends with a prefix of "</think>"
+                    // to avoid emitting partial tag as reasoning text.
+                    let suffix_match = longest_tag_suffix(&state.tag_buffer, "</think>");
+                    if suffix_match > 0 {
+                        let safe = state.tag_buffer.len() - suffix_match;
+                        let emit = state.tag_buffer[..safe].to_string();
+                        emit_reasoning(emit, &mut state.think_strip_leading_ws, events);
+                        let kept = state.tag_buffer[safe..].to_string();
+                        state.tag_buffer = kept;
+                    } else {
+                        // No partial tag — emit everything as reasoning
+                        let buf = std::mem::take(&mut state.tag_buffer);
+                        emit_reasoning(buf, &mut state.think_strip_leading_ws, events);
+                    }
+                    break;
+                },
+            }
+        } else {
+            // Look for <think> to enter think mode
+            match state.tag_buffer.find("<think>") {
+                Some(pos) => {
+                    let visible = state.tag_buffer[..pos].to_string();
+                    if !visible.is_empty() {
+                        events.push(StreamEvent::Delta(visible));
+                    }
+                    state.in_think_block = true;
+                    state.think_strip_leading_ws = true;
+                    let rest = state.tag_buffer[pos + "<think>".len()..].to_string();
+                    state.tag_buffer = rest;
+                    // Continue loop to process remaining content
+                },
+                None => {
+                    // Check if buffer ends with a prefix of "<think>"
+                    let suffix_match = longest_tag_suffix(&state.tag_buffer, "<think>");
+                    if suffix_match > 0 {
+                        let safe = state.tag_buffer.len() - suffix_match;
+                        let emit = state.tag_buffer[..safe].to_string();
+                        if !emit.is_empty() {
+                            events.push(StreamEvent::Delta(emit));
+                        }
+                        let kept = state.tag_buffer[safe..].to_string();
+                        state.tag_buffer = kept;
+                    } else {
+                        // No partial tag — emit everything as visible
+                        if !state.tag_buffer.is_empty() {
+                            events.push(StreamEvent::Delta(std::mem::take(&mut state.tag_buffer)));
+                        }
+                    }
+                    break;
+                },
+            }
+        }
+    }
+}
+
+/// Return the length of the longest suffix of `text` that is a prefix of `tag`.
+///
+/// For example, `longest_tag_suffix("abc<th", "<think>")` returns 3 because
+/// `"<th"` is a 3-character prefix of `"<think>"`.
+fn longest_tag_suffix(text: &str, tag: &str) -> usize {
+    let text_bytes = text.as_bytes();
+    let tag_bytes = tag.as_bytes();
+    let max_check = text_bytes.len().min(tag_bytes.len());
+    for len in (1..=max_check).rev() {
+        if text_bytes[text_bytes.len() - len..] == tag_bytes[..len] {
+            return len;
+        }
+    }
+    0
+}
+
 /// Process a single SSE data line and return any events to yield.
 ///
 /// This handles the common OpenAI streaming format used by:
@@ -262,6 +434,11 @@ pub enum SseLineResult {
 /// - GitHub Copilot API
 /// - Kimi Code API
 /// - Any other OpenAI-compatible API
+///
+/// Content inside `<think>...</think>` tags is emitted as `ReasoningDelta`
+/// events rather than `Delta`, allowing the UI to show reasoning text
+/// separately. This handles models (DeepSeek R1, QwQ, MiniMax) that embed
+/// chain-of-thought in `content` rather than using `reasoning_content`.
 pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> SseLineResult {
     if data == "[DONE]" {
         return SseLineResult::Done;
@@ -285,11 +462,11 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
 
     let delta = &evt["choices"][0]["delta"];
 
-    // Handle user-visible text content.
+    // Handle user-visible text content, stripping <think> tags.
     if let Some(content) = delta["content"].as_str()
         && !content.is_empty()
     {
-        events.push(StreamEvent::Delta(content.to_string()));
+        process_content_think_tags(content, state, &mut events);
     }
 
     // Some OpenAI-compatible backends stream planning text in
@@ -341,8 +518,21 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
 }
 
 /// Generate the final events when stream ends (tool call completions + done).
-pub fn finalize_stream(state: &StreamingToolState) -> Vec<StreamEvent> {
+///
+/// Any residual content in the think-tag buffer is flushed as the appropriate
+/// event type (reasoning if we were inside a think block, visible otherwise).
+pub fn finalize_stream(state: &mut StreamingToolState) -> Vec<StreamEvent> {
     let mut events = Vec::new();
+
+    // Flush any remaining think-tag buffer content
+    if !state.tag_buffer.is_empty() {
+        let remaining = std::mem::take(&mut state.tag_buffer);
+        if state.in_think_block {
+            events.push(StreamEvent::ReasoningDelta(remaining));
+        } else {
+            events.push(StreamEvent::Delta(remaining));
+        }
+    }
 
     // Emit completion for any pending tool calls
     for index in state.tool_calls.keys() {
@@ -632,7 +822,7 @@ mod tests {
         state.input_tokens = 10;
         state.output_tokens = 5;
 
-        let events = finalize_stream(&state);
+        let events = finalize_stream(&mut state);
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], StreamEvent::ToolCallComplete {
             index: 0
@@ -777,5 +967,381 @@ mod tests {
         // Responses API: flat format
         assert!(responses_api[0].get("function").is_none());
         assert_eq!(responses_api[0]["name"], "test_tool");
+    }
+
+    // ============================================================
+    // Tests for strip_think_tags (non-streaming)
+    // ============================================================
+
+    #[test]
+    fn test_strip_think_tags_no_tags() {
+        let (visible, thinking) = strip_think_tags("Hello, world!");
+        assert_eq!(visible, "Hello, world!");
+        assert_eq!(thinking, "");
+    }
+
+    #[test]
+    fn test_strip_think_tags_single_block() {
+        let input = "<think>reasoning here</think>The answer is 42.";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "The answer is 42.");
+        assert_eq!(thinking, "reasoning here");
+    }
+
+    #[test]
+    fn test_strip_think_tags_multiple_blocks() {
+        let input = "Start<think>thought 1</think> middle <think>thought 2</think> end";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "Start middle  end");
+        assert_eq!(thinking, "thought 1thought 2");
+    }
+
+    #[test]
+    fn test_strip_think_tags_unclosed() {
+        let input = "visible<think>unclosed reasoning";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "visible");
+        assert_eq!(thinking, "unclosed reasoning");
+    }
+
+    #[test]
+    fn test_strip_think_tags_empty_block() {
+        let input = "<think></think>just the answer";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "just the answer");
+        assert_eq!(thinking, "");
+    }
+
+    #[test]
+    fn test_strip_think_tags_only_thinking() {
+        let input = "<think>all reasoning no answer</think>";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "");
+        assert_eq!(thinking, "all reasoning no answer");
+    }
+
+    // ============================================================
+    // Tests for longest_tag_suffix helper
+    // ============================================================
+
+    #[test]
+    fn test_longest_tag_suffix_full_prefix() {
+        assert_eq!(longest_tag_suffix("abc<think>", "<think>"), 7);
+    }
+
+    #[test]
+    fn test_longest_tag_suffix_partial() {
+        assert_eq!(longest_tag_suffix("abc<th", "<think>"), 3);
+    }
+
+    #[test]
+    fn test_longest_tag_suffix_single_char() {
+        assert_eq!(longest_tag_suffix("abc<", "<think>"), 1);
+    }
+
+    #[test]
+    fn test_longest_tag_suffix_no_match() {
+        assert_eq!(longest_tag_suffix("abcdef", "<think>"), 0);
+    }
+
+    // ============================================================
+    // Tests for streaming think-tag handling
+    // ============================================================
+
+    #[test]
+    fn test_stream_think_block_single_chunk() {
+        let mut state = StreamingToolState::default();
+        // Full think block + answer in one SSE chunk
+        let data = r#"{"choices":[{"delta":{"content":"<think>reasoning</think>The answer"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let reasoning: Vec<_> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let visible: Vec<_> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning.join(""), "reasoning");
+                assert_eq!(visible.join(""), "The answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_think_tag_split_across_chunks() {
+        let mut state = StreamingToolState::default();
+
+        // First chunk: starts with partial opening tag
+        let data1 = r#"{"choices":[{"delta":{"content":"<thi"}}]}"#;
+        let result1 = process_openai_sse_line(data1, &mut state);
+        // Should hold back the partial tag — no Delta emitted
+        match result1 {
+            SseLineResult::Events(events) => {
+                assert!(
+                    events.is_empty(),
+                    "partial tag should be buffered, got {events:?}"
+                );
+            },
+            SseLineResult::Skip => {},
+            _ => panic!("Expected Events or Skip"),
+        }
+
+        // Second chunk: completes the opening tag + reasoning
+        let data2 = r#"{"choices":[{"delta":{"content":"nk>deep thought</think>42"}}]}"#;
+        let result2 = process_openai_sse_line(data2, &mut state);
+        match result2 {
+            SseLineResult::Events(events) => {
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning, "deep thought");
+                assert_eq!(visible, "42");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_multiple_think_blocks() {
+        let mut state = StreamingToolState::default();
+
+        let data = r#"{"choices":[{"delta":{"content":"A<think>t1</think>B<think>t2</think>C"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning, "t1t2");
+                assert_eq!(visible, "ABC");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_unclosed_think_emits_as_reasoning() {
+        let mut state = StreamingToolState::default();
+
+        // Start a think block that never closes
+        let data = r#"{"choices":[{"delta":{"content":"<think>partial reasoning"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        assert!(state.in_think_block);
+
+        // Reasoning should be emitted during processing (not buffered)
+        match result {
+            SseLineResult::Events(events) => {
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning, "partial reasoning");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_unclosed_think_partial_tag_flushed_on_finalize() {
+        let mut state = StreamingToolState::default();
+
+        // Enter think mode, then receive content ending with a partial </think>
+        let data1 = r#"{"choices":[{"delta":{"content":"<think>start"}}]}"#;
+        let _ = process_openai_sse_line(data1, &mut state);
+        assert!(state.in_think_block);
+
+        // Content ending with partial closing tag
+        let data2 = r#"{"choices":[{"delta":{"content":" more</thi"}}]}"#;
+        let _ = process_openai_sse_line(data2, &mut state);
+        // The "</thi" should be buffered as a partial tag
+
+        // Finalize should flush the buffered partial tag as reasoning
+        let final_events = finalize_stream(&mut state);
+        let has_reasoning = final_events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ReasoningDelta(s) if s.contains("</thi")));
+        assert!(
+            has_reasoning,
+            "finalize should flush partial tag buffer as reasoning"
+        );
+    }
+
+    #[test]
+    fn test_stream_think_coexists_with_reasoning_content() {
+        // Models that send both reasoning_content AND <think> tags
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"<think>inline thought</think>answer","reasoning_content":"separate reasoning"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let reasoning_deltas: Vec<_> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                // Both reasoning sources should produce ReasoningDelta events
+                assert!(reasoning_deltas.contains(&"inline thought".to_string()));
+                assert!(reasoning_deltas.contains(&"separate reasoning".to_string()));
+                assert_eq!(visible, "answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_no_think_tags_unchanged() {
+        // Normal content without think tags should still produce Delta
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"Hello world"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                assert_eq!(events.len(), 1);
+                assert!(matches!(&events[0], StreamEvent::Delta(s) if s == "Hello world"));
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_closing_tag_split_across_chunks() {
+        let mut state = StreamingToolState::default();
+
+        // Enter think mode
+        let data1 = r#"{"choices":[{"delta":{"content":"<think>reasoning</thi"}}]}"#;
+        let _ = process_openai_sse_line(data1, &mut state);
+        assert!(state.in_think_block);
+
+        // Complete the closing tag
+        let data2 = r#"{"choices":[{"delta":{"content":"nk>visible"}}]}"#;
+        let result = process_openai_sse_line(data2, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(visible, "visible");
+                assert!(!state.in_think_block);
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    // ============================================================
+    // Tests for leading whitespace stripping in think blocks
+    // ============================================================
+
+    #[test]
+    fn test_strip_think_tags_trims_leading_whitespace() {
+        let input = "<think>\n  Let me think\n</think>Answer";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "Answer");
+        assert_eq!(thinking, "Let me think\n");
+    }
+
+    #[test]
+    fn test_stream_think_strips_leading_newline() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[{"delta":{"content":"<think>\nreasoning</think>answer"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning, "reasoning");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_think_strips_leading_whitespace_across_chunks() {
+        let mut state = StreamingToolState::default();
+
+        // First chunk: open tag + whitespace only
+        let data1 = r#"{"choices":[{"delta":{"content":"<think>\n  "}}]}"#;
+        let result1 = process_openai_sse_line(data1, &mut state);
+        // Whitespace-only reasoning should be swallowed
+        match result1 {
+            SseLineResult::Events(events) => {
+                let reasoning_count = events
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::ReasoningDelta(_)))
+                    .count();
+                assert_eq!(reasoning_count, 0, "leading whitespace should be stripped");
+            },
+            SseLineResult::Skip => {},
+            _ => panic!("Expected Events or Skip"),
+        }
+
+        // Second chunk: actual reasoning
+        let data2 = r#"{"choices":[{"delta":{"content":"actual thought</think>ok"}}]}"#;
+        let result2 = process_openai_sse_line(data2, &mut state);
+        match result2 {
+            SseLineResult::Events(events) => {
+                let reasoning: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::ReasoningDelta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(reasoning, "actual thought");
+            },
+            _ => panic!("Expected Events"),
+        }
     }
 }
