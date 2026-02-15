@@ -2105,7 +2105,7 @@ fn ensure_apple_container_service() -> bool {
 /// (e.g. after an interrupted macOS restart/sleep). Returns `true` on success.
 #[cfg(target_os = "macos")]
 fn restart_apple_container_service() -> bool {
-    tracing::warn!("apple container daemon has stale VM state, restarting it automatically");
+    tracing::warn!("apple container service unhealthy, restarting automatically");
 
     let stop = std::process::Command::new("container")
         .args(["system", "stop"])
@@ -2186,6 +2186,27 @@ fn is_apple_container_daemon_stale_error(text: &str) -> bool {
     text.contains("NSPOSIXErrorDomain") && text.contains("Invalid argument")
 }
 
+/// Returns `true` when a freshly created container stopped immediately and
+/// produced no meaningful logs. This indicates the VM never fully booted —
+/// a broader symptom than the specific daemon-stale EINVAL signature. It can
+/// occur after macOS sleep/wake cycles, resource exhaustion, or
+/// Virtualization.framework glitches. The appropriate recovery is a full
+/// service restart, same as for daemon-stale errors.
+fn is_apple_container_boot_failure(logs: Option<&str>) -> bool {
+    match logs {
+        None => true,
+        Some(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return true;
+            }
+            // Log-retrieval errors about a missing stdio.log mean
+            // the VM never produced any output.
+            trimmed.contains("stdio.log") && trimmed.contains("doesn't exist")
+        },
+    }
+}
+
 fn is_apple_container_corruption_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     is_apple_container_service_error(stderr)
@@ -2193,6 +2214,7 @@ fn is_apple_container_corruption_error(stderr: &str) -> bool {
         || is_apple_container_daemon_stale_error(stderr)
         || lower.contains("failed to bootstrap container")
         || lower.contains("config.json")
+        || lower.contains("vm never booted")
 }
 
 /// Wrapper sandbox that can fail over from a primary backend to a fallback backend.
@@ -2558,10 +2580,42 @@ impl Sandbox for AppleContainerSandbox {
                         );
                     }
 
+                    // Boot failure: container immediately stopped with no output.
+                    // The VM likely never booted — try a full service restart
+                    // (same recovery as daemon-stale, triggered by absence of
+                    // logs rather than a specific error signature).
+                    if state == ContainerState::Stopped
+                        && !daemon_restarted
+                        && is_apple_container_boot_failure(logs.as_deref())
+                    {
+                        warn!(
+                            name,
+                            attempt,
+                            "apple container immediately stopped with no output, \
+                             attempting service restart"
+                        );
+                        Self::force_remove_and_wait(&name).await;
+                        if restart_apple_container_service() {
+                            daemon_restarted = true;
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        warn!(name, "apple container service restart did not help");
+                    }
+
                     if is_last {
+                        // Include "VM never booted" when boot failure was
+                        // detected so `is_apple_container_corruption_error`
+                        // triggers failover to Docker.
+                        let boot_note = if is_apple_container_boot_failure(logs.as_deref()) {
+                            " (VM never booted)"
+                        } else {
+                            ""
+                        };
                         let diag = Self::diagnose_container_failure(&name).await;
                         anyhow::bail!(
-                            "apple container {name} did not become exec-ready: {error:#}; diagnostics: {diag}"
+                            "apple container {name} did not become exec-ready{boot_note}: \
+                             {error:#}; diagnostics: {diag}"
                         );
                     }
                     warn!(
@@ -3801,6 +3855,27 @@ mod tests {
     }
 
     #[test]
+    fn test_is_apple_container_boot_failure() {
+        // No logs at all — VM never booted
+        assert!(is_apple_container_boot_failure(None));
+        // Empty logs
+        assert!(is_apple_container_boot_failure(Some("")));
+        assert!(is_apple_container_boot_failure(Some("  \n  ")));
+        // stdio.log doesn't exist — VM never produced output
+        assert!(is_apple_container_boot_failure(Some(
+            r#"Error: invalidArgument: "failed to fetch container logs: internalError: "failed to open container logs: Error Domain=NSCocoaErrorDomain Code=4 "The file "stdio.log" doesn't exist."""#
+        )));
+        // Real logs present — not a boot failure
+        assert!(!is_apple_container_boot_failure(Some(
+            "sleep: invalid time interval 'infinity'"
+        )));
+        // Daemon-stale EINVAL is NOT a boot failure (different handler)
+        assert!(!is_apple_container_boot_failure(Some(
+            "Error Domain=NSPOSIXErrorDomain Code=22 \"Invalid argument\""
+        )));
+    }
+
+    #[test]
     fn test_is_apple_container_corruption_error() {
         assert!(is_apple_container_corruption_error(
             "failed to bootstrap container because config.json is missing"
@@ -3816,6 +3891,10 @@ mod tests {
             "invalidState: \"no sandbox client exists: container is stopped\""
         ));
         assert!(!is_apple_container_corruption_error("permission denied"));
+        // Boot failure "VM never booted" should trigger corruption/failover
+        assert!(is_apple_container_corruption_error(
+            "apple container test did not become exec-ready (VM never booted): timeout"
+        ));
     }
 
     #[tokio::test]
@@ -3837,6 +3916,26 @@ mod tests {
 
         assert_eq!(primary.ensure_ready_calls(), 1);
         assert_eq!(fallback.ensure_ready_calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_failover_sandbox_switches_on_boot_failure() {
+        let primary = Arc::new(TestSandbox::new(
+            "apple-container",
+            Some("apple container test did not become exec-ready (VM never booted): timeout"),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("docker", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-boot".into(),
+        };
+
+        sandbox.ensure_ready(&id, None).await.unwrap();
+
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 1);
     }
 
     #[tokio::test]
