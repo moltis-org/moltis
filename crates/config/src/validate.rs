@@ -97,6 +97,7 @@ const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "minimax",
     "moonshot",
     "venice",
+    "zaps",
     "ollama",
 ];
 

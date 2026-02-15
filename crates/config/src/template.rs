@@ -88,8 +88,8 @@ offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moon
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
-#   "venice", "ollama", "local-llm", "openai-codex", "github-copilot",
-#   "kimi-code"
+#   "venice", "zaps", "ollama", "local-llm", "openai-codex",
+#   "github-copilot", "kimi-code"
 
 # ── Anthropic (Claude) ────────────────────────────────────────
 # [providers.anthropic]
@@ -144,6 +144,15 @@ models = ["gpt-5.3", "gpt-5.2"]              # Preferred models shown first
 # api_key = "..."                             # Or set OPENROUTER_API_KEY env var
 # models = ["anthropic/claude-3.5-sonnet"]    # Any model IDs on OpenRouter
 # base_url = "https://openrouter.ai/api/v1"
+
+# ── Zaps.ai (PII redaction gateway) ────────────────────────────
+# Routes requests through Zaps.ai's privacy gateway which
+# automatically redacts PII before forwarding to upstream LLMs.
+# [providers.zaps]
+# enabled = true
+# api_key = "gk_..."                            # Or set ZAPS_API_KEY env var
+# models = ["gpt-4o", "deepseek-chat"]          # Any model supported by Zaps gateway
+# base_url = "https://zaps.ai/v1"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────
 [providers.moonshot]

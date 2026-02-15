@@ -540,6 +540,13 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: &[],
     },
     OpenAiCompatDef {
+        config_name: "zaps",
+        env_key: "ZAPS_API_KEY",
+        env_base_url_key: "ZAPS_BASE_URL",
+        default_base_url: "https://zaps.ai/v1",
+        models: &[],
+    },
+    OpenAiCompatDef {
         config_name: "ollama",
         env_key: "OLLAMA_API_KEY",
         env_base_url_key: "OLLAMA_BASE_URL",

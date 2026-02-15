@@ -664,6 +664,15 @@ fn known_providers() -> Vec<KnownProvider> {
             key_optional: false,
         },
         KnownProvider {
+            name: "zaps",
+            display_name: "Zaps.ai",
+            auth_type: "api-key",
+            env_key: Some("ZAPS_API_KEY"),
+            default_base_url: Some("https://zaps.ai/v1"),
+            requires_model: true,
+            key_optional: false,
+        },
+        KnownProvider {
             name: "ollama",
             display_name: "Ollama",
             auth_type: "api-key",
