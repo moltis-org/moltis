@@ -793,14 +793,11 @@ mod tests {
             "https://api.moonshot.ai/v1".to_string(),
             "moonshot".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -816,14 +813,11 @@ mod tests {
             "gpt-4o".to_string(),
             "https://api.openai.com/v1".to_string(),
         );
-        let messages = vec![ChatMessage::assistant_with_tools(
-            None,
-            vec![ToolCall {
-                id: "call_1".into(),
-                name: "exec".into(),
-                arguments: serde_json::json!({ "command": "uname -a" }),
-            }],
-        )];
+        let messages = vec![ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({ "command": "uname -a" }),
+        }])];
 
         let serialized = provider.serialize_messages_for_request(&messages);
         assert_eq!(serialized.len(), 1);
@@ -839,14 +833,13 @@ mod tests {
         );
         let long_id = "forced-123e4567-e89b-12d3-a456-426614174000";
         let messages = vec![
-            ChatMessage::assistant_with_tools(
-                Some("running command".to_string()),
-                vec![ToolCall {
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
                     id: long_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                }],
-            ),
+                },
+            ]),
             ChatMessage::tool(long_id, "ok"),
         ];
 
@@ -871,14 +864,13 @@ mod tests {
         );
         let short_id = "call_abc";
         let messages = vec![
-            ChatMessage::assistant_with_tools(
-                Some("running command".to_string()),
-                vec![ToolCall {
+            ChatMessage::assistant_with_tools(Some("running command".to_string()), vec![
+                ToolCall {
                     id: short_id.to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({ "command": "pwd" }),
-                }],
-            ),
+                },
+            ]),
             ChatMessage::tool(short_id, "ok"),
         ];
 
@@ -903,14 +895,11 @@ mod tests {
         );
         let messages = vec![
             ChatMessage::user("run uname"),
-            ChatMessage::assistant_with_tools(
-                None,
-                vec![ToolCall {
-                    id: "exec:0".into(),
-                    name: "exec".into(),
-                    arguments: serde_json::json!({ "command": "uname -a" }),
-                }],
-            ),
+            ChatMessage::assistant_with_tools(None, vec![ToolCall {
+                id: "exec:0".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({ "command": "uname -a" }),
+            }]),
             ChatMessage::tool("exec:0", "Linux host 6.0"),
         ];
 
@@ -1154,16 +1143,13 @@ mod tests {
         let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
         // Only chat-capable models pass; non-chat (image, TTS, whisper,
         // embedding, moderation, audio, realtime, transcribe) are excluded.
-        assert_eq!(
-            ids,
-            vec![
-                "gpt-5.2",
-                "gpt-5.2-2025-12-11",
-                "o4-mini-deep-research",
-                "kimi-k2.5",
-                "moonshot-v1-8k",
-            ]
-        );
+        assert_eq!(ids, vec![
+            "gpt-5.2",
+            "gpt-5.2-2025-12-11",
+            "o4-mini-deep-research",
+            "kimi-k2.5",
+            "moonshot-v1-8k",
+        ]);
     }
 
     #[test]
@@ -1221,13 +1207,10 @@ mod tests {
     #[test]
     fn merge_with_fallback_uses_fallback_when_discovery_is_empty() {
         use crate::providers::DiscoveredModel;
-        let merged = crate::providers::merge_discovered_with_fallback_catalog(
-            Vec::new(),
-            vec![
-                DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
-                DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
-            ],
-        );
+        let merged = crate::providers::merge_discovered_with_fallback_catalog(Vec::new(), vec![
+            DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
+            DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
+        ]);
         let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["gpt-5.2", "gpt-5-mini"]);
     }

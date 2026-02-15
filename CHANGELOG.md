@@ -19,6 +19,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.8.30] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+- **Assistant reasoning persistence**: conversation reasoning is now persisted
+  in assistant messages and shared snapshots so resumed sessions retain
+  reasoning context instead of dropping it after refresh/share operations.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
 ## [0.8.29] - 2026-02-14
 
 
