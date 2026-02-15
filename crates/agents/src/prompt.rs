@@ -305,6 +305,13 @@ fn build_system_prompt_full(
                 "you MUST call `memory_save` to persist it.** ",
                 "Do not just acknowledge verbally — without calling the tool, ",
                 "the information will be lost after the session.\n",
+                "\nChoose the right target to keep context lean:\n",
+                "- **MEMORY.md** — only core identity facts (name, age, location, ",
+                "language, key preferences). This is loaded into every conversation, ",
+                "so keep it short.\n",
+                "- **memory/&lt;topic&gt;.md** — everything else (detailed notes, project ",
+                "context, decisions, session summaries). These are only retrieved via ",
+                "`memory_search` and do not consume prompt space.\n",
             ));
         }
         prompt.push('\n');

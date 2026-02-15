@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add memory target routing guidance to `memory_save` prompt hint — core facts go to MEMORY.md, everything else to `memory/<topic>.md` to keep context lean
+
 ### Changed
 
 ### Deprecated
