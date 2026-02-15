@@ -458,6 +458,11 @@ function renderHistoryToolResult(msg) {
 		card.appendChild(errMsg);
 	}
 
+	// Append reasoning disclosure if this tool call carried thinking text.
+	if (msg.reasoning) {
+		appendReasoningDisclosure(card, msg.reasoning);
+	}
+
 	if (S.chatMsgBox) S.chatMsgBox.appendChild(card);
 	return card;
 }

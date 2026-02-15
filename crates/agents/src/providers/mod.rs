@@ -343,6 +343,18 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
     if model_id.starts_with("kimi-") {
         return 128_000;
     }
+    // MiniMax M2/M2.1/M2.5: 204,800.
+    if model_id.starts_with("MiniMax-") {
+        return 204_800;
+    }
+    // Z.AI GLM-4-32B: 128k.
+    if model_id == "glm-4-32b-0414-128k" {
+        return 128_000;
+    }
+    // Z.AI GLM-5/4.7/4.6/4.5 series: 128k.
+    if model_id.starts_with("glm-") {
+        return 128_000;
+    }
     // Default fallback.
     200_000
 }
@@ -367,6 +379,14 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
         "omni-moderation",
         "moderation-",
         "sora",
+        // Z.AI non-chat models
+        "glm-image",
+        "glm-asr",
+        "glm-ocr",
+        "cogvideo",
+        "cogview",
+        "vidu",
+        "autoglm-phone",
     ];
     for prefix in NON_CHAT_PREFIXES {
         if id.starts_with(prefix) {
@@ -443,6 +463,10 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
     if model_id.starts_with("gemini-") {
         return true;
     }
+    // Z.AI GLM vision models
+    if model_id.starts_with("glm-") && model_id.contains('v') {
+        return true;
+    }
     // Default: no vision support
     false
 }
@@ -482,7 +506,31 @@ const CEREBRAS_MODELS: &[(&str, &str)] =
     &[("llama-4-scout-17b-16e-instruct", "Llama 4 Scout (Cerebras)")];
 
 /// Known MiniMax models.
-const MINIMAX_MODELS: &[(&str, &str)] = &[("MiniMax-M2.1", "MiniMax M2.1")];
+/// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
+const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M2.5", "MiniMax M2.5"),
+    ("MiniMax-M2.5-highspeed", "MiniMax M2.5 Highspeed"),
+    ("MiniMax-M2.1", "MiniMax M2.1"),
+    ("MiniMax-M2", "MiniMax M2"),
+];
+
+/// Known Z.AI (Zhipu) models.
+/// See: <https://docs.z.ai/api-reference/llm/chat-completion>
+const ZAI_MODELS: &[(&str, &str)] = &[
+    ("glm-5", "GLM-5"),
+    ("glm-4.7", "GLM-4.7"),
+    ("glm-4.7-flash", "GLM-4.7 Flash"),
+    ("glm-4.7-flashx", "GLM-4.7 FlashX"),
+    ("glm-4.6", "GLM-4.6"),
+    ("glm-4.6v", "GLM-4.6V (Vision)"),
+    ("glm-4.6v-flash", "GLM-4.6V Flash"),
+    ("glm-4.5", "GLM-4.5"),
+    ("glm-4.5-air", "GLM-4.5 Air"),
+    ("glm-4.5-airx", "GLM-4.5 AirX"),
+    ("glm-4.5-flash", "GLM-4.5 Flash"),
+    ("glm-4.5v", "GLM-4.5V (Vision)"),
+    ("glm-4-32b-0414-128k", "GLM-4 32B 128K"),
+];
 
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
@@ -494,6 +542,11 @@ struct OpenAiCompatDef {
     env_base_url_key: &'static str,
     default_base_url: &'static str,
     models: &'static [(&'static str, &'static str)],
+    /// Whether to attempt `/models` discovery by default. Providers whose API
+    /// does not expose a models endpoint (e.g. MiniMax returns 404) should set
+    /// this to `false` so the static catalog is used without a noisy warning.
+    /// Users can still override via `fetch_models = true` in config.
+    supports_model_discovery: bool,
 }
 
 const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
@@ -503,6 +556,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MISTRAL_BASE_URL",
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "openrouter",
@@ -510,6 +564,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
         models: &[],
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "cerebras",
@@ -517,13 +572,16 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "CEREBRAS_BASE_URL",
         default_base_url: "https://api.cerebras.ai/v1",
         models: CEREBRAS_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "minimax",
         env_key: "MINIMAX_API_KEY",
         env_base_url_key: "MINIMAX_BASE_URL",
-        default_base_url: "https://api.minimax.chat/v1",
+        default_base_url: "https://api.minimax.io/v1",
         models: MINIMAX_MODELS,
+        // MiniMax API does not expose a /models endpoint (returns 404).
+        supports_model_discovery: false,
     },
     OpenAiCompatDef {
         config_name: "moonshot",
@@ -531,6 +589,15 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MOONSHOT_BASE_URL",
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
+        supports_model_discovery: true,
+    },
+    OpenAiCompatDef {
+        config_name: "zai",
+        env_key: "Z_API_KEY",
+        env_base_url_key: "Z_BASE_URL",
+        default_base_url: "https://api.z.ai/api/paas/v4",
+        models: ZAI_MODELS,
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "venice",
@@ -538,6 +605,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "VENICE_BASE_URL",
         default_base_url: "https://api.venice.ai/api/v1",
         models: &[],
+        supports_model_discovery: true,
     },
     OpenAiCompatDef {
         config_name: "ollama",
@@ -545,6 +613,7 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OLLAMA_BASE_URL",
         default_base_url: "http://127.0.0.1:11434/v1",
         models: &[],
+        supports_model_discovery: true,
     },
 ];
 
@@ -1343,41 +1412,55 @@ impl ProviderRegistry {
             // configured models) skip discovery — the user must pick a model.
             let skip_discovery =
                 def.models.is_empty() && preferred.is_empty() && def.config_name != "ollama";
-            let discovered = if !skip_discovery && should_fetch_models(config, def.config_name) {
-                if def.config_name == "ollama" {
-                    match discover_ollama_models(&base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
+            // Respect `supports_model_discovery`: providers whose API lacks a
+            // /models endpoint (e.g. MiniMax) skip live fetch unless the user
+            // explicitly opted in via `fetch_models = true` in config.
+            let user_opted_in = config
+                .get(def.config_name)
+                .is_some_and(|entry| entry.fetch_models);
+            let try_fetch = def.supports_model_discovery || user_opted_in;
+            let discovered =
+                if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
+                    if def.config_name == "ollama" {
+                        match discover_ollama_models(&base_url) {
+                            Ok(models) => models,
+                            Err(err) => {
+                                tracing::warn!(
+                                    provider = def.config_name,
+                                    error = %err,
+                                    "failed to fetch live models for provider"
+                                );
+                                def.models
+                                    .iter()
+                                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                    .collect()
+                            },
+                        }
+                    } else {
+                        match openai::live_models(&key, &base_url) {
+                            Ok(models) => models,
+                            Err(err) => {
+                                tracing::warn!(
+                                    provider = def.config_name,
+                                    error = %err,
+                                    "failed to fetch live models for provider"
+                                );
+                                def.models
+                                    .iter()
+                                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                    .collect()
+                            },
+                        }
                     }
+                } else if !def.supports_model_discovery && !def.models.is_empty() {
+                    // Provider has no /models endpoint — use the static catalog.
+                    def.models
+                        .iter()
+                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                        .collect()
                 } else {
-                    match openai::live_models(&key, &base_url) {
-                        Ok(models) => models,
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = def.config_name,
-                                error = %err,
-                                "failed to fetch live models for provider"
-                            );
-                            def.models
-                                .iter()
-                                .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                .collect()
-                        },
-                    }
-                }
-            } else {
-                Vec::new()
-            };
+                    Vec::new()
+                };
             let models = merge_preferred_and_discovered_models(preferred, discovered);
             for model in models {
                 let (model_id, display_name, created_at) =
@@ -1560,6 +1643,16 @@ mod tests {
             1_000_000
         );
         assert_eq!(super::context_window_for_model("kimi-k2.5"), 128_000);
+        // Z.AI GLM models
+        assert_eq!(super::context_window_for_model("glm-5"), 128_000);
+        assert_eq!(super::context_window_for_model("glm-4.7"), 128_000);
+        assert_eq!(super::context_window_for_model("glm-4.7-flash"), 128_000);
+        assert_eq!(super::context_window_for_model("glm-4.6"), 128_000);
+        assert_eq!(super::context_window_for_model("glm-4.5"), 128_000);
+        assert_eq!(
+            super::context_window_for_model("glm-4-32b-0414-128k"),
+            128_000
+        );
     }
 
     #[test]
@@ -1607,6 +1700,11 @@ mod tests {
 
         // Gemini supports vision
         assert!(super::supports_vision_for_model("gemini-2.0-flash"));
+
+        // Z.AI vision models
+        assert!(super::supports_vision_for_model("glm-4.6v"));
+        assert!(super::supports_vision_for_model("glm-4.6v-flash"));
+        assert!(super::supports_vision_for_model("glm-4.5v"));
     }
 
     #[test]
@@ -1619,6 +1717,11 @@ mod tests {
 
         // Kimi - no vision
         assert!(!super::supports_vision_for_model("kimi-k2.5"));
+
+        // Z.AI text-only models - no vision
+        assert!(!super::supports_vision_for_model("glm-5"));
+        assert!(!super::supports_vision_for_model("glm-4.7"));
+        assert!(!super::supports_vision_for_model("glm-4.5"));
 
         // Unknown models default to no vision
         assert!(!super::supports_vision_for_model("some-unknown-model"));
@@ -1666,6 +1769,19 @@ mod tests {
         assert!(!super::is_chat_capable_model("gpt-4o-realtime-preview"));
         assert!(!super::is_chat_capable_model("gpt-4o-mini-transcribe"));
         assert!(!super::is_chat_capable_model("sora"));
+
+        // Z.AI non-chat models
+        assert!(!super::is_chat_capable_model("glm-image"));
+        assert!(!super::is_chat_capable_model("glm-asr-2512"));
+        assert!(!super::is_chat_capable_model("glm-ocr"));
+        assert!(!super::is_chat_capable_model("cogvideox-3"));
+        assert!(!super::is_chat_capable_model("cogview-4"));
+        assert!(!super::is_chat_capable_model("vidu"));
+        assert!(!super::is_chat_capable_model("autoglm-phone-multilingual"));
+        // Z.AI chat models pass
+        assert!(super::is_chat_capable_model("glm-5"));
+        assert!(super::is_chat_capable_model("glm-4.7"));
+        assert!(super::is_chat_capable_model("glm-4.6v"));
 
         // Works with namespaced model IDs too
         assert!(super::is_chat_capable_model("openai::gpt-5.2"));
@@ -1756,6 +1872,7 @@ mod tests {
         assert!(!MISTRAL_MODELS.is_empty());
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
+        assert!(!ZAI_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
     }
 
@@ -1776,6 +1893,7 @@ mod tests {
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
             MINIMAX_MODELS,
+            ZAI_MODELS,
             MOONSHOT_MODELS,
         ] {
             let mut ids: Vec<&str> = models.iter().map(|(id, _)| *id).collect();
@@ -1956,6 +2074,20 @@ mod tests {
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "minimax"));
+    }
+
+    #[test]
+    fn zai_registers_with_api_key() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("zai".into(), moltis_config::schema::ProviderEntry {
+                api_key: Some(secrecy::Secret::new("sk-test-zai".into())),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(reg.list_models().iter().any(|m| m.provider == "zai"));
     }
 
     #[test]

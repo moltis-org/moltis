@@ -81,7 +81,7 @@ fn to_user_content(mc: &MessageContent) -> UserContent {
                         },
                         None => {
                             warn!(
-                                url_prefix = &image_url.url[..image_url.url.len().min(80)],
+                                url_prefix = truncate_at_char_boundary(&image_url.url, 80),
                                 "to_user_content: failed to parse data URI, dropping image"
                             );
                             None
@@ -113,6 +113,11 @@ fn to_user_content(mc: &MessageContent) -> UserContent {
 enum ReplyMedium {
     Text,
     Voice,
+}
+
+#[must_use]
+fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
+    &text[..text.floor_char_boundary(max_bytes)]
 }
 
 #[derive(Debug, Deserialize)]
@@ -3963,6 +3968,8 @@ async fn run_with_tools(
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        // Track reasoning text that should be persisted with the first tool call after thinking.
+        let mut tool_reasoning_map: HashMap<String, String> = HashMap::new();
         let mut latest_reasoning = String::new();
         while let Some(event) = event_rx.recv().await {
             let state = Arc::clone(&state_for_events);
@@ -3989,6 +3996,12 @@ async fn run_with_tools(
                     arguments,
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
+
+                    // Attach reasoning to the first tool call after thinking.
+                    if !latest_reasoning.is_empty() {
+                        tool_reasoning_map
+                            .insert(id.clone(), std::mem::take(&mut latest_reasoning));
+                    }
 
                     // Send tool status to channels (Telegram, etc.)
                     let state_clone = Arc::clone(&state);
@@ -4072,7 +4085,7 @@ async fn run_with_tools(
                             {
                                 let truncated = format!(
                                     "{}\n\n... [truncated — {} bytes total]",
-                                    &s[..10_000],
+                                    truncate_at_char_boundary(s, 10_000),
                                     s.len()
                                 );
                                 capped[*field] = serde_json::Value::String(truncated);
@@ -4164,7 +4177,7 @@ async fn run_with_tools(
                                 {
                                     let truncated = format!(
                                         "{}\n\n... [truncated — {} bytes total]",
-                                        &s[..10_000],
+                                        truncate_at_char_boundary(s, 10_000),
                                         s.len()
                                     );
                                     r[*field] = serde_json::Value::String(truncated);
@@ -4172,13 +4185,15 @@ async fn run_with_tools(
                             }
                             r
                         });
-                        let tool_result_msg = PersistedMessage::tool_result(
+                        let tracked_reasoning = tool_reasoning_map.remove(&id);
+                        let tool_result_msg = PersistedMessage::tool_result_with_reasoning(
                             id,
                             name,
                             tracked_args,
                             success,
                             persisted_result,
                             error,
+                            tracked_reasoning,
                         );
                         let store_clone = Arc::clone(store);
                         let sk_persist = sk.clone();
@@ -4848,7 +4863,7 @@ async fn send_chat_push_notification(state: &Arc<GatewayState>, session_key: &st
 
     // Create a short summary of the response (first 100 chars)
     let summary = if text.len() > 100 {
-        format!("{}…", &text[..100])
+        format!("{}…", truncate_at_char_boundary(text, 100))
     } else {
         text.to_string()
     };
@@ -5310,7 +5325,7 @@ fn format_tool_status_message(tool_name: &str, arguments: &serde_json::Value) ->
             if let Some(cmd) = command {
                 // Show first ~50 chars of command
                 let display_cmd = if cmd.len() > 50 {
-                    format!("{}...", &cmd[..50])
+                    format!("{}...", truncate_at_char_boundary(cmd, 50))
                 } else {
                     cmd.to_string()
                 };
@@ -5331,7 +5346,7 @@ fn format_tool_status_message(tool_name: &str, arguments: &serde_json::Value) ->
             let query = arguments.get("query").and_then(|v| v.as_str());
             if let Some(q) = query {
                 let display_q = if q.len() > 40 {
-                    format!("{}...", &q[..40])
+                    format!("{}...", truncate_at_char_boundary(q, 40))
                 } else {
                     q.to_string()
                 };
@@ -5356,7 +5371,7 @@ fn truncate_url(url: &str) -> String {
 
     // Take first 50 chars max
     if without_scheme.len() > 50 {
-        format!("{}...", &without_scheme[..50])
+        format!("{}...", truncate_at_char_boundary(without_scheme, 50))
     } else {
         without_scheme.to_string()
     }
@@ -5568,6 +5583,14 @@ mod tests {
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
         delay: Duration,
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_handles_multibyte_boundary() {
+        let text = format!("{}л{}", "a".repeat(99), "z");
+        let truncated = truncate_at_char_boundary(&text, 100);
+        assert_eq!(truncated.len(), 99);
+        assert!(truncated.chars().all(|c| c == 'a'));
     }
 
     #[test]

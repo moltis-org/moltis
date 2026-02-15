@@ -122,11 +122,17 @@ test.describe("Onboarding Anthropic provider", () => {
 			.filter({ has: page.getByText("API Key", { exact: true }) })
 			.first();
 		await expect(anthropicRow).toBeVisible();
-		await anthropicRow.getByRole("button", { name: "Configure", exact: true }).click();
-		await anthropicRow.locator("input[type='password']").first().fill(ANTHROPIC_API_KEY);
-		await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
-		await expect(anthropicRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
-		await expect(anthropicRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
+
+		// In serial mode, the previous test may have already configured Anthropic.
+		// Only configure from scratch if the "Configure" button is visible.
+		const configureBtn = anthropicRow.getByRole("button", { name: "Configure", exact: true });
+		if (await isVisible(configureBtn)) {
+			await configureBtn.click();
+			await anthropicRow.locator("input[type='password']").first().fill(ANTHROPIC_API_KEY);
+			await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
+			await expect(anthropicRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
+			await expect(anthropicRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
+		}
 
 		await page.getByRole("button", { name: "Continue", exact: true }).click();
 		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).not.toBeVisible({ timeout: 45_000 });

@@ -17,7 +17,11 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::{container::BrowserContainer, error::BrowserError, types::BrowserConfig};
+use crate::{
+    container::BrowserContainer,
+    error::BrowserError,
+    types::{BrowserConfig, BrowserPreference},
+};
 
 /// Get current system memory usage as a percentage (0-100).
 fn get_memory_usage_percent() -> u8 {
@@ -76,6 +80,7 @@ impl BrowserPool {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<String, BrowserError> {
         // Treat empty string as None (generate new session ID)
         let session_id = session_id.filter(|s| !s.is_empty());
@@ -129,7 +134,7 @@ impl BrowserPool {
             .map(String::from)
             .unwrap_or_else(generate_session_id);
 
-        let instance = self.launch_browser(&sid, sandbox).await?;
+        let instance = self.launch_browser(&sid, sandbox, browser).await?;
         let instance = Arc::new(Mutex::new(instance));
 
         {
@@ -291,11 +296,12 @@ impl BrowserPool {
         &self,
         session_id: &str,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, BrowserError> {
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
-            self.launch_host_browser(session_id).await
+            self.launch_host_browser(session_id, browser).await
         }
     }
 
@@ -387,15 +393,61 @@ impl BrowserPool {
     }
 
     /// Launch a browser on the host (non-sandboxed mode).
-    async fn launch_host_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
-        // Check if Chrome/Chromium is available before attempting to launch
-        let detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
-        if !detection.found {
-            return Err(BrowserError::LaunchFailed(format!(
-                "Chrome/Chromium not found. {}",
-                detection.install_hint
-            )));
+    async fn launch_host_browser(
+        &self,
+        session_id: &str,
+        browser: Option<BrowserPreference>,
+    ) -> Result<BrowserInstance, BrowserError> {
+        let requested_browser = browser.unwrap_or_default();
+
+        // Detect all installed browser candidates.
+        let mut detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
+        let mut install_attempt: Option<crate::detect::AutoInstallResult> = None;
+
+        // Auto-install is always on: if none are installed, try to install one.
+        if detection.browsers.is_empty() {
+            let result = crate::detect::auto_install_browser(requested_browser).await;
+            if result.attempted && result.installed {
+                info!(details = %result.details, "auto-installed browser on host");
+            } else if result.attempted {
+                warn!(details = %result.details, "browser auto-install failed");
+            } else {
+                warn!(
+                    details = %result.details,
+                    "browser auto-install skipped (installer unavailable)"
+                );
+            }
+            install_attempt = Some(result);
+            detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
         }
+
+        if detection.browsers.is_empty() {
+            let mut message = format!("No compatible browser found. {}", detection.install_hint);
+            if let Some(attempt) = install_attempt
+                && attempt.attempted
+            {
+                message.push_str("\n\nAuto-install attempt:\n");
+                message.push_str(&attempt.details);
+            }
+            return Err(BrowserError::LaunchFailed(message));
+        }
+
+        let selected =
+            match crate::detect::pick_browser(&detection.browsers, Some(requested_browser)) {
+                Some(browser) => browser,
+                None => {
+                    let installed = crate::detect::installed_browser_labels(&detection.browsers);
+                    let installed_list = if installed.is_empty() {
+                        "none".to_string()
+                    } else {
+                        installed.join(", ")
+                    };
+                    return Err(BrowserError::LaunchFailed(format!(
+                        "requested browser '{}' is not installed. Installed browsers: {}",
+                        requested_browser, installed_list
+                    )));
+                },
+            };
 
         let mut builder = CdpBrowserConfig::builder();
 
@@ -429,10 +481,7 @@ impl BrowserPool {
         if let Some(ref ua) = self.config.user_agent {
             builder = builder.arg(format!("--user-agent={ua}"));
         }
-
-        if let Some(ref path) = self.config.chrome_path {
-            builder = builder.chrome_executable(path);
-        }
+        builder = builder.chrome_executable(selected.path.clone());
 
         for arg in &self.config.chrome_args {
             builder = builder.arg(arg);
@@ -455,6 +504,13 @@ impl BrowserPool {
             let install_hint = crate::detect::install_instructions();
             BrowserError::LaunchFailed(format!("browser launch failed: {e}\n\n{install_hint}"))
         })?;
+
+        info!(
+            session_id,
+            browser = %selected.kind,
+            path = %selected.path.display(),
+            "launched host browser executable"
+        );
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
