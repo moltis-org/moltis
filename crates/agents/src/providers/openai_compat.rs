@@ -387,7 +387,10 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
         }
     }
 
-    (visible.trim_start().to_string(), thinking.trim_start().to_string())
+    (
+        visible.trim_start().to_string(),
+        thinking.trim_start().to_string(),
+    )
 }
 
 /// State for tracking streaming tool calls.
@@ -1596,8 +1599,7 @@ mod tests {
     #[test]
     fn test_stream_strips_visible_whitespace_after_think() {
         let mut state = StreamingToolState::default();
-        let data =
-            r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\nHere's the answer"}}]}"#;
+        let data = r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\nHere's the answer"}}]}"#;
         let result = process_openai_sse_line(data, &mut state);
         match result {
             SseLineResult::Events(events) => {
