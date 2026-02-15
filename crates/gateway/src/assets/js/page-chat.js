@@ -619,7 +619,7 @@ function toggleMcp() {
 	var label = S.$("mcpToggleLabel");
 	var isEnabled = label && label.textContent === "MCP";
 	var newDisabled = isEnabled;
-	sendRpc("sessions.patch", { key: S.activeSessionKey, mcp_disabled: newDisabled }).then((res) => {
+	sendRpc("sessions.patch", { key: S.activeSessionKey, mcpDisabled: newDisabled }).then((res) => {
 		if (res?.ok) {
 			updateMcpToggleUI(!newDisabled);
 		}

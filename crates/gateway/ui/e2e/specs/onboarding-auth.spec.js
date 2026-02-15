@@ -122,8 +122,6 @@ test.describe("Onboarding with forced auth (remote)", () => {
 			return;
 		}
 
-		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
-
 		let step = await waitForStableStep(page);
 
 		if (step === "chats") {
@@ -149,6 +147,9 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 		// After identity save, onboarding should advance (summary in current flow).
 		await expect.poll(() => detectOnboardingStep(page), { timeout: 10_000 }).toMatch(/^(summary|chats)$/);
+		if ((await detectOnboardingStep(page)) === "summary") {
+			await expect(page.getByText("You: TestUser Agent:", { exact: false })).toBeVisible();
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

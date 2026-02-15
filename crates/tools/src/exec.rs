@@ -281,8 +281,8 @@ impl AgentTool for ExecTool {
 
         // Resolve working directory.  When sandboxed *with a real container
         // backend* the host CWD doesn't exist inside the container, so default
-        // to "/home/sandbox".  When the backend is "none" (no container), fall
-        // back to the host data directory to avoid ENOENT.
+        // to "/home/sandbox".  When running on the host (no container), default
+        // to $HOME so the LLM operates in a familiar location.
         let explicit_working_dir = params
             .get("working_dir")
             .and_then(|v| v.as_str())
@@ -290,18 +290,40 @@ impl AgentTool for ExecTool {
             .map(PathBuf::from)
             .or_else(|| self.working_dir.clone());
 
-        let using_default_working_dir = explicit_working_dir.is_none();
-        let mut working_dir = explicit_working_dir.or_else(|| {
-            if is_sandboxed && has_container_backend {
+        let runs_on_host = !(is_sandboxed && has_container_backend);
+        let host_default_dir = || moltis_config::home_dir().unwrap_or_else(moltis_config::data_dir);
+
+        // When running on the host, validate that the explicit working dir
+        // actually exists — the LLM may remember a container path like
+        // /home/sandbox from an earlier sandboxed run.
+        let validated_explicit = if runs_on_host {
+            match explicit_working_dir {
+                Some(ref dir) if dir.is_dir() => explicit_working_dir,
+                Some(ref dir) => {
+                    debug!(
+                        path = %dir.display(),
+                        "explicit working_dir does not exist on host, using default"
+                    );
+                    None
+                },
+                None => None,
+            }
+        } else {
+            explicit_working_dir
+        };
+
+        let using_default_working_dir = validated_explicit.is_none();
+        let mut working_dir = validated_explicit.or_else(|| {
+            if !runs_on_host {
                 Some(PathBuf::from("/home/sandbox"))
             } else {
-                Some(moltis_config::data_dir())
+                Some(host_default_dir())
             }
         });
 
         // Ensure default host working directory exists so command spawning does
-        // not fail on fresh machines where ~/.moltis has not been created yet.
-        if !(is_sandboxed && has_container_backend)
+        // not fail on fresh machines where $HOME has not been created yet.
+        if runs_on_host
             && using_default_working_dir
             && let Some(dir) = working_dir.as_ref()
             && let Err(e) = tokio::fs::create_dir_all(dir).await

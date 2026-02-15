@@ -108,7 +108,7 @@ impl GitHubCopilotProvider {
         interval: u64,
     ) -> anyhow::Result<String> {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            tokio::time::sleep(Duration::from_secs(interval)).await;
 
             let resp = client
                 .post(GITHUB_TOKEN_URL)
@@ -130,7 +130,7 @@ impl GitHubCopilotProvider {
             match body.error.as_deref() {
                 Some("authorization_pending") => continue,
                 Some("slow_down") => {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 },
                 Some(err) => anyhow::bail!("GitHub device flow error: {err}"),
@@ -962,7 +962,7 @@ mod tests {
             "/chat/completions",
             post(|| async {
                 (
-                    axum::http::StatusCode::BAD_REQUEST,
+                    http::StatusCode::BAD_REQUEST,
                     "bad request: missing something",
                 )
             }),

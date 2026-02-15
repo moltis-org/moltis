@@ -14,7 +14,7 @@ use {
 pub type ServiceError = String;
 pub type ServiceResult<T = Value> = Result<T, ServiceError>;
 
-fn security_audit(event: &str, details: serde_json::Value) {
+fn security_audit(event: &str, details: Value) {
     let dir = moltis_config::data_dir().join("logs");
     let path = dir.join("security-audit.jsonl");
     let now_ms = std::time::SystemTime::now()
@@ -49,7 +49,7 @@ async fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<serde_json::Value> {
+async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<Value> {
     let mut cmd = if command_available("uvx").await {
         let mut c = tokio::process::Command::new("uvx");
         c.arg("mcp-scan@latest");
@@ -78,7 +78,7 @@ async fn run_mcp_scan(installed_dir: &Path) -> anyhow::Result<serde_json::Value>
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+    let parsed: Value = serde_json::from_str(&stdout)
         .map_err(|e| anyhow::anyhow!("invalid mcp-scan JSON output: {e}"))?;
     Ok(parsed)
 }

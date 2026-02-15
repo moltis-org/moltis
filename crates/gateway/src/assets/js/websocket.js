@@ -174,6 +174,11 @@ function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 	// Close the current streaming element so new text deltas after this tool
 	// call will create a fresh element positioned after the tool card
 	if (S.streamEl) {
+		// Remove the element if it's empty (e.g. only whitespace from a
+		// pre-tool-call delta) to avoid leaving an orphaned empty div.
+		if (!S.streamEl.textContent.trim()) {
+			S.streamEl.remove();
+		}
 		S.setStreamEl(null);
 		S.setStreamText("");
 	}
@@ -334,6 +339,13 @@ function handleChatDelta(p, isActive, isChatPage, eventSession) {
 		S.setStreamText(S.streamText + p.text);
 		return;
 	}
+	// Skip leading whitespace before any real content has been streamed.
+	// Some providers emit newlines between thinking and content; rendering
+	// them would create an empty assistant div that lingers if a tool call
+	// follows immediately.  We must check this BEFORE removeThinking() so
+	// the thinking text is still available for handleChatToolCallStart to
+	// extract into a reasoning disclosure on the tool card.
+	if (!(S.streamEl || p.text.trim())) return;
 	removeThinking();
 	if (!S.streamEl) {
 		S.setStreamText("");

@@ -277,7 +277,7 @@ impl LiveOnboardingService {
 }
 
 /// Path to the `.onboarded` sentinel file in the data directory.
-fn onboarded_sentinel() -> std::path::PathBuf {
+fn onboarded_sentinel() -> PathBuf {
     moltis_config::data_dir().join(".onboarded")
 }
 
@@ -340,8 +340,8 @@ mod tests {
         _data_dir: Option<PathBuf>,
     }
 
-    static DATA_DIR_TEST_LOCK: std::sync::Mutex<TestDataDirState> =
-        std::sync::Mutex::new(TestDataDirState { _data_dir: None });
+    static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> =
+        Mutex::new(TestDataDirState { _data_dir: None });
 
     #[test]
     fn wizard_round_trip() {

@@ -1587,7 +1587,7 @@ impl ProviderRegistry {
             .models
             .iter()
             .map(|m| m.provider.as_str())
-            .collect::<std::collections::HashSet<_>>()
+            .collect::<HashSet<_>>()
             .len();
         let model_count = self.models.len();
         format!(
@@ -1620,47 +1620,35 @@ mod tests {
     #[test]
     fn context_window_for_known_models() {
         assert_eq!(
-            super::context_window_for_model("claude-sonnet-4-20250514"),
+            context_window_for_model("claude-sonnet-4-20250514"),
             200_000
         );
         assert_eq!(
-            super::context_window_for_model("claude-opus-4-5-20251101"),
+            context_window_for_model("claude-opus-4-5-20251101"),
             200_000
         );
-        assert_eq!(super::context_window_for_model("gpt-4o"), 128_000);
-        assert_eq!(super::context_window_for_model("gpt-4o-mini"), 128_000);
-        assert_eq!(super::context_window_for_model("gpt-4-turbo"), 128_000);
-        assert_eq!(super::context_window_for_model("o3"), 200_000);
-        assert_eq!(super::context_window_for_model("o3-mini"), 200_000);
-        assert_eq!(super::context_window_for_model("o4-mini"), 200_000);
-        assert_eq!(super::context_window_for_model("codestral-latest"), 256_000);
-        assert_eq!(
-            super::context_window_for_model("mistral-large-latest"),
-            128_000
-        );
-        assert_eq!(
-            super::context_window_for_model("gemini-2.0-flash"),
-            1_000_000
-        );
-        assert_eq!(super::context_window_for_model("kimi-k2.5"), 128_000);
+        assert_eq!(context_window_for_model("gpt-4o"), 128_000);
+        assert_eq!(context_window_for_model("gpt-4o-mini"), 128_000);
+        assert_eq!(context_window_for_model("gpt-4-turbo"), 128_000);
+        assert_eq!(context_window_for_model("o3"), 200_000);
+        assert_eq!(context_window_for_model("o3-mini"), 200_000);
+        assert_eq!(context_window_for_model("o4-mini"), 200_000);
+        assert_eq!(context_window_for_model("codestral-latest"), 256_000);
+        assert_eq!(context_window_for_model("mistral-large-latest"), 128_000);
+        assert_eq!(context_window_for_model("gemini-2.0-flash"), 1_000_000);
+        assert_eq!(context_window_for_model("kimi-k2.5"), 128_000);
         // Z.AI GLM models
-        assert_eq!(super::context_window_for_model("glm-5"), 128_000);
-        assert_eq!(super::context_window_for_model("glm-4.7"), 128_000);
-        assert_eq!(super::context_window_for_model("glm-4.7-flash"), 128_000);
-        assert_eq!(super::context_window_for_model("glm-4.6"), 128_000);
-        assert_eq!(super::context_window_for_model("glm-4.5"), 128_000);
-        assert_eq!(
-            super::context_window_for_model("glm-4-32b-0414-128k"),
-            128_000
-        );
+        assert_eq!(context_window_for_model("glm-5"), 128_000);
+        assert_eq!(context_window_for_model("glm-4.7"), 128_000);
+        assert_eq!(context_window_for_model("glm-4.7-flash"), 128_000);
+        assert_eq!(context_window_for_model("glm-4.6"), 128_000);
+        assert_eq!(context_window_for_model("glm-4.5"), 128_000);
+        assert_eq!(context_window_for_model("glm-4-32b-0414-128k"), 128_000);
     }
 
     #[test]
     fn context_window_fallback_for_unknown_model() {
-        assert_eq!(
-            super::context_window_for_model("some-unknown-model"),
-            200_000
-        );
+        assert_eq!(context_window_for_model("some-unknown-model"), 200_000);
     }
 
     #[test]
@@ -1679,52 +1667,52 @@ mod tests {
     #[test]
     fn supports_vision_for_known_models() {
         // Claude models support vision
-        assert!(super::supports_vision_for_model("claude-sonnet-4-20250514"));
-        assert!(super::supports_vision_for_model("claude-opus-4-5-20251101"));
-        assert!(super::supports_vision_for_model("claude-3-haiku-20240307"));
+        assert!(supports_vision_for_model("claude-sonnet-4-20250514"));
+        assert!(supports_vision_for_model("claude-opus-4-5-20251101"));
+        assert!(supports_vision_for_model("claude-3-haiku-20240307"));
 
         // GPT-4o variants support vision
-        assert!(super::supports_vision_for_model("gpt-4o"));
-        assert!(super::supports_vision_for_model("gpt-4o-mini"));
+        assert!(supports_vision_for_model("gpt-4o"));
+        assert!(supports_vision_for_model("gpt-4o-mini"));
 
         // GPT-4 turbo supports vision
-        assert!(super::supports_vision_for_model("gpt-4-turbo"));
+        assert!(supports_vision_for_model("gpt-4-turbo"));
 
         // GPT-5 supports vision
-        assert!(super::supports_vision_for_model("gpt-5.2-codex"));
+        assert!(supports_vision_for_model("gpt-5.2-codex"));
 
         // o3/o4 series supports vision
-        assert!(super::supports_vision_for_model("o3"));
-        assert!(super::supports_vision_for_model("o3-mini"));
-        assert!(super::supports_vision_for_model("o4-mini"));
+        assert!(supports_vision_for_model("o3"));
+        assert!(supports_vision_for_model("o3-mini"));
+        assert!(supports_vision_for_model("o4-mini"));
 
         // Gemini supports vision
-        assert!(super::supports_vision_for_model("gemini-2.0-flash"));
+        assert!(supports_vision_for_model("gemini-2.0-flash"));
 
         // Z.AI vision models
-        assert!(super::supports_vision_for_model("glm-4.6v"));
-        assert!(super::supports_vision_for_model("glm-4.6v-flash"));
-        assert!(super::supports_vision_for_model("glm-4.5v"));
+        assert!(supports_vision_for_model("glm-4.6v"));
+        assert!(supports_vision_for_model("glm-4.6v-flash"));
+        assert!(supports_vision_for_model("glm-4.5v"));
     }
 
     #[test]
     fn supports_vision_false_for_non_vision_models() {
         // Codestral is code-focused, no vision
-        assert!(!super::supports_vision_for_model("codestral-latest"));
+        assert!(!supports_vision_for_model("codestral-latest"));
 
         // Mistral Large - no vision
-        assert!(!super::supports_vision_for_model("mistral-large-latest"));
+        assert!(!supports_vision_for_model("mistral-large-latest"));
 
         // Kimi - no vision
-        assert!(!super::supports_vision_for_model("kimi-k2.5"));
+        assert!(!supports_vision_for_model("kimi-k2.5"));
 
         // Z.AI text-only models - no vision
-        assert!(!super::supports_vision_for_model("glm-5"));
-        assert!(!super::supports_vision_for_model("glm-4.7"));
-        assert!(!super::supports_vision_for_model("glm-4.5"));
+        assert!(!supports_vision_for_model("glm-5"));
+        assert!(!supports_vision_for_model("glm-4.7"));
+        assert!(!supports_vision_for_model("glm-4.5"));
 
         // Unknown models default to no vision
-        assert!(!super::supports_vision_for_model("some-unknown-model"));
+        assert!(!supports_vision_for_model("some-unknown-model"));
     }
 
     #[test]
@@ -1752,72 +1740,72 @@ mod tests {
     #[test]
     fn is_chat_capable_filters_non_chat_models() {
         // Chat-capable models pass
-        assert!(super::is_chat_capable_model("gpt-5.2"));
-        assert!(super::is_chat_capable_model("gpt-4o"));
-        assert!(super::is_chat_capable_model("o4-mini"));
-        assert!(super::is_chat_capable_model("chatgpt-4o-latest"));
+        assert!(is_chat_capable_model("gpt-5.2"));
+        assert!(is_chat_capable_model("gpt-4o"));
+        assert!(is_chat_capable_model("o4-mini"));
+        assert!(is_chat_capable_model("chatgpt-4o-latest"));
 
         // Non-chat models are rejected
-        assert!(!super::is_chat_capable_model("dall-e-3"));
-        assert!(!super::is_chat_capable_model("gpt-image-1-mini"));
-        assert!(!super::is_chat_capable_model("chatgpt-image-latest"));
-        assert!(!super::is_chat_capable_model("gpt-audio"));
-        assert!(!super::is_chat_capable_model("tts-1"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
-        assert!(!super::is_chat_capable_model("gpt-4o-audio-preview"));
-        assert!(!super::is_chat_capable_model("gpt-4o-realtime-preview"));
-        assert!(!super::is_chat_capable_model("gpt-4o-mini-transcribe"));
-        assert!(!super::is_chat_capable_model("sora"));
+        assert!(!is_chat_capable_model("dall-e-3"));
+        assert!(!is_chat_capable_model("gpt-image-1-mini"));
+        assert!(!is_chat_capable_model("chatgpt-image-latest"));
+        assert!(!is_chat_capable_model("gpt-audio"));
+        assert!(!is_chat_capable_model("tts-1"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-tts-2025-12-15"));
+        assert!(!is_chat_capable_model("gpt-4o-audio-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-realtime-preview"));
+        assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
+        assert!(!is_chat_capable_model("sora"));
 
         // Z.AI non-chat models
-        assert!(!super::is_chat_capable_model("glm-image"));
-        assert!(!super::is_chat_capable_model("glm-asr-2512"));
-        assert!(!super::is_chat_capable_model("glm-ocr"));
-        assert!(!super::is_chat_capable_model("cogvideox-3"));
-        assert!(!super::is_chat_capable_model("cogview-4"));
-        assert!(!super::is_chat_capable_model("vidu"));
-        assert!(!super::is_chat_capable_model("autoglm-phone-multilingual"));
+        assert!(!is_chat_capable_model("glm-image"));
+        assert!(!is_chat_capable_model("glm-asr-2512"));
+        assert!(!is_chat_capable_model("glm-ocr"));
+        assert!(!is_chat_capable_model("cogvideox-3"));
+        assert!(!is_chat_capable_model("cogview-4"));
+        assert!(!is_chat_capable_model("vidu"));
+        assert!(!is_chat_capable_model("autoglm-phone-multilingual"));
         // Z.AI chat models pass
-        assert!(super::is_chat_capable_model("glm-5"));
-        assert!(super::is_chat_capable_model("glm-4.7"));
-        assert!(super::is_chat_capable_model("glm-4.6v"));
+        assert!(is_chat_capable_model("glm-5"));
+        assert!(is_chat_capable_model("glm-4.7"));
+        assert!(is_chat_capable_model("glm-4.6v"));
 
         // Works with namespaced model IDs too
-        assert!(super::is_chat_capable_model("openai::gpt-5.2"));
-        assert!(!super::is_chat_capable_model("openai::dall-e-3"));
-        assert!(!super::is_chat_capable_model("openai::gpt-image-1-mini"));
-        assert!(!super::is_chat_capable_model("openai::gpt-4o-mini-tts"));
+        assert!(is_chat_capable_model("openai::gpt-5.2"));
+        assert!(!is_chat_capable_model("openai::dall-e-3"));
+        assert!(!is_chat_capable_model("openai::gpt-image-1-mini"));
+        assert!(!is_chat_capable_model("openai::gpt-4o-mini-tts"));
     }
 
     #[test]
     fn supports_tools_for_chat_models() {
         // Modern chat models support tools
-        assert!(super::supports_tools_for_model("gpt-5.2"));
-        assert!(super::supports_tools_for_model("gpt-4o"));
-        assert!(super::supports_tools_for_model("gpt-4o-mini"));
-        assert!(super::supports_tools_for_model("o3"));
-        assert!(super::supports_tools_for_model("o4-mini"));
-        assert!(super::supports_tools_for_model("chatgpt-4o-latest"));
-        assert!(super::supports_tools_for_model("claude-sonnet-4-20250514"));
-        assert!(super::supports_tools_for_model("gemini-2.0-flash"));
-        assert!(super::supports_tools_for_model("codestral-latest"));
+        assert!(supports_tools_for_model("gpt-5.2"));
+        assert!(supports_tools_for_model("gpt-4o"));
+        assert!(supports_tools_for_model("gpt-4o-mini"));
+        assert!(supports_tools_for_model("o3"));
+        assert!(supports_tools_for_model("o4-mini"));
+        assert!(supports_tools_for_model("chatgpt-4o-latest"));
+        assert!(supports_tools_for_model("claude-sonnet-4-20250514"));
+        assert!(supports_tools_for_model("gemini-2.0-flash"));
+        assert!(supports_tools_for_model("codestral-latest"));
     }
 
     #[test]
     fn supports_tools_false_for_legacy_and_non_chat_models() {
         // Legacy completions-only models
-        assert!(!super::supports_tools_for_model("babbage-002"));
-        assert!(!super::supports_tools_for_model("davinci-002"));
+        assert!(!supports_tools_for_model("babbage-002"));
+        assert!(!supports_tools_for_model("davinci-002"));
 
         // Non-chat model families
-        assert!(!super::supports_tools_for_model("dall-e-3"));
-        assert!(!super::supports_tools_for_model("gpt-image-1"));
-        assert!(!super::supports_tools_for_model("tts-1"));
-        assert!(!super::supports_tools_for_model("tts-1-hd"));
-        assert!(!super::supports_tools_for_model("whisper-1"));
-        assert!(!super::supports_tools_for_model("text-embedding-3-large"));
-        assert!(!super::supports_tools_for_model("omni-moderation-latest"));
+        assert!(!supports_tools_for_model("dall-e-3"));
+        assert!(!supports_tools_for_model("gpt-image-1"));
+        assert!(!supports_tools_for_model("tts-1"));
+        assert!(!supports_tools_for_model("tts-1-hd"));
+        assert!(!supports_tools_for_model("whisper-1"));
+        assert!(!supports_tools_for_model("text-embedding-3-large"));
+        assert!(!supports_tools_for_model("omni-moderation-latest"));
     }
 
     #[test]
@@ -2427,7 +2415,7 @@ mod tests {
         ];
         for model in claude_models {
             assert!(
-                super::supports_vision_for_model(model),
+                supports_vision_for_model(model),
                 "expected {} to support vision",
                 model
             );
@@ -2447,7 +2435,7 @@ mod tests {
         ];
         for model in gpt4o_models {
             assert!(
-                super::supports_vision_for_model(model),
+                supports_vision_for_model(model),
                 "expected {} to support vision",
                 model
             );
@@ -2466,7 +2454,7 @@ mod tests {
         ];
         for model in gpt5_models {
             assert!(
-                super::supports_vision_for_model(model),
+                supports_vision_for_model(model),
                 "expected {} to support vision",
                 model
             );
@@ -2479,7 +2467,7 @@ mod tests {
         let reasoning_models = ["o3", "o3-mini", "o3-preview", "o4", "o4-mini", "o4-preview"];
         for model in reasoning_models {
             assert!(
-                super::supports_vision_for_model(model),
+                supports_vision_for_model(model),
                 "expected {} to support vision",
                 model
             );
@@ -2499,7 +2487,7 @@ mod tests {
         ];
         for model in gemini_models {
             assert!(
-                super::supports_vision_for_model(model),
+                supports_vision_for_model(model),
                 "expected {} to support vision",
                 model
             );
@@ -2522,7 +2510,7 @@ mod tests {
         ];
         for model in text_only_models {
             assert!(
-                !super::supports_vision_for_model(model),
+                !supports_vision_for_model(model),
                 "expected {} to NOT support vision",
                 model
             );
@@ -2532,16 +2520,16 @@ mod tests {
     #[test]
     fn vision_support_is_case_sensitive() {
         // Model IDs are case-sensitive - uppercase should not match
-        assert!(!super::supports_vision_for_model("CLAUDE-SONNET-4"));
-        assert!(!super::supports_vision_for_model("GPT-4O"));
-        assert!(!super::supports_vision_for_model("Gemini-2.0-flash"));
+        assert!(!supports_vision_for_model("CLAUDE-SONNET-4"));
+        assert!(!supports_vision_for_model("GPT-4O"));
+        assert!(!supports_vision_for_model("Gemini-2.0-flash"));
     }
 
     #[test]
     fn vision_support_requires_exact_prefix() {
         // Vision support is based on prefix matching - partial matches shouldn't work
-        assert!(!super::supports_vision_for_model("my-claude-model"));
-        assert!(!super::supports_vision_for_model("custom-gpt-4o-wrapper"));
-        assert!(!super::supports_vision_for_model("not-gemini-model"));
+        assert!(!supports_vision_for_model("my-claude-model"));
+        assert!(!supports_vision_for_model("custom-gpt-4o-wrapper"));
+        assert!(!supports_vision_for_model("not-gemini-model"));
     }
 }

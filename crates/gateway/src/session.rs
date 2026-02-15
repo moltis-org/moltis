@@ -1797,7 +1797,7 @@ mod tests {
     #[tokio::test]
     async fn message_audio_data_url_for_share_reads_media_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let bytes = b"OggSfake".to_vec();
         store
             .save_media("main", "voice.ogg", &bytes)
@@ -1822,7 +1822,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_skips_system_and_notice_roles() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
 
         let system_msg = serde_json::json!({
             "role": "system",
@@ -1857,7 +1857,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_user_audio_without_text() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         store
             .save_media("main", "voice-input.webm", b"RIFFfake")
             .await
@@ -1887,7 +1887,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_assistant_audio() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         store
             .save_media("main", "voice-output.ogg", b"OggSfake")
             .await
@@ -1917,7 +1917,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_assistant_reasoning_without_text() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let assistant_msg = serde_json::json!({
             "role": "assistant",
             "content": "",
@@ -1937,7 +1937,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tiny_png = general_purpose::STANDARD
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=")
             .unwrap();
@@ -2037,7 +2037,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_exec_command_for_tool_result() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",
@@ -2066,7 +2066,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_redacts_exec_command_and_output_secrets() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",
@@ -2125,24 +2125,24 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::services::TtsService for MockTtsService {
-        async fn status(&self) -> crate::services::ServiceResult {
+    impl TtsService for MockTtsService {
+        async fn status(&self) -> ServiceResult {
             Ok(self.status_payload.clone())
         }
 
-        async fn providers(&self) -> crate::services::ServiceResult {
+        async fn providers(&self) -> ServiceResult {
             Ok(serde_json::json!([]))
         }
 
-        async fn enable(&self, _params: Value) -> crate::services::ServiceResult {
+        async fn enable(&self, _params: Value) -> ServiceResult {
             Err("mock".to_string())
         }
 
-        async fn disable(&self) -> crate::services::ServiceResult {
+        async fn disable(&self) -> ServiceResult {
             Ok(serde_json::json!({}))
         }
 
-        async fn convert(&self, _params: Value) -> crate::services::ServiceResult {
+        async fn convert(&self, _params: Value) -> ServiceResult {
             self.convert_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(ref error) = self.convert_error {
                 return Err(error.clone());
@@ -2152,7 +2152,7 @@ mod tests {
                 .ok_or_else(|| "mock missing convert payload".to_string())
         }
 
-        async fn set_provider(&self, _params: Value) -> crate::services::ServiceResult {
+        async fn set_provider(&self, _params: Value) -> ServiceResult {
             Err("mock".to_string())
         }
     }
@@ -2160,11 +2160,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_reuses_existing_audio_without_tts_convert() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
         let existing_path = store
             .save_media("main", "voice-msg-1.ogg", b"OggSreuse")
             .await
@@ -2195,7 +2193,7 @@ mod tests {
             "convert should not be called",
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let result = service
             .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 1 }))
@@ -2210,11 +2208,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_creates_and_persists_audio() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         store
             .append(
@@ -2243,7 +2239,7 @@ mod tests {
             })),
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let result = service
             .voice_generate(serde_json::json!({ "key": "main", "runId": "run-generate" }))
@@ -2269,11 +2265,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_rejects_non_assistant_target() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         store
             .append(
@@ -2288,7 +2282,7 @@ mod tests {
             None,
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let error = service
             .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 0 }))
@@ -2300,11 +2294,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_prefers_run_id_over_non_assistant_message_index() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
         let existing_path = store
             .save_media("main", "voice-msg-2.ogg", b"OggSreuse")
             .await
@@ -2342,7 +2334,7 @@ mod tests {
             "convert should not be called",
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let result = service
             .voice_generate(
@@ -2380,7 +2372,7 @@ mod tests {
 
     #[async_trait]
     impl crate::services::BrowserService for MockBrowserService {
-        async fn request(&self, _p: serde_json::Value) -> crate::services::ServiceResult {
+        async fn request(&self, _p: Value) -> ServiceResult {
             Err("mock".into())
         }
 
@@ -2391,20 +2383,16 @@ mod tests {
 
     async fn sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        moltis_sessions::metadata::SqliteSessionMetadata::init(&pool)
-            .await
-            .unwrap();
+        SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
     }
 
     #[tokio::test]
     async fn with_browser_service_builder() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -2416,11 +2404,9 @@ mod tests {
     #[tokio::test]
     async fn clear_all_calls_browser_close_all() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -2434,11 +2420,9 @@ mod tests {
     #[tokio::test]
     async fn clear_all_without_browser_service() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         // No browser_service wired.
         let svc = LiveSessionService::new(store, metadata);

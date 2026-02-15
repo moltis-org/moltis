@@ -41,7 +41,7 @@ pub type AgentTurnFn = Arc<
 pub type SystemEventFn = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Callback for notifying about cron job changes.
-pub type NotifyFn = Arc<dyn Fn(crate::types::CronNotification) + Send + Sync>;
+pub type NotifyFn = Arc<dyn Fn(CronNotification) + Send + Sync>;
 
 /// Rate limiting configuration for cron job creation.
 #[derive(Debug, Clone)]
@@ -188,7 +188,7 @@ impl CronService {
     }
 
     /// Emit a notification if a callback is registered.
-    fn notify(&self, notification: crate::types::CronNotification) {
+    fn notify(&self, notification: CronNotification) {
         if let Some(ref notify_fn) = self.on_notify {
             notify_fn(notification);
         }
@@ -271,7 +271,7 @@ impl CronService {
         }
 
         self.wake_notify.notify_one();
-        self.notify(crate::types::CronNotification::Created { job: job.clone() });
+        self.notify(CronNotification::Created { job: job.clone() });
         info!(id = %job.id, name = %job.name, "cron job added");
         Ok(job)
     }
@@ -323,7 +323,7 @@ impl CronService {
 
         drop(jobs);
         self.wake_notify.notify_one();
-        self.notify(crate::types::CronNotification::Updated {
+        self.notify(CronNotification::Updated {
             job: updated.clone(),
         });
         info!(id, "cron job updated");
@@ -336,7 +336,7 @@ impl CronService {
         let mut jobs = self.jobs.write().await;
         jobs.retain(|j| j.id != id);
         drop(jobs);
-        self.notify(crate::types::CronNotification::Removed {
+        self.notify(CronNotification::Removed {
             job_id: id.to_string(),
         });
         info!(id, "cron job removed");

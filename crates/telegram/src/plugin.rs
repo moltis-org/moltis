@@ -60,7 +60,7 @@ impl TelegramPlugin {
     }
 
     /// Get a shared reference to the outbound sender (for use outside the plugin).
-    pub fn shared_outbound(&self) -> Arc<dyn moltis_channels::ChannelOutbound> {
+    pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
         Arc::new(TelegramOutbound {
             accounts: Arc::clone(&self.accounts),
         })

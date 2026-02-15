@@ -954,6 +954,19 @@ integrate them together so nothing is lost.
 to check fmt, lint, and tests locally and publish commit statuses to the PR.
 Running the script without a PR number is useless — it skips status publishing.
 
+**Formatter/linter command parity (mandatory):** When running Rust fmt/clippy
+manually, use the exact command values used by `scripts/local-validate.sh`.
+Do not substitute different flags/toolchains.
+
+- Fmt (default): `cargo +nightly-2025-11-30 fmt --all -- --check`
+- Clippy (default): `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
+- On macOS hosts without `nvcc`, local validation intentionally uses a clippy
+  variant without `--all-features`; mirror that behavior when reproducing
+  local validation results.
+
+If `scripts/local-validate.sh` changes, treat that script as the source of
+truth and update manual commands accordingly.
+
 **PR description quality:** Every pull request must include a clear, reviewer-friendly
 description with at least these sections:
 - `## Summary` (what changed and why)
@@ -978,8 +991,9 @@ concrete (commands to run, UI paths to click, and expected results).
 - [ ] **No secrets or private tokens are included** (CRITICAL)
 - [ ] `taplo fmt` (when TOML files were modified)
 - [ ] `biome check --write` (when JS files were modified; CI runs `biome ci`)
-- [ ] Code is formatted (`just format-check` passes)
-- [ ] Code passes release clippy gate (`just release-preflight` passes)
+- [ ] Rust formatting matches local validation (`cargo +nightly-2025-11-30 fmt --all -- --check` passes)
+- [ ] Rust clippy matches local validation command (`cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`; macOS/no-`nvcc` omits `--all-features`)
+- [ ] `just release-preflight` passes
 - [ ] All tests pass (`cargo test`)
 - [ ] Commit message follows conventional commit format
 - [ ] Changes are logically grouped in the commit

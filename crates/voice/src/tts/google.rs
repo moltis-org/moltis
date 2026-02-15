@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn language_prefix_extraction_handles_short_tags() {
         let config = GoogleTtsConfig {
-            api_key: Some(secrecy::Secret::new("test".to_string())),
+            api_key: Some(Secret::new("test".to_string())),
             language_code: Some("e".to_string()),
             ..Default::default()
         };

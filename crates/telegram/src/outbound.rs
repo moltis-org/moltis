@@ -28,7 +28,7 @@ pub struct TelegramOutbound {
 }
 
 impl TelegramOutbound {
-    fn get_bot(&self, account_id: &str) -> Result<teloxide::Bot> {
+    fn get_bot(&self, account_id: &str) -> Result<Bot> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
@@ -530,12 +530,7 @@ impl ChannelOutbound for TelegramOutbound {
 
 impl TelegramOutbound {
     /// Send a `ReplyPayload` — dispatches to text or media.
-    pub async fn send_reply(
-        &self,
-        bot: &teloxide::Bot,
-        to: &str,
-        payload: &ReplyPayload,
-    ) -> Result<()> {
+    pub async fn send_reply(&self, bot: &Bot, to: &str, payload: &ReplyPayload) -> Result<()> {
         let chat_id = ChatId(to.parse::<i64>()?);
 
         // Send typing indicator

@@ -49,11 +49,11 @@ fn deserialize_provider_models<'de, D>(deserializer: D) -> Result<Vec<String>, D
 where
     D: serde::Deserializer<'de>,
 {
-    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    let value: Value = serde::Deserialize::deserialize(deserializer)?;
     let normalized = match value {
-        serde_json::Value::Null => Vec::new(),
-        serde_json::Value::String(model) => vec![model],
-        serde_json::Value::Array(values) => values
+        Value::Null => Vec::new(),
+        Value::String(model) => vec![model],
+        Value::Array(values) => values
             .into_iter()
             .filter_map(|value| value.as_str().map(ToString::to_string))
             .collect(),
@@ -774,7 +774,7 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return false;
     };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+    let Ok(json) = serde_json::from_str::<Value>(&raw) else {
         return false;
     };
     json.get("tokens")
@@ -785,7 +785,7 @@ fn codex_cli_auth_has_access_token(path: &Path) -> bool {
 
 /// Parse Codex CLI `auth.json` content into `OAuthTokens`.
 fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
-    let json: serde_json::Value = serde_json::from_str(data).ok()?;
+    let json: Value = serde_json::from_str(data).ok()?;
     let tokens = json.get("tokens")?;
     let access_token = tokens.get("access_token")?.as_str()?.to_string();
     if access_token.trim().is_empty() {
@@ -1975,7 +1975,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         if probe_succeeded {
             // Build model list for the frontend, excluding non-chat models.
-            let model_list: Vec<serde_json::Value> = models
+            let model_list: Vec<Value> = models
                 .iter()
                 .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
                 .map(|m| {
