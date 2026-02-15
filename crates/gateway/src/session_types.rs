@@ -1,31 +1,10 @@
-//! Typed parameter structs for session RPC methods.
+//! Typed parameter structs for complex session RPC methods.
 //!
-//! These structs are deserialized from the JSON-RPC `params` value at the
-//! service boundary, eliminating ad-hoc `.get(...)` chains in business logic.
+//! Only methods with non-trivial parameter shapes (multi-field with defaults,
+//! null-vs-absent semantics, precedence logic) get dedicated structs here.
+//! Simple key-only handlers use inline `.get(...)` directly.
 
 use serde::Deserialize;
-
-use crate::share_store::ShareVisibility;
-
-/// Params for `session.preview`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewParams {
-    pub key: String,
-    #[serde(default = "default_preview_limit")]
-    pub limit: usize,
-}
-
-fn default_preview_limit() -> usize {
-    5
-}
-
-/// Params for `session.resolve`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolveParams {
-    pub key: String,
-}
 
 /// Params for `session.patch`.
 ///
@@ -103,97 +82,6 @@ pub enum VoiceTarget {
     ByMessageIndex(usize),
 }
 
-/// Params for `session.share.create`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShareCreateParams {
-    pub key: String,
-    #[serde(
-        default = "default_share_visibility",
-        deserialize_with = "deserialize_share_visibility"
-    )]
-    pub visibility: ShareVisibility,
-}
-
-fn default_share_visibility() -> ShareVisibility {
-    ShareVisibility::Public
-}
-
-fn deserialize_share_visibility<'de, D>(deserializer: D) -> Result<ShareVisibility, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(s) => s
-            .parse::<ShareVisibility>()
-            .map_err(serde::de::Error::custom),
-        None => Ok(ShareVisibility::Public),
-    }
-}
-
-/// Params for `session.share.list`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShareListParams {
-    pub key: String,
-}
-
-/// Params for `session.share.revoke`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShareRevokeParams {
-    pub id: String,
-}
-
-/// Params for `session.reset`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResetParams {
-    pub key: String,
-}
-
-/// Params for `session.delete`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteParams {
-    pub key: String,
-    #[serde(default)]
-    pub force: bool,
-}
-
-/// Params for `session.fork`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ForkParams {
-    pub key: String,
-    #[serde(default)]
-    pub label: Option<String>,
-    #[serde(default)]
-    pub fork_point: Option<usize>,
-}
-
-/// Params for `session.branches`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchesParams {
-    pub key: String,
-}
-
-/// Params for `session.search`.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchParams {
-    #[serde(default)]
-    pub query: String,
-    #[serde(default = "default_search_limit")]
-    pub limit: usize,
-}
-
-fn default_search_limit() -> usize {
-    20
-}
-
 /// Parse a `serde_json::Value` into a typed param struct, mapping
 /// deserialization errors to the service error format.
 pub fn parse_params<T: serde::de::DeserializeOwned>(
@@ -206,32 +94,6 @@ pub fn parse_params<T: serde::de::DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use {super::*, serde_json::json};
-
-    #[test]
-    fn preview_params_with_defaults() {
-        let p: PreviewParams = serde_json::from_value(json!({"key": "main"})).unwrap();
-        assert_eq!(p.key, "main");
-        assert_eq!(p.limit, 5);
-    }
-
-    #[test]
-    fn preview_params_with_limit() {
-        let p: PreviewParams = serde_json::from_value(json!({"key": "s1", "limit": 10})).unwrap();
-        assert_eq!(p.key, "s1");
-        assert_eq!(p.limit, 10);
-    }
-
-    #[test]
-    fn preview_params_missing_key() {
-        let result = serde_json::from_value::<PreviewParams>(json!({"limit": 5}));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn resolve_params_basic() {
-        let p: ResolveParams = serde_json::from_value(json!({"key": "session:abc"})).unwrap();
-        assert_eq!(p.key, "session:abc");
-    }
 
     #[test]
     fn patch_params_minimal() {
@@ -329,69 +191,16 @@ mod tests {
     }
 
     #[test]
-    fn share_create_default_visibility() {
-        let p: ShareCreateParams = serde_json::from_value(json!({"key": "main"})).unwrap();
-        assert!(matches!(p.visibility, ShareVisibility::Public));
-    }
-
-    #[test]
-    fn share_create_private() {
-        let p: ShareCreateParams =
-            serde_json::from_value(json!({"key": "main", "visibility": "private"})).unwrap();
-        assert!(matches!(p.visibility, ShareVisibility::Private));
-    }
-
-    #[test]
-    fn delete_params_defaults() {
-        let p: DeleteParams = serde_json::from_value(json!({"key": "s1"})).unwrap();
-        assert_eq!(p.key, "s1");
-        assert!(!p.force);
-    }
-
-    #[test]
-    fn fork_params_minimal() {
-        let p: ForkParams = serde_json::from_value(json!({"key": "main"})).unwrap();
-        assert_eq!(p.key, "main");
-        assert!(p.label.is_none());
-        assert!(p.fork_point.is_none());
-    }
-
-    #[test]
-    fn fork_params_with_fork_point() {
-        let p: ForkParams =
-            serde_json::from_value(json!({"key": "main", "forkPoint": 10, "label": "branch"}))
-                .unwrap();
-        assert_eq!(p.fork_point, Some(10));
-        assert_eq!(p.label.as_deref(), Some("branch"));
-    }
-
-    #[test]
-    fn search_params_defaults() {
-        let p: SearchParams = serde_json::from_value(json!({})).unwrap();
-        assert_eq!(p.query, "");
-        assert_eq!(p.limit, 20);
-    }
-
-    #[test]
-    fn search_params_with_values() {
-        let p: SearchParams =
-            serde_json::from_value(json!({"query": "hello", "limit": 5})).unwrap();
-        assert_eq!(p.query, "hello");
-        assert_eq!(p.limit, 5);
-    }
-
-    #[test]
     fn parse_params_helper() {
-        let v = json!({"key": "main", "limit": 3});
-        let p: PreviewParams = parse_params(v).unwrap();
+        let v = json!({"key": "main"});
+        let p: PatchParams = parse_params(v).unwrap();
         assert_eq!(p.key, "main");
-        assert_eq!(p.limit, 3);
     }
 
     #[test]
     fn parse_params_error() {
-        let v = json!({"limit": 3}); // missing key
-        let err = parse_params::<PreviewParams>(v).unwrap_err();
+        let v = json!({"not_key": true});
+        let err = parse_params::<PatchParams>(v).unwrap_err();
         assert!(err.contains("key"));
     }
 }
