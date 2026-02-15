@@ -391,7 +391,7 @@ fn macos_install_commands(target: BrowserKind) -> Vec<InstallCommand> {
         BrowserKind::Opera => vec!["opera"],
         BrowserKind::Vivaldi => vec!["vivaldi"],
         BrowserKind::Arc => vec!["arc"],
-        BrowserKind::Custom => return vec![],
+        BrowserKind::Custom => vec![],
     };
 
     casks
@@ -410,7 +410,7 @@ fn linux_package_candidates(target: BrowserKind) -> Vec<&'static str> {
         BrowserKind::Opera => vec!["opera-stable", "opera", "chromium"],
         BrowserKind::Vivaldi => vec!["vivaldi-stable", "vivaldi", "chromium"],
         BrowserKind::Arc => vec!["chromium"],
-        BrowserKind::Custom => return vec![],
+        BrowserKind::Custom => vec![],
     }
 }
 
@@ -424,7 +424,7 @@ fn windows_package_ids(target: BrowserKind) -> Vec<&'static str> {
         BrowserKind::Opera => vec!["Opera.Opera"],
         BrowserKind::Vivaldi => vec!["VivaldiTechnologies.Vivaldi"],
         BrowserKind::Arc => vec!["TheBrowserCompany.Arc"],
-        BrowserKind::Custom => return vec![],
+        BrowserKind::Custom => vec![],
     }
 }
 
