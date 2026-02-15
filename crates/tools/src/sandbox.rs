@@ -1354,6 +1354,189 @@ impl AppleContainerSandbox {
         Self::remove_container_force(name).await;
         Self::wait_for_container_absent(name).await;
     }
+
+    /// Inspect the container and return its current state.
+    async fn inspect_container_state(name: &str) -> ContainerState {
+        let output = match tokio::process::Command::new("container")
+            .args(["inspect", name])
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return ContainerState::Unknown,
+        };
+
+        if !output.status.success() {
+            return ContainerState::NotFound;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let trimmed = stdout.trim();
+        if trimmed.is_empty() || trimmed == "[]" {
+            return ContainerState::NotFound;
+        }
+
+        match apple_container_status_from_inspect(&stdout) {
+            Some("running") => ContainerState::Running,
+            Some("stopped") => ContainerState::Stopped,
+            _ => ContainerState::Unknown,
+        }
+    }
+
+    /// Try to create and start a container. Classifies errors into
+    /// `CreateError` variants so the caller can decide the right recovery.
+    async fn run_container(name: &str, image: &str, tz: Option<&str>) -> Result<(), CreateError> {
+        let mut args = vec![
+            "run".to_string(),
+            "-d".to_string(),
+            "--name".to_string(),
+            name.to_string(),
+        ];
+
+        if let Some(tz) = tz {
+            args.extend(["-e".to_string(), format!("TZ={tz}")]);
+        }
+
+        args.extend([
+            image.to_string(),
+            "sleep".to_string(),
+            "infinity".to_string(),
+        ]);
+
+        let output = tokio::process::Command::new("container")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|e| CreateError::Other(format!("failed to run container command: {e}")))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if is_apple_container_service_error(&stderr) {
+            return Err(CreateError::ServiceDown);
+        }
+        if is_apple_container_exists_error(&stderr) {
+            return Err(CreateError::AlreadyExists);
+        }
+        Err(CreateError::Other(stderr))
+    }
+
+    /// Try to restart a stopped container. Returns `true` if restart succeeded.
+    async fn try_restart_container(name: &str) -> bool {
+        let start = tokio::process::Command::new("container")
+            .args(["start", name])
+            .output()
+            .await;
+        matches!(start, Ok(output) if output.status.success())
+    }
+
+    /// Capture the last N lines of container logs (stdout + stderr).
+    /// Returns `None` if logs cannot be retrieved.
+    async fn capture_container_logs(name: &str, max_lines: usize) -> Option<String> {
+        let output = tokio::process::Command::new("container")
+            .args(["logs", name])
+            .output()
+            .await
+            .ok()?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut combined = String::new();
+        if !stdout.trim().is_empty() {
+            combined.push_str(&stdout);
+        }
+        if !stderr.trim().is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(&stderr);
+        }
+        if combined.trim().is_empty() {
+            return None;
+        }
+
+        // Keep only the last N lines.
+        let lines: Vec<&str> = combined.lines().collect();
+        let tail = if lines.len() > max_lines {
+            &lines[lines.len() - max_lines..]
+        } else {
+            &lines
+        };
+        Some(tail.join("\n"))
+    }
+
+    /// Collect diagnostic information when all recovery attempts have failed.
+    async fn diagnose_container_failure(name: &str) -> String {
+        let mut diagnostics = Vec::new();
+
+        // Check how many containers are currently running.
+        let list_output = tokio::process::Command::new("container")
+            .args(["list", "--format", "json"])
+            .output()
+            .await;
+        match list_output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let count = stdout.lines().count();
+                diagnostics.push(format!("running containers: {count}"));
+            },
+            _ => diagnostics.push("running containers: unknown (list failed)".to_string()),
+        }
+
+        // Check the state of the target container.
+        let state = Self::inspect_container_state(name).await;
+        diagnostics.push(format!("container '{name}' state: {state:?}"));
+
+        // Capture container logs — this is the most useful piece: it shows
+        // WHY the entrypoint exited (e.g. missing binary, image issues).
+        match Self::capture_container_logs(name, 10).await {
+            Some(logs) => diagnostics.push(format!("container logs: {logs}")),
+            None => diagnostics.push("container logs: (empty or unavailable)".to_string()),
+        }
+
+        // Check the service health.
+        let service_ok = tokio::process::Command::new("container")
+            .args(["system", "status"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|s| s.success());
+        diagnostics.push(format!(
+            "container service: {}",
+            if service_ok {
+                "running"
+            } else {
+                "not running"
+            }
+        ));
+
+        diagnostics.join("; ")
+    }
+}
+
+/// State of an Apple Container as observed via `container inspect`.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerState {
+    Running,
+    Stopped,
+    NotFound,
+    Unknown,
+}
+
+/// Classification of container creation errors for recovery decisions.
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+enum CreateError {
+    /// The container name is already taken (stale metadata).
+    AlreadyExists,
+    /// The container service itself is down — retrying won't help.
+    ServiceDown,
+    /// Any other creation error.
+    Other(String),
 }
 
 /// Check whether the Apple Container system service is running.
@@ -1409,6 +1592,37 @@ fn ensure_apple_container_service() -> bool {
     try_start_apple_container_service()
 }
 
+/// Restart the Apple Container daemon by stopping then starting it.
+/// Used when the daemon is alive but its Virtualization.framework state is stale
+/// (e.g. after an interrupted macOS restart/sleep). Returns `true` on success.
+#[cfg(target_os = "macos")]
+fn restart_apple_container_service() -> bool {
+    tracing::warn!("apple container daemon has stale VM state, restarting it automatically");
+
+    let stop = std::process::Command::new("container")
+        .args(["system", "stop"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .status();
+    match stop {
+        Ok(status) if status.success() => {
+            tracing::info!("apple container service stopped");
+        },
+        Ok(status) => {
+            tracing::warn!(
+                exit_code = status.code(),
+                "failed to stop apple container service"
+            );
+            // Continue to try start anyway — stop may fail if already stopped.
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to stop apple container service");
+        },
+    }
+
+    try_start_apple_container_service()
+}
+
 fn is_apple_container_service_error(stderr: &str) -> bool {
     stderr.contains("XPC connection error") || stderr.contains("Connection invalid")
 }
@@ -1424,6 +1638,8 @@ fn is_apple_container_unavailable_error(stderr: &str) -> bool {
         || (lower.contains("container") && lower.contains("is not running"))
         || lower.contains("container is stopped")
         || lower.contains("no sandbox client exists")
+        || lower.contains("notfound")
+        || (lower.contains("not found") && lower.contains("container"))
 }
 
 fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
@@ -1443,10 +1659,25 @@ fn apple_container_status_from_inspect(stdout: &str) -> Option<&'static str> {
     None
 }
 
+/// The Apple Container daemon process is alive but its internal
+/// Virtualization.framework state is stale (e.g. after an interrupted
+/// macOS restart/sleep). Containers are created but immediately exit
+/// with `NSPOSIXErrorDomain Code=22 "Invalid argument"`.
+/// Restarting the daemon (`container system stop && container system start`)
+/// is the only fix — retrying will never help.
+fn is_apple_container_daemon_stale_error(text: &str) -> bool {
+    // Both patterns are required — `NSPOSIXErrorDomain` alone can appear in
+    // benign log-fetching errors (Code=2 "No such file or directory") when a
+    // container vanishes. The stale-daemon signature is specifically EINVAL:
+    // `NSPOSIXErrorDomain Code=22 "Invalid argument"`.
+    text.contains("NSPOSIXErrorDomain") && text.contains("Invalid argument")
+}
+
 fn is_apple_container_corruption_error(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     is_apple_container_service_error(stderr)
         || is_apple_container_exists_error(stderr)
+        || is_apple_container_daemon_stale_error(stderr)
         || lower.contains("failed to bootstrap container")
         || lower.contains("config.json")
 }
@@ -1619,218 +1850,176 @@ impl Sandbox for AppleContainerSandbox {
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         let mut name = self.container_name(id).await;
         let image = image_override.unwrap_or_else(|| self.image());
+        let tz = self.config.timezone.as_deref();
 
-        // Check if container exists and parse its state.
-        // Note: `container inspect` returns exit 0 with empty `[]` for nonexistent
-        // containers, so we must also check the output content.
-        let check = tokio::process::Command::new("container")
-            .args(["inspect", &name])
-            .output()
-            .await;
+        const MAX_ATTEMPTS: usize = 3;
+        let mut daemon_restarted = false;
 
-        if let Ok(output) = check
-            && output.status.success()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
+        for attempt in 0..MAX_ATTEMPTS {
+            let is_last = attempt + 1 >= MAX_ATTEMPTS;
 
-            // Empty array means container doesn't exist — fall through to create.
-            if stdout.trim() == "[]" || stdout.trim().is_empty() {
-                info!(
-                    name,
-                    "apple container not found (inspect returned empty), creating"
-                );
-            } else if stdout.contains("\"running\"") {
-                info!(name, "apple container already running");
-                match Self::wait_for_container_exec_ready(&name).await {
-                    Ok(()) => return Ok(()),
-                    Err(error) => {
-                        warn!(
-                            name,
-                            %error,
-                            "apple container reported running but failed exec readiness probe, recreating"
-                        );
-                        Self::force_remove_and_wait(&name).await;
-                    },
-                }
-            } else if stdout.contains("stopped") || stdout.contains("exited") {
-                info!(name, "apple container stopped, restarting");
-                let start = tokio::process::Command::new("container")
-                    .args(["start", &name])
-                    .output()
-                    .await?;
-                if !start.status.success() {
-                    let stderr = String::from_utf8_lossy(&start.stderr);
-                    warn!(name, %stderr, "container start failed, removing and recreating");
-                    Self::force_remove_and_wait(&name).await;
-                } else {
-                    info!(name, "apple container restarted");
+            // Phase 1: Check existing container and try to reuse it.
+            match Self::inspect_container_state(&name).await {
+                ContainerState::Running => {
+                    info!(name, "apple container already running");
                     match Self::wait_for_container_exec_ready(&name).await {
                         Ok(()) => return Ok(()),
                         Err(error) => {
                             warn!(
                                 name,
                                 %error,
-                                "restarted apple container failed exec readiness probe, recreating"
+                                attempt,
+                                "apple container running but exec probe failed, removing"
                             );
                             Self::force_remove_and_wait(&name).await;
                         },
                     }
-                }
-            } else {
-                // Unknown state — log and recreate.
-                info!(name, state = %stdout.chars().take(200).collect::<String>(), "apple container in unknown state, removing and recreating");
-                Self::force_remove_and_wait(&name).await;
-            }
-        } else {
-            info!(name, "apple container not found, creating");
-        }
-
-        // Container doesn't exist — create it.
-        // Must pass `sleep infinity` so the container stays alive for subsequent
-        // exec calls (the default entrypoint /bin/bash exits immediately without a TTY).
-        info!(name, image, "creating apple container");
-        let mut args = vec![
-            "run".to_string(),
-            "-d".to_string(),
-            "--name".to_string(),
-            name.clone(),
-        ];
-
-        if let Some(ref tz) = self.config.timezone {
-            args.extend(["-e".to_string(), format!("TZ={tz}")]);
-        }
-
-        args.extend([
-            image.to_string(),
-            "sleep".to_string(),
-            "infinity".to_string(),
-        ]);
-
-        let mut run_args = args;
-        let mut output = tokio::process::Command::new("container")
-            .args(&run_args)
-            .output()
-            .await?;
-
-        // Recovery loop for poisoned container names:
-        // - If container metadata says "exists" but cleanup can't remove it, rotate
-        //   to a new generation-specific name and retry.
-        // - Also rotate on other non-service create failures to avoid repeatedly
-        //   binding to a potentially corrupted name entry.
-        for attempt in 0..2 {
-            if output.status.success() {
-                break;
+                },
+                ContainerState::Stopped => {
+                    info!(name, "apple container stopped, restarting");
+                    if Self::try_restart_container(&name).await {
+                        info!(name, "apple container restarted");
+                        match Self::wait_for_container_exec_ready(&name).await {
+                            Ok(()) => return Ok(()),
+                            Err(error) => {
+                                warn!(
+                                    name,
+                                    %error,
+                                    attempt,
+                                    "restarted container failed exec probe, removing"
+                                );
+                                Self::force_remove_and_wait(&name).await;
+                            },
+                        }
+                    } else {
+                        warn!(name, attempt, "container restart failed, removing");
+                        Self::force_remove_and_wait(&name).await;
+                    }
+                },
+                ContainerState::NotFound => {
+                    debug!(name, "apple container not found, will create");
+                },
+                ContainerState::Unknown => {
+                    info!(name, attempt, "apple container in unknown state, removing");
+                    Self::force_remove_and_wait(&name).await;
+                },
             }
 
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            if is_apple_container_service_error(&stderr) {
-                break;
+            // Phase 2: Create a new container.
+            info!(name, image, attempt, "creating apple container");
+            match Self::run_container(&name, image, tz).await {
+                Ok(()) => {},
+                Err(CreateError::AlreadyExists) => {
+                    warn!(
+                        name,
+                        attempt,
+                        "container already exists during create, removing and rotating name"
+                    );
+                    Self::force_remove_and_wait(&name).await;
+                    name = self.bump_container_generation(id).await;
+                    continue;
+                },
+                Err(CreateError::ServiceDown) => {
+                    anyhow::bail!(
+                        "apple container service is not running. \
+                         Start it with `container system start` and restart moltis"
+                    );
+                },
+                Err(CreateError::Other(stderr)) => {
+                    // Daemon-stale errors mean the VM subsystem is broken.
+                    // Restart the daemon once and retry; bail if already tried.
+                    if is_apple_container_daemon_stale_error(&stderr) {
+                        Self::force_remove_and_wait(&name).await;
+                        if !daemon_restarted && restart_apple_container_service() {
+                            daemon_restarted = true;
+                            // Let the daemon fully initialize before retrying.
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        anyhow::bail!(
+                            "apple container daemon has stale Virtualization.framework state \
+                             and automatic restart failed (create error: {stderr}). \
+                             Restart manually with `container system stop && container system start`"
+                        );
+                    }
+                    if is_last {
+                        let diag = Self::diagnose_container_failure(&name).await;
+                        anyhow::bail!(
+                            "container run failed for {name} (image={image}): {stderr}; diagnostics: {diag}"
+                        );
+                    }
+                    warn!(
+                        name,
+                        %stderr,
+                        attempt,
+                        "container create failed, retrying"
+                    );
+                    Self::force_remove_and_wait(&name).await;
+                    continue;
+                },
             }
 
-            if is_apple_container_exists_error(&stderr) {
-                warn!(
-                    name,
-                    %stderr,
-                    attempt,
-                    "container already exists during create, removing stale entry and rotating name"
-                );
-                Self::force_remove_and_wait(&name).await;
-            } else {
-                warn!(
-                    name,
-                    %stderr,
-                    attempt,
-                    "container create failed, rotating name and retrying"
-                );
-            }
-
-            name = self.bump_container_generation(id).await;
-            if let Some(slot) = run_args
-                .iter()
-                .position(|arg| arg == "--name")
-                .and_then(|idx| run_args.get_mut(idx + 1))
-            {
-                *slot = name.clone();
-            }
-
-            output = tokio::process::Command::new("container")
-                .args(&run_args)
-                .output()
-                .await?;
-        }
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if is_apple_container_service_error(&stderr) {
-                anyhow::bail!(
-                    "apple container service is not running. \
-                     Start it with `container system start` and restart moltis"
-                );
-            }
-            anyhow::bail!(
-                "container run failed for {name} (image={image}): {}",
-                stderr.trim()
-            );
-        }
-
-        const MAX_EXEC_READY_RECREATE_ATTEMPTS: usize = 4;
-        for attempt in 0..MAX_EXEC_READY_RECREATE_ATTEMPTS {
+            // Phase 3: Wait for exec readiness (do NOT rotate name on failure).
             match Self::wait_for_container_exec_ready(&name).await {
-                Ok(()) => break,
+                Ok(()) => {
+                    info!(name, image, "apple container created and running");
+
+                    // Skip provisioning for pre-built sandbox images.
+                    let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
+                    if !is_prebuilt {
+                        provision_packages("container", &name, &self.config.packages).await?;
+                    }
+
+                    return Ok(());
+                },
                 Err(error) => {
-                    if attempt + 1 >= MAX_EXEC_READY_RECREATE_ATTEMPTS {
-                        return Err(error);
+                    // Capture logs before removing — this tells us WHY the
+                    // entrypoint exited (missing binary, image issue, etc.).
+                    let logs = Self::capture_container_logs(&name, 5).await;
+
+                    // Daemon-stale errors (NSPOSIXErrorDomain EINVAL) mean
+                    // the VM subsystem is broken. Restart the daemon once and
+                    // retry; bail if we already restarted and it still fails.
+                    if let Some(ref log_text) = logs
+                        && is_apple_container_daemon_stale_error(log_text)
+                    {
+                        Self::force_remove_and_wait(&name).await;
+                        if !daemon_restarted && restart_apple_container_service() {
+                            daemon_restarted = true;
+                            // Let the daemon fully initialize before retrying.
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        anyhow::bail!(
+                            "apple container daemon has stale Virtualization.framework state \
+                             and automatic restart failed (container logs: {log_text}). \
+                             Restart manually with `container system stop && container system start`"
+                        );
+                    }
+
+                    if is_last {
+                        let diag = Self::diagnose_container_failure(&name).await;
+                        anyhow::bail!(
+                            "apple container {name} did not become exec-ready: {error:#}; diagnostics: {diag}"
+                        );
                     }
                     warn!(
                         name,
                         %error,
+                        ?logs,
                         attempt,
-                        max_attempts = MAX_EXEC_READY_RECREATE_ATTEMPTS,
-                        "apple container did not become exec-ready after create, recreating"
+                        "apple container not exec-ready after create, removing and retrying"
                     );
                     Self::force_remove_and_wait(&name).await;
-
-                    name = self.bump_container_generation(id).await;
-                    if let Some(slot) = run_args
-                        .iter()
-                        .position(|arg| arg == "--name")
-                        .and_then(|idx| run_args.get_mut(idx + 1))
-                    {
-                        *slot = name.clone();
-                    }
-
-                    output = tokio::process::Command::new("container")
-                        .args(&run_args)
-                        .output()
-                        .await?;
-
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        if is_apple_container_service_error(&stderr) {
-                            anyhow::bail!(
-                                "apple container service is not running. \
-                                 Start it with `container system start` and restart moltis"
-                            );
-                        }
-                        anyhow::bail!(
-                            "container run failed for {name} (image={image}): {}",
-                            stderr.trim()
-                        );
-                    }
                 },
             }
         }
 
-        info!(name, image, "apple container created and running");
-
-        // Skip provisioning if the image is a pre-built instance sandbox image
-        // (packages are already baked in — including /home/sandbox from the Dockerfile).
-        let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
-        if !is_prebuilt {
-            provision_packages("container", &name, &self.config.packages).await?;
-        }
-
-        Ok(())
+        // Unreachable: the loop either returns or bails on the last attempt.
+        let diag = Self::diagnose_container_failure(&name).await;
+        anyhow::bail!(
+            "apple container {name} failed after {MAX_ATTEMPTS} attempts; diagnostics: {diag}"
+        );
     }
 
     async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
@@ -2463,10 +2652,14 @@ mod tests {
         };
         let docker = DockerSandbox::new(config);
         let args = docker.resource_args();
-        assert_eq!(
-            args,
-            vec!["--memory", "256M", "--cpus", "0.5", "--pids-limit", "50"]
-        );
+        assert_eq!(args, vec![
+            "--memory",
+            "256M",
+            "--cpus",
+            "0.5",
+            "--pids-limit",
+            "50"
+        ]);
     }
 
     #[test]
@@ -2935,6 +3128,13 @@ mod tests {
         assert!(is_apple_container_unavailable_error(
             "invalidState: \"no sandbox client exists: container is stopped\""
         ));
+        // notFound errors from get/inspect failures
+        assert!(is_apple_container_unavailable_error(
+            "Error: notFound: \"get failed: container moltis-sandbox-main not found\""
+        ));
+        assert!(is_apple_container_unavailable_error(
+            "container not found: moltis-sandbox-session-abc"
+        ));
         assert!(!is_apple_container_unavailable_error("permission denied"));
     }
 
@@ -2955,9 +3155,34 @@ mod tests {
     }
 
     #[test]
+    fn test_is_apple_container_daemon_stale_error() {
+        // Full EINVAL pattern from container logs
+        assert!(is_apple_container_daemon_stale_error(
+            "Error: internalError: \" Error Domain=NSPOSIXErrorDomain Code=22 \"Invalid argument\"\""
+        ));
+        // Both patterns required — neither alone should match
+        assert!(!is_apple_container_daemon_stale_error(
+            "NSPOSIXErrorDomain Code=22"
+        ));
+        assert!(!is_apple_container_daemon_stale_error("Invalid argument"));
+        // Log-fetching errors with NSPOSIXErrorDomain Code=2 must NOT match
+        assert!(!is_apple_container_daemon_stale_error(
+            "Error Domain=NSPOSIXErrorDomain Code=2 \"No such file or directory\""
+        ));
+        assert!(!is_apple_container_daemon_stale_error(
+            "container is not running"
+        ));
+        assert!(!is_apple_container_daemon_stale_error("permission denied"));
+    }
+
+    #[test]
     fn test_is_apple_container_corruption_error() {
         assert!(is_apple_container_corruption_error(
             "failed to bootstrap container because config.json is missing"
+        ));
+        // Daemon-stale errors should also trigger corruption/failover
+        assert!(is_apple_container_corruption_error(
+            "Error: internalError: \" Error Domain=NSPOSIXErrorDomain Code=22 \"Invalid argument\"\""
         ));
         assert!(!is_apple_container_corruption_error(
             "cannot exec: container is not running"
@@ -3033,6 +3258,29 @@ mod tests {
         assert_eq!(fallback.exec_calls(), 1);
     }
 
+    #[tokio::test]
+    async fn test_failover_sandbox_switches_on_daemon_stale_error() {
+        let primary = Arc::new(TestSandbox::new(
+            "apple-container",
+            Some(
+                "Error: internalError: \" Error Domain=NSPOSIXErrorDomain Code=22 \"Invalid argument\"\"",
+            ),
+            None,
+        ));
+        let fallback = Arc::new(TestSandbox::new("docker", None, None));
+        let sandbox = FailoverSandbox::new(primary.clone(), fallback.clone());
+        let id = SandboxId {
+            scope: SandboxScope::Session,
+            key: "session-abc".into(),
+        };
+
+        sandbox.ensure_ready(&id, None).await.unwrap();
+        sandbox.ensure_ready(&id, None).await.unwrap();
+
+        assert_eq!(primary.ensure_ready_calls(), 1);
+        assert_eq!(fallback.ensure_ready_calls(), 2);
+    }
+
     #[test]
     fn test_is_debian_host() {
         let result = is_debian_host();
@@ -3046,30 +3294,28 @@ mod tests {
 
     #[test]
     fn test_host_package_name_candidates_t64_to_base() {
-        assert_eq!(
-            host_package_name_candidates("libgtk-3-0t64"),
-            vec!["libgtk-3-0t64".to_string(), "libgtk-3-0".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("libgtk-3-0t64"), vec![
+            "libgtk-3-0t64".to_string(),
+            "libgtk-3-0".to_string()
+        ]);
     }
 
     #[test]
     fn test_host_package_name_candidates_base_to_t64_for_soname() {
-        assert_eq!(
-            host_package_name_candidates("libcups2"),
-            vec!["libcups2".to_string(), "libcups2t64".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("libcups2"), vec![
+            "libcups2".to_string(),
+            "libcups2t64".to_string()
+        ]);
     }
 
     #[test]
     fn test_host_package_name_candidates_non_library_stays_single() {
-        assert_eq!(
-            host_package_name_candidates("curl"),
-            vec!["curl".to_string()]
-        );
-        assert_eq!(
-            host_package_name_candidates("libreoffice-core"),
-            vec!["libreoffice-core".to_string()]
-        );
+        assert_eq!(host_package_name_candidates("curl"), vec![
+            "curl".to_string()
+        ]);
+        assert_eq!(host_package_name_candidates("libreoffice-core"), vec![
+            "libreoffice-core".to_string()
+        ]);
     }
 
     #[tokio::test]

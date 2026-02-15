@@ -23,7 +23,7 @@ use crate::{
     sandbox::{NoSandbox, Sandbox, SandboxId, SandboxRouter},
 };
 
-const MAX_SANDBOX_RECOVERY_RETRIES: usize = 3;
+const MAX_SANDBOX_RECOVERY_RETRIES: usize = 1;
 
 /// Broadcaster that notifies connected clients about pending approval requests.
 #[async_trait]
@@ -595,6 +595,8 @@ fn is_container_not_running_exec_error(stderr: &str) -> bool {
         || (lower.contains("container")
             && lower.contains("not running")
             && lower.contains("failed to create process"))
+        || lower.contains("notfound")
+        || (lower.contains("not found") && lower.contains("container"))
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -932,29 +934,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exec_tool_retries_container_not_running_multiple_times() {
-        use crate::sandbox::SandboxScope;
-
-        let sandbox = Arc::new(RetryRecoverySandbox::new(false, 2));
-        let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
-        let id = SandboxId {
-            scope: SandboxScope::Session,
-            key: "retry-multi-session".into(),
-        };
-        let result = ExecTool::default()
-            .with_sandbox(sandbox_dyn, id)
-            .execute(serde_json::json!({ "command": "echo hi" }))
-            .await
-            .unwrap();
-
-        assert_eq!(result["exit_code"], 0);
-        assert_eq!(result["stdout"].as_str().unwrap(), "recovered");
-        assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 3);
-        assert_eq!(sandbox.cleanup_calls.load(Ordering::SeqCst), 2);
-        assert_eq!(sandbox.exec_calls.load(Ordering::SeqCst), 3);
-    }
-
-    #[tokio::test]
     async fn test_exec_tool_stops_after_max_container_retries() {
         use crate::sandbox::SandboxScope;
 
@@ -1110,6 +1089,13 @@ mod tests {
         ));
         assert!(is_container_not_running_exec_error(
             "Error: internalError: \"failed to create process in container\" (cause: \"invalidState: \\\"no sandbox client exists: container is stopped\\\"\")"
+        ));
+        // notFound errors from get/inspect failures
+        assert!(is_container_not_running_exec_error(
+            "Error: notFound: \"get failed: container moltis-sandbox-main not found\""
+        ));
+        assert!(is_container_not_running_exec_error(
+            "container not found: moltis-sandbox-session-abc"
         ));
         assert!(!is_container_not_running_exec_error(
             "permission denied: operation not permitted"

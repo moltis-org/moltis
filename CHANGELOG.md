@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Apple Container recovery**: simplify container recovery to a single flat
+  retry loop (3 attempts max, down from up to 24). Name rotation now only
+  triggers on `AlreadyExists` errors, preventing orphan containers. Added
+  `notFound` error matching so exec readiness probes retry correctly.
+  Diagnostic info (running container count, service health, container logs)
+  is now included in failure messages. Detect stale Virtualization.framework
+  state (`NSPOSIXErrorDomain EINVAL`) and automatically restart the daemon
+  (`container system stop && container system start`) before retrying; bail
+  with a clear remediation message only if automatic restart fails.
+  Exec-level recovery retries reduced from 3 to 1.
+
 ### Security
 
 ## [0.8.30] - 2026-02-15
