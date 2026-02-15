@@ -503,7 +503,12 @@ function postHistoryLoadActions(key, searchContext, msgEls) {
 	sendRpc("chat.context", {}).then((ctxRes) => {
 		if (ctxRes?.ok && ctxRes.payload) {
 			if (ctxRes.payload.tokenUsage) {
-				S.setSessionContextWindow(ctxRes.payload.tokenUsage.contextWindow || 0);
+				var tu = ctxRes.payload.tokenUsage;
+				S.setSessionContextWindow(tu.contextWindow || 0);
+				S.setSessionTokens({
+					input: tu.inputTokens || 0,
+					output: tu.outputTokens || 0,
+				});
 			}
 			S.setSessionToolsEnabled(ctxRes.payload.supportsTools !== false);
 		}
