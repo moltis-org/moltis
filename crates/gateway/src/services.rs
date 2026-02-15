@@ -457,6 +457,11 @@ pub trait ChatService: Send + Sync {
     async fn active_session_keys(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Return the accumulated thinking text for a session that has an active run,
+    /// so the frontend can restore it after a page reload.
+    async fn active_thinking_text(&self, _session_key: &str) -> Option<String> {
+        None
+    }
 }
 
 pub struct NoopChatService;

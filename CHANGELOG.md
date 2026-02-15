@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sandbox toggle notification**: when the sandbox is enabled or disabled
+  mid-session, a system message is injected into the conversation history so
+  the LLM knows the execution environment changed. A chat notice also appears
+  in the UI immediately.
+
 - **Config `[env]` section**: environment variables defined in `[env]` in
   `moltis.toml` are injected into the Moltis process at startup. This makes
   API keys (Brave, OpenRouter, etc.) available to features that read from
@@ -45,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was generating no longer loses the "thinking" dots. The backend now includes
   `replying` state in `sessions.list` and `sessions.switch` RPC responses so
   the frontend can restore the indicator after a full page reload.
+- **Thinking text restored after reload**: reloading the page during extended
+  thinking (reasoning) now restores the accumulated thinking text instead of
+  showing only bouncing dots. The backend tracks thinking text per session and
+  returns it in the `sessions.switch` response.
 - **Apple Container recovery**: simplify container recovery to a single flat
   retry loop (3 attempts max, down from up to 24). Name rotation now only
   triggers on `AlreadyExists` errors, preventing orphan containers. Added

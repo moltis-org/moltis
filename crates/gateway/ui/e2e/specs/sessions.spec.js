@@ -481,4 +481,28 @@ test.describe("Session management", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("toggling sandbox shows chat notice", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+
+		// Enable sandbox via RPC patch
+		await expectRpcOk(page, "sessions.patch", {
+			key: "main",
+			sandboxEnabled: true,
+		});
+
+		// The chat notice should appear as a system message
+		await expect(page.locator(".msg.system").filter({ hasText: "Sandbox enabled" })).toBeVisible({ timeout: 5_000 });
+
+		// Disable sandbox
+		await expectRpcOk(page, "sessions.patch", {
+			key: "main",
+			sandboxEnabled: false,
+		});
+
+		await expect(page.locator(".msg.system").filter({ hasText: "Sandbox disabled" })).toBeVisible({ timeout: 5_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
 });

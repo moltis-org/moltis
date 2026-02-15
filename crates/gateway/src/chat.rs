@@ -1781,6 +1781,9 @@ pub struct LiveChatService {
     message_queue: Arc<RwLock<HashMap<String, Vec<QueuedMessage>>>>,
     /// Per-session last-seen client sequence number for ordering diagnostics.
     last_client_seq: Arc<RwLock<HashMap<String, u64>>>,
+    /// Per-session accumulated thinking text for active runs, so it can be
+    /// returned in `sessions.switch` after a page reload.
+    active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
     /// Failover configuration for automatic model/provider failover.
     failover_config: moltis_config::schema::FailoverConfig,
 }
@@ -1806,6 +1809,7 @@ impl LiveChatService {
             session_locks: Arc::new(RwLock::new(HashMap::new())),
             message_queue: Arc::new(RwLock::new(HashMap::new())),
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
+            active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
     }
@@ -2331,6 +2335,7 @@ impl ChatService for LiveChatService {
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
+        let active_thinking_text = Arc::clone(&self.active_thinking_text);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
         let hook_registry = self.hook_registry.clone();
@@ -2581,6 +2586,7 @@ impl ChatService for LiveChatService {
                         Some(&session_store),
                         mcp_disabled,
                         client_seq,
+                        Some(Arc::clone(&active_thinking_text)),
                     )
                     .await
                 }
@@ -2654,6 +2660,11 @@ impl ChatService for LiveChatService {
             if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
                 runs_by_session.remove(&session_key_clone);
             }
+            drop(runs_by_session);
+            active_thinking_text
+                .write()
+                .await
+                .remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
             // acquire it. Without this, every replayed `chat.send()` would
@@ -2882,6 +2893,7 @@ impl ChatService for LiveChatService {
                 Some(&self.session_store),
                 false, // send_sync: MCP tools always enabled for API calls
                 None,  // send_sync: no client seq
+                None,  // send_sync: no thinking text tracking
             )
             .await
         };
@@ -3775,6 +3787,14 @@ impl ChatService for LiveChatService {
             .cloned()
             .collect()
     }
+
+    async fn active_thinking_text(&self, session_key: &str) -> Option<String> {
+        self.active_thinking_text
+            .read()
+            .await
+            .get(session_key)
+            .cloned()
+    }
 }
 
 // ── Agent loop mode ─────────────────────────────────────────────────────────
@@ -3901,6 +3921,7 @@ async fn run_with_tools(
     session_store: Option<&Arc<SessionStore>>,
     mcp_disabled: bool,
     client_seq: Option<u64>,
+    active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
     let persona = load_prompt_persona();
 
@@ -4210,6 +4231,9 @@ async fn run_with_tools(
                 },
                 RunnerEvent::ThinkingText(text) => {
                     latest_reasoning = text.clone();
+                    if let Some(ref map) = active_thinking_text {
+                        map.write().await.insert(sk.clone(), text.clone());
+                    }
                     serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,

@@ -499,7 +499,7 @@ function makeThinkingDots() {
 	return tpl.content.cloneNode(true).firstElementChild;
 }
 
-function postHistoryLoadActions(key, searchContext, msgEls) {
+function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 	sendRpc("chat.context", {}).then((ctxRes) => {
 		if (ctxRes?.ok && ctxRes.payload) {
 			if (ctxRes.payload.tokenUsage) {
@@ -528,7 +528,14 @@ function postHistoryLoadActions(key, searchContext, msgEls) {
 		var thinkEl = document.createElement("div");
 		thinkEl.className = "msg assistant thinking";
 		thinkEl.id = "thinkingIndicator";
-		thinkEl.appendChild(makeThinkingDots());
+		if (thinkingText) {
+			var textEl = document.createElement("span");
+			textEl.className = "thinking-text";
+			textEl.textContent = thinkingText;
+			thinkEl.appendChild(textEl);
+		} else {
+			thinkEl.appendChild(makeThinkingDots());
+		}
 		S.chatMsgBox.appendChild(thinkEl);
 		scrollChatToBottom();
 	}
@@ -687,7 +694,8 @@ export function switchSession(key, searchContext, projectId) {
 			}
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);
-			postHistoryLoadActions(key, searchContext, msgEls);
+			var thinkingText = res.payload.replying ? res.payload.thinkingText || null : null;
+			postHistoryLoadActions(key, searchContext, msgEls, thinkingText);
 			if (S.chatInput) S.chatInput.focus();
 		} else {
 			sessionStore.switchInProgress.value = false;
