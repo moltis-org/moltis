@@ -772,6 +772,10 @@ pub fn build_gateway_app(
 
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route(
+                "/share/{share_id}/og-image.svg",
+                get(share_social_image_handler),
+            )
             .route("/share/{share_id}", get(share_page_handler))
             .route("/onboarding", get(onboarding_handler))
             .route("/login", get(login_handler_page))
@@ -843,6 +847,10 @@ pub fn build_gateway_app(
 
         router
             .route("/auth/callback", get(oauth_callback_handler))
+            .route(
+                "/share/{share_id}/og-image.svg",
+                get(share_social_image_handler),
+            )
             .route("/share/{share_id}", get(share_page_handler))
             .route("/onboarding", get(onboarding_handler))
             .route("/login", get(login_handler_page))
@@ -4269,6 +4277,224 @@ fn build_session_share_meta(
 }
 
 #[cfg(feature = "web-ui")]
+fn normalize_share_social_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(feature = "web-ui")]
+fn wrap_share_social_line(text: &str, max_chars: usize) -> Vec<String> {
+    if max_chars == 0 {
+        return vec![];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+
+    for raw_word in text.split_whitespace() {
+        let mut word = raw_word.to_string();
+        let mut word_len = word.chars().count();
+        if word_len > max_chars {
+            word = truncate_for_meta(&word, max_chars.saturating_sub(1));
+            word_len = word.chars().count();
+        }
+
+        if current.is_empty() {
+            current.push_str(&word);
+            current_len = word_len;
+            continue;
+        }
+
+        if current_len + 1 + word_len <= max_chars {
+            current.push(' ');
+            current.push_str(&word);
+            current_len += 1 + word_len;
+            continue;
+        }
+
+        lines.push(current);
+        current = word;
+        current_len = word_len;
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    lines
+}
+
+#[cfg(feature = "web-ui")]
+fn build_share_social_text_lines(
+    snapshot: &crate::share_store::ShareSnapshot,
+    identity: &moltis_config::ResolvedIdentity,
+    max_chars: usize,
+    max_lines: usize,
+) -> Vec<String> {
+    let user_label = share_user_label(identity);
+    let assistant_label = share_assistant_label(identity);
+    let mut lines = Vec::new();
+    let mut truncated = false;
+
+    for msg in &snapshot.messages {
+        let role = match msg.role {
+            crate::share_store::SharedMessageRole::User => user_label.as_str(),
+            crate::share_store::SharedMessageRole::Assistant => assistant_label.as_str(),
+            crate::share_store::SharedMessageRole::ToolResult => "Tool",
+            crate::share_store::SharedMessageRole::System
+            | crate::share_store::SharedMessageRole::Notice => continue,
+        };
+        let content = normalize_share_social_text(&msg.content);
+        if content.is_empty() {
+            continue;
+        }
+        let snippet = format!("{role}: {content}");
+        let wrapped = wrap_share_social_line(&snippet, max_chars);
+        for line in wrapped {
+            if lines.len() >= max_lines {
+                truncated = true;
+                break;
+            }
+            lines.push(line);
+        }
+        if truncated {
+            break;
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push("Shared conversation snapshot".to_string());
+    } else if truncated && let Some(last) = lines.last_mut() {
+        *last = truncate_for_meta(last, max_chars.saturating_sub(1));
+    }
+
+    lines
+}
+
+#[cfg(feature = "web-ui")]
+fn escape_svg_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+#[cfg(feature = "web-ui")]
+fn build_share_social_image_svg(
+    snapshot: &crate::share_store::ShareSnapshot,
+    identity: &moltis_config::ResolvedIdentity,
+) -> String {
+    const MAX_CHARS_PER_LINE: usize = 64;
+    const MAX_LINES: usize = 6;
+    const WIDTH: usize = 1200;
+    const HEIGHT: usize = 630;
+
+    let agent_name = identity_name(identity);
+    let session_name = snapshot
+        .session_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Shared session");
+    let title = truncate_for_meta(session_name, 90);
+    let subtitle = format!(
+        "{agent_name} • {} messages • {}",
+        snapshot.cutoff_message_count,
+        human_share_time(snapshot.created_at)
+    );
+    let lines = build_share_social_text_lines(snapshot, identity, MAX_CHARS_PER_LINE, MAX_LINES);
+
+    let mut conversation_lines = String::new();
+    for (idx, line) in lines.iter().enumerate() {
+        let y = 260 + idx * 48;
+        conversation_lines.push_str(&format!(
+            "<text x=\"78\" y=\"{y}\" fill=\"#e5e7eb\" font-size=\"29\" font-family=\"Inter, system-ui, sans-serif\">{}</text>",
+            escape_svg_text(line)
+        ));
+    }
+
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{WIDTH}\" height=\"{HEIGHT}\" viewBox=\"0 0 {WIDTH} {HEIGHT}\">\
+<defs>\
+  <linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">\
+    <stop offset=\"0%\" stop-color=\"#0f172a\"/>\
+    <stop offset=\"100%\" stop-color=\"#020617\"/>\
+  </linearGradient>\
+  <linearGradient id=\"accent\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\">\
+    <stop offset=\"0%\" stop-color=\"#22c55e\"/>\
+    <stop offset=\"100%\" stop-color=\"#16a34a\"/>\
+  </linearGradient>\
+  <radialGradient id=\"glow\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"translate(1120 88) rotate(90) scale(240 300)\">\
+    <stop offset=\"0%\" stop-color=\"#22c55e\" stop-opacity=\"0.2\"/>\
+    <stop offset=\"100%\" stop-color=\"#22c55e\" stop-opacity=\"0\"/>\
+  </radialGradient>\
+  <clipPath id=\"brand-clip\">\
+    <circle cx=\"1080\" cy=\"118\" r=\"50\"/>\
+  </clipPath>\
+</defs>\
+<rect width=\"{WIDTH}\" height=\"{HEIGHT}\" fill=\"url(#bg)\"/>\
+<rect width=\"{WIDTH}\" height=\"{HEIGHT}\" fill=\"url(#glow)\"/>\
+<rect x=\"44\" y=\"40\" width=\"1112\" height=\"550\" rx=\"26\" fill=\"#0b1220\" fill-opacity=\"0.84\" stroke=\"#334155\"/>\
+<rect x=\"74\" y=\"76\" width=\"8\" height=\"112\" rx=\"4\" fill=\"url(#accent)\"/>\
+<circle cx=\"1080\" cy=\"118\" r=\"58\" fill=\"#0f172a\" stroke=\"#334155\" stroke-width=\"2\"/>\
+<image x=\"1030\" y=\"68\" width=\"100\" height=\"100\" href=\"{}\" clip-path=\"url(#brand-clip)\"/>\
+<text x=\"98\" y=\"120\" fill=\"#f8fafc\" font-size=\"46\" font-family=\"Inter, system-ui, sans-serif\" font-weight=\"700\">{}</text>\
+<text x=\"98\" y=\"164\" fill=\"#93c5fd\" font-size=\"25\" font-family=\"Inter, system-ui, sans-serif\">{}</text>\
+<line x1=\"74\" y1=\"210\" x2=\"1126\" y2=\"210\" stroke=\"#334155\" stroke-width=\"1\"/>\
+{}\
+<text x=\"1122\" y=\"584\" text-anchor=\"end\" fill=\"#9ca3af\" font-size=\"22\" font-family=\"Inter, system-ui, sans-serif\">By Moltis</text>\
+</svg>",
+        SHARE_SOCIAL_BRAND_ICON_DATA_URL.as_str(),
+        escape_svg_text(&title),
+        escape_svg_text(&subtitle),
+        conversation_lines
+    )
+}
+
+#[cfg(feature = "web-ui")]
+fn request_origin(headers: &axum::http::HeaderMap, tls_active: bool) -> Option<String> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let forwarded_proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| *value == "http" || *value == "https");
+    let scheme = forwarded_proto.unwrap_or(if tls_active {
+        "https"
+    } else {
+        "http"
+    });
+    Some(format!("{scheme}://{host}"))
+}
+
+#[cfg(feature = "web-ui")]
+fn share_social_image_url(
+    headers: &axum::http::HeaderMap,
+    tls_active: bool,
+    share_id: &str,
+) -> String {
+    let path = format!("/share/{share_id}/og-image.svg");
+    match request_origin(headers, tls_active) {
+        Some(origin) => format!("{origin}{path}"),
+        None => path,
+    }
+}
+
+#[cfg(feature = "web-ui")]
+static SHARE_SOCIAL_BRAND_ICON_DATA_URL: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("assets/icons/favicon-compact-512.png"));
+        format!("data:image/png;base64,{encoded}")
+    });
+
+#[cfg(feature = "web-ui")]
 fn human_share_time(ts_ms: u64) -> String {
     let millis = ts_ms.min(i64::MAX as u64) as i64;
     Utc.timestamp_millis_opt(millis)
@@ -4471,6 +4697,7 @@ async fn share_page_handler(
     Query(query): Query<ShareAccessQuery>,
     jar: CookieJar,
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     let Some(ref share_store) = state.gateway.services.session_share_store else {
         return not_found_share_response();
@@ -4558,6 +4785,7 @@ async fn share_page_handler(
         "private"
     };
     let nonce = uuid::Uuid::new_v4().to_string();
+    let share_image_url = share_social_image_url(&headers, state.gateway.tls_active, &share.id);
 
     let template = ShareHtmlTemplate {
         nonce: &nonce,
@@ -4565,7 +4793,7 @@ async fn share_page_handler(
         share_title: &share_meta.title,
         share_description: &share_meta.description,
         share_site_name: &share_meta.site_name,
-        share_image_url: SHARE_IMAGE_URL,
+        share_image_url: &share_image_url,
         share_image_alt: &share_meta.image_alt,
         assistant_name: &assistant_name,
         assistant_emoji: &assistant_emoji,
@@ -4611,6 +4839,85 @@ async fn share_page_handler(
         headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, value);
     }
 
+    response
+}
+
+#[cfg(feature = "web-ui")]
+async fn share_social_image_handler(
+    Path(share_id): Path<String>,
+    Query(query): Query<ShareAccessQuery>,
+    jar: CookieJar,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(ref share_store) = state.gateway.services.session_share_store else {
+        return not_found_share_response();
+    };
+
+    let share = match share_store.get_active_by_id(&share_id).await {
+        Ok(Some(share)) => share,
+        Ok(None) => return not_found_share_response(),
+        Err(e) => {
+            warn!(share_id, error = %e, "failed to load shared session for social image");
+            return not_found_share_response();
+        },
+    };
+
+    let cookie_name = share_cookie_name(&share.id);
+    let cookie_access_granted = jar.get(&cookie_name).is_some_and(|cookie| {
+        crate::share_store::ShareStore::verify_access_key(&share, cookie.value())
+    });
+    let query_access_granted = query
+        .k
+        .as_deref()
+        .is_some_and(|key| crate::share_store::ShareStore::verify_access_key(&share, key));
+
+    if share.visibility == crate::share_store::ShareVisibility::Private
+        && !(cookie_access_granted || query_access_granted)
+    {
+        return not_found_share_response();
+    }
+
+    let snapshot: crate::share_store::ShareSnapshot =
+        match serde_json::from_str(&share.snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                warn!(
+                    share_id,
+                    error = %e,
+                    "failed to parse shared session snapshot for social image"
+                );
+                return not_found_share_response();
+            },
+        };
+
+    let identity = state
+        .gateway
+        .services
+        .onboarding
+        .identity_get()
+        .await
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let svg = build_share_social_image_svg(&snapshot, &identity);
+
+    let mut response = (StatusCode::OK, svg).into_response();
+    let headers = response.headers_mut();
+    if let Ok(value) = "image/svg+xml".parse() {
+        headers.insert(axum::http::header::CONTENT_TYPE, value);
+    }
+    if let Ok(value) = "no-cache".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, value);
+    }
+    if let Ok(value) = "nosniff".parse() {
+        headers.insert(
+            axum::http::header::HeaderName::from_static("x-content-type-options"),
+            value,
+        );
+    }
+    if let Ok(value) = "default-src 'none'; img-src 'self' data:; style-src 'none'; script-src 'none'; object-src 'none'; frame-ancestors 'none'".parse() {
+        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, value);
+    }
     response
 }
 
@@ -6494,6 +6801,84 @@ mod tests {
 
     #[cfg(feature = "web-ui")]
     #[test]
+    fn share_social_image_svg_uses_session_content_and_escapes() {
+        let identity = moltis_config::ResolvedIdentity {
+            name: "Moltis".to_owned(),
+            user_name: Some("Fabien".to_owned()),
+            emoji: Some("🤖".to_owned()),
+            ..Default::default()
+        };
+        let snapshot = crate::share_store::ShareSnapshot {
+            session_key: "main".to_string(),
+            session_label: Some("Release checklist".to_string()),
+            cutoff_message_count: 2,
+            created_at: 1_770_966_600_000,
+            messages: vec![
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::User,
+                    content: "Need to validate <script>alert(1)</script> path".to_string(),
+                    reasoning: None,
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: None,
+                    model: None,
+                    provider: None,
+                },
+                crate::share_store::SharedMessage {
+                    role: crate::share_store::SharedMessageRole::Assistant,
+                    content: "Run tests, then deploy.".to_string(),
+                    reasoning: None,
+                    audio_data_url: None,
+                    image: None,
+                    image_data_url: None,
+                    map_links: None,
+                    tool_success: None,
+                    tool_name: None,
+                    tool_command: None,
+                    created_at: None,
+                    model: None,
+                    provider: None,
+                },
+            ],
+        };
+
+        let svg = build_share_social_image_svg(&snapshot, &identity);
+        assert!(svg.contains("Release checklist"));
+        assert!(svg.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!svg.contains("Need to validate <script>alert(1)</script> path"));
+        assert!(svg.contains("Fabien: Need to validate"));
+        assert!(svg.contains("data:image/png;base64,"));
+        assert!(svg.contains("By Moltis"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn share_social_image_url_prefers_request_origin_and_falls_back_to_relative() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "share.example.com".parse().unwrap(),
+        );
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert_eq!(
+            share_social_image_url(&headers, false, "abc123"),
+            "https://share.example.com/share/abc123/og-image.svg"
+        );
+
+        let empty = axum::http::HeaderMap::new();
+        assert_eq!(
+            share_social_image_url(&empty, false, "abc123"),
+            "/share/abc123/og-image.svg"
+        );
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
     fn askama_template_escapes_share_meta_values() {
         let template = IndexHtmlTemplate {
             build_ts: "dev",
@@ -6573,6 +6958,7 @@ mod tests {
         assert!(html.contains("data-theme-val=\"light\""));
         assert!(html.contains("data-theme-val=\"dark\""));
         assert!(html.contains("class=\"share-page-footer\""));
+        assert!(html.contains("margin-bottom: 14px;"));
         assert!(html.contains("Get your AI assistant at"));
         assert!(html.contains("src=\"/assets/icons/icon-96.png\""));
         assert!(!html.contains("data-epoch-ms=\"1770966600000\""));

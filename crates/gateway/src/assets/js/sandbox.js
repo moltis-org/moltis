@@ -73,7 +73,7 @@ export function bindSandboxToggleEvents() {
 		var newVal = !S.sessionSandboxEnabled;
 		sendRpc("sessions.patch", {
 			key: S.activeSessionKey,
-			sandbox_enabled: newVal,
+			sandboxEnabled: newVal,
 		}).then((res) => {
 			if (res?.result) {
 				updateSandboxUI(res.result.sandbox_enabled);
@@ -179,7 +179,7 @@ function selectImage(tag) {
 	var value = tag || "";
 	sendRpc("sessions.patch", {
 		key: S.activeSessionKey,
-		sandbox_image: value,
+		sandboxImage: value,
 	}).then((res) => {
 		if (res?.result) {
 			updateSandboxImageUI(res.result.sandbox_image);

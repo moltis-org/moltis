@@ -2179,13 +2179,13 @@ function SummaryStep({ onBack, onFinish }) {
 			<${SummaryRow}
 				icon=${data.identity?.user_name && data.identity?.name ? html`<${CheckIcon} />` : html`<${WarnIcon} />`}
 				label="Identity">
-				${
-					data.identity?.user_name && data.identity?.name
-						? html`You: <span class="font-medium text-[var(--text)]">${data.identity.user_name}</span>
-						Agent: <span class="font-medium text-[var(--text)]">${data.identity.emoji || ""} ${data.identity.name}</span>`
-						: html`<span class="text-[var(--warn)]">Identity not fully configured</span>`
-				}
-			<//>
+					${
+						data.identity?.user_name && data.identity?.name
+							? html`You: <span class="font-medium text-[var(--text)]">${data.identity.user_name}</span> Agent:
+							<span class="font-medium text-[var(--text)]">${data.identity.emoji || ""} ${data.identity.name}</span>`
+							: html`<span class="text-[var(--warn)]">Identity not fully configured</span>`
+					}
+				<//>
 
 			<!-- LLMs -->
 			<${SummaryRow}

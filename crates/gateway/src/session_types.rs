@@ -122,6 +122,45 @@ mod tests {
     }
 
     #[test]
+    fn patch_params_sandbox_enabled_false() {
+        let p: PatchParams = serde_json::from_value(json!({
+            "key": "main",
+            "sandboxEnabled": false,
+        }))
+        .unwrap();
+        assert_eq!(p.sandbox_enabled, Some(Some(false)));
+    }
+
+    #[test]
+    fn patch_params_sandbox_enabled_null_clears() {
+        let p: PatchParams = serde_json::from_value(json!({
+            "key": "main",
+            "sandboxEnabled": null,
+        }))
+        .unwrap();
+        assert_eq!(p.sandbox_enabled, Some(None));
+    }
+
+    #[test]
+    fn patch_params_snake_case_fields_ignored() {
+        // Ensure snake_case field names are NOT accepted (rename_all = camelCase).
+        let p: PatchParams = serde_json::from_value(json!({
+            "key": "main",
+            "sandbox_enabled": true,
+            "mcp_disabled": true,
+            "project_id": "proj-1",
+            "sandbox_image": "img:1",
+            "worktree_branch": "feat/x",
+        }))
+        .unwrap();
+        assert!(p.sandbox_enabled.is_none());
+        assert!(p.mcp_disabled.is_none());
+        assert!(p.project_id.is_none());
+        assert!(p.sandbox_image.is_none());
+        assert!(p.worktree_branch.is_none());
+    }
+
+    #[test]
     fn patch_params_null_project_id() {
         let p: PatchParams = serde_json::from_value(json!({
             "key": "main",

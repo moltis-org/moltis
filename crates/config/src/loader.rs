@@ -664,7 +664,12 @@ fn strip_leading_html_comments(content: &str) -> &str {
     }
 }
 
-fn home_dir() -> Option<PathBuf> {
+/// Returns the user's home directory (`$HOME` / `~`).
+///
+/// This is the **single call-site** for `directories::BaseDirs` — all other
+/// crates must call this via `moltis_config::home_dir()` instead of using the
+/// `directories` crate directly.
+pub fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf())
 }
 

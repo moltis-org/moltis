@@ -48,7 +48,7 @@ export function selectProject(id, label) {
 	if (S.projectComboLabel) S.projectComboLabel.textContent = label;
 	closeProjectDropdown();
 	if (S.connected && S.activeSessionKey) {
-		sendRpc("sessions.patch", { key: S.activeSessionKey, project_id: id });
+		sendRpc("sessions.patch", { key: S.activeSessionKey, projectId: id });
 	}
 }
 
