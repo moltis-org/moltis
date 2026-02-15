@@ -179,12 +179,10 @@ function removeContainer(name) {
 					containerError.value = `Failed to delete ${name}: ${t || r.statusText}`;
 				});
 			}
+			fetchContainers();
 		})
 		.catch((e) => {
 			containerError.value = `Failed to delete ${name}: ${e.message}`;
-		})
-		.finally(() => {
-			fetchContainers();
 		});
 }
 
@@ -208,14 +206,14 @@ function cleanAllContainers() {
 					containerError.value = `Failed to clean containers: ${t || r.statusText}`;
 				});
 			}
+			fetchContainers();
+			fetchDiskUsage();
 		})
 		.catch((e) => {
 			containerError.value = `Failed to clean containers: ${e.message}`;
 		})
 		.finally(() => {
 			cleaningAll.value = false;
-			fetchContainers();
-			fetchDiskUsage();
 		});
 }
 
@@ -228,14 +226,14 @@ function restartDaemon() {
 					containerError.value = `Failed to restart daemon: ${t || r.statusText}`;
 				});
 			}
+			fetchContainers();
+			fetchDiskUsage();
 		})
 		.catch((e) => {
 			containerError.value = `Failed to restart daemon: ${e.message}`;
 		})
 		.finally(() => {
 			restarting.value = false;
-			fetchContainers();
-			fetchDiskUsage();
 		});
 }
 

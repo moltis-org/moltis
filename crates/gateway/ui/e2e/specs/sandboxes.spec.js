@@ -249,15 +249,16 @@ test.describe("Sandboxes page – Container error handling", () => {
 		await navigateAndWait(page, "/settings/sandboxes");
 		await containerListResponse;
 
-		// Click delete to trigger error — the delete handler calls fetchContainers
-		// in .finally(), which triggers a second GET that clears the error on success.
-		const refreshResponse = page.waitForResponse(
-			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
-		);
+		// Click delete to trigger error (delete no longer auto-refreshes on failure)
 		await page.getByRole("button", { name: "Delete", exact: true }).click();
 		await expect(page.locator(".alert-error-text")).toBeVisible();
 
-		// Since our second mock returns empty list, the error should clear.
+		// Click Refresh to trigger a successful container fetch that clears the error.
+		// Second mock returns empty list, so fetchContainers succeeds and clears containerError.
+		const refreshResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
+		);
+		await page.getByRole("button", { name: "Refresh", exact: true }).click();
 		await refreshResponse;
 		await expect(page.locator(".alert-error-text")).not.toBeVisible();
 
