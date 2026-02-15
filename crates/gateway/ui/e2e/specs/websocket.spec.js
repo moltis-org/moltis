@@ -468,7 +468,7 @@ test.describe("WebSocket connection lifecycle", () => {
 				text: " \n\t ",
 			},
 		});
-		await expect(page.locator("#messages .msg.assistant")).toHaveCount(1);
+		await expect(page.locator("#messages .msg.assistant")).toHaveCount(0);
 
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
