@@ -6,7 +6,13 @@
 import { html } from "htm/preact";
 import { useCallback, useRef, useState } from "preact/hooks";
 import { sendRpc } from "../helpers.js";
-import { clearActiveSession, fetchSessions, switchSession } from "../sessions.js";
+import {
+	clearActiveSession,
+	fetchSessions,
+	setSessionActiveRunId,
+	setSessionReplying,
+	switchSession,
+} from "../sessions.js";
 import { sessionStore } from "../stores/session-store.js";
 import { confirmDialog, shareLinkDialog, shareVisibilityDialog, showToast } from "../ui.js";
 
@@ -47,15 +53,19 @@ export function SessionHeader() {
 
 	var [renaming, setRenaming] = useState(false);
 	var [clearing, setClearing] = useState(false);
+	var [stopping, setStopping] = useState(false);
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
 	var displayName = fullName.length > 20 ? `${fullName.slice(0, 20)}\u2026` : fullName;
+	var replying = session?.replying.value;
+	var activeRunId = session?.activeRunId.value || null;
 
 	var isMain = currentKey === "main";
 	var isChannel = session?.channelBinding || currentKey.startsWith("telegram:");
 	var isCron = currentKey.startsWith("cron:");
 	var canRename = !(isMain || isChannel || isCron);
+	var canStop = !isCron && replying;
 
 	var startRename = useCallback(() => {
 		if (!canRename) return;
@@ -138,6 +148,25 @@ export function SessionHeader() {
 		});
 	}, [clearing]);
 
+	var onStop = useCallback(() => {
+		if (stopping) return;
+		var params = { sessionKey: currentKey };
+		if (activeRunId) params.runId = activeRunId;
+		setStopping(true);
+		sendRpc("chat.abort", params)
+			.then((res) => {
+				if (!res?.ok) {
+					showToast(res?.error?.message || "Failed to stop response", "error");
+					return;
+				}
+				setSessionActiveRunId(currentKey, null);
+				setSessionReplying(currentKey, false);
+			})
+			.finally(() => {
+				setStopping(false);
+			});
+	}, [activeRunId, currentKey, stopping]);
+
 	var shareSnapshot = useCallback(
 		async (visibility) => {
 			var res = await sendRpc("sessions.share.create", { key: currentKey, visibility: visibility });
@@ -192,6 +221,14 @@ export function SessionHeader() {
 				</button>
 				<button class="chat-session-btn" onClick=${onShare} title="Share snapshot">
 					Share
+				</button>
+			`
+			}
+			${
+				canStop &&
+				html`
+				<button class="chat-session-btn" onClick=${onStop} title="Stop generation" disabled=${stopping}>
+					${stopping ? "Stopping\u2026" : "Stop"}
 				</button>
 			`
 			}

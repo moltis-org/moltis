@@ -84,6 +84,11 @@ impl TtsProvider for GoogleTts {
         }
 
         let voices_resp: VoicesResponse = resp.json().await?;
+        let language_prefix = self
+            .language_code
+            .split('-')
+            .next()
+            .unwrap_or(self.language_code.as_str());
 
         // Filter to voices matching the configured language
         let voices = voices_resp
@@ -93,7 +98,8 @@ impl TtsProvider for GoogleTts {
             .filter(|v| {
                 v.language_codes
                     .iter()
-                    .any(|lc| lc.starts_with(&self.language_code[..2]))
+                    .filter_map(|lc| lc.split('-').next())
+                    .any(|prefix| prefix.eq_ignore_ascii_case(language_prefix))
             })
             .map(|v| Voice {
                 id: v.name.clone(),
@@ -267,5 +273,16 @@ mod tests {
         assert_eq!(tts.id(), "google");
         assert_eq!(tts.name(), "Google Cloud TTS");
         assert!(tts.supports_ssml());
+    }
+
+    #[test]
+    fn language_prefix_extraction_handles_short_tags() {
+        let config = GoogleTtsConfig {
+            api_key: Some(secrecy::Secret::new("test".to_string())),
+            language_code: Some("e".to_string()),
+            ..Default::default()
+        };
+        let tts = GoogleTts::new(&config);
+        assert_eq!(tts.language_code, "e");
     }
 }

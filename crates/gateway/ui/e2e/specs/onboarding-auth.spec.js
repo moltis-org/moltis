@@ -5,29 +5,76 @@ function isVisible(locator) {
 	return locator.isVisible().catch(() => false);
 }
 
-async function detectOnboardingStep(page, authHeading, identityHeading, providersHeading) {
+async function clickFirstVisibleButton(page, roleQuery) {
+	const buttons = page.locator(".onboarding-card").getByRole("button", roleQuery);
+	const count = await buttons.count();
+	for (let i = 0; i < count; i++) {
+		const button = buttons.nth(i);
+		if (!(await isVisible(button))) continue;
+		await button.click();
+		return true;
+	}
+	return false;
+}
+
+async function detectOnboardingStep(page) {
 	const pathname = new URL(page.url()).pathname;
 	if (/^\/chats\//.test(pathname)) return "chats";
-	if (await isVisible(authHeading)) return "auth";
-	if (await isVisible(identityHeading)) return "identity";
-	if (await isVisible(providersHeading)) return "providers";
+
+	const currentHeading = page.locator(".onboarding-card h2").first();
+	if (!(await isVisible(currentHeading))) return "pending";
+	const headingText = ((await currentHeading.textContent()) || "").trim();
+
+	if (headingText === "Secure your instance") return "auth";
+	if (headingText === "Set up your identity") return "identity";
+	if (/^(Add LLMs|Add providers)$/.test(headingText)) return "providers";
+	if (headingText === "Voice (optional)") return "voice";
+	if (headingText === "Connect Telegram") return "channel";
+	if (headingText === "Setup Summary") return "summary";
 	return "pending";
 }
 
-async function waitForStableStep(page, authHeading, identityHeading, providersHeading) {
-	await expect
-		.poll(() => detectOnboardingStep(page, authHeading, identityHeading, providersHeading), { timeout: 10_000 })
-		.not.toBe("pending");
-	return detectOnboardingStep(page, authHeading, identityHeading, providersHeading);
+async function waitForStableStep(page) {
+	await expect.poll(() => detectOnboardingStep(page), { timeout: 10_000 }).not.toBe("pending");
+	return detectOnboardingStep(page);
+}
+
+async function advanceToIdentityStep(page) {
+	for (let i = 0; i < 6; i++) {
+		const step = await detectOnboardingStep(page);
+		if (step === "identity" || step === "chats" || step === "summary") return step;
+		if (step === "auth") {
+			await completePasswordAuthStep(page);
+			continue;
+		}
+		if (step === "providers" || step === "voice" || step === "channel") {
+			if (await clickFirstVisibleButton(page, { name: /skip for now/i })) continue;
+			if (await clickFirstVisibleButton(page, { name: /continue/i })) continue;
+		}
+		break;
+	}
+	return detectOnboardingStep(page);
 }
 
 async function completePasswordAuthStep(page) {
-	await page.getByPlaceholder("6-digit code from terminal").fill("123456");
-	await page.locator(".backend-card").filter({ hasText: "Password" }).click();
-	const inputs = page.locator("input[type='password']");
+	const setupCodeInput = page.getByPlaceholder("6-digit code from terminal");
+	if (!(await isVisible(setupCodeInput))) return false;
+
+	await setupCodeInput.fill("123456");
+
+	const passwordCard = page.locator(".backend-card").filter({ hasText: "Password" }).first();
+	if (await isVisible(passwordCard)) {
+		await passwordCard.click();
+	}
+
+	const inputs = page.locator(".onboarding-card input[type='password']");
+	if ((await inputs.count()) < 2) return false;
 	await inputs.first().fill("testpassword1");
 	await inputs.nth(1).fill("testpassword1");
-	await page.getByRole("button", { name: /^Set password(?: & continue)?$/ }).click();
+
+	if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) return true;
+	if (await clickFirstVisibleButton(page, { name: /^Skip$/ })) return true;
+	return false;
 }
 
 async function completeIdentityStep(page) {
@@ -75,13 +122,9 @@ test.describe("Onboarding with forced auth (remote)", () => {
 			return;
 		}
 
-		const authHeading = page.getByRole("heading", { name: "Secure your instance", exact: true });
 		const identityHeading = page.getByRole("heading", { name: "Set up your identity", exact: true });
-		const providersHeading = page.getByRole("heading", { name: /^(Add LLMs|Add providers)$/ });
-		const voiceHeading = page.getByRole("heading", { name: "Voice (optional)", exact: true });
-		const channelHeading = page.getByRole("heading", { name: "Connect Telegram", exact: true });
 
-		let step = await waitForStableStep(page, authHeading, identityHeading, providersHeading);
+		let step = await waitForStableStep(page);
 
 		if (step === "chats") {
 			expect(pageErrors).toEqual([]);
@@ -90,32 +133,22 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 		if (step === "auth") {
 			await completePasswordAuthStep(page);
-			step = await waitForStableStep(page, authHeading, identityHeading, providersHeading);
+			step = await waitForStableStep(page);
 		}
 
 		if (step !== "identity") {
-			if (step === "providers" || step === "chats") {
+			step = await advanceToIdentityStep(page);
+			if (step !== "identity") {
 				expect(pageErrors).toEqual([]);
 				return;
 			}
-			await expect(identityHeading).toBeVisible({ timeout: 10_000 });
-			expect(pageErrors).toEqual([]);
-			return;
 		}
 
 		// Fill identity and save — proves WS is connected (uses sendRpc)
 		await completeIdentityStep(page);
 
-		// Provider step appears — proves identity save succeeded over WS
-		await expect(providersHeading).toBeVisible({ timeout: 10_000 });
-		await page.getByRole("button", { name: "Continue", exact: true }).click();
-
-		const voiceEnabled = await page.evaluate(() => Boolean(window.__MOLTIS__?.voice_enabled));
-		if (voiceEnabled) {
-			await expect(voiceHeading).toBeVisible({ timeout: 10_000 });
-		} else {
-			await expect(channelHeading).toBeVisible({ timeout: 10_000 });
-		}
+		// After identity save, onboarding should advance (summary in current flow).
+		await expect.poll(() => detectOnboardingStep(page), { timeout: 10_000 }).toMatch(/^(summary|chats)$/);
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -143,6 +143,7 @@ const WRITE_METHODS: &[&str] = &[
     "channels.senders.deny",
     "sessions.switch",
     "sessions.fork",
+    "sessions.voice.generate",
     "sessions.clear_all",
     "sessions.share.create",
     "sessions.share.revoke",
@@ -1340,6 +1341,19 @@ impl MethodRegistry {
                     )
                     .await;
                     Ok(result)
+                })
+            }),
+        );
+        self.register(
+            "sessions.voice.generate",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .session
+                        .voice_generate(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })
             }),
         );

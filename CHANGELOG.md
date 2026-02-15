@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser auto-detection and install**: automatically detect all installed
+  Chromium-family browsers (Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc)
+  and auto-install via the system package manager when none is found. Requests
+  can specify a preferred browser (`"browser": "brave"`) or let the system
+  pick the first available one.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.30] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+- **Assistant reasoning persistence**: conversation reasoning is now persisted
+  in assistant messages and shared snapshots so resumed sessions retain
+  reasoning context instead of dropping it after refresh/share operations.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.29] - 2026-02-14
+
+
+### Added
+
 - **Memory bootstrap**: inject `MEMORY.md` content directly into the system
   prompt (truncated at 20,000 chars) so the agent always has core memory
   available without needing to call `memory_search` first. Matches OpenClaw's

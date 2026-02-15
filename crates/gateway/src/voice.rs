@@ -89,7 +89,7 @@ impl LiveTtsService {
             enabled: cfg.voice.tts.enabled,
             provider: cfg.voice.tts.provider.clone(),
             auto: moltis_voice::TtsAutoMode::Off,
-            max_text_length: 2000,
+            max_text_length: 8000,
             elevenlabs: moltis_voice::ElevenLabsConfig {
                 api_key: cfg.voice.tts.elevenlabs.api_key.clone(),
                 voice_id: cfg.voice.tts.elevenlabs.voice_id.clone(),

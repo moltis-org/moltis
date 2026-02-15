@@ -237,9 +237,18 @@ pub const TELEGRAM_MAX_MESSAGE_LEN: usize = 4096;
 /// Telegram caption size limit for media messages (voice, photo, document).
 pub const TELEGRAM_CAPTION_LIMIT: usize = 1024;
 
+#[must_use]
+pub fn truncate_at_char_boundary(text: &str, max_len: usize) -> &str {
+    &text[..text.floor_char_boundary(max_len)]
+}
+
 /// Split text into chunks that fit within Telegram's message limit.
 /// Tries to split at newlines or spaces to avoid breaking words.
 pub fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+    if max_len == 0 {
+        return Vec::new();
+    }
+
     if text.len() <= max_len {
         return vec![text.to_string()];
     }
@@ -253,15 +262,24 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
             break;
         }
 
+        let mut split_window_end = remaining.floor_char_boundary(max_len);
+        if split_window_end == 0 {
+            split_window_end = remaining
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(remaining.len());
+        }
+
         // Try to split at a newline
-        let slice = &remaining[..max_len];
+        let slice = &remaining[..split_window_end];
         let split_at = slice
             .rfind('\n')
             .or_else(|| slice.rfind(' '))
-            .unwrap_or(max_len);
+            .unwrap_or(split_window_end);
 
         let split_at = if split_at == 0 {
-            max_len
+            split_window_end
         } else {
             split_at
         };
@@ -331,5 +349,22 @@ mod tests {
         assert_eq!(chunks[0], "hello");
         assert_eq!(chunks[1], "world foo");
         assert_eq!(chunks[2], "bar");
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_handles_utf8() {
+        let text = format!("{}л{}", "a".repeat(4095), "z");
+        let truncated = truncate_at_char_boundary(&text, 4096);
+        assert_eq!(truncated.len(), 4095);
+        assert!(truncated.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn chunk_message_handles_utf8_boundary() {
+        let text = format!("{}лz", "a".repeat(4095));
+        let chunks = chunk_message(&text, 4096);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 4095);
+        assert_eq!(chunks[1], "лz");
     }
 }

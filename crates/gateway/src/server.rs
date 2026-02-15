@@ -740,7 +740,7 @@ pub fn build_gateway_app(
     methods: Arc<MethodRegistry>,
     push_service: Option<Arc<crate::push::PushService>>,
     http_request_logs: bool,
-    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
+    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -752,7 +752,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: webauthn_state.clone(),
+            webauthn_registry: webauthn_registry.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -803,7 +803,7 @@ pub fn build_gateway_app(
     state: Arc<GatewayState>,
     methods: Arc<MethodRegistry>,
     http_request_logs: bool,
-    webauthn_state: Option<Arc<crate::auth_webauthn::WebAuthnState>>,
+    webauthn_registry: Option<Arc<crate::auth_webauthn::WebAuthnRegistry>>,
 ) -> Router {
     let cors = build_cors_layer();
 
@@ -824,7 +824,7 @@ pub fn build_gateway_app(
     if let Some(ref cred_store) = state.credential_store {
         let auth_state = AuthState {
             credential_store: Arc::clone(cred_store),
-            webauthn_state: webauthn_state.clone(),
+            webauthn_registry: webauthn_registry.clone(),
             gateway_state: Arc::clone(&state),
         };
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
@@ -1324,80 +1324,94 @@ pub async fn start_gateway(
             .expect("failed to init credential store"),
     );
 
-    // Initialize WebAuthn state for passkey support.
-    // RP ID: explicit env > PaaS env (DO, Render, Fly, Railway) > "localhost"
-    let rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
-        .or_else(|_| std::env::var("APP_DOMAIN"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
-        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
-        .unwrap_or_else(|_| "localhost".into());
+    // Initialize WebAuthn registry for passkey support.
+    // Each hostname the user may access from gets its own RP ID + origins entry
+    // so passkeys work from localhost, mDNS hostname, and .local alike.
     let default_scheme = if config.tls.enabled {
         "https"
     } else {
         "http"
     };
-    // Origin: explicit env > PaaS env (DO, Render, Fly) > scheme://rp_id(:port)
-    // PaaS platforms proxy on standard ports, so skip the port when rp_id isn't localhost.
-    let rp_origin_str = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
+
+    // Explicit RP ID from env (PaaS platforms).
+    let explicit_rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
+        .or_else(|_| std::env::var("APP_DOMAIN"))
+        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
+        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
+        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
+        .ok();
+
+    let explicit_origin = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
         .or_else(|_| std::env::var("APP_URL"))
         .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .unwrap_or_else(|_| {
-            if rp_id == "localhost" {
-                format!("{default_scheme}://{rp_id}:{port}")
-            } else {
-                // PaaS platforms terminate TLS at the proxy, so the browser always
-                // sees https even though the app runs with --no-tls.
-                format!("https://{rp_id}")
+        .ok();
+
+    let webauthn_registry = {
+        let mut registry = crate::auth_webauthn::WebAuthnRegistry::new();
+        let mut any_ok = false;
+
+        // Helper: try to add one RP ID with its origin + extras to the registry.
+        let mut try_add = |rp_id: &str, origin_str: &str, extras: &[webauthn_rs::prelude::Url]| {
+            let Ok(origin_url) = webauthn_rs::prelude::Url::parse(origin_str) else {
+                tracing::warn!("invalid WebAuthn origin URL '{origin_str}'");
+                return;
+            };
+            match crate::auth_webauthn::WebAuthnState::new(rp_id, &origin_url, extras) {
+                Ok(wa) => {
+                    info!(rp_id = %rp_id, origins = ?wa.get_allowed_origins(), "WebAuthn RP registered");
+                    registry.add(rp_id.to_owned(), wa);
+                    any_ok = true;
+                },
+                Err(e) => tracing::warn!(rp_id = %rp_id, "failed to init WebAuthn: {e}"),
             }
-        });
-    // Build extra allowed origins so passkeys work when accessed via mDNS
-    // hostname (e.g. http://m4max.local:18080) in addition to localhost.
-    let mut extra_origins = Vec::new();
-    if rp_id == "localhost"
-        && let Ok(url) =
-            webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://moltis.localhost:{port}"))
-    {
-        extra_origins.push(url);
-    }
-    if let Ok(hn) = hostname::get() {
-        let hn_str = hn.to_string_lossy();
-        if hn_str != rp_id && hn_str != "localhost" {
-            if let Ok(url) =
-                webauthn_rs::prelude::Url::parse(&format!("{default_scheme}://{hn_str}:{port}"))
-            {
-                extra_origins.push(url);
-            }
-            // Also accept the .local mDNS variant if the hostname doesn't
-            // already end with .local.
-            if !hn_str.ends_with(".local")
-                && let Ok(url) = webauthn_rs::prelude::Url::parse(&format!(
-                    "{default_scheme}://{hn_str}.local:{port}"
+        };
+
+        if let Some(ref rp_id) = explicit_rp_id {
+            // PaaS: single explicit RP ID.
+            let origin = explicit_origin
+                .clone()
+                .unwrap_or_else(|| format!("https://{rp_id}"));
+            try_add(rp_id, &origin, &[]);
+        } else {
+            // Local: register localhost + moltis.localhost as extras.
+            let localhost_origin = format!("{default_scheme}://localhost:{port}");
+            let moltis_localhost: Vec<webauthn_rs::prelude::Url> =
+                webauthn_rs::prelude::Url::parse(&format!(
+                    "{default_scheme}://moltis.localhost:{port}"
                 ))
-            {
-                extra_origins.push(url);
+                .into_iter()
+                .collect();
+            try_add("localhost", &localhost_origin, &moltis_localhost);
+
+            // Register system hostname and hostname.local for LAN/mDNS access.
+            if let Ok(hn) = hostname::get() {
+                let hn_str = hn.to_string_lossy();
+                if hn_str != "localhost" {
+                    // hostname.local as RP ID (mDNS access)
+                    let local_name = if hn_str.ends_with(".local") {
+                        hn_str.to_string()
+                    } else {
+                        format!("{hn_str}.local")
+                    };
+                    let local_origin = format!("{default_scheme}://{local_name}:{port}");
+                    try_add(&local_name, &local_origin, &[]);
+
+                    // bare hostname as RP ID (direct LAN access)
+                    let bare = hn_str.strip_suffix(".local").unwrap_or(&hn_str);
+                    if bare != local_name {
+                        let bare_origin = format!("{default_scheme}://{bare}:{port}");
+                        try_add(bare, &bare_origin, &[]);
+                    }
+                }
             }
         }
-    }
 
-    let webauthn_state = match webauthn_rs::prelude::Url::parse(&rp_origin_str) {
-        Ok(rp_origin) => {
-            match crate::auth_webauthn::WebAuthnState::new(&rp_id, &rp_origin, &extra_origins) {
-                Ok(wa) => {
-                    let origins = wa.get_allowed_origins();
-                    info!(rp_id = %rp_id, origins = ?origins, "WebAuthn passkeys enabled");
-                    Some(Arc::new(wa))
-                },
-                Err(e) => {
-                    tracing::warn!("failed to init WebAuthn: {e}");
-                    None
-                },
-            }
-        },
-        Err(e) => {
-            tracing::warn!("invalid WebAuthn origin URL '{rp_origin_str}': {e}");
+        if any_ok {
+            info!(origins = ?registry.get_all_origins(), "WebAuthn passkeys enabled");
+            Some(Arc::new(registry))
+        } else {
             None
-        },
+        }
     };
 
     // If MOLTIS_PASSWORD is set and no password in DB yet, migrate it.
@@ -2002,6 +2016,7 @@ pub async fn start_gateway(
     {
         let mut session_svc =
             LiveSessionService::new(Arc::clone(&session_store), Arc::clone(&session_metadata))
+                .with_tts_service(Arc::clone(&services.tts))
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_project_store(Arc::clone(&project_store))
@@ -2698,7 +2713,7 @@ pub async fn start_gateway(
         Arc::clone(&methods),
         push_service,
         config.server.http_request_logs,
-        webauthn_state.clone(),
+        webauthn_registry.clone(),
     );
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     #[cfg(not(feature = "push-notifications"))]
@@ -2706,7 +2721,7 @@ pub async fn start_gateway(
         Arc::clone(&state),
         Arc::clone(&methods),
         config.server.http_request_logs,
-        webauthn_state.clone(),
+        webauthn_registry.clone(),
     );
 
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
@@ -2813,6 +2828,10 @@ pub async fn start_gateway(
     };
     #[cfg(not(feature = "tls"))]
     let display_host = display_ip.to_string();
+    let passkey_origins = webauthn_registry
+        .as_ref()
+        .map(|registry| registry.get_all_origins())
+        .unwrap_or_default();
     #[cfg_attr(not(feature = "tls"), allow(unused_mut))]
     let mut lines = vec![
         format!("moltis gateway v{}", state.version),
@@ -2827,6 +2846,7 @@ pub async fn start_gateway(
                 "HTTP/1.1"
             },
         ),
+        startup_bind_line(addr),
         format!("{} methods registered", methods.method_names().len()),
         format!("llm: {}", provider_summary),
         format!(
@@ -2855,6 +2875,7 @@ pub async fn start_gateway(
         ),
         format!("data: {}", data_dir.display()),
     ];
+    lines.extend(startup_passkey_origin_lines(&passkey_origins));
     // Hint about Apple Container on macOS when using Docker.
     #[cfg(target_os = "macos")]
     if sandbox_router.backend_name() == "docker" {
@@ -2874,9 +2895,7 @@ pub async fn start_gateway(
     }
     // Display setup code if one was generated.
     if let Some(ref code) = setup_code_display {
-        lines.push(format!(
-            "setup code: {code} (enter this in the browser to set your password)"
-        ));
+        lines.extend(startup_setup_code_lines(code));
     }
     #[cfg(feature = "tls")]
     if tls_active {
@@ -3689,6 +3708,26 @@ fn resolve_outbound_ip(ipv6: bool) -> Option<std::net::IpAddr> {
     Some(socket.local_addr().ok()?.ip())
 }
 
+fn startup_bind_line(addr: std::net::SocketAddr) -> String {
+    format!("bind (--bind): {addr}")
+}
+
+fn startup_passkey_origin_lines(origins: &[String]) -> Vec<String> {
+    origins
+        .iter()
+        .map(|origin| format!("passkey origin: {origin}"))
+        .collect()
+}
+
+fn startup_setup_code_lines(code: &str) -> Vec<String> {
+    vec![
+        String::new(),
+        format!("setup code: {code}"),
+        "enter this code to set your password or register a passkey".to_string(),
+        String::new(),
+    ]
+}
+
 /// Check whether a WebSocket `Origin` header matches the request `Host`.
 ///
 /// Extracts the host portion of the origin URL and compares it to the Host
@@ -4388,6 +4427,12 @@ fn map_share_message_views(
                 role_class,
                 role_label,
                 content: msg.content.clone(),
+                reasoning: msg
+                    .reasoning
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
                 audio_data_url: msg.audio_data_url.clone(),
                 image_preview_data_url,
                 image_link_data_url,
@@ -4649,6 +4694,7 @@ struct ShareMessageView {
     role_class: &'static str,
     role_label: String,
     content: String,
+    reasoning: Option<String>,
     audio_data_url: Option<String>,
     image_preview_data_url: Option<String>,
     image_link_data_url: Option<String>,
@@ -6483,6 +6529,7 @@ mod tests {
             role_class: "assistant",
             role_label: "🤖 Moltis".to_string(),
             content: "Audio response".to_string(),
+            reasoning: Some("Step 1\nStep 2".to_string()),
             audio_data_url: Some("data:audio/ogg;base64,T2dnUw==".to_string()),
             image_preview_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
             image_link_data_url: Some("data:image/png;base64,ZmFrZQ==".to_string()),
@@ -6541,6 +6588,8 @@ mod tests {
         assert!(html.contains("src=\"/assets/icons/map-google-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-apple-maps.svg\""));
         assert!(html.contains("src=\"/assets/icons/map-openstreetmap.svg\""));
+        assert!(html.contains("class=\"msg-reasoning\""));
+        assert!(html.contains("Reasoning"));
     }
 
     #[cfg(feature = "web-ui")]
@@ -6561,6 +6610,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::User,
                     content: "hi".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6575,6 +6625,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::System,
                     content: "system warning".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6589,6 +6640,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::Notice,
                     content: "share boundary".to_string(),
+                    reasoning: None,
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6603,6 +6655,7 @@ mod tests {
                 crate::share_store::SharedMessage {
                     role: crate::share_store::SharedMessageRole::Assistant,
                     content: "hello".to_string(),
+                    reasoning: Some("internal plan".to_string()),
                     audio_data_url: None,
                     image: None,
                     image_data_url: None,
@@ -6621,6 +6674,7 @@ mod tests {
         assert_eq!(views.len(), 2);
         assert_eq!(views[0].role_class, "user");
         assert_eq!(views[1].role_class, "assistant");
+        assert_eq!(views[1].reasoning.as_deref(), Some("internal plan"));
     }
 
     #[cfg(feature = "web-ui")]
@@ -6640,6 +6694,7 @@ mod tests {
             messages: vec![crate::share_store::SharedMessage {
                 role: crate::share_store::SharedMessageRole::ToolResult,
                 content: "Tartine Bakery".to_string(),
+                reasoning: None,
                 audio_data_url: None,
                 image: Some(crate::share_store::SharedImageSet {
                     preview: crate::share_store::SharedImageAsset {
@@ -6709,6 +6764,7 @@ mod tests {
             messages: vec![crate::share_store::SharedMessage {
                 role: crate::share_store::SharedMessageRole::ToolResult,
                 content: "{\n  \"ok\": true\n}".to_string(),
+                reasoning: None,
                 audio_data_url: None,
                 image: None,
                 image_data_url: None,
@@ -6871,6 +6927,35 @@ mod tests {
             assert!(!display.ip().is_unspecified());
             assert_eq!(display.port(), 9999);
         }
+    }
+
+    #[test]
+    fn startup_bind_line_includes_bind_flag_and_address() {
+        let addr: std::net::SocketAddr = "0.0.0.0:49494".parse().unwrap();
+        assert_eq!(startup_bind_line(addr), "bind (--bind): 0.0.0.0:49494");
+    }
+
+    #[test]
+    fn startup_passkey_origin_lines_emits_clickable_urls() {
+        let lines = startup_passkey_origin_lines(&[
+            "https://localhost:49494".to_string(),
+            "https://m4max.local:49494".to_string(),
+        ]);
+        assert_eq!(lines, vec![
+            "passkey origin: https://localhost:49494",
+            "passkey origin: https://m4max.local:49494",
+        ]);
+    }
+
+    #[test]
+    fn startup_setup_code_lines_adds_spacers() {
+        let lines = startup_setup_code_lines("493413");
+        assert_eq!(lines, vec![
+            "",
+            "setup code: 493413",
+            "enter this code to set your password or register a passkey",
+            "",
+        ]);
     }
 
     // ── is_local_connection / proxy header detection tests ───────────────

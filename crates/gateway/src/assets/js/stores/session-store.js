@@ -37,6 +37,7 @@ export class Session {
 		this.localUnread = signal(false);
 		this.streamText = signal("");
 		this.voicePending = signal(false);
+		this.activeRunId = signal(null);
 		this.lastHistoryIndex = signal(-1);
 		this.sessionTokens = signal({ input: 0, output: 0 });
 		this.contextWindow = signal(0);
@@ -108,6 +109,7 @@ export class Session {
 	resetStreamState() {
 		this.streamText.value = "";
 		this.voicePending.value = false;
+		this.activeRunId.value = null;
 		this.lastToolOutput.value = "";
 	}
 }
