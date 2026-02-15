@@ -12,7 +12,7 @@ use tracing::{debug, trace, warn};
 use {
     super::openai_compat::{
         SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
-        process_openai_sse_line, to_openai_tools,
+        process_openai_sse_line, strip_think_tags, to_openai_tools,
     },
     crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
 };
@@ -583,7 +583,14 @@ impl LlmProvider for OpenAiProvider {
 
         let message = &resp["choices"][0]["message"];
 
-        let text = message["content"].as_str().map(|s| s.to_string());
+        let text = message["content"].as_str().and_then(|s| {
+            let (visible, _thinking) = strip_think_tags(s);
+            if visible.is_empty() {
+                None
+            } else {
+                Some(visible)
+            }
+        });
         let tool_calls = parse_tool_calls(message);
 
         let usage = Usage {
@@ -689,7 +696,7 @@ impl LlmProvider for OpenAiProvider {
 
                     match process_openai_sse_line(data, &mut state) {
                         SseLineResult::Done => {
-                            for event in finalize_stream(&state) {
+                            for event in finalize_stream(&mut state) {
                                 yield event;
                             }
                             return;

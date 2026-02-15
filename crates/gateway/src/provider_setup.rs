@@ -641,7 +641,7 @@ fn known_providers() -> Vec<KnownProvider> {
             display_name: "MiniMax",
             auth_type: "api-key",
             env_key: Some("MINIMAX_API_KEY"),
-            default_base_url: Some("https://api.minimax.chat/v1"),
+            default_base_url: Some("https://api.minimax.io/v1"),
             requires_model: false,
             key_optional: false,
         },

@@ -124,7 +124,12 @@ function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
 }
 
 function handleChatThinkingDone(_p, isActive, isChatPage) {
-	if (isActive && isChatPage) removeThinking();
+	// Don't remove the thinking indicator here. It will be removed by either:
+	// - handleChatDelta (when text starts streaming)
+	// - handleChatToolCallStart (which preserves thinking text as a disclosure)
+	// - handleChatFinal / handleChatError (cleanup)
+	// This keeps the thinking text visible until we know whether to preserve it.
+	void (isActive && isChatPage);
 }
 
 function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
@@ -137,12 +142,34 @@ function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
 	// Keep the existing thinking dots visible — no separate voice indicator.
 }
 
+/** Check whether a reasoning disclosure with the given text already exists in
+ * the chat box (from a previous preserveThinkingAsDisclosure call). */
+function isReasoningAlreadyShown(text) {
+	if (!(S.chatMsgBox && text)) return false;
+	var normalized = text.trim();
+	for (var el of S.chatMsgBox.querySelectorAll(".msg-reasoning-body")) {
+		if (el.textContent.trim() === normalized) return true;
+	}
+	return false;
+}
+
+/** Extract thinking text from the indicator before it is removed. Returns the
+ * trimmed text or null if the indicator has no thinking content. */
+function extractThinkingText() {
+	var indicator = document.getElementById("thinkingIndicator");
+	if (!indicator) return null;
+	var textEl = indicator.querySelector(".thinking-text");
+	var text = textEl?.textContent.trim();
+	return text || null;
+}
+
 function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	// Update per-session signal
 	var session = sessionStore.getByKey(eventSession);
 	if (session) session.streamText.value = "";
 	if (!(isActive && isChatPage)) return;
+	var thinkingText = extractThinkingText();
 	removeThinking();
 	// Close the current streaming element so new text deltas after this tool
 	// call will create a fresh element positioned after the tool card
@@ -158,6 +185,8 @@ function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
 	card.id = cardId;
 	var cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
 	card.querySelector("[data-cmd]").textContent = ` ${cmd}`;
+	// Preserve thinking text as a reasoning disclosure inside the tool card
+	if (thinkingText) appendReasoningDisclosure(card, thinkingText);
 	S.chatMsgBox.appendChild(card);
 	var endKey = toolCallEventKey(eventSession, p);
 	var pendingEnd = pendingToolCallEnds.get(endKey);
@@ -425,15 +454,18 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		textWrap.className = "mt-2";
 		setSafeMarkdownHtml(textWrap, p.text);
 		msgEl.appendChild(textWrap);
-		if (p.reasoning) appendReasoningDisclosure(msgEl, p.reasoning);
+		if (p.reasoning && !isReasoningAlreadyShown(p.reasoning)) {
+			appendReasoningDisclosure(msgEl, p.reasoning);
+		}
 		appendFinalFooter(msgEl, p, eventSession);
 		S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	} else {
 		var resolvedEl = resolveFinalMessageEl(p);
-		if (!resolvedEl && p.reasoning) {
+		var skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
+		if (!resolvedEl && p.reasoning && !skipReasoning) {
 			resolvedEl = chatAddMsg("assistant", "", false);
 		}
-		if (resolvedEl && p.reasoning) {
+		if (resolvedEl && p.reasoning && !skipReasoning) {
 			appendReasoningDisclosure(resolvedEl, p.reasoning);
 		}
 		if (resolvedEl && p.text && p.replyMedium === "voice") {
