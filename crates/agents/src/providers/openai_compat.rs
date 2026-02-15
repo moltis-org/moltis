@@ -234,6 +234,50 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
         .unwrap_or_default()
 }
 
+fn usage_value_at_path(usage: &serde_json::Value, path: &[&str]) -> Option<u64> {
+    let mut cursor = usage;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    cursor.as_u64()
+}
+
+fn usage_field_u32(usage: &serde_json::Value, paths: &[&[&str]]) -> u32 {
+    paths
+        .iter()
+        .find_map(|path| usage_value_at_path(usage, path))
+        .unwrap_or(0) as u32
+}
+
+/// Parse usage payloads from OpenAI-compatible backends.
+///
+/// Different providers use different field names:
+/// - OpenAI-style: `prompt_tokens`, `completion_tokens`
+/// - Anthropic/MiniMax-style: `input_tokens`, `output_tokens`
+/// - Cache fields may be top-level or nested in `*_tokens_details`.
+#[must_use]
+pub fn parse_openai_compat_usage(usage: &serde_json::Value) -> Usage {
+    Usage {
+        input_tokens: usage_field_u32(usage, &[&["prompt_tokens"], &["input_tokens"]]),
+        output_tokens: usage_field_u32(usage, &[&["completion_tokens"], &["output_tokens"]]),
+        cache_read_tokens: usage_field_u32(
+            usage,
+            &[
+                &["prompt_tokens_details", "cached_tokens"],
+                &["cache_read_input_tokens"],
+                &["input_tokens_details", "cache_read_input_tokens"],
+            ],
+        ),
+        cache_write_tokens: usage_field_u32(
+            usage,
+            &[
+                &["cache_creation_input_tokens"],
+                &["input_tokens_details", "cache_creation_input_tokens"],
+            ],
+        ),
+    }
+}
+
 /// Strip `<think>...</think>` tags from content, returning `(visible, thinking)`.
 ///
 /// Models like DeepSeek R1, QwQ, and MiniMax embed chain-of-thought reasoning
@@ -452,12 +496,11 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
 
     // Usage chunk (sent with stream_options.include_usage)
     if let Some(u) = evt.get("usage").filter(|u| !u.is_null()) {
-        state.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        state.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
-        // OpenAI reports cached tokens in prompt_tokens_details
-        if let Some(cached) = u["prompt_tokens_details"]["cached_tokens"].as_u64() {
-            state.cache_read_tokens = cached as u32;
-        }
+        let usage = parse_openai_compat_usage(u);
+        state.input_tokens = usage.input_tokens;
+        state.output_tokens = usage.output_tokens;
+        state.cache_read_tokens = usage.cache_read_tokens;
+        state.cache_write_tokens = usage.cache_write_tokens;
     }
 
     let delta = &evt["choices"][0]["delta"];
@@ -729,6 +772,51 @@ mod tests {
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "get_weather");
         assert_eq!(calls[0].arguments["city"], "SF");
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_openai_fields() {
+        let usage = serde_json::json!({
+            "prompt_tokens": 42,
+            "completion_tokens": 17,
+            "prompt_tokens_details": {
+                "cached_tokens": 9
+            }
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 42);
+        assert_eq!(parsed.output_tokens, 17);
+        assert_eq!(parsed.cache_read_tokens, 9);
+        assert_eq!(parsed.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn test_parse_openai_compat_usage_input_output_fields() {
+        let usage = serde_json::json!({
+            "input_tokens": 123,
+            "output_tokens": 45,
+            "cache_read_input_tokens": 7,
+            "cache_creation_input_tokens": 11
+        });
+
+        let parsed = parse_openai_compat_usage(&usage);
+        assert_eq!(parsed.input_tokens, 123);
+        assert_eq!(parsed.output_tokens, 45);
+        assert_eq!(parsed.cache_read_tokens, 7);
+        assert_eq!(parsed.cache_write_tokens, 11);
+    }
+
+    #[test]
+    fn test_process_sse_usage_chunk_with_input_output_fields() {
+        let mut state = StreamingToolState::default();
+        let data = r#"{"choices":[],"usage":{"input_tokens":64,"output_tokens":19,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        assert!(matches!(result, SseLineResult::Skip));
+        assert_eq!(state.input_tokens, 64);
+        assert_eq!(state.output_tokens, 19);
+        assert_eq!(state.cache_read_tokens, 5);
+        assert_eq!(state.cache_write_tokens, 2);
     }
 
     #[test]

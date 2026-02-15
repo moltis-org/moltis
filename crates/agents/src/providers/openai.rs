@@ -11,10 +11,10 @@ use tracing::{debug, trace, warn};
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
-        process_openai_sse_line, strip_think_tags, to_openai_tools,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
+        parse_tool_calls, process_openai_sse_line, strip_think_tags, to_openai_tools,
     },
-    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
+    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
 
 pub struct OpenAiProvider {
@@ -631,14 +631,7 @@ impl LlmProvider for OpenAiProvider {
         });
         let tool_calls = parse_tool_calls(message);
 
-        let usage = Usage {
-            input_tokens: resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            output_tokens: resp["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: resp["usage"]["prompt_tokens_details"]["cached_tokens"]
-                .as_u64()
-                .unwrap_or(0) as u32,
-            ..Default::default()
-        };
+        let usage = parse_openai_compat_usage(&resp["usage"]);
 
         Ok(CompletionResponse {
             text,
