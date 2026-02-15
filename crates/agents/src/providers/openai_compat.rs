@@ -387,7 +387,7 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
         }
     }
 
-    (visible, thinking.trim_start().to_string())
+    (visible.trim_start().to_string(), thinking.trim_start().to_string())
 }
 
 /// State for tracking streaming tool calls.
@@ -405,6 +405,10 @@ pub struct StreamingToolState {
     /// think block. Set to `true` when entering `<think>`, cleared once
     /// non-whitespace reasoning content is emitted.
     think_strip_leading_ws: bool,
+    /// Whether we are still stripping leading whitespace from visible content
+    /// after exiting a `</think>` block. Models often emit `\n\n` between
+    /// `</think>` and the actual answer.
+    visible_strip_leading_ws: bool,
     /// Buffer for detecting `<think>` / `</think>` tags that may be split
     /// across SSE chunk boundaries.
     tag_buffer: String,
@@ -440,6 +444,26 @@ fn emit_reasoning(text: String, strip_leading_ws: &mut bool, events: &mut Vec<St
     events.push(StreamEvent::ReasoningDelta(emitted));
 }
 
+/// Emit a visible `Delta`, stripping leading whitespace after a `</think>`
+/// block so the UI doesn't show blank lines before the answer.
+fn emit_visible(text: String, strip_leading_ws: &mut bool, events: &mut Vec<StreamEvent>) {
+    if text.is_empty() {
+        return;
+    }
+    let emitted = if *strip_leading_ws {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            // Entire chunk was whitespace — keep stripping
+            return;
+        }
+        *strip_leading_ws = false;
+        trimmed.to_string()
+    } else {
+        text
+    };
+    events.push(StreamEvent::Delta(emitted));
+}
+
 /// Process streamed content through the `<think>` tag state machine.
 ///
 /// Content arriving inside `<think>...</think>` is emitted as
@@ -462,6 +486,7 @@ fn process_content_think_tags(
                     let thinking = state.tag_buffer[..pos].to_string();
                     emit_reasoning(thinking, &mut state.think_strip_leading_ws, events);
                     state.in_think_block = false;
+                    state.visible_strip_leading_ws = true;
                     let rest = state.tag_buffer[pos + "</think>".len()..].to_string();
                     state.tag_buffer = rest;
                     // Continue loop to process remaining content
@@ -489,9 +514,7 @@ fn process_content_think_tags(
             match state.tag_buffer.find("<think>") {
                 Some(pos) => {
                     let visible = state.tag_buffer[..pos].to_string();
-                    if !visible.is_empty() {
-                        events.push(StreamEvent::Delta(visible));
-                    }
+                    emit_visible(visible, &mut state.visible_strip_leading_ws, events);
                     state.in_think_block = true;
                     state.think_strip_leading_ws = true;
                     let rest = state.tag_buffer[pos + "<think>".len()..].to_string();
@@ -504,16 +527,13 @@ fn process_content_think_tags(
                     if suffix_match > 0 {
                         let safe = state.tag_buffer.len() - suffix_match;
                         let emit = state.tag_buffer[..safe].to_string();
-                        if !emit.is_empty() {
-                            events.push(StreamEvent::Delta(emit));
-                        }
+                        emit_visible(emit, &mut state.visible_strip_leading_ws, events);
                         let kept = state.tag_buffer[safe..].to_string();
                         state.tag_buffer = kept;
                     } else {
                         // No partial tag — emit everything as visible
-                        if !state.tag_buffer.is_empty() {
-                            events.push(StreamEvent::Delta(std::mem::take(&mut state.tag_buffer)));
-                        }
+                        let buf = std::mem::take(&mut state.tag_buffer);
+                        emit_visible(buf, &mut state.visible_strip_leading_ws, events);
                     }
                     break;
                 },
@@ -1556,6 +1576,79 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(reasoning, "actual thought");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    // ============================================================
+    // Tests for visible content whitespace stripping after </think>
+    // ============================================================
+
+    #[test]
+    fn test_strip_think_tags_trims_visible_after_think() {
+        let input = "<think>reasoning</think>\n\nHere's the answer";
+        let (visible, thinking) = strip_think_tags(input);
+        assert_eq!(visible, "Here's the answer");
+        assert_eq!(thinking, "reasoning");
+    }
+
+    #[test]
+    fn test_stream_strips_visible_whitespace_after_think() {
+        let mut state = StreamingToolState::default();
+        let data =
+            r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\nHere's the answer"}}]}"#;
+        let result = process_openai_sse_line(data, &mut state);
+        match result {
+            SseLineResult::Events(events) => {
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(visible, "Here's the answer");
+            },
+            _ => panic!("Expected Events"),
+        }
+    }
+
+    #[test]
+    fn test_stream_strips_visible_whitespace_across_chunks() {
+        let mut state = StreamingToolState::default();
+
+        // First chunk: think block + close tag + newlines
+        let data1 = r#"{"choices":[{"delta":{"content":"<think>reasoning</think>\n\n"}}]}"#;
+        let result1 = process_openai_sse_line(data1, &mut state);
+        match result1 {
+            SseLineResult::Events(events) => {
+                let visible_count = events
+                    .iter()
+                    .filter(|e| matches!(e, StreamEvent::Delta(_)))
+                    .count();
+                assert_eq!(
+                    visible_count, 0,
+                    "leading whitespace after </think> should be stripped"
+                );
+            },
+            SseLineResult::Skip => {},
+            _ => panic!("Expected Events or Skip"),
+        }
+
+        // Second chunk: actual visible content
+        let data2 = r#"{"choices":[{"delta":{"content":"The answer"}}]}"#;
+        let result2 = process_openai_sse_line(data2, &mut state);
+        match result2 {
+            SseLineResult::Events(events) => {
+                let visible: String = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        StreamEvent::Delta(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(visible, "The answer");
             },
             _ => panic!("Expected Events"),
         }
