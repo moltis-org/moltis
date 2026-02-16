@@ -726,6 +726,7 @@ function OnboardingProviderRow({
 					<button type="submit" class="provider-btn provider-btn-sm" disabled=${phase === "validating"}>${phase === "validating" ? "Validating\u2026" : "Save & Validate"}</button>
 					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${phase === "validating"}>Cancel</button>
 				</div>
+				${phase === "validating" ? html`<div class="text-xs text-[var(--muted)] mt-1">Testing connection and discovering available models\u2026</div>` : null}
 			</form>`
 				: null
 		}
@@ -760,6 +761,7 @@ function OnboardingProviderRow({
 					<button type="button" class="provider-btn provider-btn-sm" disabled=${selectedModels.size === 0 || savingModels} onClick=${onSaveModels}>${savingModels ? "Saving\u2026" : "Save"}</button>
 					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${onCancelConfigure} disabled=${savingModels}>Cancel</button>
 				</div>
+				${savingModels ? html`<div class="text-xs text-[var(--muted)] mt-1">Saving credentials and validating selected models\u2026</div>` : null}
 			</div>`
 				: null
 		}

@@ -149,6 +149,7 @@
 .btn-row-mt { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
 
 .provider-btn {
+  appearance: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: #fff;
