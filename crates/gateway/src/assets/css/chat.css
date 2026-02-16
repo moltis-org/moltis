@@ -433,6 +433,35 @@
 
 .token-bar:empty { display: none; }
 
+.chat-command-prompt {
+  min-width: 20px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.chat-command-prompt-hidden {
+  display: none;
+}
+
+.chat-input-row.command-mode {
+  border-top-color: var(--accent-subtle);
+}
+
+.chat-input-row.command-mode #chatInput {
+  font-family: var(--font-mono);
+}
+
 .msg-model-footer {
   color: var(--muted);
   text-align: right;

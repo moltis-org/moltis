@@ -736,6 +736,43 @@ async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) {
     }
 }
 
+async fn detect_host_root_user() -> Option<bool> {
+    #[cfg(not(unix))]
+    {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        if let Some(uid) = std::env::var("EUID")
+            .ok()
+            .or_else(|| std::env::var("UID").ok())
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+        {
+            return Some(uid == 0);
+        }
+        if let Ok(user) = std::env::var("USER") {
+            let trimmed = user.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed == "root");
+            }
+        }
+        let output = tokio::process::Command::new("id")
+            .arg("-u")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let uid_text = String::from_utf8_lossy(&output.stdout);
+        uid_text.trim().parse::<u32>().ok().map(|uid| uid == 0)
+    }
+}
+
 /// Pre-loaded persona data used to build the system prompt.
 struct PromptPersona {
     config: moltis_config::MoltisConfig,
@@ -3472,6 +3509,30 @@ impl ChatService for LiveChatService {
                 "backend": null,
             })
         };
+        let sandbox_enabled = sandbox_info
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let host_is_root = detect_host_root_user().await;
+        // Sandbox containers currently run as root by default.
+        let exec_is_root = if sandbox_enabled {
+            Some(true)
+        } else {
+            host_is_root
+        };
+        let exec_prompt_symbol = exec_is_root.map(|is_root| {
+            if is_root {
+                "#"
+            } else {
+                "$"
+            }
+        });
+        let execution_info = serde_json::json!({
+            "mode": if sandbox_enabled { "sandbox" } else { "host" },
+            "hostIsRoot": host_is_root,
+            "isRoot": exec_is_root,
+            "promptSymbol": exec_prompt_symbol,
+        });
 
         // Discover enabled skills/plugins (only if provider supports tools)
         let skills_list: Vec<Value> = if supports_tools {
@@ -3514,6 +3575,7 @@ impl ChatService for LiveChatService {
             "mcpServers": mcp_servers,
             "mcpDisabled": mcp_disabled,
             "sandbox": sandbox_info,
+            "execution": execution_info,
             "supportsTools": supports_tools,
             "tokenUsage": {
                 "inputTokens": total_input,

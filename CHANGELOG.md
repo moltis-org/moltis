@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Web chat now supports `/sh` command mode: entering `/sh` toggles a dedicated
+  command input state, command sends are automatically prefixed with `/sh`,
+  and the token bar shows effective execution route (`sandboxed` vs `host`)
+  plus prompt symbol (`#` for root, `$` for non-root).
+
 ### Deprecated
 
 ### Removed

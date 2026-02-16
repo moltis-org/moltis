@@ -295,6 +295,28 @@ export function chatAutoResize() {
 	S.chatInput.style.height = `${Math.min(S.chatInput.scrollHeight, 120)}px`;
 }
 
+export function updateCommandInputUI() {
+	if (!S.chatInput) return;
+	var row = S.chatInput.closest(".chat-input-row");
+	if (row) {
+		row.classList.toggle("command-mode", S.commandModeEnabled);
+	}
+	var prompt = S.$("chatCommandPrompt");
+	if (prompt) {
+		prompt.textContent = S.sessionExecPromptSymbol || "$";
+		prompt.classList.toggle("chat-command-prompt-hidden", !S.commandModeEnabled);
+		prompt.setAttribute("aria-hidden", S.commandModeEnabled ? "false" : "true");
+	}
+	if (S.commandModeEnabled) {
+		S.chatInput.placeholder = "Run shell command\u2026";
+		S.chatInput.setAttribute("aria-label", "Command input");
+	} else {
+		S.chatInput.placeholder = "Type a message...";
+		S.chatInput.setAttribute("aria-label", "Chat input");
+	}
+	updateTokenBar();
+}
+
 export function updateTokenBar() {
 	var bar = S.$("tokenBar");
 	if (!bar) return;
@@ -312,6 +334,12 @@ export function updateTokenBar() {
 	}
 	if (!S.sessionToolsEnabled) {
 		text += " \u00b7 Tools: disabled";
+	}
+	var execModeLabel = S.sessionExecMode === "sandbox" ? "sandboxed" : "host";
+	var promptSymbol = S.sessionExecPromptSymbol || "$";
+	text += ` \u00b7 Execute: ${execModeLabel} (${promptSymbol})`;
+	if (S.commandModeEnabled) {
+		text += " \u00b7 /sh mode";
 	}
 	bar.textContent = text;
 }
