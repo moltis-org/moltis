@@ -30,7 +30,6 @@ var xtermDataDisposable = null;
 var TerminalCtor = null;
 var FitAddonCtor = null;
 
-var lastOutput = "";
 var terminalAvailable = false;
 var lastSentCols = 0;
 var lastSentRows = 0;
@@ -217,7 +216,7 @@ async function initXterm() {
 	}
 
 	xterm = new TerminalCtor({
-		convertEol: true,
+		convertEol: false,
 		disableStdin: false,
 		cursorBlink: true,
 		scrollback: 4000,
@@ -266,7 +265,6 @@ function disposeXterm() {
 		xterm = null;
 	}
 	fitAddon = null;
-	lastOutput = "";
 	lastSentCols = 0;
 	lastSentRows = 0;
 }
@@ -278,44 +276,23 @@ function isNearBottom() {
 	return buffer.baseY - buffer.viewportY <= 2;
 }
 
-function normalizeForXterm(text) {
-	return text.replace(/\r?\n/g, "\r\n");
-}
-
 function writeToXterm(text, scrollBottom) {
 	if (!xterm) return;
-	var normalized = normalizeForXterm(text || "");
-	if (!normalized) {
+	var content = typeof text === "string" ? text : "";
+	if (!content) {
 		if (scrollBottom) xterm.scrollToBottom();
 		return;
 	}
-	xterm.write(normalized, () => {
+	xterm.write(content, () => {
 		if (scrollBottom && xterm) xterm.scrollToBottom();
 	});
 }
 
-function replaceXtermOutput(text, scrollBottom) {
+function appendOutputChunk(text, forceBottom) {
 	if (!xterm) return;
-	xterm.reset();
-	if (!text) {
-		if (scrollBottom) xterm.scrollToBottom();
-		return;
-	}
-	writeToXterm(text, scrollBottom);
-}
-
-function updateOutput(text, forceBottom) {
-	if (!xterm) return;
-	var next = typeof text === "string" ? text : "";
-	if (next === lastOutput) return;
-
+	if (typeof text !== "string" || text.length === 0) return;
 	var atBottom = forceBottom || isNearBottom();
-	if (next.length > lastOutput.length && next.startsWith(lastOutput)) {
-		writeToXterm(next.slice(lastOutput.length), atBottom);
-	} else {
-		replaceXtermOutput(next, atBottom);
-	}
-	lastOutput = next;
+	writeToXterm(text, atBottom);
 }
 
 function closeTerminalSocket() {
@@ -416,7 +393,7 @@ function handleTerminalMessage(payload) {
 			applyReadyPayload(payload);
 			break;
 		case "output":
-			updateOutput(payload.data || "", false);
+			appendOutputChunk(payload.data || "", false);
 			break;
 		case "status":
 			setStatus(payload.text || "", payload.level || "");
@@ -603,7 +580,6 @@ export function teardownTerminal() {
 	restartBtn = null;
 	installTmuxBtn = null;
 	copyInstallBtn = null;
-	lastOutput = "";
 	terminalAvailable = false;
 	tmuxInstallCommand = "";
 }
