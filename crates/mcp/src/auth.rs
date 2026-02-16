@@ -493,7 +493,10 @@ impl McpAuthProvider for McpOAuthProvider {
             #[allow(clippy::collapsible_if)]
             if let Some(tokens) = cached.as_ref() {
                 if !Self::is_token_expired(tokens) {
-                    return Ok(Some(tokens.access_token.clone()));
+                    let token = tokens.access_token.clone();
+                    drop(cached);
+                    *self.state.write().await = McpAuthState::Authenticated;
+                    return Ok(Some(token));
                 }
                 // Token expired — try refresh below
             }
@@ -506,6 +509,7 @@ impl McpAuthProvider for McpOAuthProvider {
                 if let Some(new_tokens) = self.try_refresh(&tokens).await? {
                     let token = new_tokens.access_token.clone();
                     *self.cached_token.write().await = Some(new_tokens);
+                    *self.state.write().await = McpAuthState::Authenticated;
                     return Ok(Some(token));
                 }
                 // Refresh failed or no refresh token — return None to trigger re-auth
@@ -513,6 +517,7 @@ impl McpAuthProvider for McpOAuthProvider {
             }
             let token = tokens.access_token.clone();
             *self.cached_token.write().await = Some(tokens);
+            *self.state.write().await = McpAuthState::Authenticated;
             return Ok(Some(token));
         }
 
@@ -763,7 +768,7 @@ mod tests {
 
         let token = provider.access_token().await.unwrap().unwrap();
         assert_eq!(token.expose_secret(), "cached-token");
-        assert_eq!(provider.auth_state(), McpAuthState::NotRequired);
+        assert_eq!(provider.auth_state(), McpAuthState::Authenticated);
     }
 
     #[tokio::test]
