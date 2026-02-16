@@ -8,7 +8,7 @@
 //! - Exit 1 → [`HookAction::Block`] with stderr as reason
 //! - Timeout → error (non-fatal, logged by registry)
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use {
     anyhow::{Context, Result, bail},
@@ -36,6 +36,7 @@ pub struct ShellHookHandler {
     subscribed_events: Vec<HookEvent>,
     timeout: Duration,
     env: HashMap<String, String>,
+    working_dir: Option<PathBuf>,
 }
 
 impl ShellHookHandler {
@@ -45,6 +46,7 @@ impl ShellHookHandler {
         events: Vec<HookEvent>,
         timeout: Duration,
         env: HashMap<String, String>,
+        working_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             hook_name: name.into(),
@@ -52,10 +54,14 @@ impl ShellHookHandler {
             subscribed_events: events,
             timeout,
             env,
+            working_dir,
         }
     }
 
     /// Create from a [`ShellHookConfig`].
+    ///
+    /// Config-based hooks (from `moltis.toml`) don't have a hook directory,
+    /// so `working_dir` is `None`.
     pub fn from_config(config: &ShellHookConfig) -> Self {
         Self::new(
             config.name.clone(),
@@ -63,6 +69,7 @@ impl ShellHookHandler {
             config.events.clone(),
             Duration::from_secs(config.timeout),
             config.env.clone(),
+            None,
         )
     }
 }
@@ -88,13 +95,19 @@ impl HookHandler for ShellHookHandler {
             "spawning shell hook"
         );
 
-        let mut child = Command::new("sh")
-            .arg("-c")
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
             .arg(&self.command)
             .envs(&self.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn hook command: {}", self.command))?;
 
@@ -189,6 +202,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -205,6 +219,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -224,6 +239,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -244,6 +260,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -263,6 +280,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_millis(100),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -284,6 +302,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             env,
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -303,6 +322,7 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
@@ -318,12 +338,62 @@ mod tests {
             vec![HookEvent::SessionStart],
             Duration::from_secs(5),
             HashMap::new(),
+            None,
         );
         let result = handler
             .handle(HookEvent::SessionStart, &test_payload())
             .await
             .unwrap();
         assert!(matches!(result, HookAction::Continue));
+    }
+
+    #[tokio::test]
+    async fn shell_hook_working_dir() {
+        let tmp = std::env::temp_dir().join("moltis_hook_wd_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let handler = ShellHookHandler::new(
+            "test-wd",
+            "pwd",
+            vec![HookEvent::SessionStart],
+            Duration::from_secs(5),
+            HashMap::new(),
+            Some(tmp.clone()),
+        );
+        let result = handler
+            .handle(HookEvent::SessionStart, &test_payload())
+            .await
+            .unwrap();
+
+        // pwd outputs a path on stdout — handler treats non-JSON stdout as Continue,
+        // so we verify via a modify response instead.
+        drop(result);
+
+        // Use a command that echoes pwd as JSON modify data.
+        let handler = ShellHookHandler::new(
+            "test-wd-json",
+            r#"echo "{\"action\":\"modify\",\"data\":{\"cwd\":\"$(pwd)\"}}"  "#,
+            vec![HookEvent::SessionStart],
+            Duration::from_secs(5),
+            HashMap::new(),
+            Some(tmp.clone()),
+        );
+        let result = handler
+            .handle(HookEvent::SessionStart, &test_payload())
+            .await
+            .unwrap();
+        match result {
+            HookAction::ModifyPayload(v) => {
+                let cwd = v["cwd"].as_str().unwrap();
+                // Canonicalize both to handle /tmp vs /private/tmp on macOS.
+                let expected = std::fs::canonicalize(&tmp).unwrap();
+                let actual = std::fs::canonicalize(cwd).unwrap();
+                assert_eq!(actual, expected);
+            },
+            _ => panic!("expected ModifyPayload, got: {result:?}"),
+        }
+
+        let _ = std::fs::remove_dir(&tmp);
     }
 
     #[tokio::test]

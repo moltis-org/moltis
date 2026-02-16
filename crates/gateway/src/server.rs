@@ -6664,6 +6664,7 @@ pub(crate) async fn discover_and_build_hooks(
                 meta.events.clone(),
                 std::time::Duration::from_secs(meta.timeout),
                 meta.env.clone(),
+                Some(parsed.source_path.clone()),
             );
             registry.register(Arc::new(handler));
         }
