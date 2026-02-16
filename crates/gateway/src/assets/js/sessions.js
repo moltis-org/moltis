@@ -691,6 +691,13 @@ export function switchSession(key, searchContext, projectId) {
 			// after a full page reload while the model is still generating.
 			if (res.payload.replying) {
 				setSessionReplying(key, true);
+				// Restore voice-pending state so the final handler renders
+				// the audio player instead of treating it as a text stream.
+				if (res.payload.voicePending) {
+					S.setVoicePending(true);
+					var voiceSession = sessionStore.getByKey(key);
+					if (voiceSession) voiceSession.voicePending.value = true;
+				}
 			}
 			sessionStore.switchInProgress.value = false;
 			S.setSessionSwitchInProgress(false);

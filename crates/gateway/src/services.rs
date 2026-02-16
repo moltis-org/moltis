@@ -462,6 +462,11 @@ pub trait ChatService: Send + Sync {
     async fn active_thinking_text(&self, _session_key: &str) -> Option<String> {
         None
     }
+    /// Return whether the active run for this session is using voice reply medium,
+    /// so the frontend can restore `voicePending` state after a page reload.
+    async fn active_voice_pending(&self, _session_key: &str) -> bool {
+        false
+    }
 }
 
 pub struct NoopChatService;

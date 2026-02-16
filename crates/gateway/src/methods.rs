@@ -2352,15 +2352,20 @@ impl MethodRegistry {
                     }
 
                     // Inject replying state so frontend restores thinking
-                    // indicator after page reload.
+                    // indicator and voice-pending state after page reload.
                     let chat = ctx.state.chat().await;
                     let active_keys = chat.active_session_keys().await;
                     let replying = active_keys.iter().any(|k| k == key);
                     let mut result = result;
                     if let Some(obj) = result.as_object_mut() {
                         obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
-                        if replying && let Some(text) = chat.active_thinking_text(key).await {
-                            obj.insert("thinkingText".to_string(), serde_json::Value::String(text));
+                        if replying {
+                            if let Some(text) = chat.active_thinking_text(key).await {
+                                obj.insert("thinkingText".to_string(), serde_json::Value::String(text));
+                            }
+                            if chat.active_voice_pending(key).await {
+                                obj.insert("voicePending".to_string(), serde_json::Value::Bool(true));
+                            }
                         }
                     }
 

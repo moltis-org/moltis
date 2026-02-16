@@ -1785,6 +1785,9 @@ pub struct LiveChatService {
     /// Per-session accumulated thinking text for active runs, so it can be
     /// returned in `sessions.switch` after a page reload.
     active_thinking_text: Arc<RwLock<HashMap<String, String>>>,
+    /// Per-session reply medium for active runs, so the frontend can restore
+    /// `voicePending` state after a page reload.
+    active_reply_medium: Arc<RwLock<HashMap<String, ReplyMedium>>>,
     /// Failover configuration for automatic model/provider failover.
     failover_config: moltis_config::schema::FailoverConfig,
 }
@@ -1811,6 +1814,7 @@ impl LiveChatService {
             message_queue: Arc::new(RwLock::new(HashMap::new())),
             last_client_seq: Arc::new(RwLock::new(HashMap::new())),
             active_thinking_text: Arc::new(RwLock::new(HashMap::new())),
+            active_reply_medium: Arc::new(RwLock::new(HashMap::new())),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
     }
@@ -2337,6 +2341,7 @@ impl ChatService for LiveChatService {
         let active_runs = Arc::clone(&self.active_runs);
         let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
         let active_thinking_text = Arc::clone(&self.active_thinking_text);
+        let active_reply_medium = Arc::clone(&self.active_reply_medium);
         let run_id_clone = run_id.clone();
         let tool_registry = Arc::clone(&self.tool_registry);
         let hook_registry = self.hook_registry.clone();
@@ -2530,6 +2535,10 @@ impl ChatService for LiveChatService {
         let handle = tokio::spawn(async move {
             let permit = permit; // hold permit until agent run completes
             let ctx_ref = project_context.as_deref();
+            active_reply_medium
+                .write()
+                .await
+                .insert(session_key_clone.clone(), desired_reply_medium);
             if desired_reply_medium == ReplyMedium::Voice {
                 broadcast(
                     &state,
@@ -2664,6 +2673,10 @@ impl ChatService for LiveChatService {
             }
             drop(runs_by_session);
             active_thinking_text
+                .write()
+                .await
+                .remove(&session_key_clone);
+            active_reply_medium
                 .write()
                 .await
                 .remove(&session_key_clone);
@@ -3809,6 +3822,14 @@ impl ChatService for LiveChatService {
             .await
             .get(session_key)
             .cloned()
+    }
+
+    async fn active_voice_pending(&self, session_key: &str) -> bool {
+        self.active_reply_medium
+            .read()
+            .await
+            .get(session_key)
+            .is_some_and(|m| *m == ReplyMedium::Voice)
     }
 }
 
