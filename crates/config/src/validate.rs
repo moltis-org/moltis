@@ -355,6 +355,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("backend", Leaf),
                 ("provider", Leaf),
+                ("disable_rag", Leaf),
                 ("base_url", Leaf),
                 ("model", Leaf),
                 ("api_key", Leaf),
@@ -1412,6 +1413,23 @@ provider = "pinecone"
         assert!(
             warning.is_some(),
             "expected warning for unknown memory provider"
+        );
+    }
+
+    #[test]
+    fn memory_disable_rag_is_valid_field() {
+        let toml = r#"
+[memory]
+disable_rag = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown = result
+            .diagnostics
+            .iter()
+            .find(|d| d.category == "unknown-field" && d.path == "memory.disable_rag");
+        assert!(
+            unknown.is_none(),
+            "memory.disable_rag should be accepted as a known field"
         );
     }
 
