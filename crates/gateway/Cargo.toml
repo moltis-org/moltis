@@ -75,6 +75,7 @@ webauthn-rs        = { features = ["danger-allow-state-serialisation"], workspac
 webauthn-rs-proto  = { workspace = true }
 # OpenSSL vendored for cross-compilation (required by webauthn-rs)
 openssl     = { workspace = true }
+url         = { workspace = true }
 urlencoding = { workspace = true }
 
 [features]

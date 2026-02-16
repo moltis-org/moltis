@@ -753,6 +753,10 @@ fn check_provider_names(
         if PROVIDERS_META_KEYS.contains(&name.as_str()) {
             continue;
         }
+        // Custom providers (user-added OpenAI-compatible endpoints) are valid.
+        if name.starts_with("custom-") {
+            continue;
+        }
         if !KNOWN_PROVIDER_NAMES.contains(&name.as_str()) {
             let suggestion = suggest(name, KNOWN_PROVIDER_NAMES, 3);
             let msg = if let Some(s) = suggestion {
@@ -1732,6 +1736,42 @@ CUSTOM_VAR = "some-value"
         assert!(
             unknown_fields.is_empty(),
             "env keys should not be flagged as unknown: {unknown_fields:?}"
+        );
+    }
+
+    #[test]
+    fn custom_provider_prefix_suppresses_unknown_provider_warning() {
+        let toml = r#"
+[providers.custom-together-ai]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            unknown_providers.is_empty(),
+            "custom- prefix should not trigger unknown-provider warning: {unknown_providers:?}"
+        );
+    }
+
+    #[test]
+    fn non_custom_unknown_provider_still_warns() {
+        let toml = r#"
+[providers.typo-anthropc]
+enabled = true
+"#;
+        let result = validate_toml_str(toml);
+        let unknown_providers: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            !unknown_providers.is_empty(),
+            "misspelled provider should trigger unknown-provider warning"
         );
     }
 }

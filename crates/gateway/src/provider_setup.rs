@@ -43,6 +43,8 @@ pub(crate) struct ProviderConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 fn deserialize_provider_models<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -204,6 +206,7 @@ impl KeyStore {
                         api_key: Some(v),
                         base_url: None,
                         models: Vec::new(),
+                        display_name: None,
                     })
                 })
                 .collect();
@@ -323,6 +326,18 @@ impl KeyStore {
         base_url: Option<String>,
         models: Option<Vec<String>>,
     ) -> Result<(), String> {
+        self.save_config_with_display_name(provider, api_key, base_url, models, None)
+    }
+
+    /// Save a provider's full configuration, including an optional display name.
+    fn save_config_with_display_name(
+        &self,
+        provider: &str,
+        api_key: Option<String>,
+        base_url: Option<String>,
+        models: Option<Vec<String>>,
+        display_name: Option<String>,
+    ) -> Result<(), String> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
         let entry = configs.entry(provider.to_string()).or_default();
@@ -340,6 +355,9 @@ impl KeyStore {
         }
         if let Some(models) = models {
             entry.models = normalize_model_list(models);
+        }
+        if let Some(name) = display_name {
+            entry.display_name = Some(name);
         }
 
         Self::save_all_configs_to_path(&guard.path, &configs)
@@ -449,6 +467,48 @@ pub(crate) fn config_with_saved_keys(
     }
 
     config
+}
+
+// ── Custom provider helpers ────────────────────────────────────────────────
+
+const CUSTOM_PROVIDER_PREFIX: &str = "custom-";
+
+fn is_custom_provider(name: &str) -> bool {
+    name.starts_with(CUSTOM_PROVIDER_PREFIX)
+}
+
+/// Derive a provider name from a URL, e.g. `https://api.together.ai/v1` → `custom-together-ai`.
+fn derive_provider_name_from_url(raw: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw).ok()?;
+    let host = parsed.host_str()?;
+    let stripped = host.strip_prefix("api.").unwrap_or(host);
+    let slug = stripped.replace('.', "-");
+    Some(format!("{CUSTOM_PROVIDER_PREFIX}{slug}"))
+}
+
+/// Return a unique provider name by appending `-2`, `-3`, etc. if the base
+/// name is already taken.
+fn make_unique_provider_name(base: &str, existing: &HashMap<String, ProviderConfig>) -> String {
+    if !existing.contains_key(base) {
+        return base.to_string();
+    }
+    for i in 2.. {
+        let candidate = format!("{base}-{i}");
+        if !existing.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Extract a human-friendly display name from a URL.
+/// `https://api.together.ai/v1` → `together.ai`
+fn base_url_to_display_name(raw: &str) -> String {
+    url::Url::parse(raw)
+        .ok()
+        .and_then(|u| u.host_str().map(ToOwned::to_owned))
+        .map(|host| host.strip_prefix("api.").unwrap_or(&host).to_string())
+        .unwrap_or_else(|| raw.to_string())
 }
 
 const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
@@ -1428,6 +1488,39 @@ impl ProviderSetupService for LiveProviderSetupService {
             })
             .collect();
 
+        // Append custom providers from the key store.
+        let known_count = providers.len();
+        for (name, config) in self.key_store.load_all_configs() {
+            if !is_custom_provider(&name) {
+                continue;
+            }
+            if !active_config.is_enabled(&name) {
+                continue;
+            }
+            let display_name = config.display_name.clone().unwrap_or_else(|| name.clone());
+            let base_url = config.base_url.clone();
+            let models = normalize_model_list(config.models.clone());
+            let model = models.first().cloned();
+
+            providers.push((
+                None,
+                known_count, // sort after all known providers
+                serde_json::json!({
+                    "name": name,
+                    "displayName": display_name,
+                    "authType": "api-key",
+                    "configured": true,
+                    "defaultBaseUrl": base_url,
+                    "baseUrl": base_url,
+                    "models": models,
+                    "model": model,
+                    "requiresModel": true,
+                    "keyOptional": false,
+                    "isCustom": true,
+                }),
+            ));
+        }
+
         providers.sort_by(
             |(a_offered, a_known, a_value), (b_offered, b_known, b_value)| {
                 let offered_cmp = match (a_offered, b_offered) {
@@ -1486,17 +1579,23 @@ impl ProviderSetupService for LiveProviderSetupService {
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
         let models = parse_models_param(&params);
 
-        // Validate provider name - allow both api-key and local providers
-        let known = known_providers();
-        let provider = known
-            .iter()
-            .find(|p| {
-                p.name == provider_name && (p.auth_type == "api-key" || p.auth_type == "local")
-            })
-            .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
+        // Custom providers bypass known_providers() validation.
+        let is_custom = is_custom_provider(provider_name);
+        if !is_custom {
+            // Validate provider name - allow both api-key and local providers
+            let known = known_providers();
+            let provider = known
+                .iter()
+                .find(|p| {
+                    p.name == provider_name && (p.auth_type == "api-key" || p.auth_type == "local")
+                })
+                .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
 
-        // API key is required for api-key providers (except Ollama which is optional)
-        if provider.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
+            // API key is required for api-key providers (except Ollama which is optional)
+            if provider.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
+                return Err("missing 'apiKey' parameter".to_string());
+            }
+        } else if api_key.is_none() {
             return Err("missing 'apiKey' parameter".to_string());
         }
 
@@ -1749,35 +1848,42 @@ impl ProviderSetupService for LiveProviderSetupService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'provider' parameter".to_string())?;
 
-        let providers = known_providers();
-        let known = providers
-            .iter()
-            .find(|p| p.name == provider_name)
-            .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
-
-        // Remove persisted API key
-        if known.auth_type == "api-key" {
+        if is_custom_provider(provider_name) {
+            // Custom provider: remove key store entry + disable.
             self.key_store.remove(provider_name)?;
-        }
+            set_provider_enabled_in_config(provider_name, false)?;
+            self.set_provider_enabled_in_memory(provider_name, false);
+        } else {
+            let providers = known_providers();
+            let known = providers
+                .iter()
+                .find(|p| p.name == provider_name)
+                .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
 
-        // Remove OAuth tokens
-        if known.auth_type == "oauth" || provider_name == "kimi-code" {
-            let _ = self.token_store.delete(provider_name);
-        }
+            // Remove persisted API key
+            if known.auth_type == "api-key" {
+                self.key_store.remove(provider_name)?;
+            }
 
-        // Persist explicit disable so auto-detected/global credentials do not
-        // immediately re-enable the provider on next rebuild.
-        set_provider_enabled_in_config(provider_name, false)?;
-        self.set_provider_enabled_in_memory(provider_name, false);
+            // Remove OAuth tokens
+            if known.auth_type == "oauth" || provider_name == "kimi-code" {
+                let _ = self.token_store.delete(provider_name);
+            }
 
-        // Remove local-llm config
-        #[cfg(feature = "local-llm")]
-        if known.auth_type == "local"
-            && provider_name == "local-llm"
-            && let Some(config_dir) = moltis_config::config_dir()
-        {
-            let config_path = config_dir.join("local-llm.json");
-            let _ = std::fs::remove_file(config_path);
+            // Persist explicit disable so auto-detected/global credentials do not
+            // immediately re-enable the provider on next rebuild.
+            set_provider_enabled_in_config(provider_name, false)?;
+            self.set_provider_enabled_in_memory(provider_name, false);
+
+            // Remove local-llm config
+            #[cfg(feature = "local-llm")]
+            if known.auth_type == "local"
+                && provider_name == "local-llm"
+                && let Some(config_dir) = moltis_config::config_dir()
+            {
+                let config_path = config_dir.join("local-llm.json");
+                let _ = std::fs::remove_file(config_path);
+            }
         }
 
         // Rebuild the provider registry without the removed provider.
@@ -1823,16 +1929,36 @@ impl ProviderSetupService for LiveProviderSetupService {
         let base_url = params.get("baseUrl").and_then(|v| v.as_str());
         let preferred_models = parse_models_param(&params);
 
-        // Validate provider name exists.
-        let known = known_providers();
-        let provider_info = known
-            .iter()
-            .find(|p| p.name == provider_name)
-            .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
+        // Custom providers bypass known_providers() validation.
+        let is_custom = is_custom_provider(provider_name);
+        let provider_info = if is_custom {
+            None
+        } else {
+            let known = known_providers();
+            let info = known
+                .iter()
+                .find(|p| p.name == provider_name)
+                .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
+            // API key is required for api-key providers (except Ollama).
+            if info.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
+                return Err("missing 'apiKey' parameter".to_string());
+            }
+            Some(KnownProvider {
+                name: info.name,
+                display_name: info.display_name,
+                auth_type: info.auth_type,
+                env_key: info.env_key,
+                default_base_url: info.default_base_url,
+                requires_model: info.requires_model,
+                key_optional: info.key_optional,
+            })
+        };
 
-        // API key is required for api-key providers (except Ollama).
-        if provider_info.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
+        if is_custom && api_key.is_none() {
             return Err("missing 'apiKey' parameter".to_string());
+        }
+        if is_custom && base_url.filter(|s| !s.trim().is_empty()).is_none() {
+            return Err("missing 'baseUrl' parameter".to_string());
         }
 
         let selected_model = preferred_models.first().map(String::as_str);
@@ -1841,8 +1967,9 @@ impl ProviderSetupService for LiveProviderSetupService {
         // Ollama supports native model discovery through /api/tags.
         // If no model is supplied, return discovered models for UI selection.
         if provider_name == "ollama" {
-            let ollama_api_base =
-                normalize_ollama_api_base_url(base_url_value.or(provider_info.default_base_url));
+            let ollama_api_base = normalize_ollama_api_base_url(
+                base_url_value.or(provider_info.as_ref().and_then(|p| p.default_base_url)),
+            );
             let discovered_models = match discover_ollama_models(&ollama_api_base).await {
                 Ok(models) => models,
                 Err(error) => {
@@ -2063,10 +2190,12 @@ impl ProviderSetupService for LiveProviderSetupService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'model' parameter".to_string())?;
 
-        // Validate provider exists.
-        let known = known_providers();
-        if !known.iter().any(|p| p.name == provider_name) {
-            return Err(format!("unknown provider: {provider_name}"));
+        // Validate provider exists (known or custom).
+        if !is_custom_provider(provider_name) {
+            let known = known_providers();
+            if !known.iter().any(|p| p.name == provider_name) {
+                return Err(format!("unknown provider: {provider_name}"));
+            }
         }
 
         // Prepend chosen model to existing saved models so it appears first,
@@ -2115,10 +2244,12 @@ impl ProviderSetupService for LiveProviderSetupService {
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
 
-        // Validate provider exists.
-        let known = known_providers();
-        if !known.iter().any(|p| p.name == provider_name) {
-            return Err(format!("unknown provider: {provider_name}"));
+        // Validate provider exists (known or custom).
+        if !is_custom_provider(provider_name) {
+            let known = known_providers();
+            if !known.iter().any(|p| p.name == provider_name) {
+                return Err(format!("unknown provider: {provider_name}"));
+            }
         }
 
         self.key_store
@@ -2143,6 +2274,61 @@ impl ProviderSetupService for LiveProviderSetupService {
         );
         self.queue_registry_rebuild(provider_name, "save_models");
         Ok(serde_json::json!({ "ok": true }))
+    }
+
+    async fn add_custom(&self, params: Value) -> ServiceResult {
+        let _timing = ProviderSetupTiming::start("providers.add_custom", None);
+
+        let base_url = params
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "missing 'baseUrl' parameter".to_string())?;
+
+        let api_key = params
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "missing 'apiKey' parameter".to_string())?;
+
+        let model = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+
+        let base_name = derive_provider_name_from_url(base_url)
+            .ok_or_else(|| "could not parse endpoint URL".to_string())?;
+
+        let existing = self.key_store.load_all_configs();
+        let provider_name = make_unique_provider_name(&base_name, &existing);
+        let display_name = base_url_to_display_name(base_url);
+
+        let models = model.map(|m| vec![m.to_string()]).unwrap_or_default();
+
+        self.key_store.save_config_with_display_name(
+            &provider_name,
+            Some(api_key.to_string()),
+            Some(base_url.to_string()),
+            Some(models),
+            Some(display_name.clone()),
+        )?;
+
+        set_provider_enabled_in_config(&provider_name, true)?;
+        self.set_provider_enabled_in_memory(&provider_name, true);
+
+        self.queue_registry_rebuild(&provider_name, "add_custom");
+
+        info!(
+            provider = %provider_name,
+            display_name = %display_name,
+            "added custom OpenAI-compatible provider"
+        );
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "providerName": provider_name,
+            "displayName": display_name,
+        }))
     }
 }
 
@@ -3346,5 +3532,87 @@ mod tests {
 
         std::fs::write(&path, r#"{"not_tokens":true}"#).unwrap();
         assert!(!codex_cli_auth_has_access_token(&path));
+    }
+
+    #[test]
+    fn is_custom_provider_detects_prefix() {
+        assert!(is_custom_provider("custom-together-ai"));
+        assert!(is_custom_provider("custom-openrouter-ai"));
+        assert!(!is_custom_provider("openai"));
+        assert!(!is_custom_provider("anthropic"));
+    }
+
+    #[test]
+    fn derive_provider_name_from_url_extracts_host() {
+        assert_eq!(
+            derive_provider_name_from_url("https://api.together.ai/v1"),
+            Some("custom-together-ai".into())
+        );
+        assert_eq!(
+            derive_provider_name_from_url("https://openrouter.ai/api/v1"),
+            Some("custom-openrouter-ai".into())
+        );
+        assert_eq!(
+            derive_provider_name_from_url("https://api.example.com"),
+            Some("custom-example-com".into())
+        );
+        assert_eq!(derive_provider_name_from_url("not-a-url"), None);
+    }
+
+    #[test]
+    fn make_unique_provider_name_appends_suffix() {
+        let mut existing = HashMap::new();
+        assert_eq!(
+            make_unique_provider_name("custom-foo", &existing),
+            "custom-foo"
+        );
+
+        existing.insert("custom-foo".into(), ProviderConfig::default());
+        assert_eq!(
+            make_unique_provider_name("custom-foo", &existing),
+            "custom-foo-2"
+        );
+
+        existing.insert("custom-foo-2".into(), ProviderConfig::default());
+        assert_eq!(
+            make_unique_provider_name("custom-foo", &existing),
+            "custom-foo-3"
+        );
+    }
+
+    #[test]
+    fn base_url_to_display_name_strips_api_prefix() {
+        assert_eq!(
+            base_url_to_display_name("https://api.together.ai/v1"),
+            "together.ai"
+        );
+        assert_eq!(
+            base_url_to_display_name("https://openrouter.ai/api/v1"),
+            "openrouter.ai"
+        );
+    }
+
+    #[test]
+    fn key_store_save_config_with_display_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KeyStore::with_path(dir.path().join("keys.json"));
+
+        store
+            .save_config_with_display_name(
+                "custom-together-ai",
+                Some("sk-test".into()),
+                Some("https://api.together.ai/v1".into()),
+                Some(vec!["meta-llama/Llama-3-70b".into()]),
+                Some("together.ai".into()),
+            )
+            .unwrap();
+
+        let config = store.load_config("custom-together-ai").unwrap();
+        assert_eq!(config.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(
+            config.base_url.as_deref(),
+            Some("https://api.together.ai/v1")
+        );
+        assert_eq!(config.display_name.as_deref(), Some("together.ai"));
     }
 }

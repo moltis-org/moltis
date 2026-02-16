@@ -1944,6 +1944,8 @@ pub trait ProviderSetupService: Send + Sync {
     async fn save_model(&self, params: Value) -> ServiceResult;
     /// Save multiple model preferences for a provider (replaces existing saved models).
     async fn save_models(&self, params: Value) -> ServiceResult;
+    /// Add a custom OpenAI-compatible provider by endpoint URL and API key.
+    async fn add_custom(&self, params: Value) -> ServiceResult;
 }
 
 // ── Local LLM ───────────────────────────────────────────────────────────────
@@ -2037,6 +2039,10 @@ impl ProviderSetupService for NoopProviderSetupService {
     }
 
     async fn save_models(&self, _p: Value) -> ServiceResult {
+        Err("provider setup not configured".into())
+    }
+
+    async fn add_custom(&self, _p: Value) -> ServiceResult {
         Err("provider setup not configured".into())
     }
 }

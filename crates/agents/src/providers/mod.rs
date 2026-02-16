@@ -938,6 +938,7 @@ impl ProviderRegistry {
         // Built-in providers first: they support tool calling.
         reg.register_builtin_providers(config, env_overrides);
         reg.register_openai_compatible_providers(config, env_overrides);
+        reg.register_custom_providers(config);
 
         #[cfg(feature = "provider-async-openai")]
         {
@@ -1524,6 +1525,84 @@ impl ProviderRegistry {
                     provider,
                 );
             }
+        }
+    }
+
+    /// Register custom OpenAI-compatible providers (names starting with `custom-`).
+    /// These are user-added endpoints that may support model discovery via `/v1/models`.
+    fn register_custom_providers(&mut self, config: &ProvidersConfig) {
+        for (name, entry) in &config.providers {
+            if !name.starts_with("custom-") || !entry.enabled {
+                continue;
+            }
+
+            let Some(api_key) = entry
+                .api_key
+                .as_ref()
+                .filter(|k| !k.expose_secret().is_empty())
+            else {
+                continue;
+            };
+
+            let Some(base_url) = entry.base_url.as_ref().filter(|u| !u.trim().is_empty()) else {
+                continue;
+            };
+
+            let preferred = configured_models_for_provider(config, name);
+
+            // Try model discovery, fall back to configured models.
+            let discovered = if should_fetch_models(config, name) {
+                match openai::live_models(api_key, base_url) {
+                    Ok(models) => models,
+                    Err(err) => {
+                        tracing::warn!(
+                            provider = %name,
+                            error = %err,
+                            "failed to fetch live models for custom provider"
+                        );
+                        Vec::new()
+                    },
+                }
+            } else {
+                Vec::new()
+            };
+
+            let models = merge_preferred_and_discovered_models(preferred, discovered);
+            if models.is_empty() {
+                tracing::debug!(
+                    provider = %name,
+                    "custom provider has no models — skipping registration"
+                );
+                continue;
+            }
+
+            for model in models {
+                let (model_id, display_name, created_at) =
+                    (model.id, model.display_name, model.created_at);
+                if self.has_provider_model(name, &model_id) {
+                    continue;
+                }
+                let provider = Arc::new(openai::OpenAiProvider::new_with_name(
+                    api_key.clone(),
+                    model_id.clone(),
+                    base_url.clone(),
+                    name.clone(),
+                ));
+                self.register(
+                    ModelInfo {
+                        id: model_id,
+                        provider: name.clone(),
+                        display_name,
+                        created_at,
+                    },
+                    provider,
+                );
+            }
+
+            tracing::info!(
+                provider = %name,
+                "registered custom OpenAI-compatible provider"
+            );
         }
     }
 

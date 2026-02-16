@@ -92,16 +92,23 @@ export function openProviderModal() {
 				badges.appendChild(check);
 			}
 
-			var badge = document.createElement("span");
-			badge.className = `provider-item-badge ${p.authType}`;
-			if (p.authType === "oauth") {
-				badge.textContent = "OAuth";
-			} else if (p.authType === "local") {
-				badge.textContent = "Local";
+			if (p.isCustom) {
+				var customBadge = document.createElement("span");
+				customBadge.className = "provider-item-badge api-key";
+				customBadge.textContent = "Custom";
+				badges.appendChild(customBadge);
 			} else {
-				badge.textContent = "API Key";
+				var badge = document.createElement("span");
+				badge.className = `provider-item-badge ${p.authType}`;
+				if (p.authType === "oauth") {
+					badge.textContent = "OAuth";
+				} else if (p.authType === "local") {
+					badge.textContent = "Local";
+				} else {
+					badge.textContent = "API Key";
+				}
+				badges.appendChild(badge);
 			}
-			badges.appendChild(badge);
 			item.appendChild(badges);
 
 			item.addEventListener("click", () => {
@@ -111,6 +118,30 @@ export function openProviderModal() {
 			});
 			m.body.appendChild(item);
 		});
+
+		// Separator + "OpenAI Compatible" entry
+		var separator = document.createElement("div");
+		separator.className = "border-t border-[var(--border)] my-2";
+		m.body.appendChild(separator);
+
+		var customItem = document.createElement("div");
+		customItem.className = "provider-item";
+
+		var customName = document.createElement("span");
+		customName.className = "provider-item-name";
+		customName.textContent = "OpenAI Compatible";
+		customItem.appendChild(customName);
+
+		var customBadges = document.createElement("div");
+		customBadges.className = "badge-row";
+		var anyBadge = document.createElement("span");
+		anyBadge.className = "provider-item-badge api-key";
+		anyBadge.textContent = "Any Endpoint";
+		customBadges.appendChild(anyBadge);
+		customItem.appendChild(customBadges);
+
+		customItem.addEventListener("click", showCustomProviderForm);
+		m.body.appendChild(customItem);
 	});
 }
 
@@ -127,6 +158,154 @@ function setFormError(errorPanel, message) {
 	}
 	errorPanel.textContent = `Error: ${message}`;
 	errorPanel.style.display = "";
+}
+
+function showCustomProviderForm() {
+	var m = els();
+	m.title.textContent = "OpenAI Compatible";
+	m.body.textContent = "";
+
+	var form = document.createElement("div");
+	form.className = "provider-key-form";
+
+	// Endpoint URL
+	var urlLabel = document.createElement("label");
+	urlLabel.className = "text-xs text-[var(--muted)]";
+	urlLabel.textContent = "Endpoint URL";
+	form.appendChild(urlLabel);
+
+	var urlInp = document.createElement("input");
+	urlInp.className = "provider-key-input";
+	urlInp.type = "text";
+	urlInp.placeholder = "https://api.example.com/v1";
+	form.appendChild(urlInp);
+
+	// API Key
+	var keyLabel = document.createElement("label");
+	keyLabel.className = "text-xs text-[var(--muted)] mt-2";
+	keyLabel.textContent = "API Key";
+	form.appendChild(keyLabel);
+
+	var keyInp = document.createElement("input");
+	keyInp.className = "provider-key-input";
+	keyInp.type = "password";
+	keyInp.placeholder = "sk-...";
+	form.appendChild(keyInp);
+
+	// Model ID (optional)
+	var modelLabel = document.createElement("label");
+	modelLabel.className = "text-xs text-[var(--muted)] mt-2";
+	modelLabel.textContent = "Model ID (optional)";
+	form.appendChild(modelLabel);
+
+	var modelInp = document.createElement("input");
+	modelInp.className = "provider-key-input";
+	modelInp.type = "text";
+	modelInp.placeholder = "Leave blank for auto-discovery";
+	form.appendChild(modelInp);
+
+	var errorPanel = document.createElement("div");
+	errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+	errorPanel.style.display = "none";
+	form.appendChild(errorPanel);
+
+	var btns = document.createElement("div");
+	btns.className = "btn-row";
+	btns.style.marginTop = "12px";
+
+	var backBtn = document.createElement("button");
+	backBtn.className = "provider-btn provider-btn-secondary";
+	backBtn.textContent = "Back";
+	backBtn.addEventListener("click", openProviderModal);
+	btns.appendChild(backBtn);
+
+	var saveBtn = document.createElement("button");
+	saveBtn.className = "provider-btn";
+	saveBtn.textContent = "Add Provider";
+	saveBtn.addEventListener("click", () => {
+		var url = urlInp.value.trim();
+		var key = keyInp.value.trim();
+		var model = modelInp.value.trim() || null;
+
+		if (!url) {
+			setFormError(errorPanel, "Endpoint URL is required.");
+			return;
+		}
+		if (!key) {
+			setFormError(errorPanel, "API key is required.");
+			return;
+		}
+
+		saveBtn.disabled = true;
+		saveBtn.textContent = "Adding...";
+		setFormError(errorPanel, null);
+
+		sendRpc("providers.add_custom", { baseUrl: url, apiKey: key, model: model })
+			.then((res) => {
+				if (!res?.ok) {
+					saveBtn.disabled = false;
+					saveBtn.textContent = "Add Provider";
+					setFormError(errorPanel, res?.error?.message || "Failed to add provider.");
+					return;
+				}
+				var result = res.payload;
+				var providerName = result.providerName;
+				var displayName = result.displayName;
+
+				// Validate the provider to discover models
+				validateProviderKey(providerName, key, url, model)
+					.then((valResult) => {
+						if (!valResult.valid && !model) {
+							saveBtn.disabled = false;
+							saveBtn.textContent = "Add Provider";
+							setFormError(errorPanel, valResult.error || "No models discovered. Please specify a model ID.");
+							return;
+						}
+
+						if (valResult.models && valResult.models.length > 0) {
+							// Show model selector
+							var customProvider = {
+								name: providerName,
+								displayName: displayName,
+								authType: "api-key",
+								keyOptional: false,
+								isCustom: true,
+							};
+							showModelSelector(customProvider, valResult.models, key, url, model, true);
+						} else if (model) {
+							// Model specified manually — save it and finish
+							sendRpc("providers.save_model", { provider: providerName, model: model }).then(() => {
+								fetchModels();
+								if (S.refreshProvidersPage) S.refreshProvidersPage();
+								m.body.textContent = "";
+								var status = document.createElement("div");
+								status.className = "provider-status";
+								status.textContent = `${displayName} configured successfully!`;
+								m.body.appendChild(status);
+								setTimeout(closeProviderModal, 1500);
+							});
+						} else {
+							saveBtn.disabled = false;
+							saveBtn.textContent = "Add Provider";
+							setFormError(errorPanel, "No models discovered. Please specify a model ID.");
+						}
+					})
+					.catch((err) => {
+						saveBtn.disabled = false;
+						saveBtn.textContent = "Add Provider";
+						setFormError(errorPanel, err?.message || "Validation failed.");
+					});
+			})
+			.catch((err) => {
+				saveBtn.disabled = false;
+				saveBtn.textContent = "Add Provider";
+				setFormError(errorPanel, err?.message || "Failed to add provider.");
+			});
+	});
+	btns.appendChild(saveBtn);
+	form.appendChild(btns);
+	m.body.appendChild(form);
+	urlInp.focus();
 }
 
 export function showApiKeyForm(provider) {
