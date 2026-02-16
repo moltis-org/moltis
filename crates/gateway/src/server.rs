@@ -3940,7 +3940,7 @@ static SPA_ROUTES: SpaRoutes = SpaRoutes {
     onboarding: "/onboarding",
     projects: "/projects",
     skills: "/skills",
-    crons: "/crons",
+    crons: "/settings/crons",
     monitoring: "/monitoring",
 };
 

@@ -8,8 +8,6 @@ import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
 import { updateNavCount } from "./nav-counts.js";
-import { navigate, registerPrefix } from "./router.js";
-import { routes } from "./routes.js";
 import { models as modelsSig } from "./stores/model-store.js";
 import { ComboSelect, ConfirmDialog, Modal, ModelSelect, requestConfirm } from "./ui.js";
 
@@ -24,8 +22,6 @@ var showModal = signal(false);
 var editingJob = signal(null);
 var activeSection = signal("jobs");
 var _cronsContainer = null;
-var cronsRouteBase = routes.crons;
-var syncCronsRoute = true;
 
 // ── Heartbeat state ──────────────────────────────────────────
 var heartbeatStatus = signal(null);
@@ -107,51 +103,6 @@ function formatSchedule(sched) {
 	}
 	if (sched.kind === "cron") return sched.expr + (sched.tz ? ` (${sched.tz})` : "");
 	return JSON.stringify(sched);
-}
-
-// ── Sidebar navigation ──────────────────────────────────────
-
-var sections = [
-	{
-		id: "jobs",
-		label: "Cron Jobs",
-		icon: html`<span class="icon icon-cron"></span>`,
-	},
-	{
-		id: "heartbeat",
-		label: "Heartbeat",
-		icon: html`<span class="icon icon-heart"></span>`,
-	},
-];
-
-var sectionIds = sections.map((s) => s.id);
-
-function setCronsSection(sectionId) {
-	if (!sectionIds.includes(sectionId)) return;
-	if (syncCronsRoute) {
-		navigate(`${cronsRouteBase}/${sectionId}`);
-		return;
-	}
-	activeSection.value = sectionId;
-}
-
-function CronsSidebar() {
-	return html`<div class="settings-sidebar">
-		<div class="settings-sidebar-nav">
-			${sections.map(
-				(s) => html`
-				<button
-					key=${s.id}
-					class="settings-nav-item ${activeSection.value === s.id ? "active" : ""}"
-					onClick=${() => setCronsSection(s.id)}
-				>
-					${s.icon}
-					${s.label}
-				</button>
-			`,
-			)}
-		</div>
-	</div>`;
 }
 
 // ── Heartbeat Card ───────────────────────────────────────────
@@ -763,10 +714,8 @@ function CronJobsPanel() {
 // ── Main page ───────────────────────────────────────────────
 
 function CronsPage() {
-	var showSidebar = syncCronsRoute;
 	return html`
-    <div class=${showSidebar ? "settings-layout" : ""}>
-      ${showSidebar && html`<${CronsSidebar} />`}
+    <div>
       <div class="flex-1 overflow-y-auto">
         ${activeSection.value === "jobs" && html`<${CronJobsPanel} />`}
         ${activeSection.value === "heartbeat" && html`<${HeartbeatPanel} />`}
@@ -777,16 +726,10 @@ function CronsPage() {
   `;
 }
 
-registerPrefix(routes.crons, initCrons, teardownCrons);
-
-export function initCrons(container, param, options) {
+export function initCrons(container, param) {
 	_cronsContainer = container;
-	cronsRouteBase = options?.routeBase || routes.crons;
-	syncCronsRoute = options?.syncRoute !== false;
 
-	container.style.cssText = syncCronsRoute
-		? "flex-direction:row;padding:0;overflow:hidden;"
-		: "padding:0;overflow:hidden;";
+	container.style.cssText = "padding:0;overflow:hidden;";
 	cronJobs.value = gon.get("crons") || [];
 	cronStatus.value = gon.get("cron_status");
 	heartbeatConfig.value = gon.get("heartbeat_config") || {};
@@ -799,11 +742,7 @@ export function initCrons(container, param, options) {
 	heartbeatModel.value = gon.get("heartbeat_config")?.model || "";
 	heartbeatSandboxImage.value = gon.get("heartbeat_config")?.sandbox_image || "";
 
-	var section = param && sectionIds.includes(param) ? param : "jobs";
-	if (syncCronsRoute && param && !sectionIds.includes(param)) {
-		history.replaceState(null, "", `${cronsRouteBase}/jobs`);
-	}
-	activeSection.value = section;
+	activeSection.value = param === "heartbeat" ? "heartbeat" : "jobs";
 
 	// Eagerly load heartbeat data so it's ready when the panel mounts.
 	loadHeartbeatRuns();
@@ -815,6 +754,4 @@ export function initCrons(container, param, options) {
 export function teardownCrons() {
 	if (_cronsContainer) render(null, _cronsContainer);
 	_cronsContainer = null;
-	cronsRouteBase = routes.crons;
-	syncCronsRoute = true;
 }
