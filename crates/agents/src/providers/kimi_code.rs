@@ -235,13 +235,26 @@ impl LlmProvider for KimiCodeProvider {
 
         let status = http_resp.status();
         if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
             warn!(status = %status, body = %body_text, "kimi-code API error");
             let hint = build_access_denied_hint(status, &body_text);
             if let Some(hint) = hint {
-                anyhow::bail!("Kimi Code API error HTTP {status}: {body_text} ({hint})");
+                anyhow::bail!(
+                    "{}",
+                    super::with_retry_after_marker(
+                        format!("Kimi Code API error HTTP {status}: {body_text} ({hint})"),
+                        retry_after_ms,
+                    )
+                );
             }
-            anyhow::bail!("Kimi Code API error HTTP {status}: {body_text}");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("Kimi Code API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
@@ -318,6 +331,7 @@ impl LlmProvider for KimiCodeProvider {
                 Ok(r) => {
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
                         let hint = build_access_denied_hint(
                             reqwest::StatusCode::from_u16(status)
@@ -325,9 +339,15 @@ impl LlmProvider for KimiCodeProvider {
                             &body_text,
                         );
                         if let Some(hint) = hint {
-                            yield StreamEvent::Error(format!("HTTP {status}: {body_text} ({hint})"));
+                            yield StreamEvent::Error(super::with_retry_after_marker(
+                                format!("HTTP {status}: {body_text} ({hint})"),
+                                retry_after_ms,
+                            ));
                         } else {
-                            yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                            yield StreamEvent::Error(super::with_retry_after_marker(
+                                format!("HTTP {status}: {body_text}"),
+                                retry_after_ms,
+                            ));
                         }
                         return;
                     }

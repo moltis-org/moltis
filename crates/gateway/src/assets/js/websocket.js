@@ -555,6 +555,44 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 	}
 }
 
+function retryDelayMsFromPayload(p) {
+	if (p.retryAfterMs !== undefined && p.retryAfterMs !== null) return Number(p.retryAfterMs) || 0;
+	if (p.error?.retryAfterMs !== undefined && p.error?.retryAfterMs !== null) return Number(p.error.retryAfterMs) || 0;
+	return 0;
+}
+
+function retryStatusText(p) {
+	var retryMs = retryDelayMsFromPayload(p);
+	var retrySecs = Math.max(1, Math.ceil(retryMs / 1000));
+	var rateLimited = p.error?.type === "rate_limit_exceeded";
+	return rateLimited
+		? `Rate limited by provider, retrying in ${retrySecs}s…`
+		: `Temporary provider issue, retrying in ${retrySecs}s…`;
+}
+
+function handleChatRetrying(p, isActive, isChatPage, eventSession) {
+	updateSessionRunId(eventSession, p.runId);
+	setSessionReplying(eventSession, true);
+	if (!(isActive && isChatPage)) return;
+
+	var indicator = document.getElementById("thinkingIndicator");
+	if (!indicator) {
+		removeThinking();
+		indicator = document.createElement("div");
+		indicator.className = "msg assistant thinking";
+		indicator.id = "thinkingIndicator";
+		indicator.appendChild(makeThinkingDots());
+		S.chatMsgBox.appendChild(indicator);
+	}
+
+	while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
+	var textEl = document.createElement("span");
+	textEl.className = "thinking-text";
+	textEl.textContent = retryStatusText(p);
+	indicator.appendChild(textEl);
+	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+}
+
 function handleChatError(p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
 	setSessionReplying(eventSession, false);
@@ -628,6 +666,7 @@ var chatHandlers = {
 	delta: handleChatDelta,
 	final: handleChatFinal,
 	auto_compact: handleChatAutoCompact,
+	retrying: handleChatRetrying,
 	error: handleChatError,
 	notice: handleChatNotice,
 	queue_cleared: handleChatQueueCleared,

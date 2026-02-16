@@ -245,8 +245,15 @@ impl OpenAiCodexProvider {
         }
 
         let status = response.status();
+        let retry_after_ms = super::retry_after_ms_from_headers(response.headers());
         let body_text = response.text().await.unwrap_or_default();
-        anyhow::bail!("openai-codex API error HTTP {status}: {body_text}");
+        anyhow::bail!(
+            "{}",
+            super::with_retry_after_marker(
+                format!("openai-codex API error HTTP {status}: {body_text}"),
+                retry_after_ms,
+            )
+        );
     }
 }
 

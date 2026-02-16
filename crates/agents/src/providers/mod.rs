@@ -192,6 +192,25 @@ fn normalize_ollama_api_base_url(base_url: &str) -> String {
     trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
 }
 
+/// Parse `Retry-After` header as milliseconds.
+///
+/// `Retry-After` may be either delta-seconds or an HTTP date. We currently
+/// consume delta-seconds, which is what providers typically return for 429.
+pub(crate) fn retry_after_ms_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?;
+    let text = value.to_str().ok()?.trim();
+    let seconds = text.parse::<u64>().ok()?;
+    seconds.checked_mul(1_000)
+}
+
+/// Attach an explicit retry hint marker consumable by runner retry logic.
+pub(crate) fn with_retry_after_marker(base: String, retry_after_ms: Option<u64>) -> String {
+    match retry_after_ms {
+        Some(ms) => format!("{base} (retry_after_ms={ms})"),
+        None => base,
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct OllamaTagEntry {
     name: String,
