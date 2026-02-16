@@ -37,7 +37,7 @@ QMD is an optional external sidecar that provides enhanced search capabilities:
 - **Hybrid search with LLM reranking**: Combines both methods with an LLM pass for optimal relevance
 
 To use QMD:
-1. Install QMD separately from [github.com/qmd/qmd](https://github.com/qmd/qmd)
+1. Install QMD separately from [github.com/tobi/qmd](https://github.com/tobi/qmd)
 2. Enable it in Settings > Memory > Backend
 
 ## Features
