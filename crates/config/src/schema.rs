@@ -1148,6 +1148,10 @@ pub struct WebFetchConfig {
     pub max_redirects: u8,
     /// Use readability extraction for HTML pages.
     pub readability: bool,
+    /// CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`).
+    /// Default: empty (all private IPs blocked).
+    #[serde(default)]
+    pub ssrf_allowlist: Vec<String>,
 }
 
 impl Default for WebFetchConfig {
@@ -1159,6 +1163,7 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: Vec::new(),
         }
     }
 }

@@ -168,6 +168,7 @@ fn build_schema_map() -> KnownKeys {
             ("cache_ttl_minutes", Leaf),
             ("max_redirects", Leaf),
             ("readability", Leaf),
+            ("ssrf_allowlist", Leaf),
         ]))
     };
 
@@ -830,6 +831,28 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             category: "security",
             path: "tools.exec.sandbox.mode".into(),
             message: "sandbox mode is disabled — commands run without isolation".into(),
+        });
+    }
+
+    // SSRF allowlist CIDR validation
+    for (idx, entry) in config.tools.web.fetch.ssrf_allowlist.iter().enumerate() {
+        if entry.parse::<ipnet::IpNet>().is_err() {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "security",
+                path: format!("tools.web.fetch.ssrf_allowlist[{idx}]"),
+                message: format!(
+                    "\"{entry}\" is not a valid CIDR range (expected e.g. \"172.22.0.0/16\")"
+                ),
+            });
+        }
+    }
+    if !config.tools.web.fetch.ssrf_allowlist.is_empty() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "security",
+            path: "tools.web.fetch.ssrf_allowlist".into(),
+            message: "ssrf_allowlist is set — SSRF protection is relaxed for the listed ranges. Ensure these are trusted networks.".into(),
         });
     }
 

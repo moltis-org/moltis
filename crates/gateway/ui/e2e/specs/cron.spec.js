@@ -4,7 +4,7 @@ const { navigateAndWait, watchPageErrors } = require("../helpers");
 test.describe("Cron jobs page", () => {
 	test("cron page loads with heading", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/crons/jobs");
+		await navigateAndWait(page, "/settings/crons");
 
 		await expect(page.getByRole("heading", { name: "Cron Jobs", exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
@@ -12,7 +12,7 @@ test.describe("Cron jobs page", () => {
 
 	test("heartbeat tab loads", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/crons/heartbeat");
+		await navigateAndWait(page, "/settings/heartbeat");
 
 		await expect(page.getByRole("heading", { name: /heartbeat/i })).toBeVisible();
 		expect(pageErrors).toEqual([]);
@@ -20,7 +20,7 @@ test.describe("Cron jobs page", () => {
 
 	test("heartbeat inactive state disables run now with info notice", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/crons/heartbeat");
+		await navigateAndWait(page, "/settings/heartbeat");
 
 		await expect(page.getByRole("button", { name: "Run Now", exact: true })).toBeDisabled();
 		await expect(page.getByText(/Heartbeat inactive:/)).toBeVisible();
@@ -28,7 +28,7 @@ test.describe("Cron jobs page", () => {
 	});
 
 	test("create job button present", async ({ page }) => {
-		await navigateAndWait(page, "/crons/jobs");
+		await navigateAndWait(page, "/settings/crons");
 
 		// Page should have content, create button may depend on state
 		const content = page.locator("#pageContent");
@@ -37,7 +37,7 @@ test.describe("Cron jobs page", () => {
 
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/crons/jobs");
+		await navigateAndWait(page, "/settings/crons");
 		expect(pageErrors).toEqual([]);
 	});
 });
