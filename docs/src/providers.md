@@ -7,6 +7,7 @@ Configure providers through the web UI or directly in configuration files.
 
 | Provider | Auth | Notes |
 |----------|------|-------|
+| **Zaps.ai** | API Key | Privacy-first gateway (redacts PII) |
 | **OpenAI Codex** | OAuth | Codex-focused cloud models |
 | **GitHub Copilot** | OAuth | Requires active Copilot subscription |
 | **Local LLM** | Local runtime | Runs models on your machine |
@@ -53,6 +54,15 @@ model = "qwen2.5-coder-7b-q4_k_m"
 ```
 
 ## Provider Setup
+
+### Zaps.ai
+
+Zaps.ai acts as a privacy shield between you and upstream LLM providers, automatically redacting PII.
+
+1. Go to **Settings** -> **Providers** -> **Zaps.ai**.
+2. Enter your API Key (starts with `gk_`).
+3. (Optional) Set the Base URL if using a custom endpoint (default: `https://zaps.ai/v1`).
+4. Enter the model ID you wish to use (e.g., `deepseek-chat`).
 
 ### OpenAI Codex
 

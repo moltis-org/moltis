@@ -39,8 +39,8 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 ## Features
 
-- **Multi-provider LLM support** — OpenAI Codex, GitHub Copilot, and Local
-  LLM through a trait-based provider architecture
+- **Multi-provider LLM support** — Zaps.ai (Privacy Gateway), OpenAI Codex,
+  GitHub Copilot, and Local LLM through a trait-based provider architecture
 - **Streaming responses** — real-time token streaming for a responsive user
   experience, including when tools are enabled (tool calls stream argument
   deltas as they arrive)
