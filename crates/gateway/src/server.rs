@@ -6523,7 +6523,9 @@ fn spawn_host_terminal_reader(
                                 Ok(valid) => {
                                     if !valid.is_empty()
                                         && tx
-                                            .send(HostTerminalOutputEvent::Output(valid.to_string()))
+                                            .send(HostTerminalOutputEvent::Output(
+                                                valid.to_string(),
+                                            ))
                                             .is_err()
                                     {
                                         return;
@@ -6534,14 +6536,19 @@ fn spawn_host_terminal_reader(
                                 Err(err) => {
                                     let valid_up_to = err.valid_up_to();
                                     if valid_up_to > 0 {
-                                        let valid = String::from_utf8_lossy(&pending_utf8[..valid_up_to]).to_string();
-                                        if tx.send(HostTerminalOutputEvent::Output(valid)).is_err() {
+                                        let valid =
+                                            String::from_utf8_lossy(&pending_utf8[..valid_up_to])
+                                                .to_string();
+                                        if tx.send(HostTerminalOutputEvent::Output(valid)).is_err()
+                                        {
                                             return;
                                         }
                                     }
 
                                     if let Some(invalid_len) = err.error_len() {
-                                        let end = valid_up_to.saturating_add(invalid_len).min(pending_utf8.len());
+                                        let end = valid_up_to
+                                            .saturating_add(invalid_len)
+                                            .min(pending_utf8.len());
                                         if end > valid_up_to {
                                             let replacement = String::from_utf8_lossy(
                                                 &pending_utf8[valid_up_to..end],
@@ -6549,7 +6556,9 @@ fn spawn_host_terminal_reader(
                                             .to_string();
                                             if !replacement.is_empty()
                                                 && tx
-                                                    .send(HostTerminalOutputEvent::Output(replacement))
+                                                    .send(HostTerminalOutputEvent::Output(
+                                                        replacement,
+                                                    ))
                                                     .is_err()
                                             {
                                                 return;
