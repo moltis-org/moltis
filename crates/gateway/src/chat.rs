@@ -2676,10 +2676,7 @@ impl ChatService for LiveChatService {
                 .write()
                 .await
                 .remove(&session_key_clone);
-            active_reply_medium
-                .write()
-                .await
-                .remove(&session_key_clone);
+            active_reply_medium.write().await.remove(&session_key_clone);
 
             // Release the semaphore *before* draining so replayed sends can
             // acquire it. Without this, every replayed `chat.send()` would

@@ -2361,10 +2361,16 @@ impl MethodRegistry {
                         obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
                         if replying {
                             if let Some(text) = chat.active_thinking_text(key).await {
-                                obj.insert("thinkingText".to_string(), serde_json::Value::String(text));
+                                obj.insert(
+                                    "thinkingText".to_string(),
+                                    serde_json::Value::String(text),
+                                );
                             }
                             if chat.active_voice_pending(key).await {
-                                obj.insert("voicePending".to_string(), serde_json::Value::Bool(true));
+                                obj.insert(
+                                    "voicePending".to_string(),
+                                    serde_json::Value::Bool(true),
+                                );
                             }
                         }
                     }
