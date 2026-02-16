@@ -958,7 +958,7 @@ mod tests {
             RegistrationStore::with_path(dir.path().join("registrations.json")),
         );
 
-        let (client_id, _, _, _, _) = provider
+        let (client_id, ..) = provider
             .discover_and_register(None, redirect_uri)
             .await
             .unwrap();

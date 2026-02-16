@@ -544,13 +544,10 @@ mod tests {
     #[tokio::test]
     async fn test_status_shows_stopped_for_configured_but_not_started() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "test".into(),
-            McpServerConfig {
-                command: "echo".into(),
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("test".into(), McpServerConfig {
+            command: "echo".into(),
+            ..Default::default()
+        });
         let mgr = McpManager::new(reg);
 
         let statuses = mgr.status_all().await;
@@ -572,14 +569,11 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_start_server_requires_sse_transport() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert(
-            "stdio".into(),
-            McpServerConfig {
-                command: "echo".into(),
-                transport: TransportType::Stdio,
-                ..Default::default()
-            },
-        );
+        reg.servers.insert("stdio".into(), McpServerConfig {
+            command: "echo".into(),
+            transport: TransportType::Stdio,
+            ..Default::default()
+        });
         let mgr = McpManager::new(reg);
         let err = mgr
             .oauth_start_server("stdio", "https://example.com/auth/callback")
