@@ -143,6 +143,8 @@ avoid `waitForTimeout()`.
 
 ## Code Quality
 
+- Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo +nightly-2025-11-30 fmt ...`).
+
 ```bash
 just format              # Format Rust (pinned nightly)
 just format-check        # CI format check
