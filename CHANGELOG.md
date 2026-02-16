@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SSRF allowlist**: `tools.web.fetch.ssrf_allowlist` config field to exempt trusted
+  CIDR ranges from SSRF blocking, enabling Docker inter-container networking.
+
 ### Changed
 
 ### Deprecated

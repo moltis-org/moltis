@@ -252,6 +252,18 @@ The `web_fetch` tool resolves DNS and blocks requests to private IP ranges
 (loopback, RFC 1918, link-local, CGNAT). This prevents server-side request
 forgery attacks.
 
+To allow access to trusted private networks (e.g. Docker sibling containers),
+add their CIDR ranges to `ssrf_allowlist`:
+
+```toml
+[tools.web.fetch]
+ssrf_allowlist = ["172.22.0.0/16"]
+```
+
+**Warning:** Only add networks you trust. The allowlist bypasses SSRF protection
+for the listed ranges. Never add cloud metadata ranges (`169.254.169.254/32`)
+unless you understand the risk.
+
 ## Authentication
 
 Moltis uses a unified auth gate that applies a single `check_auth()`
