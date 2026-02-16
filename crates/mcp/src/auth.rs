@@ -144,10 +144,14 @@ impl McpOAuthProvider {
         };
 
         // Need the token endpoint. Try loading from stored registration or override.
-        let (client_id, token_url) = if let Some(ov) = &self.oauth_override {
-            (ov.client_id.clone(), ov.token_url.clone())
+        let (client_id, token_url, resource) = if let Some(ov) = &self.oauth_override {
+            (
+                ov.client_id.clone(),
+                ov.token_url.clone(),
+                Some(self.server_url.clone()),
+            )
         } else if let Some(reg) = self.registration_store.load(&self.server_url) {
-            (reg.client_id, reg.token_endpoint)
+            (reg.client_id, reg.token_endpoint, Some(reg.resource))
         } else {
             return Ok(None); // Can't refresh without knowing where to send the request
         };
@@ -159,6 +163,7 @@ impl McpOAuthProvider {
             auth_url: String::new(), // Not needed for refresh
             token_url,
             redirect_uri: String::new(),
+            resource,
             scopes: Vec::new(),
             extra_auth_params: Vec::new(),
             device_flow: false,
@@ -198,6 +203,16 @@ impl McpOAuthProvider {
     }
 
     async fn perform_oauth_flow_inner(&self, www_authenticate: Option<&str>) -> Result<()> {
+        // Bind ephemeral port for callback FIRST — this port must be used for
+        // both dynamic client registration and the authorization request.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("failed to bind callback listener")?;
+        let callback_port = listener.local_addr()?.port();
+        drop(listener); // Release so CallbackServer can bind
+
+        let redirect_uri = format!("http://127.0.0.1:{callback_port}/auth/callback");
+
         let (client_id, auth_url, token_url, scopes, resource) =
             if let Some(ov) = &self.oauth_override {
                 // Manual override: skip discovery
@@ -210,30 +225,26 @@ impl McpOAuthProvider {
                 )
             } else {
                 // Full discovery flow
-                self.discover_and_register(www_authenticate).await?
+                self.discover_and_register(www_authenticate, &redirect_uri)
+                    .await?
             };
-
-        // Bind ephemeral port for callback
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .context("failed to bind callback listener")?;
-        let callback_port = listener.local_addr()?.port();
-        drop(listener); // Release so CallbackServer can bind
-
-        let redirect_uri = format!("http://127.0.0.1:{callback_port}/auth/callback");
-
-        // RFC 8707: include resource indicator
-        let extra_params = vec![("resource".to_string(), resource)];
 
         let config = OAuthConfig {
             client_id,
             auth_url,
             token_url,
             redirect_uri,
+            resource: Some(resource),
             scopes,
-            extra_auth_params: extra_params,
+            extra_auth_params: Vec::new(),
             device_flow: false,
         };
+
+        info!(
+            server = %self.server_name,
+            resource = %config.resource.as_deref().unwrap_or(""),
+            "starting MCP OAuth authorization flow"
+        );
 
         let flow = OAuthFlow::new(config);
         let auth_req = flow.start()?;
@@ -270,19 +281,55 @@ impl McpOAuthProvider {
         Ok(())
     }
 
+    /// Extract the origin (scheme + host + port) from a URL, stripping the path.
+    fn origin_url(url: &Url) -> Url {
+        let mut origin = url.clone();
+        origin.set_path("/");
+        origin.set_query(None);
+        origin.set_fragment(None);
+        origin
+    }
+
+    /// Build an RFC 8707 resource indicator from a server URL origin.
+    ///
+    /// Uses scheme + host (+ explicit port) without path/query/fragment.
+    fn origin_resource(url: &Url) -> String {
+        match (url.host_str(), url.port()) {
+            (Some(host), Some(port)) => format!("{}://{host}:{port}", url.scheme()),
+            (Some(host), None) => format!("{}://{host}", url.scheme()),
+            _ => url.to_string(),
+        }
+    }
+
     /// Discover resource + AS metadata and perform dynamic client registration.
     ///
     /// Returns `(client_id, auth_url, token_url, scopes, resource)`.
+    ///
+    /// Per the MCP Authorization spec, well-known metadata URLs are tried at the
+    /// server's full URL first (path-aware), then at the origin (scheme + host)
+    /// as a fallback.
     async fn discover_and_register(
         &self,
         www_authenticate: Option<&str>,
+        redirect_uri: &str,
     ) -> Result<(String, String, String, Vec<String>, String)> {
         let server_url = Url::parse(&self.server_url)
             .with_context(|| format!("invalid MCP server URL: {}", self.server_url))?;
+        let origin = Self::origin_url(&server_url);
+        let has_path = server_url.path() != "/" && !server_url.path().is_empty();
+
+        debug!(
+            server = %self.server_name,
+            server_url = %server_url,
+            origin = %origin,
+            has_path,
+            www_authenticate = ?www_authenticate,
+            "starting OAuth discovery"
+        );
 
         // Step 1: Try to get resource metadata (RFC 9728) from WWW-Authenticate
-        // header or well-known endpoint. If that fails, fall back to fetching
-        // AS metadata (RFC 8414) directly from the server's origin.
+        // header or well-known endpoint. If the path-aware URL fails and the
+        // server URL has a non-trivial path, retry at the origin.
         let resource_meta_result =
             if let Some(meta_url) = www_authenticate.and_then(parse_www_authenticate) {
                 debug!(url = %meta_url, "using resource_metadata URL from WWW-Authenticate");
@@ -290,7 +337,20 @@ impl McpOAuthProvider {
                     .context("invalid resource_metadata URL in WWW-Authenticate header")?;
                 fetch_resource_metadata(&self.http_client, &meta_url).await
             } else {
-                fetch_resource_metadata(&self.http_client, &server_url).await
+                let result = fetch_resource_metadata(&self.http_client, &server_url).await;
+                if result.is_err() && has_path {
+                    debug!(
+                        server = %self.server_name,
+                        origin = %origin,
+                        "resource metadata unavailable at path-aware URL, trying origin"
+                    );
+                    // Try origin; if that also fails, keep the original error
+                    fetch_resource_metadata(&self.http_client, &origin)
+                        .await
+                        .or(result)
+                } else {
+                    result
+                }
             };
 
         // Step 2: Get AS metadata — either from resource metadata's
@@ -311,14 +371,42 @@ impl McpOAuthProvider {
                 debug!(
                     server = %self.server_name,
                     error = %e,
-                    "RFC 9728 resource metadata unavailable, trying RFC 8414 on server origin"
+                    "RFC 9728 resource metadata unavailable, trying RFC 8414"
                 );
-                // Fall back: fetch AS metadata directly from the server URL.
-                let as_meta = fetch_as_metadata(&self.http_client, &server_url).await?;
-                let resource = self.server_url.clone();
+                // Fall back: fetch AS metadata. Try the server URL first, then
+                // the origin if the server has a non-trivial path.
+                let as_meta = match fetch_as_metadata(&self.http_client, &server_url).await {
+                    Ok(meta) => meta,
+                    Err(path_err) if has_path => {
+                        debug!(
+                            server = %self.server_name,
+                            origin = %origin,
+                            "AS metadata unavailable at path-aware URL, trying origin"
+                        );
+                        fetch_as_metadata(&self.http_client, &origin).await.with_context(|| {
+                            format!(
+                                "AS metadata unavailable at both {server_url} and {origin}: {path_err}"
+                            )
+                        })?
+                    },
+                    Err(e) => return Err(e),
+                };
+                // When resource metadata is unavailable we fall back to origin
+                // as the resource indicator to avoid path-scoped audience mismatches.
+                let resource = Self::origin_resource(&server_url);
                 (as_meta, resource)
             },
         };
+
+        debug!(
+            server = %self.server_name,
+            issuer = %as_meta.issuer,
+            auth_endpoint = %as_meta.authorization_endpoint,
+            token_endpoint = %as_meta.token_endpoint,
+            registration = ?as_meta.registration_endpoint,
+            resource = %resource,
+            "resolved OAuth endpoints"
+        );
 
         // Step 3: Dynamic client registration (or use cached)
         let client_id = if let Some(cached) = self.registration_store.load(&self.server_url) {
@@ -329,19 +417,13 @@ impl McpOAuthProvider {
             );
             cached.client_id
         } else if let Some(reg_endpoint) = &as_meta.registration_endpoint {
-            // Bind an ephemeral port to determine the redirect URI for registration
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .context("failed to bind for port discovery")?;
-            let port = listener.local_addr()?.port();
-            drop(listener);
-
-            let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
-
+            // Register the exact callback URI that we'll use for this auth flow.
+            // Some providers require an exact redirect URI match and reject
+            // port-agnostic loopback registrations.
             let reg = register_client(
                 &self.http_client,
                 reg_endpoint,
-                vec![redirect_uri],
+                vec![redirect_uri.to_string()],
                 &format!("moltis ({})", self.server_name),
             )
             .await?;
@@ -411,9 +493,10 @@ impl McpAuthProvider for McpOAuthProvider {
     }
 
     async fn handle_unauthorized(&self, www_authenticate: Option<&str>) -> Result<bool> {
-        // Clear cached tokens
+        // Clear cached tokens and stale registration (redirect_uri may have changed)
         *self.cached_token.write().await = None;
         let _ = self.token_store.delete(&self.store_key());
+        let _ = self.registration_store.delete(&self.server_url);
 
         match self.perform_oauth_flow(www_authenticate).await {
             Ok(()) => Ok(true),
@@ -456,9 +539,54 @@ impl McpAuthProvider for NoAuthProvider {
 /// Type alias for a shared auth provider.
 pub type SharedAuthProvider = Arc<dyn McpAuthProvider>;
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use mockito::Matcher;
+
     use super::*;
+
+    #[test]
+    fn origin_url_strips_path() {
+        let url = Url::parse("https://mcp.linear.app/sse").unwrap();
+        let origin = McpOAuthProvider::origin_url(&url);
+        assert_eq!(origin.as_str(), "https://mcp.linear.app/");
+    }
+
+    #[test]
+    fn origin_url_preserves_port() {
+        let url = Url::parse("https://mcp.example.com:8443/v1/mcp").unwrap();
+        let origin = McpOAuthProvider::origin_url(&url);
+        assert_eq!(origin.as_str(), "https://mcp.example.com:8443/");
+    }
+
+    #[test]
+    fn origin_url_root_unchanged() {
+        let url = Url::parse("https://mcp.example.com/").unwrap();
+        let origin = McpOAuthProvider::origin_url(&url);
+        assert_eq!(origin.as_str(), "https://mcp.example.com/");
+    }
+
+    #[test]
+    fn origin_url_strips_query_and_fragment() {
+        let url = Url::parse("https://mcp.example.com/sse?token=abc#frag").unwrap();
+        let origin = McpOAuthProvider::origin_url(&url);
+        assert_eq!(origin.as_str(), "https://mcp.example.com/");
+    }
+
+    #[test]
+    fn origin_resource_strips_path_and_trailing_slash() {
+        let url = Url::parse("https://mcp.linear.app/mcp").unwrap();
+        let resource = McpOAuthProvider::origin_resource(&url);
+        assert_eq!(resource, "https://mcp.linear.app");
+    }
+
+    #[test]
+    fn origin_resource_preserves_explicit_port() {
+        let url = Url::parse("https://mcp.example.com:8443/v1/mcp").unwrap();
+        let resource = McpOAuthProvider::origin_resource(&url);
+        assert_eq!(resource, "https://mcp.example.com:8443");
+    }
 
     #[test]
     fn auth_state_serialization() {
@@ -603,6 +731,161 @@ mod tests {
         );
 
         assert!(provider.access_token().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn discovery_falls_back_to_origin_as_metadata_for_path_url() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let resource_meta_path = server
+            .mock("GET", "/sse/.well-known/oauth-protected-resource")
+            .with_status(404)
+            .create_async()
+            .await;
+        let resource_meta_origin = server
+            .mock("GET", "/.well-known/oauth-protected-resource")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let as_meta_path = server
+            .mock("GET", "/sse/.well-known/oauth-authorization-server")
+            .with_status(404)
+            .create_async()
+            .await;
+        let as_meta_origin = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "issuer": base.clone(),
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                    "scopes_supported": ["read"],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let redirect_uri = "http://127.0.0.1:5555/auth/callback";
+        let register = server
+            .mock("POST", "/register")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "redirect_uris": [redirect_uri],
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "client_id": "client-fallback",
+                    "redirect_uris": [redirect_uri],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::with_stores(
+            "linear",
+            &format!("{base}/sse"),
+            TokenStore::with_path(dir.path().join("tokens.json")),
+            RegistrationStore::with_path(dir.path().join("registrations.json")),
+        );
+
+        let (client_id, auth_url, token_url, scopes, resource) = provider
+            .discover_and_register(None, redirect_uri)
+            .await
+            .unwrap();
+
+        assert_eq!(client_id, "client-fallback");
+        assert_eq!(auth_url, format!("{base}/authorize"));
+        assert_eq!(token_url, format!("{base}/token"));
+        assert_eq!(scopes, vec!["read".to_string()]);
+        assert_eq!(resource, base);
+
+        resource_meta_path.assert_async().await;
+        resource_meta_origin.assert_async().await;
+        as_meta_path.assert_async().await;
+        as_meta_origin.assert_async().await;
+        register.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn dynamic_registration_uses_exact_redirect_uri() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+        let redirect_uri = "http://127.0.0.1:43123/auth/callback";
+
+        let resource_meta = server
+            .mock("GET", "/mcp/.well-known/oauth-protected-resource")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "resource": format!("{base}/mcp"),
+                    "authorization_servers": [base.clone()],
+                    "scopes_supported": ["read", "write"],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let as_meta = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "issuer": base.clone(),
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let register = server
+            .mock("POST", "/register")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "redirect_uris": [redirect_uri],
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "client_id": "client-redirect",
+                    "redirect_uris": [redirect_uri],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::with_stores(
+            "remote",
+            &format!("{base}/mcp"),
+            TokenStore::with_path(dir.path().join("tokens.json")),
+            RegistrationStore::with_path(dir.path().join("registrations.json")),
+        );
+
+        let (client_id, _, _, _, _) = provider
+            .discover_and_register(None, redirect_uri)
+            .await
+            .unwrap();
+
+        assert_eq!(client_id, "client-redirect");
+        resource_meta.assert_async().await;
+        as_meta.assert_async().await;
+        register.assert_async().await;
     }
 
     #[test]

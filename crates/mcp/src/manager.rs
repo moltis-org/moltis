@@ -9,9 +9,9 @@ use {
 };
 
 use crate::{
-    auth::{McpAuthState, McpOAuthProvider, SharedAuthProvider},
+    auth::{McpAuthState, McpOAuthOverride, McpOAuthProvider, SharedAuthProvider},
     client::{McpClient, McpClientState},
-    registry::{McpRegistry, McpServerConfig, TransportType},
+    registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     tool_bridge::McpToolBridge,
     traits::McpClientTrait,
     types::{McpToolDef, McpTransportError},
@@ -62,6 +62,24 @@ impl McpManager {
         }
     }
 
+    fn build_auth_provider(
+        name: &str,
+        url: &str,
+        oauth: Option<&McpOAuthConfig>,
+    ) -> SharedAuthProvider {
+        let provider = if let Some(ov) = oauth {
+            McpOAuthProvider::new(name, url).with_oauth_override(McpOAuthOverride {
+                client_id: ov.client_id.clone(),
+                auth_url: ov.auth_url.clone(),
+                token_url: ov.token_url.clone(),
+                scopes: ov.scopes.clone(),
+            })
+        } else {
+            McpOAuthProvider::new(name, url)
+        };
+        Arc::new(provider)
+    }
+
     /// Start all enabled servers from the registry.
     pub async fn start_enabled(&self) -> Vec<String> {
         let enabled: Vec<(String, McpServerConfig)> = {
@@ -110,6 +128,13 @@ impl McpManager {
                     // Reuse existing auth provider
                     let client = McpClient::connect_sse_with_auth(name, url, auth.clone()).await?;
                     (client, Some(auth))
+                } else if config.oauth.is_some() {
+                    // Explicit OAuth override configured, so use an auth provider
+                    // from the first request instead of probing unauthenticated.
+                    let auth_provider = Self::build_auth_provider(name, url, config.oauth.as_ref());
+                    let client =
+                        McpClient::connect_sse_with_auth(name, url, auth_provider.clone()).await?;
+                    (client, Some(auth_provider))
                 } else {
                     // Try without auth first
                     match McpClient::connect_sse(name, url).await {
@@ -124,8 +149,8 @@ impl McpManager {
                                     "SSE server requires auth, starting OAuth flow"
                                 );
 
-                                let auth_provider: SharedAuthProvider =
-                                    Arc::new(McpOAuthProvider::new(name, url));
+                                let auth_provider =
+                                    Self::build_auth_provider(name, url, config.oauth.as_ref());
 
                                 // Trigger the OAuth flow
                                 let auth_ok = auth_provider
@@ -412,10 +437,13 @@ mod tests {
     #[tokio::test]
     async fn test_status_shows_stopped_for_configured_but_not_started() {
         let mut reg = McpRegistry::new();
-        reg.servers.insert("test".into(), McpServerConfig {
-            command: "echo".into(),
-            ..Default::default()
-        });
+        reg.servers.insert(
+            "test".into(),
+            McpServerConfig {
+                command: "echo".into(),
+                ..Default::default()
+            },
+        );
         let mgr = McpManager::new(reg);
 
         let statuses = mgr.status_all().await;

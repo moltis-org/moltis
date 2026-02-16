@@ -68,52 +68,110 @@ pub async fn sync_mcp_tools(
 
 // ── Config parsing helper ───────────────────────────────────────────────────
 
-/// Extract an `McpServerConfig` from JSON params (used by both `add` and `update`).
-fn parse_server_config(params: &Value) -> Result<moltis_mcp::McpServerConfig, String> {
+/// Extract an `McpServerConfig` from JSON params.
+///
+/// For updates, omitted fields inherit from `existing`.
+fn parse_server_config(
+    params: &Value,
+    existing: Option<&moltis_mcp::McpServerConfig>,
+) -> Result<moltis_mcp::McpServerConfig, String> {
+    let transport = match params.get("transport").and_then(|v| v.as_str()) {
+        Some("sse") => moltis_mcp::TransportType::Sse,
+        Some(_) => moltis_mcp::TransportType::Stdio,
+        None => existing
+            .map(|cfg| cfg.transport)
+            .unwrap_or(moltis_mcp::TransportType::Stdio),
+    };
+
     let command = params
         .get("command")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing 'command' parameter".to_string())?;
-    let args: Vec<String> = params
-        .get("args")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .map(String::from)
+        .or_else(|| existing.map(|cfg| cfg.command.clone()))
         .unwrap_or_default();
-    let env: std::collections::HashMap<String, String> = params
-        .get("env")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+
+    if matches!(transport, moltis_mcp::TransportType::Stdio) && command.trim().is_empty() {
+        return Err("missing 'command' parameter".to_string());
+    }
+
+    let args: Vec<String> = if params.get("args").is_some() {
+        params
+            .get("args")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    } else {
+        existing.map(|cfg| cfg.args.clone()).unwrap_or_default()
+    };
+
+    let env: std::collections::HashMap<String, String> = if params.get("env").is_some() {
+        params
+            .get("env")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    } else {
+        existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
+    };
+
     let enabled = params
         .get("enabled")
         .and_then(|v| v.as_bool())
+        .or_else(|| existing.map(|cfg| cfg.enabled))
         .unwrap_or(true);
-    let transport = match params
-        .get("transport")
-        .and_then(|v| v.as_str())
-        .unwrap_or("stdio")
-    {
-        "sse" => moltis_mcp::TransportType::Sse,
-        _ => moltis_mcp::TransportType::Stdio,
-    };
-    let url = params.get("url").and_then(|v| v.as_str()).map(String::from);
 
-    let oauth = params.get("oauth").and_then(|v| {
-        let client_id = v.get("client_id")?.as_str()?.to_string();
-        let auth_url = v.get("auth_url")?.as_str()?.to_string();
-        let token_url = v.get("token_url")?.as_str()?.to_string();
-        let scopes: Vec<String> = v
-            .get("scopes")
-            .and_then(|s| serde_json::from_value(s.clone()).ok())
-            .unwrap_or_default();
-        Some(moltis_mcp::registry::McpOAuthConfig {
-            client_id,
-            auth_url,
-            token_url,
-            scopes,
-        })
-    });
+    let url = if params.get("url").is_some() {
+        if params.get("url").is_some_and(Value::is_null) {
+            None
+        } else {
+            params.get("url").and_then(|v| v.as_str()).map(String::from)
+        }
+    } else {
+        existing.and_then(|cfg| cfg.url.clone())
+    };
+
+    if matches!(transport, moltis_mcp::TransportType::Sse)
+        && url
+            .as_deref()
+            .is_none_or(|candidate| candidate.trim().is_empty())
+    {
+        return Err("missing 'url' parameter for 'sse' transport".to_string());
+    }
+
+    let oauth = if let Some(v) = params.get("oauth") {
+        if v.is_null() {
+            None
+        } else {
+            let client_id = v
+                .get("client_id")
+                .and_then(|val| val.as_str())
+                .ok_or_else(|| "missing 'oauth.client_id' parameter".to_string())?
+                .to_string();
+            let auth_url = v
+                .get("auth_url")
+                .and_then(|val| val.as_str())
+                .ok_or_else(|| "missing 'oauth.auth_url' parameter".to_string())?
+                .to_string();
+            let token_url = v
+                .get("token_url")
+                .and_then(|val| val.as_str())
+                .ok_or_else(|| "missing 'oauth.token_url' parameter".to_string())?
+                .to_string();
+            let scopes: Vec<String> = v
+                .get("scopes")
+                .and_then(|s| serde_json::from_value(s.clone()).ok())
+                .unwrap_or_default();
+            Some(moltis_mcp::registry::McpOAuthConfig {
+                client_id,
+                auth_url,
+                token_url,
+                scopes,
+            })
+        }
+    } else {
+        existing.and_then(|cfg| cfg.oauth.clone())
+    };
 
     Ok(moltis_mcp::McpServerConfig {
-        command: command.into(),
+        command,
         args,
         env,
         enabled,
@@ -173,7 +231,7 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
-        let config = parse_server_config(&params)?;
+        let config = parse_server_config(&params, None)?;
 
         // If a server with this name already exists, append a numeric suffix.
         let final_name = {
@@ -293,7 +351,15 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
-        let config = parse_server_config(&params)?;
+        let existing = self
+            .manager
+            .registry_snapshot()
+            .await
+            .servers
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("MCP server '{name}' not found"))?;
+        let config = parse_server_config(&params, Some(&existing))?;
 
         self.manager
             .update_server(name, config)
@@ -325,6 +391,124 @@ impl McpService for LiveMcpService {
 #[cfg(test)]
 mod tests {
     use {super::*, moltis_mcp::McpRegistry};
+
+    #[test]
+    fn parse_server_config_allows_sse_without_command() {
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse",
+                "url": "https://mcp.linear.app/mcp",
+                "enabled": true
+            }),
+            None,
+        );
+        assert!(
+            cfg.is_ok(),
+            "expected SSE config to parse without command, got: {cfg:?}"
+        );
+        let Ok(cfg) = cfg else {
+            panic!("SSE config unexpectedly failed to parse");
+        };
+
+        assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
+        assert_eq!(cfg.command, "");
+        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+    }
+
+    #[test]
+    fn parse_server_config_requires_command_for_stdio() {
+        let err = parse_server_config(
+            &serde_json::json!({
+                "transport": "stdio",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+            }),
+            None,
+        )
+        .err();
+
+        assert_eq!(err.as_deref(), Some("missing 'command' parameter"));
+    }
+
+    #[test]
+    fn parse_server_config_requires_url_for_sse() {
+        let err = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse",
+            }),
+            None,
+        )
+        .err();
+
+        assert_eq!(
+            err.as_deref(),
+            Some("missing 'url' parameter for 'sse' transport")
+        );
+    }
+
+    #[test]
+    fn parse_server_config_update_preserves_existing_sse_fields() {
+        let existing = moltis_mcp::McpServerConfig {
+            transport: moltis_mcp::TransportType::Sse,
+            url: Some("https://mcp.linear.app/mcp".to_string()),
+            ..Default::default()
+        };
+
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "enabled": false
+            }),
+            Some(&existing),
+        );
+        assert!(
+            cfg.is_ok(),
+            "expected parser to preserve SSE defaults from existing config, got: {cfg:?}"
+        );
+        let Ok(cfg) = cfg else {
+            panic!("failed to parse update with inherited SSE config");
+        };
+
+        assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
+        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
+    fn parse_server_config_update_preserves_oauth_when_omitted() {
+        let existing = moltis_mcp::McpServerConfig {
+            transport: moltis_mcp::TransportType::Sse,
+            url: Some("https://mcp.linear.app/mcp".to_string()),
+            oauth: Some(moltis_mcp::McpOAuthConfig {
+                client_id: "linear-client".to_string(),
+                auth_url: "https://linear.app/oauth/authorize".to_string(),
+                token_url: "https://api.linear.app/oauth/token".to_string(),
+                scopes: vec!["read".to_string(), "write".to_string()],
+            }),
+            ..Default::default()
+        };
+
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse"
+            }),
+            Some(&existing),
+        );
+        assert!(
+            cfg.is_ok(),
+            "expected parser to preserve existing oauth fields, got: {cfg:?}"
+        );
+        let Ok(cfg) = cfg else {
+            panic!("failed to parse update while preserving oauth");
+        };
+
+        assert!(cfg.oauth.is_some(), "expected oauth to be preserved");
+        let Some(oauth) = cfg.oauth else {
+            panic!("oauth missing after parse");
+        };
+        assert_eq!(oauth.client_id, "linear-client");
+        assert_eq!(oauth.auth_url, "https://linear.app/oauth/authorize");
+        assert_eq!(oauth.token_url, "https://api.linear.app/oauth/token");
+        assert_eq!(oauth.scopes, vec!["read".to_string(), "write".to_string()]);
+    }
 
     #[tokio::test]
     async fn test_sync_mcp_tools_empty_manager() {

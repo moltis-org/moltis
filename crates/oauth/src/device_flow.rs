@@ -142,6 +142,7 @@ mod tests {
             auth_url,
             token_url,
             redirect_uri: String::new(),
+            resource: None,
             scopes: vec![],
             extra_auth_params: vec![],
             device_flow: true,

@@ -18,6 +18,26 @@ test.describe("MCP page", () => {
 		await expect(content).not.toBeEmpty();
 	});
 
+	test("linear remote server is available in featured list", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/mcp");
+
+		await expect(page.getByRole("heading", { name: "Popular MCP Servers", exact: true })).toBeVisible();
+		await expect(page.getByText("linear", { exact: true })).toBeVisible();
+		await expect(page.getByText("sse remote")).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("custom form supports remote SSE URL flow", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/mcp");
+
+		await page.getByRole("button", { name: "SSE (remote)", exact: true }).click();
+		await expect(page.getByPlaceholder("https://mcp.linear.app/mcp")).toBeVisible();
+		await expect(page.getByText("If the server requires OAuth", { exact: false })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/mcp");

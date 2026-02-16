@@ -47,6 +47,10 @@ impl OAuthFlow {
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state);
 
+        if let Some(resource) = &self.config.resource {
+            url.query_pairs_mut().append_pair("resource", resource);
+        }
+
         if !self.config.scopes.is_empty() {
             url.query_pairs_mut()
                 .append_pair("scope", &self.config.scopes.join(" "));
@@ -71,16 +75,21 @@ impl OAuthFlow {
         #[cfg(feature = "metrics")]
         counter!(oauth_metrics::CODE_EXCHANGE_TOTAL).increment(1);
 
+        let mut form = vec![
+            ("grant_type".to_string(), "authorization_code".to_string()),
+            ("code".to_string(), code.to_string()),
+            ("redirect_uri".to_string(), self.config.redirect_uri.clone()),
+            ("client_id".to_string(), self.config.client_id.clone()),
+            ("code_verifier".to_string(), verifier.to_string()),
+        ];
+        if let Some(resource) = &self.config.resource {
+            form.push(("resource".to_string(), resource.clone()));
+        }
+
         let result = self
             .client
             .post(&self.config.token_url)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("code", code),
-                ("redirect_uri", &self.config.redirect_uri),
-                ("client_id", &self.config.client_id),
-                ("code_verifier", verifier),
-            ])
+            .form(&form)
             .send()
             .await?
             .error_for_status()?
@@ -106,14 +115,19 @@ impl OAuthFlow {
         #[cfg(feature = "metrics")]
         counter!(oauth_metrics::TOKEN_REFRESH_TOTAL).increment(1);
 
+        let mut form = vec![
+            ("grant_type".to_string(), "refresh_token".to_string()),
+            ("refresh_token".to_string(), refresh_token.to_string()),
+            ("client_id".to_string(), self.config.client_id.clone()),
+        ];
+        if let Some(resource) = &self.config.resource {
+            form.push(("resource".to_string(), resource.clone()));
+        }
+
         let result = self
             .client
             .post(&self.config.token_url)
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-                ("client_id", &self.config.client_id),
-            ])
+            .form(&form)
             .send()
             .await?
             .error_for_status()?

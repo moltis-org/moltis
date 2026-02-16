@@ -15,7 +15,7 @@ MCP is an open protocol that lets AI assistants connect to external tools and da
 | Transport | Description | Use Case |
 |-----------|-------------|----------|
 | **stdio** | Local process via stdin/stdout | npm packages, local scripts |
-| **HTTP/SSE** | Remote server via HTTP | Cloud services, shared servers |
+| **Streamable HTTP** | Remote server via HTTP | Cloud services, shared servers |
 
 ## Adding an MCP Server
 
@@ -31,20 +31,17 @@ MCP is an open protocol that lets AI assistants connect to external tools and da
 Add servers to `moltis.toml`:
 
 ```toml
-[[mcp.servers]]
-name = "filesystem"
+[mcp.servers.filesystem]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
 
-[[mcp.servers]]
-name = "github"
+[mcp.servers.github]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
 
-[[mcp.servers]]
-name = "remote-api"
-url = "https://mcp.example.com/sse"
+[mcp.servers.remote_api]
+url = "https://mcp.example.com/mcp"
 transport = "sse"
 ```
 
@@ -68,20 +65,16 @@ Explore more at [mcp.so](https://mcp.so) and [GitHub MCP Servers](https://github
 ## Configuration Options
 
 ```toml
-[[mcp.servers]]
-name = "my-server"              # Display name
-command = "node"                # Command to run
-args = ["server.js"]            # Command arguments
-cwd = "/path/to/server"         # Working directory
+[mcp.servers.my_server]
+command = "node"                # Required for stdio transport
+args = ["server.js"]            # Optional arguments
 
-# Environment variables
+# Optional environment variables
 env = { API_KEY = "secret", DEBUG = "true" }
 
-# Health check settings
-health_check_interval = 30      # Seconds between health checks
-restart_on_failure = true       # Auto-restart on crash
-max_restart_attempts = 5        # Give up after N restarts
-restart_backoff = "exponential" # "linear" or "exponential"
+# Optional: remote transport
+transport = "sse"               # "stdio" (default) or "sse"
+url = "https://mcp.example.com/mcp"  # Required when transport = "sse"
 ```
 
 ## Server Lifecycle
@@ -169,11 +162,9 @@ await server.connect(transport);
 ### Configure in Moltis
 
 ```toml
-[[mcp.servers]]
-name = "my-server"
+[mcp.servers.my_server]
 command = "node"
 args = ["server.js"]
-cwd = "/path/to/my-server"
 ```
 
 ## Debugging
@@ -192,7 +183,7 @@ MCP server stderr is captured in Moltis logs:
 
 ```bash
 # View gateway logs
-tail -f ~/.moltis/logs/gateway.log | grep mcp
+tail -f ~/.moltis/logs.jsonl | grep -i mcp
 ```
 
 ### Test Locally
@@ -223,12 +214,11 @@ Client registrations and tokens are cached locally, so you only need to log in o
 If a server doesn't support standard OAuth discovery, you can configure credentials manually:
 
 ```toml
-[[mcp.servers]]
-name = "private-api"
-url = "https://mcp.example.com/sse"
+[mcp.servers.private_api]
+url = "https://mcp.example.com/mcp"
 transport = "sse"
 
-[mcp.servers.oauth]
+[mcp.servers.private_api.oauth]
 client_id = "your-client-id"
 auth_url = "https://auth.example.com/authorize"
 token_url = "https://auth.example.com/token"
