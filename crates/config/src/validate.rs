@@ -199,6 +199,7 @@ fn build_schema_map() -> KnownKeys {
             ("sandbox", Leaf),
             ("sandbox_image", Leaf),
             ("allowed_domains", Leaf),
+            ("low_memory_threshold_mb", Leaf),
         ]))
     };
 
