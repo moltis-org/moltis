@@ -80,6 +80,14 @@ impl McpManager {
         Arc::new(provider)
     }
 
+    fn should_attempt_auth_connection(
+        has_existing_auth_provider: bool,
+        has_oauth_override: bool,
+        has_stored_token: bool,
+    ) -> bool {
+        has_existing_auth_provider || has_oauth_override || has_stored_token
+    }
+
     /// Start all enabled servers from the registry.
     pub async fn start_enabled(&self) -> Vec<String> {
         let enabled: Vec<(String, McpServerConfig)> = {
@@ -118,29 +126,38 @@ impl McpManager {
                     .as_deref()
                     .with_context(|| format!("SSE transport for '{name}' requires a url"))?;
 
-                // Check if we already have an auth provider (from a previous connection)
+                // Check if we already have an auth provider (from a previous connection).
                 let existing_auth = {
                     let inner = self.inner.read().await;
                     inner.auth_providers.get(name).cloned()
                 };
 
-                if let Some(auth) = existing_auth {
-                    // Reuse existing auth provider
-                    let client = McpClient::connect_sse_with_auth(name, url, auth.clone()).await?;
-                    (client, Some(auth))
-                } else if config.oauth.is_some() {
-                    // Explicit OAuth override configured, so use an auth provider
-                    // from the first request instead of probing unauthenticated.
-                    let auth_provider = Self::build_auth_provider(name, url, config.oauth.as_ref());
+                let has_existing_auth_provider = existing_auth.is_some();
+                let auth_provider = existing_auth
+                    .unwrap_or_else(|| Self::build_auth_provider(name, url, config.oauth.as_ref()));
+
+                // If we have a stored token, prefer auth transport immediately.
+                // This avoids forced re-auth at process start for OAuth-backed servers.
+                let has_stored_token = if has_existing_auth_provider {
+                    false
+                } else {
+                    auth_provider.access_token().await?.is_some()
+                };
+
+                if Self::should_attempt_auth_connection(
+                    has_existing_auth_provider,
+                    config.oauth.is_some(),
+                    has_stored_token,
+                ) {
                     let client =
                         McpClient::connect_sse_with_auth(name, url, auth_provider.clone()).await?;
                     (client, Some(auth_provider))
                 } else {
-                    // Try without auth first
+                    // No hint that auth is needed yet, probe unauthenticated first.
                     match McpClient::connect_sse(name, url).await {
                         Ok(client) => (client, None),
                         Err(e) => {
-                            // Check if it's a 401 Unauthorized
+                            // Check if it's a 401 Unauthorized.
                             if let Some(McpTransportError::Unauthorized { www_authenticate }) =
                                 e.downcast_ref::<McpTransportError>()
                             {
@@ -149,10 +166,7 @@ impl McpManager {
                                     "SSE server requires auth, starting OAuth flow"
                                 );
 
-                                let auth_provider =
-                                    Self::build_auth_provider(name, url, config.oauth.as_ref());
-
-                                // Trigger the OAuth flow
+                                // Trigger the OAuth flow.
                                 let auth_ok = auth_provider
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
@@ -163,7 +177,7 @@ impl McpManager {
                                     );
                                 }
 
-                                // Retry with auth
+                                // Retry with auth.
                                 let client = McpClient::connect_sse_with_auth(
                                     name,
                                     url,
@@ -418,6 +432,34 @@ mod tests {
     fn test_manager_creation() {
         let reg = McpRegistry::new();
         let _mgr = McpManager::new(reg);
+    }
+
+    #[test]
+    fn test_should_attempt_auth_connection_with_existing_provider() {
+        assert!(McpManager::should_attempt_auth_connection(
+            true, false, false
+        ));
+    }
+
+    #[test]
+    fn test_should_attempt_auth_connection_with_oauth_override() {
+        assert!(McpManager::should_attempt_auth_connection(
+            false, true, false
+        ));
+    }
+
+    #[test]
+    fn test_should_attempt_auth_connection_with_stored_token() {
+        assert!(McpManager::should_attempt_auth_connection(
+            false, false, true
+        ));
+    }
+
+    #[test]
+    fn test_should_attempt_auth_connection_without_auth_signals() {
+        assert!(!McpManager::should_attempt_auth_connection(
+            false, false, false
+        ));
     }
 
     #[tokio::test]
