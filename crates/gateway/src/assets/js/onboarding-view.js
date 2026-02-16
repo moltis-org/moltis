@@ -562,7 +562,7 @@ function IdentityStep({ onNext, onBack }) {
 // ── Provider step ───────────────────────────────────────────
 
 var OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
-var BYOM_PROVIDERS = ["openrouter", "venice"];
+var BYOM_PROVIDERS = ["venice"];
 
 function ModelSelectCard({ model, selected, probe, onToggle }) {
 	return html`<div class="model-card ${selected ? "selected" : ""}" onClick=${onToggle}>

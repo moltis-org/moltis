@@ -787,6 +787,9 @@ pub struct MemoryEmbeddingConfig {
     pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
     pub provider: Option<String>,
+    /// Disable RAG embeddings and force keyword-only memory search.
+    #[serde(default)]
+    pub disable_rag: bool,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
     pub base_url: Option<String>,
     /// Model name (e.g. "nomic-embed-text" for Ollama, "text-embedding-3-small" for OpenAI).
@@ -952,6 +955,26 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Manual OAuth override for servers that don't support standard discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthOverrideEntry>,
+}
+
+/// Manual OAuth configuration override for an MCP server.
+///
+/// Used when the server doesn't implement RFC 9728/8414 discovery or
+/// when dynamic client registration is not available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthOverrideEntry {
+    /// The OAuth client ID.
+    pub client_id: String,
+    /// The authorization endpoint URL.
+    pub auth_url: String,
+    /// The token endpoint URL.
+    pub token_url: String,
+    /// OAuth scopes to request.
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 /// Channel configuration.
@@ -1160,6 +1183,10 @@ pub struct WebFetchConfig {
     pub max_redirects: u8,
     /// Use readability extraction for HTML pages.
     pub readability: bool,
+    /// CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`).
+    /// Default: empty (all private IPs blocked).
+    #[serde(default)]
+    pub ssrf_allowlist: Vec<String>,
 }
 
 impl Default for WebFetchConfig {
@@ -1171,6 +1198,7 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: Vec::new(),
         }
     }
 }

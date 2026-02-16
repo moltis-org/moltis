@@ -78,6 +78,14 @@ fn parse_tool_calls(content: &[serde_json::Value]) -> Vec<ToolCall> {
         .collect()
 }
 
+fn retry_after_ms_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    super::retry_after_ms_from_headers(headers)
+}
+
+fn with_retry_after_marker(base: String, retry_after_ms: Option<u64>) -> String {
+    super::with_retry_after_marker(base, retry_after_ms)
+}
+
 /// Convert `ChatMessage` list to Anthropic format.
 ///
 /// Returns `(system_text, anthropic_messages)`. System messages are extracted
@@ -232,9 +240,16 @@ impl LlmProvider for AnthropicProvider {
 
         let status = http_resp.status();
         if !status.is_success() {
+            let retry_after_ms = retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
             warn!(status = %status, body = %body_text, "anthropic API error");
-            anyhow::bail!("Anthropic API error HTTP {status}: {body_text}");
+            anyhow::bail!(
+                "{}",
+                with_retry_after_marker(
+                    format!("Anthropic API error HTTP {status}: {body_text}"),
+                    retry_after_ms
+                )
+            );
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
@@ -327,8 +342,12 @@ impl LlmProvider for AnthropicProvider {
                 Ok(r) => {
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
-                        yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                        yield StreamEvent::Error(with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
                         return;
                     }
                     r
@@ -457,5 +476,44 @@ impl LlmProvider for AnthropicProvider {
                 }
             }
         })
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_ms_from_headers_parses_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("12"),
+        );
+        assert_eq!(retry_after_ms_from_headers(&headers), Some(12_000));
+    }
+
+    #[test]
+    fn retry_after_ms_from_headers_ignores_non_numeric_values() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"),
+        );
+        assert_eq!(retry_after_ms_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn with_retry_after_marker_appends_retry_hint() {
+        let base = "HTTP 429: rate limit exceeded".to_string();
+        assert_eq!(
+            with_retry_after_marker(base.clone(), Some(3_000)),
+            "HTTP 429: rate limit exceeded (retry_after_ms=3000)"
+        );
+        assert_eq!(
+            with_retry_after_marker(base.clone(), None),
+            "HTTP 429: rate limit exceeded"
+        );
     }
 }

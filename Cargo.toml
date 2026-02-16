@@ -133,6 +133,7 @@ metrics-exporter-prometheus = "0.16"
 metrics-tracing-context     = "0.16"
 # Content processing
 image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
+ipnet          = "2"
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Filesystem / archiving
 chrono                = "0.4"

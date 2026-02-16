@@ -41,8 +41,10 @@ pub async fn run_health_monitor(state: Arc<GatewayState>, mcp: Arc<LiveMcpServic
             if prev != Some(&s.state) {
                 changed = true;
 
-                // Auto-restart: if a server was previously running and is now dead
-                if prev == Some("running") && s.state == "dead" && s.enabled {
+                // Auto-restart: if a server was previously running and is now dead.
+                // Skip restart if the server is in the middle of OAuth authentication.
+                let awaiting_auth = s.auth_state == Some(moltis_mcp::McpAuthState::AwaitingBrowser);
+                if prev == Some("running") && s.state == "dead" && s.enabled && !awaiting_auth {
                     let rs = restart_states
                         .entry(s.name.clone())
                         .or_insert(RestartState {

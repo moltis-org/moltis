@@ -40,16 +40,46 @@ async function refreshServers() {
 	updateNavCount("mcp", servers.value.filter((s) => s.state === "running").length);
 }
 
-async function addServer(name, command, args, env) {
-	var res = await sendRpc("mcp.add", { name, command, args, env });
+async function addServer(payload) {
+	var req = { ...payload };
+	if ((payload.transport || "stdio") === "sse") {
+		req.redirectUri = oauthCallbackUrl();
+	}
+	var res = await sendRpc("mcp.add", req);
 	if (res?.ok) {
-		var finalName = res.payload?.name || name;
+		var finalName = res.payload?.name || payload.name;
 		showToast(`Added MCP tool "${finalName}"`, "success");
+		if (res?.payload?.oauthPending && res?.payload?.authUrl) {
+			window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+		}
 	} else {
 		var msg = res?.error?.message || res?.error || "unknown error";
-		showToast(`Failed to add "${name}": ${msg}`, "error");
+		showToast(`Failed to add "${payload.name}": ${msg}`, "error");
 	}
 	await refreshServers();
+}
+
+function oauthCallbackUrl() {
+	return `${window.location.origin}/auth/callback`;
+}
+
+async function startMcpOAuth(name, authUrl) {
+	var finalUrl = authUrl;
+	if (!finalUrl) {
+		var res = await sendRpc("mcp.oauth.start", {
+			name,
+			redirectUri: oauthCallbackUrl(),
+		});
+		if (!res?.ok) {
+			var err = res?.error?.message || res?.error || "unknown error";
+			throw new Error(err);
+		}
+		finalUrl = res?.payload?.authUrl;
+	}
+	if (!finalUrl) {
+		throw new Error("OAuth URL missing from response");
+	}
+	window.open(finalUrl, "_blank", "noopener,noreferrer");
 }
 
 /** Parse "KEY=VALUE" lines into an object. */
@@ -75,6 +105,7 @@ var featuredServers = [
 		desc: "Secure file operations with configurable access controls",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+		requiresConfig: true,
 		hint: "Last arg is the allowed directory path",
 	},
 	{
@@ -90,8 +121,17 @@ var featuredServers = [
 		desc: "GitHub API integration — repos, issues, PRs, code search",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-github"],
+		requiresConfig: true,
 		envKeys: ["GITHUB_PERSONAL_ACCESS_TOKEN"],
 		hint: "Requires a GitHub personal access token",
+	},
+	{
+		name: "linear",
+		repo: "linear/linear",
+		desc: "Remote Linear MCP server with browser OAuth",
+		transport: "sse",
+		url: "https://mcp.linear.app/mcp",
+		hint: "After adding, click Enable and complete OAuth in your browser",
 	},
 ];
 
@@ -119,22 +159,46 @@ function StatusBadge({ state }) {
 	return html`<span class="inline-block w-2 h-2 rounded-full ${cls}"></span>`;
 }
 
-function ConfigForm({ server, argsVal, envVal, onCancel }) {
+function transportLabel(transport) {
+	return transport === "sse" ? "sse remote" : "stdio local";
+}
+
+function authStateLabel(state) {
+	if (state === "awaiting_browser") return "OAuth pending";
+	if (state === "authenticated") return "OAuth connected";
+	if (state === "failed") return "OAuth failed";
+	return "OAuth not required";
+}
+
+function ConfigForm({ server, argsVal, envVal, urlVal, onCancel }) {
+	var isSse = server.transport === "sse";
 	return html`<div class="mt-2 flex flex-col gap-1.5">
-    ${server.hint && html`<div class="text-xs text-[var(--warn)]">${server.hint}</div>`}
-    <div class="project-edit-group">
-      <div class="text-xs text-[var(--muted)] mb-1">Arguments</div>
-      <input type="text" value=${argsVal.value}
-        onInput=${(e) => {
-					argsVal.value = e.target.value;
-				}}
-        class="provider-key-input w-full" />
-    </div>
-    ${
-			server.envKeys &&
-			server.envKeys.length > 0 &&
-			html`<div class="project-edit-group">
-        <div class="text-xs text-[var(--muted)] mb-1">Environment variables (KEY=VALUE per line)</div>
+	    ${server.hint && html`<div class="text-xs text-[var(--warn)]">${server.hint}</div>`}
+	    ${
+				isSse
+					? html`<div class="project-edit-group">
+	        <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
+	        <input type="text" value=${urlVal.value}
+	          onInput=${(e) => {
+							urlVal.value = e.target.value;
+						}}
+	          class="provider-key-input w-full font-mono" />
+	      </div>`
+					: html`<div class="project-edit-group">
+	      <div class="text-xs text-[var(--muted)] mb-1">Arguments</div>
+	      <input type="text" value=${argsVal.value}
+	        onInput=${(e) => {
+						argsVal.value = e.target.value;
+					}}
+	        class="provider-key-input w-full" />
+	    </div>`
+			}
+	    ${
+				!isSse &&
+				server.envKeys &&
+				server.envKeys.length > 0 &&
+				html`<div class="project-edit-group">
+	        <div class="text-xs text-[var(--muted)] mb-1">Environment variables (KEY=VALUE per line)</div>
         <textarea value=${envVal.value}
           onInput=${(e) => {
 						envVal.value = e.target.value;
@@ -142,7 +206,7 @@ function ConfigForm({ server, argsVal, envVal, onCancel }) {
           rows=${server.envKeys.length}
           class="provider-key-input w-full resize-y" />
       </div>`
-		}
+			}
     <button onClick=${onCancel}
       class="self-start provider-btn provider-btn-secondary provider-btn-sm">Cancel</button>
   </div>`;
@@ -159,10 +223,14 @@ function FeaturedCard(props) {
 	var f = props.server;
 	var installing = useSignal(false);
 	var configuring = useSignal(false);
-	var argsVal = useSignal(f.args.join(" "));
+	var argsVal = useSignal((f.args || []).join(" "));
 	var envVal = useSignal((f.envKeys || []).map((k) => `${k}=`).join("\n"));
+	var urlVal = useSignal(f.url || "");
 
-	var needsConfig = f.envKeys || f.hint;
+	var needsConfig = Boolean(
+		f.requiresConfig || (f.envKeys && f.envKeys.length > 0) || (f.transport === "sse" && !f.url),
+	);
+	var isSse = f.transport === "sse";
 
 	function onAdd() {
 		if (needsConfig && !configuring.value) {
@@ -170,9 +238,34 @@ function FeaturedCard(props) {
 			return;
 		}
 		installing.value = true;
+		if (isSse) {
+			var url = (urlVal.value || "").trim();
+			if (!url) {
+				showToast("Remote MCP servers require a URL", "error");
+				installing.value = false;
+				return;
+			}
+			addServer({
+				name: f.name,
+				command: "",
+				args: [],
+				env: {},
+				transport: "sse",
+				url,
+			}).then(() => {
+				installing.value = false;
+				configuring.value = false;
+			});
+			return;
+		}
 		var argsList = argsVal.value.split(/\s+/).filter(Boolean);
 		var env = parseEnvLines(envVal.value);
-		addServer(f.name, f.command, argsList, env).then(() => {
+		addServer({
+			name: f.name,
+			command: f.command,
+			args: argsList,
+			env,
+		}).then(() => {
 			installing.value = false;
 			configuring.value = false;
 		});
@@ -181,12 +274,13 @@ function FeaturedCard(props) {
 	return html`<div class="mb-1">
     <div class="provider-item">
       <div class="flex-1 min-w-0">
-        <div class="provider-item-name font-mono text-sm">${f.name}</div>
-        <div class="text-xs text-[var(--muted)] mt-0.5 flex gap-3 items-center">
-          <span>${f.desc}</span>
-          ${needsConfig && html`<span class="text-[0.6rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">config required</span>`}
-        </div>
-      </div>
+	        <div class="provider-item-name font-mono text-sm">${f.name}</div>
+	        <div class="text-xs text-[var(--muted)] mt-0.5 flex gap-3 items-center">
+	          <span>${f.desc}</span>
+	          <span class="text-[0.6rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${transportLabel(f.transport)}</span>
+	          ${needsConfig && html`<span class="text-[0.6rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">config required</span>`}
+	        </div>
+	      </div>
       <button onClick=${onAdd} disabled=${installing.value}
         class="shrink-0 whitespace-nowrap provider-btn provider-btn-sm">
         ${featuredButtonLabel(installing.value, configuring.value, needsConfig)}
@@ -195,10 +289,10 @@ function FeaturedCard(props) {
     ${
 			configuring.value &&
 			html`<div class="px-3 pb-3 border border-t-0 border-[var(--border)] rounded-b-[var(--radius-sm)]">
-        <${ConfigForm} server=${f} argsVal=${argsVal} envVal=${envVal} onCancel=${() => {
-					configuring.value = false;
-				}} />
-      </div>`
+	        <${ConfigForm} server=${f} argsVal=${argsVal} envVal=${envVal} urlVal=${urlVal} onCancel=${() => {
+						configuring.value = false;
+					}} />
+	      </div>`
 		}
   </div>`;
 }
@@ -277,20 +371,14 @@ function InstallBox() {
 		adding.value = true;
 		if (isSse) {
 			var sseName = detectedName || "remote";
-			sendRpc("mcp.add", {
+			addServer({
 				name: sseName,
 				command: "",
 				args: [],
 				env: {},
 				transport: "sse",
 				url: sseUrl.value.trim(),
-			}).then((res) => {
-				if (res?.ok) {
-					showToast(`Added MCP tool "${res.payload?.name || sseName}"`, "success");
-				} else {
-					showToast(`Failed: ${res?.error?.message || res?.error || "unknown error"}`, "error");
-				}
-				refreshServers();
+			}).then(() => {
 				adding.value = false;
 				sseUrl.value = "";
 			});
@@ -301,7 +389,12 @@ function InstallBox() {
 		var argsList = parts.slice(1);
 		var name = detectedName || command;
 		var env = parseEnvLines(envVal.value);
-		addServer(name, command, argsList, env).then(() => {
+		addServer({
+			name,
+			command,
+			args: argsList,
+			env,
+		}).then(() => {
 			adding.value = false;
 			cmdLine.value = "";
 			envVal.value = "";
@@ -340,15 +433,16 @@ function InstallBox() {
     ${
 			isSse &&
 			html`<div class="project-edit-group mb-2">
-      <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
-      <input type="text" class="provider-key-input w-full font-mono" placeholder="https://mcp.example.com/mcp"
-        value=${sseUrl.value}
-        onInput=${(e) => {
-					sseUrl.value = e.target.value;
-				}}
-        onKeyDown=${onKey} />
-      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
-    </div>`
+	      <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
+	      <input type="text" class="provider-key-input w-full font-mono" placeholder="https://mcp.linear.app/mcp"
+	        value=${sseUrl.value}
+	        onInput=${(e) => {
+						sseUrl.value = e.target.value;
+					}}
+	        onKeyDown=${onKey} />
+	      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
+	      <div class="text-xs text-[var(--muted)] mt-1">If the server requires OAuth, your browser opens for sign-in when you enable or restart it.</div>
+	    </div>`
 		}
     ${
 			showEnv.value &&
@@ -362,18 +456,21 @@ function InstallBox() {
 					}} />
       </div>`
 		}
-    <div class="flex gap-2 items-center">
-      <button class="provider-btn" onClick=${onAdd} disabled=${adding.value || !canAdd}>
-        ${adding.value ? "Adding\u2026" : "Add"}
-      </button>
-      <button onClick=${() => {
-				showEnv.value = !showEnv.value;
-			}}
-        class="provider-btn provider-btn-secondary provider-btn-sm whitespace-nowrap">
-        ${showEnv.value ? "Hide env vars" : "+ Environment variables"}
-      </button>
-    </div>
-  </div>`;
+	    <div class="flex gap-2 items-center">
+	      <button class="provider-btn" onClick=${onAdd} disabled=${adding.value || !canAdd}>
+	        ${adding.value ? "Adding\u2026" : "Add"}
+	      </button>
+	      ${
+					!isSse &&
+					html`<button onClick=${() => {
+						showEnv.value = !showEnv.value;
+					}}
+	        class="provider-btn provider-btn-secondary provider-btn-sm whitespace-nowrap">
+	        ${showEnv.value ? "Hide env vars" : "+ Environment variables"}
+	      </button>`
+				}
+	    </div>
+	  </div>`;
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI component with multiple states
@@ -382,10 +479,15 @@ function ServerCard({ server }) {
 	var tools = useSignal(null);
 	var toggling = useSignal(false);
 	var editing = useSignal(false);
+	var editTransport = useSignal("stdio");
 	var editCmd = useSignal("");
 	var editArgs = useSignal("");
 	var editEnv = useSignal("");
+	var editUrl = useSignal("");
 	var saving = useSignal(false);
+	var reauthing = useSignal(false);
+	var isSse = (server.transport || "stdio") === "sse";
+	var authState = server.auth_state || "not_required";
 
 	async function toggleTools() {
 		expanded.value = !expanded.value;
@@ -395,10 +497,25 @@ function ServerCard({ server }) {
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: OAuth-pending and enable/disable branches are handled inline for clarity.
 	async function toggleEnabled() {
 		toggling.value = true;
 		var method = server.enabled ? "mcp.disable" : "mcp.enable";
-		await sendRpc(method, { name: server.name });
+		var payload = server.enabled ? { name: server.name } : { name: server.name, redirectUri: oauthCallbackUrl() };
+		var res = await sendRpc(method, payload);
+		if (res?.ok) {
+			if (res?.payload?.oauthPending) {
+				showToast(`OAuth required for "${server.name}"`, "success");
+				if (res?.payload?.authUrl) {
+					window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+				}
+			} else {
+				showToast(`${server.enabled ? "Disabled" : "Enabled"} "${server.name}"`, "success");
+			}
+		} else {
+			var msg = res?.error?.message || res?.error || "unknown error";
+			showToast(`Failed to ${server.enabled ? "disable" : "enable"}: ${msg}`, "error");
+		}
 		await refreshServers();
 		toggling.value = false;
 	}
@@ -409,26 +526,82 @@ function ServerCard({ server }) {
 		await refreshServers();
 	}
 
+	async function reauth(e) {
+		e.stopPropagation();
+		reauthing.value = true;
+		var res = await sendRpc("mcp.reauth", {
+			name: server.name,
+			redirectUri: oauthCallbackUrl(),
+		});
+		if (res?.ok) {
+			if (res?.payload?.authUrl) {
+				window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+			}
+			showToast(`OAuth started for "${server.name}"`, "success");
+		} else {
+			var msg = res?.error?.message || res?.error || "unknown error";
+			showToast(`Failed to re-auth: ${msg}`, "error");
+		}
+		reauthing.value = false;
+		await refreshServers();
+	}
+
+	async function connectAuth(e) {
+		e.stopPropagation();
+		reauthing.value = true;
+		try {
+			await startMcpOAuth(server.name, server.auth_url || null);
+			showToast(`OAuth started for "${server.name}"`, "success");
+		} catch (error) {
+			showToast(`Failed to start OAuth: ${error.message}`, "error");
+		}
+		reauthing.value = false;
+		await refreshServers();
+	}
+
 	function startEdit(e) {
 		e.stopPropagation();
+		editTransport.value = server.transport || "stdio";
 		editCmd.value = server.command || "";
 		editArgs.value = (server.args || []).join(" ");
 		editEnv.value = Object.entries(server.env || {})
 			.map(([k, v]) => `${k}=${v}`)
 			.join("\n");
+		editUrl.value = server.url || "";
 		editing.value = true;
 	}
 
 	async function saveEdit() {
 		saving.value = true;
-		var argsList = editArgs.value.split(/\s+/).filter(Boolean);
-		var env = parseEnvLines(editEnv.value);
-		var res = await sendRpc("mcp.update", {
+		var transport = editTransport.value === "sse" ? "sse" : "stdio";
+		var payload = {
 			name: server.name,
-			command: editCmd.value.trim(),
-			args: argsList,
-			env,
-		});
+			transport,
+		};
+		if (transport === "sse") {
+			var url = editUrl.value.trim();
+			if (!url) {
+				showToast("Remote MCP servers require a URL", "error");
+				saving.value = false;
+				return;
+			}
+			payload.command = "";
+			payload.args = [];
+			payload.env = {};
+			payload.url = url;
+		} else {
+			var command = editCmd.value.trim();
+			if (!command) {
+				showToast("Local stdio servers require a command", "error");
+				saving.value = false;
+				return;
+			}
+			payload.command = command;
+			payload.args = editArgs.value.split(/\s+/).filter(Boolean);
+			payload.env = parseEnvLines(editEnv.value);
+			payload.url = null;
+		}
+		var res = await sendRpc("mcp.update", payload);
 		if (res?.ok) {
 			showToast(`Updated "${server.name}"`, "success");
 			editing.value = false;
@@ -460,6 +633,7 @@ function ServerCard({ server }) {
         <${StatusBadge} state=${server.state} />
         <span class="font-mono text-sm font-medium text-[var(--text-strong)]">${server.name}</span>
         <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${server.state || "stopped"}</span>
+        <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${transportLabel(server.transport)}</span>
         <span class="text-xs text-[var(--muted)]">${server.tool_count} tool${server.tool_count !== 1 ? "s" : ""}${server.state === "running" && server.tool_count > 0 ? ` · ~${server.tool_count * 300} tokens` : ""}</span>
       </div>
       <div class="flex items-center gap-1.5">
@@ -475,6 +649,11 @@ function ServerCard({ server }) {
 					restart();
 				}} disabled=${!server.enabled}
           class="provider-btn provider-btn-secondary provider-btn-sm">Restart</button>
+        ${
+					isSse &&
+					html`<button onClick=${reauth} disabled=${reauthing.value || !server.enabled}
+          class="provider-btn provider-btn-secondary provider-btn-sm">${reauthing.value ? "\u2026" : "Re-auth"}</button>`
+				}
         <button onClick=${remove}
           class="provider-btn provider-btn-danger provider-btn-sm">Remove</button>
       </div>
@@ -482,6 +661,33 @@ function ServerCard({ server }) {
     ${
 			editing.value &&
 			html`<div class="px-3 pb-3 border border-t-0 border-[var(--border)] rounded-b-[var(--radius-sm)]" onClick=${(e) => e.stopPropagation()}>
+	        <div class="project-edit-group mb-2 mt-2">
+	          <div class="text-xs text-[var(--muted)] mb-1">Transport</div>
+	          <div class="flex gap-2">
+	            <button onClick=${() => {
+								editTransport.value = "stdio";
+							}}
+	              class="provider-btn provider-btn-sm ${editTransport.value === "stdio" ? "" : "provider-btn-secondary"}">Stdio (local)</button>
+	            <button onClick=${() => {
+								editTransport.value = "sse";
+							}}
+	              class="provider-btn provider-btn-sm ${editTransport.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
+	          </div>
+	        </div>
+	        ${
+						editTransport.value === "sse" &&
+						html`<div class="project-edit-group mb-2">
+	          <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
+	          <input type="text" class="provider-key-input w-full font-mono" value=${editUrl.value}
+	            onInput=${(e) => {
+								editUrl.value = e.target.value;
+							}} />
+	          <div class="text-xs text-[var(--muted)] mt-1">OAuth (if required) runs in your browser when the server is enabled.</div>
+	        </div>`
+					}
+	        ${
+						editTransport.value !== "sse" &&
+						html`<div>
         <div class="project-edit-group mb-2 mt-2">
           <div class="text-xs text-[var(--muted)] mb-1">Command</div>
           <input type="text" class="provider-key-input w-full font-mono" value=${editCmd.value}
@@ -504,6 +710,8 @@ function ServerCard({ server }) {
 							editEnv.value = e.target.value;
 						}} />
         </div>
+        </div>`
+					}
         <div class="flex gap-2">
           <button class="provider-btn" onClick=${saveEdit} disabled=${saving.value}>
             ${saving.value ? "Saving\u2026" : "Save"}
@@ -518,10 +726,37 @@ function ServerCard({ server }) {
     ${
 			expanded.value &&
 			html`<div class="skills-repo-detail" style="display:block">
-      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+      ${
+				isSse
+					? html`<div>
+	      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+	        <span class="opacity-60">URL</span>
+	        <code class="font-mono text-[var(--text)]">${server.url || "(missing URL)"}</code>
+	      </div>
+	      <div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+	        <span class="opacity-60">AUTH</span>
+	        <span class="${authState === "failed" ? "text-[var(--error)]" : "text-[var(--text)]"}">${authStateLabel(authState)}</span>
+	      </div>
+	      ${
+					server.auth_url &&
+					html`<div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+	        <span class="opacity-60">AUTH URL</span>
+	        <code class="font-mono text-[var(--text)] overflow-hidden text-ellipsis whitespace-nowrap">${server.auth_url}</code>
+	      </div>`
+				}
+	      ${
+					(authState === "awaiting_browser" || authState === "failed") &&
+					html`<div class="py-1.5">
+	        <button onClick=${connectAuth} disabled=${reauthing.value}
+	          class="provider-btn provider-btn-secondary provider-btn-sm">${reauthing.value ? "\u2026" : "Connect OAuth"}</button>
+	      </div>`
+				}
+	    </div>`
+					: html`<div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
         <span class="opacity-60">$</span>
         <code class="font-mono text-[var(--text)]">${server.command} ${(server.args || []).join(" ")}</code>
-      </div>
+      </div>`
+			}
       ${!tools.value && html`<div class="text-[var(--muted)] text-sm py-2">Loading tools\u2026</div>`}
       ${
 				tools.value &&
@@ -550,7 +785,7 @@ function ConfiguredServersSection() {
 	return html`<div>
     <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Configured MCP Servers</h3>
     <div>
-      ${(!s || s.length === 0) && !loading.value && html`<div class="p-3 text-[var(--muted)] text-sm">No MCP tools configured. Add one from the popular list above or enter a custom command.</div>`}
+      ${(!s || s.length === 0) && !loading.value && html`<div class="p-3 text-[var(--muted)] text-sm">No MCP tools configured. Add one from the popular list above or enter a custom stdio command / remote URL.</div>`}
       ${s.map((server) => html`<${ServerCard} key=${server.name} server=${server} />`)}
     </div>
   </div>`;
@@ -579,25 +814,25 @@ function McpPage() {
         <p class="text-sm text-[var(--text)] mb-2.5">
           <strong class="text-[var(--text-strong)]">MCP (Model Context Protocol)</strong> tools extend the AI agent with external capabilities — file access, web fetch, database queries, code search, and more.
         </p>
-        <div class="flex items-center gap-2 my-3 px-3.5 py-2.5 bg-[var(--surface)] rounded-[var(--radius-sm)] font-mono text-xs text-[var(--text-strong)]">
-          <span class="opacity-50">Agent</span>
-          <span class="text-[var(--accent)]">\u2192</span>
-          <span>Moltis</span>
-          <span class="text-[var(--accent)]">\u2192</span>
-          <span>Local MCP process</span>
-          <span class="text-[var(--accent)]">\u2192</span>
-          <span class="opacity-50">External API</span>
-        </div>
-        <p class="text-xs text-[var(--muted)]">
-          Each tool runs as a <strong>local process</strong> on your machine (spawned via npm/uvx). Moltis connects to it over stdio and the process makes outbound API calls on your behalf using your tokens. No data is sent to third-party MCP hosts.
-        </p>
-      </div>
-      <div class="skills-warn max-w-[600px]">
-        <div class="skills-warn-title">\u26a0\ufe0f MCP servers run as local processes \u2014 review before enabling</div>
-        <div>Each MCP server runs with <strong>your full system privileges</strong>. A malicious or compromised server can read your files, exfiltrate credentials, or execute arbitrary commands \u2014 just like any local process.</div>
-        <div style="margin-top:4px"><strong>Triple-check the source code</strong> of any MCP server before enabling it. Only install servers from authors you trust, and keep them updated.</div>
-        <div style="margin-top:4px">Each enabled server also adds tool definitions to every chat session's context, consuming tokens. Only enable servers you actively need.</div>
-      </div>
+	        <div class="flex items-center gap-2 my-3 px-3.5 py-2.5 bg-[var(--surface)] rounded-[var(--radius-sm)] font-mono text-xs text-[var(--text-strong)]">
+	          <span class="opacity-50">Agent</span>
+	          <span class="text-[var(--accent)]">\u2192</span>
+	          <span>Moltis</span>
+	          <span class="text-[var(--accent)]">\u2192</span>
+	          <span>Local process / Remote MCP host</span>
+	          <span class="text-[var(--accent)]">\u2192</span>
+	          <span class="opacity-50">External API</span>
+	        </div>
+	        <p class="text-xs text-[var(--muted)]">
+	          Moltis supports both <strong>local stdio MCP processes</strong> (spawned via npm/uvx) and <strong>remote Streamable HTTP/SSE servers</strong>. Remote servers may prompt browser OAuth when first enabled.
+	        </p>
+	      </div>
+	      <div class="skills-warn max-w-[600px]">
+	        <div class="skills-warn-title">\u26a0\ufe0f Review MCP trust boundaries before enabling</div>
+	        <div>Local stdio servers run with <strong>your full system privileges</strong>. A malicious or compromised local server can read files, exfiltrate credentials, or execute commands.</div>
+	        <div class="mt-1">Remote SSE servers can receive your tool inputs and act in linked external systems. Use trusted hosts and only scopes you intend to grant.</div>
+	        <div class="mt-1">Each enabled server also adds tool definitions to chat context and consumes tokens, enable only what you actively need.</div>
+	      </div>
       <${InstallBox} />
       <${FeaturedSection} />
       <${ConfiguredServersSection} />

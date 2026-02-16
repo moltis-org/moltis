@@ -157,6 +157,25 @@ test.describe("Onboarding wizard", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("server started footer timestamp is hydrated", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+
+		await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toMatch(/^\/(?:onboarding|chats\/.+)$/);
+		if (/^\/chats\//.test(new URL(page.url()).pathname)) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		const startedTime = page.locator(".onboarding-card time[data-epoch-ms]").first();
+		await expect(startedTime).toBeVisible();
+		await expect
+			.poll(async () => ((await startedTime.textContent()) || "").trim(), { timeout: 10_000 })
+			.not.toBe("");
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("step indicator shows first step", async ({ page }) => {
 		await page.goto("/onboarding");
 		await page.waitForLoadState("networkidle");

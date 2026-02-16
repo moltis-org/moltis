@@ -42,7 +42,7 @@ fn is_context_window_error(msg: &str) -> bool {
 }
 
 /// Error patterns that indicate a transient server error worth retrying.
-const RETRYABLE_PATTERNS: &[&str] = &[
+const RETRYABLE_SERVER_PATTERNS: &[&str] = &[
     "http 500",
     "http 502",
     "http 503",
@@ -58,12 +58,132 @@ const RETRYABLE_PATTERNS: &[&str] = &[
 /// Check if an error looks like a transient provider failure that may
 /// succeed on retry (5xx, overloaded, etc.).
 fn is_retryable_server_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    RETRYABLE_PATTERNS.iter().any(|p| lower.contains(p))
+    let lower = msg.to_ascii_lowercase();
+    RETRYABLE_SERVER_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
-/// Delay before retrying a failed LLM call.
-const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Error patterns that indicate provider-side rate limiting.
+const RATE_LIMIT_PATTERNS: &[&str] = &[
+    "http 429",
+    "status=429",
+    "status 429",
+    "status: 429",
+    "too many requests",
+    "rate limit",
+    "rate_limit",
+    "quota exceeded",
+];
+
+fn is_rate_limit_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    RATE_LIMIT_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// Base delay for non-rate-limit transient retries.
+const SERVER_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Rate-limit retries use exponential backoff with a cap.
+const RATE_LIMIT_INITIAL_RETRY_MS: u64 = 2_000;
+const RATE_LIMIT_MAX_RETRY_MS: u64 = 60_000;
+const RATE_LIMIT_MAX_RETRIES: u8 = 10;
+
+fn next_rate_limit_retry_ms(previous_ms: Option<u64>) -> u64 {
+    previous_ms
+        .map(|ms| ms.saturating_mul(2))
+        .unwrap_or(RATE_LIMIT_INITIAL_RETRY_MS)
+        .clamp(RATE_LIMIT_INITIAL_RETRY_MS, RATE_LIMIT_MAX_RETRY_MS)
+}
+
+fn parse_retry_delay_ms_from_fragment(
+    fragment: &str,
+    unit_default_ms: bool,
+    max_ms: u64,
+) -> Option<u64> {
+    let start = fragment.find(|c: char| c.is_ascii_digit())?;
+    let tail = &fragment[start..];
+    let digits_len = tail.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits_len == 0 {
+        return None;
+    }
+    let amount = tail[..digits_len].parse::<u64>().ok()?;
+    let unit = tail[digits_len..].trim_start();
+
+    let ms = if unit.starts_with("ms") || unit.starts_with("millisecond") {
+        amount
+    } else if unit.starts_with("sec") || unit.starts_with("second") || unit.starts_with('s') {
+        amount.saturating_mul(1_000)
+    } else if unit.starts_with("min") || unit.starts_with("minute") || unit.starts_with('m') {
+        amount.saturating_mul(60_000)
+    } else if unit_default_ms {
+        amount
+    } else {
+        amount.saturating_mul(1_000)
+    };
+
+    Some(ms.clamp(1, max_ms))
+}
+
+/// Extract retry delay hints embedded in provider error messages.
+///
+/// Supports patterns like:
+/// - `retry_after_ms=1234`
+/// - `Retry-After: 30`
+/// - `retry after 30s`
+/// - `retry in 45 seconds`
+fn extract_retry_after_ms(msg: &str, max_ms: u64) -> Option<u64> {
+    let lower = msg.to_ascii_lowercase();
+    for (needle, default_ms) in [
+        ("retry_after_ms=", true),
+        ("retry-after-ms=", true),
+        ("retry_after=", false),
+        ("retry-after:", false),
+        ("retry after ", false),
+        ("retry in ", false),
+    ] {
+        if let Some(idx) = lower.find(needle) {
+            let fragment = &lower[idx + needle.len()..];
+            if let Some(ms) = parse_retry_delay_ms_from_fragment(fragment, default_ms, max_ms) {
+                return Some(ms);
+            }
+        }
+    }
+    None
+}
+
+fn next_retry_delay_ms(
+    msg: &str,
+    server_retries_remaining: &mut u8,
+    rate_limit_retries_remaining: &mut u8,
+    rate_limit_backoff_ms: &mut Option<u64>,
+) -> Option<u64> {
+    if is_rate_limit_error(msg) {
+        if *rate_limit_retries_remaining == 0 {
+            return None;
+        }
+        *rate_limit_retries_remaining -= 1;
+
+        // Keep exponential state advancing even when the provider gives a
+        // Retry-After hint, so future retries remain bounded and predictable.
+        let current_backoff = *rate_limit_backoff_ms;
+        *rate_limit_backoff_ms = Some(next_rate_limit_retry_ms(current_backoff));
+
+        let hinted_ms = extract_retry_after_ms(msg, RATE_LIMIT_MAX_RETRY_MS);
+        let delay_ms = hinted_ms
+            .or(*rate_limit_backoff_ms)
+            .unwrap_or(RATE_LIMIT_INITIAL_RETRY_MS);
+        return Some(delay_ms.clamp(1, RATE_LIMIT_MAX_RETRY_MS));
+    }
+
+    if is_retryable_server_error(msg) {
+        if *server_retries_remaining == 0 {
+            return None;
+        }
+        *server_retries_remaining -= 1;
+        return Some(SERVER_RETRY_DELAY.as_millis() as u64);
+    }
+
+    None
+}
 
 /// Typed errors from the agent loop.
 #[derive(Debug, thiserror::Error)]
@@ -138,7 +258,10 @@ pub enum RunnerEvent {
         tool_calls_made: usize,
     },
     /// A transient LLM error occurred and the runner will retry.
-    RetryingAfterError(String),
+    RetryingAfterError {
+        error: String,
+        delay_ms: u64,
+    },
 }
 
 /// Try to parse a tool call from the LLM's text response.
@@ -710,7 +833,9 @@ pub async fn run_agent_loop_with_context(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
-    let mut retries_remaining: u8 = 1;
+    let mut server_retries_remaining: u8 = 1;
+    let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
+    let mut rate_limit_backoff_ms: Option<u64> = None;
 
     loop {
         iterations += 1;
@@ -773,18 +898,27 @@ pub async fn run_agent_loop_with_context(
                     if is_context_window_error(&msg) {
                         return Err(AgentRunError::ContextWindowExceeded(msg));
                     }
-                    if retries_remaining > 0 && is_retryable_server_error(&msg) {
-                        retries_remaining -= 1;
+                    if let Some(delay_ms) = next_retry_delay_ms(
+                        &msg,
+                        &mut server_retries_remaining,
+                        &mut rate_limit_retries_remaining,
+                        &mut rate_limit_backoff_ms,
+                    ) {
                         iterations -= 1;
                         warn!(
                             error = %msg,
-                            retries_remaining,
+                            delay_ms,
+                            server_retries_remaining,
+                            rate_limit_retries_remaining,
                             "transient LLM error, retrying after delay"
                         );
                         if let Some(cb) = on_event {
-                            cb(RunnerEvent::RetryingAfterError(msg));
+                            cb(RunnerEvent::RetryingAfterError {
+                                error: msg,
+                                delay_ms,
+                            });
                         }
-                        tokio::time::sleep(RETRY_DELAY).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         continue;
                     }
                     return Err(AgentRunError::Other(e));
@@ -1178,7 +1312,9 @@ pub async fn run_agent_loop_streaming(
     let mut total_tool_calls = 0;
     let mut total_input_tokens: u32 = 0;
     let mut total_output_tokens: u32 = 0;
-    let mut retries_remaining: u8 = 1;
+    let mut server_retries_remaining: u8 = 1;
+    let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
+    let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut raw_llm_responses: Vec<serde_json::Value> = Vec::new();
 
     loop {
@@ -1358,24 +1494,33 @@ pub async fn run_agent_loop_streaming(
             cb(RunnerEvent::ThinkingDone);
         }
 
-        // Handle stream error — retry once on transient server failures.
+        // Handle stream errors — retry on transient failures/rate limits.
         if let Some(err) = stream_error {
             if is_context_window_error(&err) {
                 return Err(AgentRunError::ContextWindowExceeded(err));
             }
-            if retries_remaining > 0 && is_retryable_server_error(&err) {
-                retries_remaining -= 1;
+            if let Some(delay_ms) = next_retry_delay_ms(
+                &err,
+                &mut server_retries_remaining,
+                &mut rate_limit_retries_remaining,
+                &mut rate_limit_backoff_ms,
+            ) {
                 // Don't count the failed attempt as an iteration.
                 iterations -= 1;
                 warn!(
                     error = %err,
-                    retries_remaining,
+                    delay_ms,
+                    server_retries_remaining,
+                    rate_limit_retries_remaining,
                     "transient LLM error, retrying after delay"
                 );
                 if let Some(cb) = on_event {
-                    cb(RunnerEvent::RetryingAfterError(err));
+                    cb(RunnerEvent::RetryingAfterError {
+                        error: err,
+                        delay_ms,
+                    });
                 }
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 continue;
             }
             return Err(AgentRunError::Other(anyhow::anyhow!(err)));
@@ -4050,9 +4195,48 @@ mod tests {
         assert!(!is_retryable_server_error("invalid API key"));
     }
 
+    #[test]
+    fn test_is_rate_limit_error() {
+        assert!(is_rate_limit_error("HTTP 429 Too Many Requests"));
+        assert!(is_rate_limit_error("status=429 upstream limit"));
+        assert!(is_rate_limit_error("rate_limit_exceeded"));
+        assert!(is_rate_limit_error("quota exceeded"));
+        assert!(!is_rate_limit_error("HTTP 500 Internal Server Error"));
+    }
+
+    #[test]
+    fn test_extract_retry_after_ms() {
+        assert_eq!(
+            extract_retry_after_ms("Anthropic API error (retry_after_ms=1234)", 60_000),
+            Some(1234)
+        );
+        assert_eq!(
+            extract_retry_after_ms("HTTP 429 Retry-After: 15", 60_000),
+            Some(15_000)
+        );
+        assert_eq!(
+            extract_retry_after_ms("rate limit exceeded, retry in 7 seconds", 60_000),
+            Some(7_000)
+        );
+    }
+
+    #[test]
+    fn test_next_rate_limit_retry_ms_doubles_and_caps() {
+        assert_eq!(next_rate_limit_retry_ms(None), 2_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(2_000)), 4_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(30_000)), 60_000);
+        assert_eq!(next_rate_limit_retry_ms(Some(60_000)), 60_000);
+    }
+
     /// Provider that fails with a 500 on the first call, succeeds on the second.
     struct TransientFailProvider {
         call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    /// Provider that fails with 429 for the first N calls, then succeeds.
+    struct RateLimitFailProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+        fail_count: usize,
     }
 
     #[async_trait]
@@ -4108,6 +4292,59 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl LlmProvider for RateLimitFailProvider {
+        fn name(&self) -> &str {
+            "rate-limit-fail"
+        }
+
+        fn id(&self) -> &str {
+            "rate-limit-fail-model"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < self.fail_count {
+                bail!("HTTP 429 Too Many Requests: retry_after_ms=1")
+            } else {
+                Ok(CompletionResponse {
+                    text: Some("Recovered from rate limit".into()),
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            let count = self
+                .call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if count < self.fail_count {
+                Box::pin(tokio_stream::once(StreamEvent::Error(
+                    "HTTP 429 Too Many Requests: retry_after_ms=1".into(),
+                )))
+            } else {
+                Box::pin(tokio_stream::iter(vec![
+                    StreamEvent::Delta("Recovered from rate limit".into()),
+                    StreamEvent::Done(Usage::default()),
+                ]))
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_retry_on_transient_error_non_streaming() {
         let provider: Arc<dyn LlmProvider> = Arc::new(TransientFailProvider {
@@ -4148,5 +4385,85 @@ mod tests {
         .await;
         assert!(result.is_ok(), "should recover after retry: {result:?}");
         assert_eq!(result.unwrap().text, "Recovered!");
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_rate_limit_non_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(RateLimitFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            fail_count: 2,
+        });
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            Some(&on_event),
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retries: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered from rate limit");
+
+        let retry_events = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunnerEvent::RetryingAfterError { delay_ms, .. } => Some(*delay_ms),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(retry_events.len(), 2, "expected two retry events");
+        assert!(retry_events.iter().all(|delay| *delay >= 1));
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_rate_limit_streaming() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(RateLimitFailProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+            fail_count: 2,
+        });
+        let tools = ToolRegistry::new();
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "sys",
+            &UserContent::text("hello"),
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "should recover after retries: {result:?}");
+        assert_eq!(result.unwrap().text, "Recovered from rate limit");
+
+        let retry_events = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                RunnerEvent::RetryingAfterError { delay_ms, .. } => Some(*delay_ms),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(retry_events.len(), 2, "expected two retry events");
+        assert!(retry_events.iter().all(|delay| *delay >= 1));
     }
 }

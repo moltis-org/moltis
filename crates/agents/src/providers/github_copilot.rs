@@ -486,9 +486,16 @@ impl LlmProvider for GitHubCopilotProvider {
 
         let status = http_resp.status();
         if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
             warn!(status = %status, body = %body_text, "github-copilot API error");
-            anyhow::bail!("GitHub Copilot API error HTTP {status}: {body_text}");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("GitHub Copilot API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
@@ -566,8 +573,12 @@ impl LlmProvider for GitHubCopilotProvider {
                 Ok(r) => {
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
-                        yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
                         return;
                     }
                     r

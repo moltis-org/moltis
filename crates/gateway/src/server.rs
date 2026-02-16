@@ -1288,7 +1288,9 @@ pub async fn start_gateway(
     )
     .with_env_overrides(config_env_overrides.clone());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
-    services.provider_setup = Arc::new(provider_setup);
+    let provider_setup_service = Arc::new(provider_setup);
+    services.provider_setup =
+        Arc::clone(&provider_setup_service) as Arc<dyn crate::services::ProviderSetupService>;
 
     // Wire live MCP service.
     let mcp_configured_count;
@@ -1304,6 +1306,15 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
+                let oauth = entry
+                    .oauth
+                    .as_ref()
+                    .map(|o| moltis_mcp::registry::McpOAuthConfig {
+                        client_id: o.client_id.clone(),
+                        auth_url: o.auth_url.clone(),
+                        token_url: o.token_url.clone(),
+                        scopes: o.scopes.clone(),
+                    });
                 merged
                     .servers
                     .insert(name.clone(), moltis_mcp::McpServerConfig {
@@ -1313,6 +1324,7 @@ pub async fn start_gateway(
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
+                        oauth,
                     });
             }
         }
@@ -2146,158 +2158,166 @@ pub async fn start_gateway(
 
         let mem_cfg = &config.memory;
 
-        // 1. If user explicitly configured an embedding provider, use it.
-        if let Some(ref provider_name) = mem_cfg.provider {
-            match provider_name.as_str() {
-                "local" => {
-                    // Local GGUF embeddings require the `local-embeddings` feature on moltis-memory.
-                    #[cfg(feature = "local-embeddings")]
-                    {
-                        let cache_dir = mem_cfg
-                            .base_url
-                            .as_ref()
-                            .map(PathBuf::from)
-                            .unwrap_or_else(
-                                moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::default_cache_dir,
-                            );
-                        match moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::ensure_model(
-                            cache_dir,
-                        )
-                        .await
+        if mem_cfg.disable_rag {
+            info!("memory: RAG disabled via memory.disable_rag=true, using keyword-only search");
+        } else {
+            // 1. If user explicitly configured an embedding provider, use it.
+            if let Some(ref provider_name) = mem_cfg.provider {
+                match provider_name.as_str() {
+                    "local" => {
+                        // Local GGUF embeddings require the `local-embeddings` feature on moltis-memory.
+                        #[cfg(feature = "local-embeddings")]
                         {
-                            Ok(path) => {
-                                match moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::new(
-                                    path,
-                                ) {
-                                    Ok(p) => embedding_providers.push(("local-gguf".into(), Box::new(p))),
-                                    Err(e) => warn!("memory: failed to load local GGUF model: {e}"),
-                                }
-                            },
-                            Err(e) => warn!("memory: failed to ensure local model: {e}"),
+                            let cache_dir = mem_cfg
+                                .base_url
+                                .as_ref()
+                                .map(PathBuf::from)
+                                .unwrap_or_else(
+                                    moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::default_cache_dir,
+                                );
+                            match moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::ensure_model(
+                                cache_dir,
+                            )
+                            .await
+                            {
+                                Ok(path) => {
+                                    match moltis_memory::embeddings_local::LocalGgufEmbeddingProvider::new(
+                                        path,
+                                    ) {
+                                        Ok(p) => embedding_providers.push(("local-gguf".into(), Box::new(p))),
+                                        Err(e) => warn!("memory: failed to load local GGUF model: {e}"),
+                                    }
+                                },
+                                Err(e) => warn!("memory: failed to ensure local model: {e}"),
+                            }
                         }
-                    }
-                    #[cfg(not(feature = "local-embeddings"))]
-                    warn!(
-                        "memory: 'local' embedding provider requires the 'local-embeddings' feature"
-                    );
-                },
-                "ollama" | "custom" | "openai" => {
-                    let base_url = mem_cfg
-                        .base_url
-                        .clone()
-                        .unwrap_or_else(|| match provider_name.as_str() {
-                            "ollama" => "http://localhost:11434".into(),
-                            _ => "https://api.openai.com".into(),
+                        #[cfg(not(feature = "local-embeddings"))]
+                        warn!(
+                            "memory: 'local' embedding provider requires the 'local-embeddings' feature"
+                        );
+                    },
+                    "ollama" | "custom" | "openai" => {
+                        let base_url = mem_cfg.base_url.clone().unwrap_or_else(|| {
+                            match provider_name.as_str() {
+                                "ollama" => "http://localhost:11434".into(),
+                                _ => "https://api.openai.com".into(),
+                            }
                         });
-                    if provider_name == "ollama" {
-                        let model = mem_cfg.model.as_deref().unwrap_or("nomic-embed-text");
-                        ensure_ollama_model(&base_url, model).await;
-                    }
-                    let api_key = mem_cfg
-                        .api_key
-                        .as_ref()
-                        .map(|k| k.expose_secret().clone())
-                        .or_else(|| {
-                            env_value_with_overrides(&runtime_env_overrides, "OPENAI_API_KEY")
-                        })
-                        .unwrap_or_default();
+                        if provider_name == "ollama" {
+                            let model = mem_cfg.model.as_deref().unwrap_or("nomic-embed-text");
+                            ensure_ollama_model(&base_url, model).await;
+                        }
+                        let api_key = mem_cfg
+                            .api_key
+                            .as_ref()
+                            .map(|k| k.expose_secret().clone())
+                            .or_else(|| {
+                                env_value_with_overrides(&runtime_env_overrides, "OPENAI_API_KEY")
+                            })
+                            .unwrap_or_default();
+                        let mut e =
+                            moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
+                        if base_url != "https://api.openai.com" {
+                            e = e.with_base_url(base_url);
+                        }
+                        if let Some(ref model) = mem_cfg.model {
+                            // Use a sensible default dims; the API returns the actual dims.
+                            e = e.with_model(model.clone(), 1536);
+                        }
+                        embedding_providers.push((provider_name.clone(), Box::new(e)));
+                    },
+                    other => warn!("memory: unknown embedding provider '{other}'"),
+                }
+            }
+
+            // 2. Auto-detect: try Ollama health check.
+            if embedding_providers.is_empty() {
+                let ollama_ok = reqwest::Client::new()
+                    .get("http://localhost:11434/api/tags")
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send()
+                    .await
+                    .is_ok();
+                if ollama_ok {
+                    ensure_ollama_model("http://localhost:11434", "nomic-embed-text").await;
+                    let e = moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(
+                        String::new(),
+                    )
+                    .with_base_url("http://localhost:11434".into())
+                    .with_model("nomic-embed-text".into(), 768);
+                    embedding_providers.push(("ollama".into(), Box::new(e)));
+                    info!("memory: detected Ollama at localhost:11434");
+                }
+            }
+
+            // 3. Auto-detect: try remote API-key providers.
+            const EMBEDDING_CANDIDATES: &[(&str, &str, &str)] = &[
+                ("openai", "OPENAI_API_KEY", "https://api.openai.com"),
+                ("mistral", "MISTRAL_API_KEY", "https://api.mistral.ai/v1"),
+                (
+                    "openrouter",
+                    "OPENROUTER_API_KEY",
+                    "https://openrouter.ai/api/v1",
+                ),
+                ("groq", "GROQ_API_KEY", "https://api.groq.com/openai"),
+                ("xai", "XAI_API_KEY", "https://api.x.ai"),
+                ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com"),
+                ("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
+                ("minimax", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
+                ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
+                ("venice", "VENICE_API_KEY", "https://api.venice.ai/api/v1"),
+            ];
+
+            for (config_name, env_key, default_base) in EMBEDDING_CANDIDATES {
+                let key = effective_providers
+                    .get(config_name)
+                    .and_then(|e| e.api_key.as_ref().map(|k| k.expose_secret().clone()))
+                    .or_else(|| env_value_with_overrides(&runtime_env_overrides, env_key))
+                    .filter(|k| !k.is_empty());
+                if let Some(api_key) = key {
+                    let base = effective_providers
+                        .get(config_name)
+                        .and_then(|e| e.base_url.clone())
+                        .unwrap_or_else(|| default_base.to_string());
                     let mut e =
                         moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
-                    if base_url != "https://api.openai.com" {
-                        e = e.with_base_url(base_url);
+                    if base != "https://api.openai.com" {
+                        e = e.with_base_url(base);
                     }
-                    if let Some(ref model) = mem_cfg.model {
-                        // Use a sensible default dims; the API returns the actual dims.
-                        e = e.with_model(model.clone(), 1536);
-                    }
-                    embedding_providers.push((provider_name.clone(), Box::new(e)));
-                },
-                other => warn!("memory: unknown embedding provider '{other}'"),
-            }
-        }
-
-        // 2. Auto-detect: try Ollama health check.
-        if embedding_providers.is_empty() {
-            let ollama_ok = reqwest::Client::new()
-                .get("http://localhost:11434/api/tags")
-                .timeout(std::time::Duration::from_secs(2))
-                .send()
-                .await
-                .is_ok();
-            if ollama_ok {
-                ensure_ollama_model("http://localhost:11434", "nomic-embed-text").await;
-                let e =
-                    moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(String::new())
-                        .with_base_url("http://localhost:11434".into())
-                        .with_model("nomic-embed-text".into(), 768);
-                embedding_providers.push(("ollama".into(), Box::new(e)));
-                info!("memory: detected Ollama at localhost:11434");
-            }
-        }
-
-        // 3. Auto-detect: try remote API-key providers.
-        const EMBEDDING_CANDIDATES: &[(&str, &str, &str)] = &[
-            ("openai", "OPENAI_API_KEY", "https://api.openai.com"),
-            ("mistral", "MISTRAL_API_KEY", "https://api.mistral.ai/v1"),
-            (
-                "openrouter",
-                "OPENROUTER_API_KEY",
-                "https://openrouter.ai/api/v1",
-            ),
-            ("groq", "GROQ_API_KEY", "https://api.groq.com/openai"),
-            ("xai", "XAI_API_KEY", "https://api.x.ai"),
-            ("deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com"),
-            ("cerebras", "CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
-            ("minimax", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
-            ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
-            ("venice", "VENICE_API_KEY", "https://api.venice.ai/api/v1"),
-        ];
-
-        for (config_name, env_key, default_base) in EMBEDDING_CANDIDATES {
-            let key = effective_providers
-                .get(config_name)
-                .and_then(|e| e.api_key.as_ref().map(|k| k.expose_secret().clone()))
-                .or_else(|| env_value_with_overrides(&runtime_env_overrides, env_key))
-                .filter(|k| !k.is_empty());
-            if let Some(api_key) = key {
-                let base = effective_providers
-                    .get(config_name)
-                    .and_then(|e| e.base_url.clone())
-                    .unwrap_or_else(|| default_base.to_string());
-                let mut e = moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(api_key);
-                if base != "https://api.openai.com" {
-                    e = e.with_base_url(base);
+                    embedding_providers.push((config_name.to_string(), Box::new(e)));
                 }
-                embedding_providers.push((config_name.to_string(), Box::new(e)));
             }
         }
 
         // Build the final embedder: fallback chain, single provider, or keyword-only.
-        let embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>> =
-            if embedding_providers.is_empty() {
-                info!("memory: no embedding provider found, using keyword-only search");
-                None
-            } else {
-                let names: Vec<&str> = embedding_providers
-                    .iter()
-                    .map(|(n, _)| n.as_str())
-                    .collect();
-                if embedding_providers.len() == 1 {
-                    if let Some((name, provider)) = embedding_providers.into_iter().next() {
-                        info!(provider = %name, "memory: using single embedding provider");
-                        Some(provider)
-                    } else {
-                        None
-                    }
+        let embedder: Option<Box<dyn moltis_memory::embeddings::EmbeddingProvider>> = if mem_cfg
+            .disable_rag
+        {
+            None
+        } else if embedding_providers.is_empty() {
+            info!("memory: no embedding provider found, using keyword-only search");
+            None
+        } else {
+            let names: Vec<&str> = embedding_providers
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect();
+            if embedding_providers.len() == 1 {
+                if let Some((name, provider)) = embedding_providers.into_iter().next() {
+                    info!(provider = %name, "memory: using single embedding provider");
+                    Some(provider)
                 } else {
-                    info!(providers = ?names, active = names[0], "memory: fallback chain configured");
-                    Some(Box::new(
-                        moltis_memory::embeddings_fallback::FallbackEmbeddingProvider::new(
-                            embedding_providers,
-                        ),
-                    ))
+                    None
                 }
-            };
+            } else {
+                info!(providers = ?names, active = names[0], "memory: fallback chain configured");
+                Some(Box::new(
+                    moltis_memory::embeddings_fallback::FallbackEmbeddingProvider::new(
+                        embedding_providers,
+                    ),
+                ))
+            }
+        };
 
         let memory_db_path = data_dir.join("memory.db");
         let memory_db_url = format!("sqlite:{}?mode=rwc", memory_db_path.display());
@@ -2581,6 +2601,9 @@ pub async fn start_gateway(
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
     }
+
+    // Set the state on provider setup service for validation progress updates.
+    provider_setup_service.set_state(Arc::clone(&state));
 
     // Set the state on model service for broadcasting model update events.
     live_model_service.set_state(Arc::clone(&state));
@@ -3932,7 +3955,7 @@ static SPA_ROUTES: SpaRoutes = SpaRoutes {
     onboarding: "/onboarding",
     projects: "/projects",
     skills: "/skills",
-    crons: "/crons",
+    crons: "/settings/crons",
     monitoring: "/monitoring",
 };
 
@@ -4253,16 +4276,29 @@ async fn oauth_callback_handler(
             .into_response();
     };
 
-    match state
+    let completion_params = serde_json::json!({
+        "code": code,
+        "state": oauth_state,
+    });
+
+    let completion = match state
         .gateway
         .services
         .provider_setup
-        .oauth_complete(serde_json::json!({
-            "code": code,
-            "state": oauth_state,
-        }))
+        .oauth_complete(completion_params.clone())
         .await
     {
+        Ok(result) => Ok(result),
+        Err(provider_error) => state
+            .gateway
+            .services
+            .mcp
+            .oauth_complete(completion_params)
+            .await
+            .map_err(|mcp_error| (provider_error, mcp_error)),
+    };
+
+    match completion {
         Ok(_) => {
             let nonce = uuid::Uuid::new_v4().to_string();
             let html = format!(
@@ -4279,8 +4315,12 @@ async fn oauth_callback_handler(
             }
             resp
         },
-        Err(e) => {
-            tracing::warn!(error = %e, "OAuth callback completion failed");
+        Err((provider_error, mcp_error)) => {
+            tracing::warn!(
+                provider_error = %provider_error,
+                mcp_error = %mcp_error,
+                "OAuth callback completion failed"
+            );
             (
                 StatusCode::BAD_REQUEST,
                 Html(
@@ -6656,6 +6696,7 @@ pub(crate) async fn discover_and_build_hooks(
                 meta.events.clone(),
                 std::time::Duration::from_secs(meta.timeout),
                 meta.env.clone(),
+                Some(parsed.source_path.clone()),
             );
             registry.register(Arc::new(handler));
         }
