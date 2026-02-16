@@ -79,11 +79,17 @@ pub fn raw_model_id(model_id: &str) -> &str {
         .unwrap_or(model_id)
 }
 
-fn configured_model_for_provider<'a>(provider: &str, model_id: &'a str) -> &'a str {
-    match model_id.split_once(MODEL_ID_NAMESPACE_SEP) {
-        Some((cfg_provider, raw)) if cfg_provider == provider => raw,
-        _ => model_id,
-    }
+#[must_use]
+fn capability_model_id(model_id: &str) -> &str {
+    let raw = raw_model_id(model_id).trim();
+    raw.rsplit('/')
+        .next()
+        .filter(|id| !id.is_empty())
+        .unwrap_or(raw)
+}
+
+fn configured_model_for_provider(model_id: &str) -> &str {
+    raw_model_id(model_id)
 }
 
 fn configured_models_for_provider(config: &ProvidersConfig, provider: &str) -> Vec<String> {
@@ -95,7 +101,7 @@ fn configured_models_for_provider(config: &ProvidersConfig, provider: &str) -> V
     normalize_unique_models(
         configured
             .into_iter()
-            .map(|model| configured_model_for_provider(provider, model.trim()).to_string()),
+            .map(|model| configured_model_for_provider(model.trim()).to_string()),
     )
 }
 
@@ -324,7 +330,7 @@ fn resolve_api_key(
 /// Return the known context window size (in tokens) for a model ID.
 /// Falls back to 200,000 for unknown models.
 pub fn context_window_for_model(model_id: &str) -> u32 {
-    let model_id = raw_model_id(model_id);
+    let model_id = capability_model_id(model_id);
     // Codestral has the largest window at 256k.
     if model_id.starts_with("codestral") {
         return 256_000;
@@ -377,7 +383,7 @@ pub fn context_window_for_model(model_id: &str) -> u32 {
 /// patterns. This is applied both at discovery time and at display time so that
 /// non-chat models never appear in the UI.
 pub fn is_chat_capable_model(model_id: &str) -> bool {
-    let id = raw_model_id(model_id);
+    let id = capability_model_id(model_id);
     const NON_CHAT_PREFIXES: &[&str] = &[
         "dall-e",
         "gpt-image",
@@ -423,7 +429,7 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
 /// This is checked per-model rather than per-provider so that providers
 /// exposing mixed catalogs report accurate tool support.
 pub fn supports_tools_for_model(model_id: &str) -> bool {
-    let id = raw_model_id(model_id);
+    let id = capability_model_id(model_id);
     // Legacy completions-only models — no tool support
     if id.starts_with("babbage") || id.starts_with("davinci") {
         return false;
@@ -448,7 +454,7 @@ pub fn supports_tools_for_model(model_id: &str) -> bool {
 /// When true, the runner sends images as multimodal content blocks rather than
 /// stripping them from the context.
 pub fn supports_vision_for_model(model_id: &str) -> bool {
-    let model_id = raw_model_id(model_id);
+    let model_id = capability_model_id(model_id);
     // Claude models: all modern Claude models support vision
     if model_id.starts_with("claude-") {
         return true;
@@ -1763,6 +1769,10 @@ mod tests {
         assert_eq!(context_window_for_model("glm-4.6"), 128_000);
         assert_eq!(context_window_for_model("glm-4.5"), 128_000);
         assert_eq!(context_window_for_model("glm-4-32b-0414-128k"), 128_000);
+        assert_eq!(
+            context_window_for_model("custom-openrouter::openai/gpt-5.2"),
+            128_000
+        );
     }
 
     #[test]
@@ -1793,6 +1803,7 @@ mod tests {
         // GPT-4o variants support vision
         assert!(supports_vision_for_model("gpt-4o"));
         assert!(supports_vision_for_model("gpt-4o-mini"));
+        assert!(supports_vision_for_model("openrouter::openai/gpt-4o"));
 
         // GPT-4 turbo supports vision
         assert!(supports_vision_for_model("gpt-4-turbo"));
@@ -1807,6 +1818,9 @@ mod tests {
 
         // Gemini supports vision
         assert!(supports_vision_for_model("gemini-2.0-flash"));
+        assert!(supports_vision_for_model(
+            "custom-openrouter::google/gemini-2.0-flash"
+        ));
 
         // Z.AI vision models
         assert!(supports_vision_for_model("glm-4.6v"));
@@ -1892,9 +1906,16 @@ mod tests {
 
         // Works with namespaced model IDs too
         assert!(is_chat_capable_model("openai::gpt-5.2"));
+        assert!(is_chat_capable_model("custom-openrouter::openai/gpt-5.2"));
+        assert!(is_chat_capable_model(
+            "custom-openrouter::anthropic/claude-sonnet-4-20250514"
+        ));
         assert!(!is_chat_capable_model("openai::dall-e-3"));
         assert!(!is_chat_capable_model("openai::gpt-image-1-mini"));
         assert!(!is_chat_capable_model("openai::gpt-4o-mini-tts"));
+        assert!(!is_chat_capable_model(
+            "custom-openrouter::openai/gpt-image-1-mini"
+        ));
     }
 
     #[test]
@@ -1909,6 +1930,9 @@ mod tests {
         assert!(supports_tools_for_model("claude-sonnet-4-20250514"));
         assert!(supports_tools_for_model("gemini-2.0-flash"));
         assert!(supports_tools_for_model("codestral-latest"));
+        assert!(supports_tools_for_model(
+            "custom-openrouter::openai/gpt-5.2"
+        ));
     }
 
     #[test]
@@ -1925,6 +1949,9 @@ mod tests {
         assert!(!supports_tools_for_model("whisper-1"));
         assert!(!supports_tools_for_model("text-embedding-3-large"));
         assert!(!supports_tools_for_model("omni-moderation-latest"));
+        assert!(!supports_tools_for_model(
+            "custom-openrouter::openai/text-embedding-3-large"
+        ));
     }
 
     #[test]
@@ -2257,6 +2284,30 @@ mod tests {
             .collect();
         assert_eq!(or_models.len(), 1);
         assert_eq!(or_models[0].id, "openrouter::anthropic/claude-3-haiku");
+    }
+
+    #[test]
+    fn openrouter_strips_foreign_namespace_in_config_model_ids() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("openrouter".into(), moltis_config::schema::ProviderEntry {
+                api_key: Some(secrecy::Secret::new("sk-test-or".into())),
+                models: vec!["openai::gpt-5.2".into()],
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        assert!(
+            reg.list_models()
+                .iter()
+                .any(|m| m.id == "openrouter::gpt-5.2")
+        );
+        assert!(
+            !reg.list_models()
+                .iter()
+                .any(|m| m.id == "openrouter::openai::gpt-5.2")
+        );
     }
 
     #[test]

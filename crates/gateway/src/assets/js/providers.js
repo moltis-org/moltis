@@ -52,6 +52,36 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 ];
 
 var BYOM_PROVIDERS = ["openrouter", "venice"];
+var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
+var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
+var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
+
+function normalizeEndpointForCompare(rawUrl) {
+	if (!rawUrl) return null;
+	var trimmed = rawUrl.trim();
+	if (!trimmed) return null;
+	try {
+		var parsed = new URL(trimmed);
+		var pathname = parsed.pathname.replace(/\/+$/, "");
+		return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${pathname}`;
+	} catch {
+		return trimmed.replace(/\/+$/, "").toLowerCase();
+	}
+}
+
+function shouldUseCustomProviderForOpenAi(provider, endpointVal) {
+	if (provider?.name !== "openai") return false;
+	var normalizedEndpoint = normalizeEndpointForCompare(endpointVal);
+	if (!normalizedEndpoint) return false;
+	var normalizedDefault = normalizeEndpointForCompare(provider.defaultBaseUrl || "https://api.openai.com/v1");
+	return normalizedDefault !== null && normalizedEndpoint !== normalizedDefault;
+}
+
+function stripModelNamespace(modelId) {
+	if (!modelId || typeof modelId !== "string") return modelId;
+	var sep = modelId.lastIndexOf("::");
+	return sep >= 0 ? modelId.slice(sep + 2) : modelId;
+}
 
 export function openProviderModal() {
 	var m = els();
@@ -160,6 +190,123 @@ function setFormError(errorPanel, message) {
 	errorPanel.style.display = "";
 }
 
+function createValidationProgress(form, marginClass) {
+	var wrapper = document.createElement("div");
+	wrapper.className = `flex flex-col gap-2 ${marginClass || "mt-2"}`;
+
+	var progress = document.createElement("div");
+	progress.className = "download-progress";
+
+	var progressBar = document.createElement("div");
+	progressBar.className = "download-progress-bar";
+	progressBar.style.width = "0%";
+	progress.appendChild(progressBar);
+	wrapper.appendChild(progress);
+
+	var progressText = document.createElement("div");
+	progressText.className = "text-xs text-[var(--muted)]";
+	progressText.textContent = VALIDATION_HINT_TEXT;
+	wrapper.appendChild(progressText);
+
+	form.appendChild(wrapper);
+
+	return {
+		progress,
+		progressBar,
+		progressText,
+		value: 0,
+	};
+}
+
+function clampProgressPercent(value) {
+	if (!Number.isFinite(value)) return 0;
+	return Math.max(0, Math.min(100, value));
+}
+
+function setValidationProgress(state, value, message) {
+	if (!state) return;
+	var next = clampProgressPercent(value);
+	state.value = Math.max(state.value, next);
+	state.progress.classList.remove("indeterminate");
+	state.progressBar.style.width = `${state.value.toFixed(1)}%`;
+	if (message) {
+		state.progressText.textContent = message;
+	}
+}
+
+function resetValidationProgress(state) {
+	if (!state) return;
+	state.value = 0;
+	state.progress.classList.remove("indeterminate");
+	state.progressBar.style.width = "0%";
+	state.progressText.textContent = VALIDATION_HINT_TEXT;
+}
+
+function completeValidationProgress(state, text) {
+	if (!state) return;
+	setValidationProgress(state, 100, text || "Validation complete.");
+}
+
+function createValidationRequestId() {
+	var nonce = Math.random().toString(36).slice(2, 10);
+	return `validate-${Date.now()}-${nonce}`;
+}
+
+function normalizeAttempt(value, fallback) {
+	if (!Number.isFinite(value)) return fallback;
+	return Math.max(1, Math.floor(value));
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: maps backend validation phases to progress UI updates.
+function progressFromValidationEvent(payload) {
+	if (!payload?.phase) return null;
+	var phase = payload.phase;
+	if (phase === "start") {
+		return { value: 8, message: payload.message || "Starting provider validation..." };
+	}
+	if (phase === "candidates_discovered") {
+		var count = Number.isFinite(payload.modelCount) ? payload.modelCount : null;
+		var message = count == null ? "Discovered candidate models." : `Discovered ${count} candidate models.`;
+		return { value: 24, message };
+	}
+	if (phase === "probe_started" || phase === "probe_failed" || phase === "probe_timeout") {
+		var total = normalizeAttempt(payload.totalAttempts, 1);
+		var attempt = Math.min(normalizeAttempt(payload.attempt, 1), total);
+		var value = 24 + (attempt / total) * 62;
+		var modelName = stripModelNamespace(payload.modelId);
+		var defaultMessage = modelName
+			? `Probing ${modelName} (${attempt}/${total})...`
+			: `Probing model ${attempt}/${total}...`;
+		return {
+			value,
+			message: payload.message || defaultMessage,
+		};
+	}
+	if (phase === "probe_succeeded") {
+		return { value: 94, message: payload.message || "Model probe succeeded." };
+	}
+	if (phase === "complete") {
+		return { value: 100, message: payload.message || "Validation complete." };
+	}
+	if (phase === "error") {
+		return { value: 98, message: payload.message || "Validation failed." };
+	}
+	return null;
+}
+
+function bindValidationProgressEvents(state, requestId) {
+	if (!(state && requestId)) return () => undefined;
+	var off = onEvent(VALIDATION_PROGRESS_EVENT, (payload) => {
+		if (!payload || payload.requestId !== requestId) return;
+		var update = progressFromValidationEvent(payload);
+		if (!update) return;
+		setValidationProgress(state, update.value, update.message);
+	});
+	return () => {
+		off();
+	};
+}
+
 function showCustomProviderForm() {
 	var m = els();
 	m.title.textContent = "OpenAI Compatible";
@@ -209,6 +356,8 @@ function showCustomProviderForm() {
 	errorPanel.style.display = "none";
 	form.appendChild(errorPanel);
 
+	var validationProgress = createValidationProgress(form, "mt-1");
+
 	var btns = document.createElement("div");
 	btns.className = "btn-row";
 	btns.style.marginTop = "12px";
@@ -237,7 +386,8 @@ function showCustomProviderForm() {
 		}
 
 		saveBtn.disabled = true;
-		saveBtn.textContent = "Adding...";
+		saveBtn.textContent = "Adding & Validating...";
+		setValidationProgress(validationProgress, 8, "Saving provider settings...");
 		setFormError(errorPanel, null);
 
 		sendRpc("providers.add_custom", { baseUrl: url, apiKey: key, model: model })
@@ -245,24 +395,30 @@ function showCustomProviderForm() {
 				if (!res?.ok) {
 					saveBtn.disabled = false;
 					saveBtn.textContent = "Add Provider";
+					resetValidationProgress(validationProgress);
 					setFormError(errorPanel, res?.error?.message || "Failed to add provider.");
 					return;
 				}
 				var result = res.payload;
 				var providerName = result.providerName;
 				var displayName = result.displayName;
+				var requestId = createValidationRequestId();
+				setValidationProgress(validationProgress, 12, VALIDATION_HINT_RUNNING_TEXT);
+				var stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
 
 				// Validate the provider to discover models
-				validateProviderKey(providerName, key, url, model)
+				validateProviderKey(providerName, key, url, model, requestId)
 					.then((valResult) => {
-						if (!valResult.valid && !model) {
+						if (!(valResult.valid || model)) {
 							saveBtn.disabled = false;
 							saveBtn.textContent = "Add Provider";
+							resetValidationProgress(validationProgress);
 							setFormError(errorPanel, valResult.error || "No models discovered. Please specify a model ID.");
 							return;
 						}
 
 						if (valResult.models && valResult.models.length > 0) {
+							completeValidationProgress(validationProgress, "Validation complete.");
 							// Show model selector
 							var customProvider = {
 								name: providerName,
@@ -275,6 +431,7 @@ function showCustomProviderForm() {
 						} else if (model) {
 							// Model specified manually — save it and finish
 							sendRpc("providers.save_model", { provider: providerName, model: model }).then(() => {
+								completeValidationProgress(validationProgress, "Validation complete.");
 								fetchModels();
 								if (S.refreshProvidersPage) S.refreshProvidersPage();
 								m.body.textContent = "";
@@ -287,18 +444,24 @@ function showCustomProviderForm() {
 						} else {
 							saveBtn.disabled = false;
 							saveBtn.textContent = "Add Provider";
+							resetValidationProgress(validationProgress);
 							setFormError(errorPanel, "No models discovered. Please specify a model ID.");
 						}
 					})
 					.catch((err) => {
 						saveBtn.disabled = false;
 						saveBtn.textContent = "Add Provider";
+						resetValidationProgress(validationProgress);
 						setFormError(errorPanel, err?.message || "Validation failed.");
+					})
+					.finally(() => {
+						stopProgressEvents();
 					});
 			})
 			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Add Provider";
+				resetValidationProgress(validationProgress);
 				setFormError(errorPanel, err?.message || "Failed to add provider.");
 			});
 	});
@@ -394,6 +557,8 @@ export function showApiKeyForm(provider) {
 		form.appendChild(modelInp);
 	}
 
+	var validationProgress = createValidationProgress(form, "mt-2");
+
 	var btns = document.createElement("div");
 	btns.className = "btn-row";
 	btns.style.marginTop = "12px";
@@ -422,34 +587,45 @@ export function showApiKeyForm(provider) {
 
 		saveBtn.disabled = true;
 		saveBtn.textContent = "Validating...";
+		setValidationProgress(validationProgress, 10, VALIDATION_HINT_RUNNING_TEXT);
 		setFormError(errorPanel, null);
 
 		var keyVal = key || provider.name;
 		var endpointVal = endpointInp?.value.trim() || null;
 		var modelVal = modelInp?.value.trim() || null;
+		var requestId = createValidationRequestId();
+		var stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
 
-		validateProviderKey(provider.name, keyVal, endpointVal, modelVal)
+		validateProviderKey(provider.name, keyVal, endpointVal, modelVal, requestId)
 			.then((result) => {
 				if (!result.valid) {
 					saveBtn.disabled = false;
 					saveBtn.textContent = "Save & Validate";
+					resetValidationProgress(validationProgress);
 					setFormError(errorPanel, result.error || "Validation failed. Please check your credentials.");
 					return;
 				}
 
 				// BYOM providers already tested the specific model — save directly.
 				if (needsModel) {
+					completeValidationProgress(validationProgress, "Validation complete.");
 					saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, null, false);
 					return;
 				}
 
 				// Regular providers — show model selector.
-				showModelSelector(provider, result.models || [], keyVal, endpointVal, modelVal);
+				var models = result.models || [];
+				completeValidationProgress(validationProgress, "Validation complete.");
+				showModelSelector(provider, models, keyVal, endpointVal, modelVal);
 			})
 			.catch((err) => {
 				saveBtn.disabled = false;
 				saveBtn.textContent = "Save & Validate";
+				resetValidationProgress(validationProgress);
 				setFormError(errorPanel, err?.message || "Validation failed.");
+			})
+			.finally(() => {
+				stopProgressEvents();
 			});
 	});
 	btns.appendChild(saveBtn);
@@ -596,7 +772,12 @@ function showModelSelector(provider, models, keyVal, endpointVal, modelVal, skip
 
 function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelId, skipSave) {
 	var m = els();
-	var effectiveModelVal = provider.keyOptional && selectedModelId ? selectedModelId : modelVal;
+	var saveAsCustomProvider = !skipSave && shouldUseCustomProviderForOpenAi(provider, endpointVal);
+	var selectedModelForSave = selectedModelId;
+	if (saveAsCustomProvider && selectedModelForSave) {
+		selectedModelForSave = stripModelNamespace(selectedModelForSave);
+	}
+	var effectiveModelVal = provider.keyOptional && selectedModelForSave ? selectedModelForSave : modelVal;
 
 	function showError(msg) {
 		var wrapper = m.body.querySelector(".provider-key-form");
@@ -606,9 +787,17 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 		}
 	}
 
-	var savePromise = skipSave
-		? Promise.resolve({ ok: true })
-		: saveProviderKey(provider.name, keyVal, endpointVal, effectiveModelVal);
+	var savePromise;
+	if (skipSave) {
+		savePromise = Promise.resolve({ ok: true });
+	} else if (saveAsCustomProvider) {
+		var customPayload = { baseUrl: endpointVal, apiKey: keyVal };
+		var customModel = selectedModelForSave || stripModelNamespace(effectiveModelVal);
+		if (customModel) customPayload.model = customModel;
+		savePromise = sendRpc("providers.add_custom", customPayload);
+	} else {
+		savePromise = saveProviderKey(provider.name, keyVal, endpointVal, effectiveModelVal);
+	}
 
 	savePromise
 		.then(async (res) => {
@@ -616,26 +805,32 @@ function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selected
 				showError(res?.error?.message || "Failed to save credentials.");
 				return;
 			}
+			var savedProviderName = saveAsCustomProvider ? res?.payload?.providerName || provider.name : provider.name;
+			var successDisplayName = saveAsCustomProvider
+				? res?.payload?.displayName || provider.displayName
+				: provider.displayName;
 
 			if (selectedModelId) {
-				var testResult = await testModel(selectedModelId);
+				var modelForStorage = selectedModelForSave || selectedModelId;
+				var modelForTest = saveAsCustomProvider ? `${savedProviderName}::${modelForStorage}` : selectedModelId;
+				var testResult = await testModel(modelForTest);
 				var modelServiceUnavailable = !testResult.ok && isModelServiceNotConfigured(testResult.error || "");
 				if (!(testResult.ok || modelServiceUnavailable)) {
 					showError(testResult.error || "Model test failed. Try another model.");
 					return;
 				}
-				await sendRpc("providers.save_model", { provider: provider.name, model: selectedModelId });
+				await sendRpc("providers.save_model", { provider: savedProviderName, model: modelForStorage });
 				if (modelServiceUnavailable) {
 					console.warn("models.test unavailable in provider settings, saved selected model without probe");
 				}
-				localStorage.setItem("moltis-model", selectedModelId);
+				localStorage.setItem("moltis-model", modelForTest);
 			}
 
 			// Success
 			m.body.textContent = "";
 			var status = document.createElement("div");
 			status.className = "provider-status";
-			status.textContent = `${provider.displayName} configured successfully!`;
+			status.textContent = `${successDisplayName} configured successfully!`;
 			m.body.appendChild(status);
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();

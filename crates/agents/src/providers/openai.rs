@@ -131,7 +131,7 @@ fn is_likely_model_id(model_id: &str) -> bool {
     }
     model_id
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':' | '/'))
 }
 
 /// Delegates to the shared [`super::is_chat_capable_model`] for filtering
@@ -1330,6 +1330,22 @@ mod tests {
         assert_eq!(ids, vec!["gpt-5.2", "o3", "gpt-4o-mini", "o1"]);
         assert_eq!(models[0].created_at, Some(3000));
         assert_eq!(models[3].created_at, None);
+    }
+
+    #[test]
+    fn parse_models_payload_accepts_provider_prefixed_model_ids() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "openai/gpt-5.2", "created": 3000 },
+                { "id": "google/gemini-2.0-flash", "created": 2000 },
+                { "id": "openai/gpt-image-1", "created": 1000 },
+                { "id": "openai/gpt-4o-mini-tts", "created": 900 }
+            ]
+        });
+
+        let models = parse_models_payload(&payload);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["openai/gpt-5.2", "google/gemini-2.0-flash"]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { initTheme, injectMarkdownStyles } from "./theme.js";
+import "./time-format.js";
 
 initTheme();
 injectMarkdownStyles();

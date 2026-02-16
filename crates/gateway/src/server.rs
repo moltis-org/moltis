@@ -1288,7 +1288,9 @@ pub async fn start_gateway(
     )
     .with_env_overrides(config_env_overrides.clone());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
-    services.provider_setup = Arc::new(provider_setup);
+    let provider_setup_service = Arc::new(provider_setup);
+    services.provider_setup =
+        Arc::clone(&provider_setup_service) as Arc<dyn crate::services::ProviderSetupService>;
 
     // Wire live MCP service.
     let mcp_configured_count;
@@ -2589,6 +2591,9 @@ pub async fn start_gateway(
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
     }
+
+    // Set the state on provider setup service for validation progress updates.
+    provider_setup_service.set_state(Arc::clone(&state));
 
     // Set the state on model service for broadcasting model update events.
     live_model_service.set_state(Arc::clone(&state));
