@@ -493,10 +493,10 @@ impl McpAuthProvider for McpOAuthProvider {
     }
 
     async fn handle_unauthorized(&self, www_authenticate: Option<&str>) -> Result<bool> {
-        // Clear cached tokens and stale registration (redirect_uri may have changed)
+        // Clear only in-memory cache before re-auth. We intentionally keep
+        // persisted credentials until a new flow succeeds so an interrupted
+        // browser flow does not permanently wipe usable tokens.
         *self.cached_token.write().await = None;
-        let _ = self.token_store.delete(&self.store_key());
-        let _ = self.registration_store.delete(&self.server_url);
 
         match self.perform_oauth_flow(www_authenticate).await {
             Ok(()) => Ok(true),
