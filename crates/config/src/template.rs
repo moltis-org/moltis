@@ -165,7 +165,8 @@ models = ["kimi-k2.5"]                        # Preferred models shown first
 # ══════════════════════════════════════════════════════════════════════════════
 
 [chat]
-message_queue_mode = "followup"   # How to handle messages during an active agent run:
+message_queue_mode = "followup"   # Default: process queued messages one-by-one after the current run.
+                                  # How to handle messages during an active agent run:
                                   #   "followup" - Queue messages, replay one-by-one after run
                                   #   "collect"  - Buffer messages, concatenate as single message
 # priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors

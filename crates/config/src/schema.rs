@@ -1019,10 +1019,11 @@ impl Default for TlsConfig {
 }
 
 /// Chat configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
     /// How to handle messages that arrive while an agent run is active.
+    #[serde(default = "default_message_queue_mode")]
     pub message_queue_mode: MessageQueueMode,
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
@@ -1031,6 +1032,20 @@ pub struct ChatConfig {
     /// live discovery), so this field is currently ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_models: Vec<String>,
+}
+
+fn default_message_queue_mode() -> MessageQueueMode {
+    MessageQueueMode::Followup
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            message_queue_mode: default_message_queue_mode(),
+            priority_models: Vec::new(),
+            allowed_models: Vec::new(),
+        }
+    }
 }
 
 /// Behaviour when `chat.send()` is called during an active run.
@@ -1750,6 +1765,18 @@ OPENROUTER_API_KEY = "sk-or-test"
     fn env_section_defaults_to_empty() {
         let config: MoltisConfig = toml::from_str("").unwrap();
         assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn chat_config_default_queue_mode_is_followup() {
+        let cfg = ChatConfig::default();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
+    }
+
+    #[test]
+    fn chat_config_toml_missing_queue_mode_defaults_to_followup() {
+        let cfg: ChatConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
     }
 
     #[test]

@@ -1165,6 +1165,18 @@ mod tests {
             raw.contains("port = 23456"),
             "generated template should include selected server port"
         );
+        assert!(
+            raw.contains("message_queue_mode = \"followup\""),
+            "generated template should set followup queue mode by default"
+        );
+        assert!(
+            raw.contains("\"followup\" - Queue messages, replay one-by-one after run"),
+            "generated template should document the followup queue option"
+        );
+        assert!(
+            raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
+            "generated template should document the collect queue option"
+        );
     }
 
     #[test]

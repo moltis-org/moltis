@@ -2005,7 +2005,7 @@ impl LiveChatService {
 
 #[async_trait]
 impl ChatService for LiveChatService {
-    async fn send(&self, params: Value) -> ServiceResult {
+    async fn send(&self, mut params: Value) -> ServiceResult {
         // Support both text-only and multimodal content.
         // - "text": string → plain text message
         // - "content": array → multimodal content (text + images)
@@ -2258,9 +2258,9 @@ impl ChatService for LiveChatService {
             .touch(&session_key, history.len() as u32)
             .await;
 
-        // If this is a web UI message on a channel-bound session, echo the
-        // user message to the channel and register a reply target so the LLM
-        // response is also delivered there.
+        // If this is a web UI message on a channel-bound session, attach the
+        // channel reply target so the run-start path can route the final
+        // response back to the channel.
         let is_web_message = conn_id.is_some()
             && params.get("_session_key").is_none()
             && params.get("channel").is_none();
@@ -2284,12 +2284,38 @@ impl ChatService for LiveChatService {
                 .unwrap_or(true);
 
             if is_active {
-                // Push reply target so deliver_channel_replies sends the LLM response.
-                self.state
-                    .push_channel_reply(&session_key, target.clone())
-                    .await;
+                match serde_json::to_value(&target) {
+                    Ok(target_val) => {
+                        params["_channel_reply_target"] = target_val;
+                    },
+                    Err(e) => {
+                        warn!(
+                            session = %session_key,
+                            error = %e,
+                            "failed to serialize channel reply target"
+                        );
+                    },
+                }
             }
         }
+
+        let deferred_channel_target =
+            params
+                .get("_channel_reply_target")
+                .cloned()
+                .and_then(|value| {
+                    match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                        Ok(target) => Some(target),
+                        Err(e) => {
+                            warn!(
+                                session = %session_key,
+                                error = %e,
+                                "ignoring invalid _channel_reply_target"
+                            );
+                            None
+                        },
+                    }
+                });
 
         // Discover enabled skills/plugins for prompt injection.
         let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
@@ -2525,10 +2551,16 @@ impl ChatService for LiveChatService {
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);
+        let deferred_channel_target = deferred_channel_target.clone();
 
         let handle = tokio::spawn(async move {
             let permit = permit; // hold permit until agent run completes
             let ctx_ref = project_context.as_deref();
+            if let Some(target) = deferred_channel_target {
+                // Register the channel reply target only after we own the
+                // session permit, so queued messages keep per-message routing.
+                state.push_channel_reply(&session_key_clone, target).await;
+            }
             active_reply_medium
                 .write()
                 .await
@@ -6342,6 +6374,15 @@ mod tests {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
+    fn make_target(message_id: &str) -> Value {
+        serde_json::json!({
+            "channel_type": "telegram",
+            "account_id": "bot1",
+            "chat_id": "123",
+            "message_id": message_id,
+        })
+    }
+
     #[tokio::test]
     async fn queue_enqueue_and_drain() {
         let queue = make_message_queue();
@@ -6482,6 +6523,97 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].params["text"], "b");
         assert_eq!(entries[1].params["text"], "c");
+    }
+
+    #[tokio::test]
+    async fn followup_drain_preserves_per_message_channel_targets() {
+        let queue = make_message_queue();
+        let key = "sess_channel_targets";
+
+        {
+            let mut q = queue.write().await;
+            let entry = q.entry(key.to_string()).or_default();
+            entry.push(QueuedMessage {
+                params: serde_json::json!({
+                    "text": "a",
+                    "_channel_reply_target": make_target("m1"),
+                }),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({
+                    "text": "b",
+                    "_channel_reply_target": make_target("m2"),
+                }),
+            });
+            entry.push(QueuedMessage {
+                params: serde_json::json!({
+                    "text": "c",
+                    "_channel_reply_target": make_target("m3"),
+                }),
+            });
+        }
+
+        let queued = queue.write().await.remove(key).unwrap_or_default();
+        let mut iter = queued.into_iter();
+        let first = iter.next().expect("queued is non-empty");
+        let rest: Vec<QueuedMessage> = iter.collect();
+
+        assert_eq!(first.params["_channel_reply_target"]["message_id"], "m1");
+
+        if !rest.is_empty() {
+            queue
+                .write()
+                .await
+                .entry(key.to_string())
+                .or_default()
+                .extend(rest);
+        }
+
+        let remaining = queue.read().await;
+        let entries = remaining.get(key).expect("requeued messages");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].params["_channel_reply_target"]["message_id"],
+            "m2"
+        );
+        assert_eq!(
+            entries[1].params["_channel_reply_target"]["message_id"],
+            "m3"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_drain_uses_last_message_channel_target() {
+        let queued = [
+            QueuedMessage {
+                params: serde_json::json!({
+                    "text": "first",
+                    "_channel_reply_target": make_target("m1"),
+                }),
+            },
+            QueuedMessage {
+                params: serde_json::json!({
+                    "text": "second",
+                    "_channel_reply_target": make_target("m2"),
+                }),
+            },
+            QueuedMessage {
+                params: serde_json::json!({
+                    "text": "third",
+                    "_channel_reply_target": make_target("m3"),
+                }),
+            },
+        ];
+
+        let combined: Vec<&str> = queued
+            .iter()
+            .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
+            .collect();
+        let mut merged = queued.last().expect("non-empty queue").params.clone();
+        merged["text"] = serde_json::json!(combined.join("\n\n"));
+
+        assert_eq!(merged["text"], "first\n\nsecond\n\nthird");
+        assert_eq!(merged["_channel_reply_target"]["message_id"], "m3");
     }
 
     #[test]

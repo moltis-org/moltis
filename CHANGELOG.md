@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Telegram queued replies**: route channel reply targets per queued message so
+  `chat.message_queue_mode = "followup"` delivers replies one-by-one instead of
+  collapsing queued channel replies into a single batch delivery.
+- **Queue mode default**: make one-by-one replay (`followup`) explicit as the
+  `ChatConfig` default, with config-level tests to prevent regressions.
 - MCP OAuth dynamic registration now uses the exact loopback callback URI selected for the current auth flow, improving compatibility with providers that require strict redirect URI matching (for example Linear).
 - MCP manager now applies `[mcp.servers.<name>.oauth]` override settings when building the OAuth provider for SSE servers.
 - Streamable HTTP MCP transport now persists and reuses `Mcp-Session-Id`, parses `text/event-stream` responses, and sends best-effort `DELETE` on shutdown to close server sessions.

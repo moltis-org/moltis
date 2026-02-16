@@ -114,12 +114,6 @@ impl ChannelEventSink for GatewayChannelEventSink {
             })
             .await;
 
-            // Register the reply target so the chat "final" broadcast can
-            // route the response back to the originating channel.
-            state
-                .push_channel_reply(&session_key, reply_to.clone())
-                .await;
-
             // Persist channel binding so web UI messages on this session
             // can be echoed back to the channel.
             if let Ok(binding_json) = serde_json::to_string(&reply_to)
@@ -152,6 +146,9 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 "text": text,
                 "channel": &meta,
                 "_session_key": &session_key,
+                // Defer reply-target registration until chat.send() actually
+                // starts executing this message (after semaphore acquire).
+                "_channel_reply_target": &reply_to,
             });
             // Forward the channel's default model to chat.send() if configured.
             // If no channel model is set, check if the session already has a model.
@@ -547,11 +544,6 @@ impl ChannelEventSink for GatewayChannelEventSink {
         })
         .await;
 
-        // Register the reply target
-        state
-            .push_channel_reply(&session_key, reply_to.clone())
-            .await;
-
         // Persist channel binding (ensure session row exists first —
         // set_channel_binding is an UPDATE so the row must already be present).
         if let Ok(binding_json) = serde_json::to_string(&reply_to)
@@ -581,6 +573,9 @@ impl ChannelEventSink for GatewayChannelEventSink {
             "content": content_parts,
             "channel": &meta,
             "_session_key": &session_key,
+            // Defer reply-target registration until chat.send() actually
+            // starts executing this message (after semaphore acquire).
+            "_channel_reply_target": &reply_to,
         });
 
         // Forward the channel's default model if configured
