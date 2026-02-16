@@ -3236,11 +3236,11 @@ function NotificationsSection() {
 
 var pageSectionHandlers = {
 	crons: {
-		init: (container) => initCrons(container, null, { syncRoute: false }),
+		init: (container) => initCrons(container, null),
 		teardown: teardownCrons,
 	},
 	heartbeat: {
-		init: (container) => initCrons(container, "heartbeat", { syncRoute: false }),
+		init: (container) => initCrons(container, "heartbeat"),
 		teardown: teardownCrons,
 	},
 	providers: { init: initProviders, teardown: teardownProviders },

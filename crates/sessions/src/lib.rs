@@ -1,7 +1,7 @@
 //! Session storage and management.
 //!
 //! Sessions are stored as JSONL files (one message per line) at
-//! ~/.clawdbot/agents/<agentId>/sessions/<sessionKey>.jsonl
+//! `<data_dir>/agents/<agentId>/sessions/<sessionKey>.jsonl`
 //! with file locking for concurrent access.
 
 pub mod compaction;

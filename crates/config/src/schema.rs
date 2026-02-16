@@ -787,6 +787,9 @@ pub struct MemoryEmbeddingConfig {
     pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
     pub provider: Option<String>,
+    /// Disable RAG embeddings and force keyword-only memory search.
+    #[serde(default)]
+    pub disable_rag: bool,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
     pub base_url: Option<String>,
     /// Model name (e.g. "nomic-embed-text" for Ollama, "text-embedding-3-small" for OpenAI).
@@ -1206,10 +1209,18 @@ pub struct BrowserConfig {
     /// Supports wildcards: "*.example.com" matches subdomains.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    /// Total system RAM threshold (MB) below which memory-saving Chrome flags
+    /// are injected automatically. Set to 0 to disable. Default: 2048.
+    #[serde(default = "default_low_memory_threshold_mb")]
+    pub low_memory_threshold_mb: u64,
 }
 
 fn default_sandbox_image() -> String {
     "browserless/chrome".to_string()
+}
+
+const fn default_low_memory_threshold_mb() -> u64 {
+    2048
 }
 
 impl Default for BrowserConfig {
@@ -1229,6 +1240,7 @@ impl Default for BrowserConfig {
             chrome_args: Vec::new(),
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
+            low_memory_threshold_mb: default_low_memory_threshold_mb(),
         }
     }
 }

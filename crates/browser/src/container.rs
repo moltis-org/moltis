@@ -68,6 +68,7 @@ impl BrowserContainer {
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
     ) -> Result<Self> {
         let backend = detect_backend()?;
         Self::start_with_backend(
@@ -76,6 +77,7 @@ impl BrowserContainer {
             container_prefix,
             viewport_width,
             viewport_height,
+            low_memory_threshold_mb,
         )
     }
 
@@ -86,6 +88,7 @@ impl BrowserContainer {
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
     ) -> Result<Self> {
         if !backend.is_available() {
             bail!(
@@ -111,6 +114,7 @@ impl BrowserContainer {
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
             )?,
             #[cfg(target_os = "macos")]
             ContainerBackend::AppleContainer => start_apple_container(
@@ -119,6 +123,7 @@ impl BrowserContainer {
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
             )?,
         };
 
@@ -223,6 +228,36 @@ impl Drop for BrowserContainer {
     }
 }
 
+/// Build the `DEFAULT_LAUNCH_ARGS` env-var value for containerised Chrome.
+///
+/// Always includes `--window-size`; appends low-memory flags when the host
+/// system RAM is below the given threshold.
+fn build_container_launch_args(
+    viewport_width: u32,
+    viewport_height: u32,
+    low_memory_threshold_mb: u64,
+) -> String {
+    use crate::pool::low_memory_chrome_args;
+
+    let mut args = vec![format!("--window-size={viewport_width},{viewport_height}")];
+
+    if low_memory_threshold_mb > 0 {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total_mb = sys.total_memory() / (1024 * 1024);
+        for flag in low_memory_chrome_args(total_mb, low_memory_threshold_mb) {
+            args.push((*flag).to_string());
+        }
+    }
+
+    let joined = args
+        .iter()
+        .map(|a| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("DEFAULT_LAUNCH_ARGS=[{joined}]")
+}
+
 /// Start a Docker container for the browser.
 fn start_docker_container(
     image: &str,
@@ -230,8 +265,12 @@ fn start_docker_container(
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
+
+    let launch_args =
+        build_container_launch_args(viewport_width, viewport_height, low_memory_threshold_mb);
 
     let output = Command::new("docker")
         .args([
@@ -243,10 +282,7 @@ fn start_docker_container(
             "-p",
             &format!("{}:3000", host_port), // Map CDP port
             "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
+            &launch_args,
             "-e",
             "MAX_CONCURRENT_SESSIONS=1", // One session per container
             "-e",
@@ -277,8 +313,12 @@ fn start_apple_container(
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
+
+    let launch_args =
+        build_container_launch_args(viewport_width, viewport_height, low_memory_threshold_mb);
 
     // Apple Container uses different syntax for port mapping and env vars
     let output = Command::new("container")
@@ -290,10 +330,7 @@ fn start_apple_container(
             "-p",
             &format!("{}:3000", host_port),
             "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
+            &launch_args,
             "-e",
             "MAX_CONCURRENT_SESSIONS=1",
             "-e",
@@ -754,5 +791,11 @@ mod tests {
         } else {
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn test_build_container_launch_args_without_low_memory() {
+        let args = build_container_launch_args(1920, 1080, 0);
+        assert_eq!(args, r#"DEFAULT_LAUNCH_ARGS=["--window-size=1920,1080"]"#);
     }
 }

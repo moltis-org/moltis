@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SSRF allowlist**: `tools.web.fetch.ssrf_allowlist` config field to exempt trusted
   CIDR ranges from SSRF blocking, enabling Docker inter-container networking.
+- Memory config: add `memory.disable_rag` to force keyword-only memory search while keeping markdown indexing and memory tools enabled
 
 ### Changed
 
@@ -19,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+
+- Memory embeddings endpoint composition now avoids duplicated path segments like `/v1/v1/embeddings` and accepts base URLs ending in host-only, `/v1`, versioned paths (for example `/v4`), or `/embeddings`
 
 ### Security
 

@@ -2416,6 +2416,8 @@ function OnboardingPage() {
 	var identityStep = voiceAvailable ? 4 : 3;
 	var summaryStep = voiceAvailable ? 5 : 4;
 
+	var startedAt = getGon("started_at");
+
 	return html`<div class="onboarding-card">
 		<${StepIndicator} steps=${steps} current=${stepIndex} />
 		<div class="mt-6">
@@ -2426,6 +2428,7 @@ function OnboardingPage() {
 			${step === identityStep && html`<${IdentityStep} onNext=${goNext} onBack=${goBack} />`}
 			${step === summaryStep && html`<${SummaryStep} onBack=${goBack} onFinish=${goFinish} />`}
 		</div>
+		${startedAt ? html`<div class="text-xs text-[var(--muted)] text-center mt-4 pt-3 border-t border-[var(--border)]">Server started <time data-epoch-ms=${startedAt}></time></div>` : null}
 	</div>`;
 }
 
