@@ -512,6 +512,12 @@ pub trait Sandbox: Send + Sync {
     /// Clean up sandbox resources.
     async fn cleanup(&self, id: &SandboxId) -> Result<()>;
 
+    /// Whether this backend provides actual isolation.
+    /// Returns `false` for `NoSandbox` (pass-through to host).
+    fn is_real(&self) -> bool {
+        true
+    }
+
     /// Pre-build a container image with packages baked in.
     /// Returns `None` for backends that don't support image building.
     async fn build_image(
@@ -1519,6 +1525,10 @@ pub struct NoSandbox;
 impl Sandbox for NoSandbox {
     fn backend_name(&self) -> &'static str {
         "none"
+    }
+
+    fn is_real(&self) -> bool {
+        false
     }
 
     async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
@@ -3074,8 +3084,13 @@ impl SandboxRouter {
     }
 
     /// Check whether a session should run sandboxed.
-    /// Per-session override takes priority, then falls back to global mode.
+    /// Returns `false` when no real container runtime is available, regardless of
+    /// config mode or per-session overrides. Otherwise, per-session override takes
+    /// priority, then falls back to global mode.
     pub async fn is_sandboxed(&self, session_key: &str) -> bool {
+        if !self.backend.is_real() {
+            return false;
+        }
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
             return override_val;
         }
@@ -3422,10 +3437,17 @@ mod tests {
         assert_eq!(docker.container_name(&id), "my-prefix-abc123");
     }
 
+    /// Helper: build a `SandboxRouter` with a deterministic backend so tests
+    /// don't depend on the host having Docker / Apple Container installed.
+    fn router_with_real_backend(config: SandboxConfig) -> SandboxRouter {
+        let backend: Arc<dyn Sandbox> = Arc::new(TestSandbox::new("docker", None, None));
+        SandboxRouter::with_backend(config, backend)
+    }
+
     #[tokio::test]
     async fn test_sandbox_router_default_all() {
         let config = SandboxConfig::default(); // mode = All
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(router.is_sandboxed("main").await);
         assert!(router.is_sandboxed("session:abc").await);
     }
@@ -3436,7 +3458,7 @@ mod tests {
             mode: SandboxMode::Off,
             ..Default::default()
         };
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(!router.is_sandboxed("main").await);
         assert!(!router.is_sandboxed("session:abc").await);
     }
@@ -3447,7 +3469,7 @@ mod tests {
             mode: SandboxMode::All,
             ..Default::default()
         };
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(router.is_sandboxed("main").await);
         assert!(router.is_sandboxed("session:abc").await);
     }
@@ -3458,7 +3480,7 @@ mod tests {
             mode: SandboxMode::NonMain,
             ..Default::default()
         };
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(!router.is_sandboxed("main").await);
         assert!(router.is_sandboxed("session:abc").await);
     }
@@ -3469,7 +3491,7 @@ mod tests {
             mode: SandboxMode::Off,
             ..Default::default()
         };
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(!router.is_sandboxed("session:abc").await);
 
         router.set_override("session:abc", true).await;
@@ -3488,11 +3510,29 @@ mod tests {
             mode: SandboxMode::All,
             ..Default::default()
         };
-        let router = SandboxRouter::new(config);
+        let router = router_with_real_backend(config);
         assert!(router.is_sandboxed("main").await);
 
         // Override to disable sandbox for main
         router.set_override("main", false).await;
+        assert!(!router.is_sandboxed("main").await);
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_router_no_runtime_returns_false() {
+        let backend: Arc<dyn Sandbox> = Arc::new(NoSandbox);
+        let config = SandboxConfig {
+            mode: SandboxMode::All,
+            ..Default::default()
+        };
+        let router = SandboxRouter::with_backend(config, backend);
+
+        // Even with mode=All, no runtime means not sandboxed
+        assert!(!router.is_sandboxed("main").await);
+        assert!(!router.is_sandboxed("session:abc").await);
+
+        // Overrides are also ignored when there's no runtime
+        router.set_override("main", true).await;
         assert!(!router.is_sandboxed("main").await);
     }
 
