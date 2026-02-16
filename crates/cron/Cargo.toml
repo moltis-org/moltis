@@ -9,8 +9,8 @@ async-trait    = { workspace = true }
 chrono         = { workspace = true }
 chrono-tz      = { workspace = true }
 cron           = { workspace = true }
-dirs-next      = { workspace = true }
 moltis-agents  = { workspace = true }
+moltis-config  = { workspace = true }
 moltis-common  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 serde          = { workspace = true }
