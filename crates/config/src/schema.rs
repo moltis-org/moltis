@@ -955,6 +955,26 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Manual OAuth override for servers that don't support standard discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthOverrideEntry>,
+}
+
+/// Manual OAuth configuration override for an MCP server.
+///
+/// Used when the server doesn't implement RFC 9728/8414 discovery or
+/// when dynamic client registration is not available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthOverrideEntry {
+    /// The OAuth client ID.
+    pub client_id: String,
+    /// The authorization endpoint URL.
+    pub auth_url: String,
+    /// The token endpoint URL.
+    pub token_url: String,
+    /// OAuth scopes to request.
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 /// Channel configuration.

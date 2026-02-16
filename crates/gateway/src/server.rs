@@ -1306,6 +1306,15 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
+                let oauth = entry
+                    .oauth
+                    .as_ref()
+                    .map(|o| moltis_mcp::registry::McpOAuthConfig {
+                        client_id: o.client_id.clone(),
+                        auth_url: o.auth_url.clone(),
+                        token_url: o.token_url.clone(),
+                        scopes: o.scopes.clone(),
+                    });
                 merged
                     .servers
                     .insert(name.clone(), moltis_mcp::McpServerConfig {
@@ -1315,6 +1324,7 @@ pub async fn start_gateway(
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
+                        oauth,
                     });
             }
         }
@@ -4266,16 +4276,29 @@ async fn oauth_callback_handler(
             .into_response();
     };
 
-    match state
+    let completion_params = serde_json::json!({
+        "code": code,
+        "state": oauth_state,
+    });
+
+    let completion = match state
         .gateway
         .services
         .provider_setup
-        .oauth_complete(serde_json::json!({
-            "code": code,
-            "state": oauth_state,
-        }))
+        .oauth_complete(completion_params.clone())
         .await
     {
+        Ok(result) => Ok(result),
+        Err(provider_error) => state
+            .gateway
+            .services
+            .mcp
+            .oauth_complete(completion_params)
+            .await
+            .map_err(|mcp_error| (provider_error, mcp_error)),
+    };
+
+    match completion {
         Ok(_) => {
             let nonce = uuid::Uuid::new_v4().to_string();
             let html = format!(
@@ -4292,8 +4315,12 @@ async fn oauth_callback_handler(
             }
             resp
         },
-        Err(e) => {
-            tracing::warn!(error = %e, "OAuth callback completion failed");
+        Err((provider_error, mcp_error)) => {
+            tracing::warn!(
+                provider_error = %provider_error,
+                mcp_error = %mcp_error,
+                "OAuth callback completion failed"
+            );
             (
                 StatusCode::BAD_REQUEST,
                 Html(

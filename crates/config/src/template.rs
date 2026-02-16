@@ -419,7 +419,7 @@ auto_load = []                    # Skills to always load without explicit activ
 # Example: SSE server
 # [mcp.servers.remote]
 # transport = "sse"
-# url = "http://localhost:8080/sse"
+# url = "http://localhost:8080/mcp"
 # enabled = true
 
 # ══════════════════════════════════════════════════════════════════════════════

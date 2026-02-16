@@ -164,7 +164,10 @@ const WRITE_METHODS: &[&str] = &[
     "mcp.enable",
     "mcp.disable",
     "mcp.restart",
+    "mcp.reauth",
     "mcp.update",
+    "mcp.oauth.start",
+    "mcp.oauth.complete",
     "cron.add",
     "cron.update",
     "cron.remove",
@@ -2921,6 +2924,45 @@ impl MethodRegistry {
                         .services
                         .mcp
                         .restart(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "mcp.reauth",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .mcp
+                        .reauth(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "mcp.oauth.start",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .mcp
+                        .oauth_start(ctx.params.clone())
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+        self.register(
+            "mcp.oauth.complete",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    ctx.state
+                        .services
+                        .mcp
+                        .oauth_complete(ctx.params.clone())
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

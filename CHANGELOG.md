@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OAuth 2.1 support for remote MCP servers — automatic discovery (RFC 9728/8414), dynamic client registration (RFC 7591), PKCE authorization code flow, and Bearer token injection with 401 retry
+- `McpOAuthOverride` config option for servers that don't implement standard OAuth discovery
+- `mcp.reauth` RPC method to manually trigger re-authentication for a server
+- Persistent storage of dynamic client registrations at `~/.config/moltis/mcp_oauth_registrations.json`
 - **SSRF allowlist**: `tools.web.fetch.ssrf_allowlist` config field to exempt trusted
   CIDR ranges from SSRF blocking, enabling Docker inter-container networking.
 - Memory config: add `memory.disable_rag` to force keyword-only memory search while keeping markdown indexing and memory tools enabled
 - Generic OpenAI-compatible provider support: connect any OpenAI-compatible endpoint via the provider setup UI, with domain-derived naming (`custom-` prefix), model auto-discovery, and full model selection
-
 ### Changed
 
 ### Deprecated
@@ -22,8 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP OAuth dynamic registration now uses the exact loopback callback URI selected for the current auth flow, improving compatibility with providers that require strict redirect URI matching (for example Linear).
+- MCP manager now applies `[mcp.servers.<name>.oauth]` override settings when building the OAuth provider for SSE servers.
+- Streamable HTTP MCP transport now persists and reuses `Mcp-Session-Id`, parses `text/event-stream` responses, and sends best-effort `DELETE` on shutdown to close server sessions.
+- MCP docs/config examples now use the current table-based config shape and `/mcp` endpoint examples for remote servers.
 - Memory embeddings endpoint composition now avoids duplicated path segments like `/v1/v1/embeddings` and accepts base URLs ending in host-only, `/v1`, versioned paths (for example `/v4`), or `/embeddings`
-
 ### Security
 
 ## [0.8.35] - 2026-02-15

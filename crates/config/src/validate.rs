@@ -228,6 +228,15 @@ fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let mcp_oauth_override = || {
+        Struct(HashMap::from([
+            ("client_id", Leaf),
+            ("auth_url", Leaf),
+            ("token_url", Leaf),
+            ("scopes", Leaf),
+        ]))
+    };
+
     let mcp_server_entry = || {
         Struct(HashMap::from([
             ("command", Leaf),
@@ -236,6 +245,7 @@ fn build_schema_map() -> KnownKeys {
             ("enabled", Leaf),
             ("transport", Leaf),
             ("url", Leaf),
+            ("oauth", mcp_oauth_override()),
         ]))
     };
 

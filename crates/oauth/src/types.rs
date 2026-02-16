@@ -10,6 +10,9 @@ pub struct OAuthConfig {
     pub auth_url: String,
     pub token_url: String,
     pub redirect_uri: String,
+    /// Optional RFC 8707 resource indicator (sent to authorize + token endpoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<String>,
     #[serde(default)]
     pub scopes: Vec<String>,
     /// Extra query parameters to include in the authorization URL.

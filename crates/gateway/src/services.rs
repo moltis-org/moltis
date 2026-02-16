@@ -577,6 +577,12 @@ pub trait McpService: Send + Sync {
     async fn restart(&self, params: Value) -> ServiceResult;
     /// Update an MCP server's configuration.
     async fn update(&self, params: Value) -> ServiceResult;
+    /// Trigger re-authentication for an SSE server.
+    async fn reauth(&self, params: Value) -> ServiceResult;
+    /// Start OAuth for an MCP SSE server.
+    async fn oauth_start(&self, params: Value) -> ServiceResult;
+    /// Complete an MCP OAuth callback.
+    async fn oauth_complete(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopMcpService;
@@ -616,6 +622,18 @@ impl McpService for NoopMcpService {
     }
 
     async fn update(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn reauth(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn oauth_start(&self, _params: Value) -> ServiceResult {
+        Err("MCP not configured".into())
+    }
+
+    async fn oauth_complete(&self, _params: Value) -> ServiceResult {
         Err("MCP not configured".into())
     }
 }

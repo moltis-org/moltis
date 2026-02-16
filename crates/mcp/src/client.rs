@@ -14,6 +14,7 @@ use std::time::Instant;
 use moltis_metrics::{counter, gauge, histogram, labels, mcp as mcp_metrics};
 
 use crate::{
+    auth::SharedAuthProvider,
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
     transport::StdioTransport,
@@ -30,6 +31,8 @@ pub enum McpClientState {
     Connected,
     /// `initialize` completed, `initialized` notification sent.
     Ready,
+    /// OAuth authentication in progress (waiting for browser).
+    Authenticating,
     /// Server process exited or was shut down.
     Closed,
 }
@@ -95,6 +98,38 @@ impl McpClient {
             warn!(server = %server_name, error = %e, "MCP SSE initialize handshake failed");
             return Err(e);
         }
+        Ok(client)
+    }
+
+    /// Connect to a remote MCP server over HTTP/SSE with an OAuth auth provider.
+    pub async fn connect_sse_with_auth(
+        server_name: &str,
+        url: &str,
+        auth: SharedAuthProvider,
+    ) -> Result<Self> {
+        info!(server = %server_name, url = %url, "connecting to MCP server via SSE (with auth)");
+        let transport = SseTransport::with_auth(url, auth)?;
+
+        let mut client = Self {
+            server_name: server_name.into(),
+            transport,
+            state: McpClientState::Connected,
+            server_info: None,
+            tools: Vec::new(),
+        };
+
+        if let Err(e) = client.initialize().await {
+            warn!(server = %server_name, error = %e, "MCP SSE (auth) initialize handshake failed");
+            return Err(e);
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            counter!(mcp_metrics::SERVER_CONNECTIONS_TOTAL, labels::SERVER => server_name.to_string())
+                .increment(1);
+            gauge!(mcp_metrics::SERVERS_CONNECTED).increment(1.0);
+        }
+
         Ok(client)
     }
 
@@ -260,6 +295,10 @@ mod tests {
     fn test_client_state_debug() {
         assert_eq!(format!("{:?}", McpClientState::Connected), "Connected");
         assert_eq!(format!("{:?}", McpClientState::Ready), "Ready");
+        assert_eq!(
+            format!("{:?}", McpClientState::Authenticating),
+            "Authenticating"
+        );
         assert_eq!(format!("{:?}", McpClientState::Closed), "Closed");
     }
 }
