@@ -171,7 +171,7 @@ fn build_system_prompt_full(
     };
 
     let base_intro = if include_tools {
-        "You are a helpful assistant with access to tools for executing shell commands.\n\n"
+        "You are a helpful assistant. You can use tools when needed.\n\n"
     } else {
         "You are a helpful assistant. Answer questions clearly and concisely.\n\n"
     };
@@ -361,11 +361,15 @@ fn build_system_prompt_full(
     if include_tools {
         prompt.push_str(concat!(
             "## Guidelines\n\n",
-            "- Use the exec tool to run shell commands when the user asks you to perform tasks ",
-            "that require system interaction (file operations, running programs, checking status, etc.).\n",
+            "- Start with a normal conversational response. Do not call tools for greetings, small talk, ",
+            "or questions you can answer directly.\n",
+            "- Use the exec tool when the user asks you to run shell commands, or when system interaction ",
+            "is required to complete the task.\n",
+            "- If the user starts a message with `/sh `, treat the remaining text as an explicit shell ",
+            "command and run it with `exec`.\n",
             "- Use the browser tool to open URLs and interact with web pages. Call it when the user ",
             "asks to visit a website, check a page, read web content, or perform any web browsing task.\n",
-            "- Always explain what you're doing before executing commands or opening pages.\n",
+            "- Before executing commands or opening pages, briefly explain what you're going to do.\n",
             "- If a command or browser action fails, analyze the error and suggest fixes.\n",
             "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
             "- Be careful with destructive operations — confirm with the user first.\n",
@@ -854,6 +858,8 @@ mod tests {
         let prompt = build_system_prompt(&tools, true, None);
         assert!(prompt.contains("## Silent Replies"));
         assert!(prompt.contains("empty response"));
+        assert!(prompt.contains("Do not call tools for greetings"));
+        assert!(prompt.contains("`/sh `"));
         assert!(!prompt.contains("__SILENT__"));
     }
 

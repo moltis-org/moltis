@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron tool job creation/update now accepts common shorthand schedule/payload
   shapes (including cron expression strings) and normalizes them before
   validation, reducing model-side schema mismatch failures.
+- Force-exec fallback now triggers only for explicit `/sh ...` input (including
+  `/sh@bot ...`), preventing casual chat messages like `hey` from being treated
+  as shell commands while still allowing normal model-driven exec tool use.
+- Tool-mode system prompt guidance is now conversation-first and documents the
+  `/sh` explicit shell prefix.
 
 ### Security
 
