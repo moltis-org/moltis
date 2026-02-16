@@ -2361,10 +2361,16 @@ impl MethodRegistry {
                         obj.insert("replying".to_string(), serde_json::Value::Bool(replying));
                         if replying {
                             if let Some(text) = chat.active_thinking_text(key).await {
-                                obj.insert("thinkingText".to_string(), serde_json::Value::String(text));
+                                obj.insert(
+                                    "thinkingText".to_string(),
+                                    serde_json::Value::String(text),
+                                );
                             }
                             if chat.active_voice_pending(key).await {
-                                obj.insert("voicePending".to_string(), serde_json::Value::Bool(true));
+                                obj.insert(
+                                    "voicePending".to_string(),
+                                    serde_json::Value::Bool(true),
+                                );
                             }
                         }
                     }
@@ -4208,6 +4214,7 @@ impl MethodRegistry {
                     Ok(serde_json::json!({
                         "backend": memory.backend.as_deref().unwrap_or("builtin"),
                         "citations": memory.citations.as_deref().unwrap_or("auto"),
+                        "disable_rag": memory.disable_rag,
                         "llm_reranking": memory.llm_reranking,
                         "session_export": memory.session_export,
                         "qmd_feature_enabled": cfg!(feature = "qmd"),
@@ -4235,6 +4242,7 @@ impl MethodRegistry {
                         .get("llm_reranking")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
+                    let disable_rag = ctx.params.get("disable_rag").and_then(|v| v.as_bool());
                     let session_export = ctx
                         .params
                         .get("session_export")
@@ -4244,11 +4252,17 @@ impl MethodRegistry {
                     // Persist to moltis.toml so the config survives restarts.
                     let backend_str = backend.to_string();
                     let citations_str = citations.to_string();
+                    let mut effective_disable_rag =
+                        moltis_config::discover_and_load().memory.disable_rag;
                     if let Err(e) = moltis_config::update_config(|cfg| {
                         cfg.memory.backend = Some(backend_str.clone());
                         cfg.memory.citations = Some(citations_str.clone());
                         cfg.memory.llm_reranking = llm_reranking;
+                        if let Some(value) = disable_rag {
+                            cfg.memory.disable_rag = value;
+                        }
                         cfg.memory.session_export = session_export;
+                        effective_disable_rag = cfg.memory.disable_rag;
                     }) {
                         tracing::warn!(error = %e, "failed to persist memory config");
                     }
@@ -4256,6 +4270,7 @@ impl MethodRegistry {
                     Ok(serde_json::json!({
                         "backend": backend,
                         "citations": citations,
+                        "disable_rag": effective_disable_rag,
                         "llm_reranking": llm_reranking,
                         "session_export": session_export,
                     }))

@@ -518,7 +518,8 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
                                   #   "openai"  - OpenAI API
                                   #   "custom"  - Custom endpoint
                                   #   (none)    - Auto-detect from available providers
-# base_url = "http://localhost:11434/v1"  # API endpoint for embeddings
+# disable_rag = false             # true => keyword-only search (no embeddings)
+# base_url = "http://localhost:11434/v1"  # Embedding API base (host, /v1, or /embeddings)
 # model = "nomic-embed-text"      # Embedding model name
 # api_key = "..."                 # API key (optional for local endpoints like Ollama)
 
