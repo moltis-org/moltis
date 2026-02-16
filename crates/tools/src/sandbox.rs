@@ -541,18 +541,64 @@ fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
     canonical
 }
 
+const SANDBOX_HOME_DIR: &str = "/home/sandbox";
+#[cfg(target_os = "macos")]
+const APPLE_CONTAINER_SAFE_WORKDIR: &str = "/tmp";
+
 fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
     let pkg_list = canonical_sandbox_packages(packages).join(" ");
     format!(
         "FROM {base}\n\
-RUN apt-get update -qq && apt-get install -y -qq {pkg_list}\n\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_list} \
+    && mkdir -p {SANDBOX_HOME_DIR}\n\
 RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
     && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\
-RUN mkdir -p /home/sandbox\n\
-ENV HOME=/home/sandbox\n\
-ENV PATH=/home/sandbox/.local/bin:/root/.local/bin:$PATH\n\
-WORKDIR /home/sandbox\n"
+ENV HOME={SANDBOX_HOME_DIR}\n\
+ENV PATH={SANDBOX_HOME_DIR}/.local/bin:/root/.local/bin:$PATH\n\
+WORKDIR {SANDBOX_HOME_DIR}\n"
     )
+}
+
+#[cfg(target_os = "macos")]
+fn apple_container_bootstrap_command() -> String {
+    format!("mkdir -p {SANDBOX_HOME_DIR} && exec sleep infinity")
+}
+
+#[cfg(target_os = "macos")]
+fn apple_container_run_args(name: &str, image: &str, tz: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "--workdir".to_string(),
+        APPLE_CONTAINER_SAFE_WORKDIR.to_string(),
+    ];
+
+    if let Some(tz) = tz {
+        args.extend(["-e".to_string(), format!("TZ={tz}")]);
+    }
+
+    args.push(image.to_string());
+    args.extend([
+        "sh".to_string(),
+        "-c".to_string(),
+        apple_container_bootstrap_command(),
+    ]);
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn apple_container_exec_args(name: &str, shell_command: String) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        "--workdir".to_string(),
+        APPLE_CONTAINER_SAFE_WORKDIR.to_string(),
+        name.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        shell_command,
+    ]
 }
 
 /// Compute the content-hash tag for a pre-built sandbox image.
@@ -1895,8 +1941,9 @@ impl AppleContainerSandbox {
     }
 
     async fn probe_container_exec_ready(name: &str) -> Result<()> {
+        let args = apple_container_exec_args(name, "true".to_string());
         let output = tokio::process::Command::new("container")
-            .args(["exec", name, "sh", "-c", "true"])
+            .args(&args)
             .output()
             .await?;
 
@@ -1978,22 +2025,7 @@ impl AppleContainerSandbox {
     /// Try to create and start a container. Classifies errors into
     /// `CreateError` variants so the caller can decide the right recovery.
     async fn run_container(name: &str, image: &str, tz: Option<&str>) -> Result<(), CreateError> {
-        let mut args = vec![
-            "run".to_string(),
-            "-d".to_string(),
-            "--name".to_string(),
-            name.to_string(),
-        ];
-
-        if let Some(tz) = tz {
-            args.extend(["-e".to_string(), format!("TZ={tz}")]);
-        }
-
-        args.extend([
-            image.to_string(),
-            "sleep".to_string(),
-            "infinity".to_string(),
-        ]);
+        let args = apple_container_run_args(name, image, tz);
 
         let output = tokio::process::Command::new("container")
             .args(&args)
@@ -2735,8 +2767,6 @@ impl Sandbox for AppleContainerSandbox {
         let name = self.container_name(id).await;
         info!(name, command, "apple container exec");
 
-        let mut args = vec!["exec".to_string(), name.clone()];
-
         // Apple Container CLI doesn't support -e flags, so prepend export
         // statements to inject env vars into the shell.
         let mut prefix = String::new();
@@ -2752,7 +2782,7 @@ impl Sandbox for AppleContainerSandbox {
             format!("{prefix}{command}")
         };
 
-        args.extend(["sh".to_string(), "-c".to_string(), full_command]);
+        let args = apple_container_exec_args(&name, full_command);
 
         let child = tokio::process::Command::new("container")
             .args(&args)
@@ -3693,6 +3723,15 @@ mod tests {
     }
 
     #[test]
+    fn test_sandbox_image_dockerfile_creates_home_in_install_layer() {
+        let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into()]);
+        assert!(dockerfile.contains(
+            "RUN apt-get update -qq && apt-get install -y -qq curl && mkdir -p /home/sandbox"
+        ));
+        assert!(!dockerfile.contains("RUN mkdir -p /home/sandbox\n"));
+    }
+
+    #[test]
     fn test_docker_image_tag_changes_with_base() {
         let packages = vec!["curl".into()];
         let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
@@ -3939,6 +3978,49 @@ mod tests {
             "permission denied",
             ContainerState::Stopped
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_apple_container_run_args_pin_workdir_and_bootstrap_home() {
+        let args = apple_container_run_args("moltis-sandbox-test", "ubuntu:25.10", Some("UTC"));
+        let expected = vec![
+            "run",
+            "-d",
+            "--name",
+            "moltis-sandbox-test",
+            "--workdir",
+            "/tmp",
+            "-e",
+            "TZ=UTC",
+            "ubuntu:25.10",
+            "sh",
+            "-c",
+            "mkdir -p /home/sandbox && exec sleep infinity",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        assert_eq!(args, expected);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_apple_container_exec_args_pin_workdir() {
+        let args = apple_container_exec_args("moltis-sandbox-test", "true".to_string());
+        let expected = vec![
+            "exec",
+            "--workdir",
+            "/tmp",
+            "moltis-sandbox-test",
+            "sh",
+            "-c",
+            "true",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        assert_eq!(args, expected);
     }
 
     #[test]

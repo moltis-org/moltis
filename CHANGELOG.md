@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apple Container sandbox startup now pins `--workdir /tmp`, bootstraps
+  `/home/sandbox` before `sleep infinity`, and uses explicit exec workdirs to
+  avoid `WORKDIR` chdir failures when image metadata directories are missing.
+- Cron tool job creation/update now accepts common shorthand schedule/payload
+  shapes (including cron expression strings) and normalizes them before
+  validation, reducing model-side schema mismatch failures.
+
 ### Security
 
 ## [0.8.36] - 2026-02-16
