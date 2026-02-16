@@ -438,10 +438,7 @@ pub async fn handle_message_direct(
         if body.starts_with('/') {
             let cmd_text = body.trim_start_matches('/');
             let cmd = cmd_text.split_whitespace().next().unwrap_or("");
-            if matches!(
-                cmd,
-                "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help"
-            ) {
+            if should_intercept_slash_command(cmd, cmd_text) {
                 // For /context, send a formatted card with inline keyboard.
                 if cmd == "context" {
                     let context_result =
@@ -546,7 +543,7 @@ pub async fn handle_message_direct(
                 }
 
                 let response = if cmd == "help" {
-                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
+                    "Available commands:\n/new — Start a new session\n/sessions — List and switch sessions\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/sh — Enable command mode (/sh off to exit)\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
                 } else {
                     match sink.dispatch_command(cmd_text, reply_target.clone()).await {
                         Ok(msg) => msg,
@@ -589,6 +586,17 @@ pub async fn handle_message_direct(
     histogram!(tg_metrics::POLLING_DURATION_SECONDS).record(start.elapsed().as_secs_f64());
 
     Ok(())
+}
+
+fn should_intercept_slash_command(cmd: &str, cmd_text: &str) -> bool {
+    match cmd {
+        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help" => true,
+        "sh" => {
+            let args = cmd_text.strip_prefix(cmd).unwrap_or("").trim();
+            args.is_empty() || matches!(args, "on" | "off" | "exit" | "status")
+        },
+        _ => false,
+    }
 }
 
 /// OTP challenge message sent to the Telegram user.
@@ -1692,6 +1700,21 @@ mod tests {
     fn session_key_group() {
         let key = build_session_key("bot1", &ChatType::Group, "user123", Some("-100999"));
         assert_eq!(key, "telegram:bot1:group:-100999");
+    }
+
+    #[test]
+    fn intercepts_shell_mode_control_commands_only() {
+        assert!(should_intercept_slash_command("sh", "sh"));
+        assert!(should_intercept_slash_command("sh", "sh on"));
+        assert!(should_intercept_slash_command("sh", "sh off"));
+        assert!(should_intercept_slash_command("sh", "sh exit"));
+        assert!(should_intercept_slash_command("sh", "sh status"));
+    }
+
+    #[test]
+    fn shell_command_payloads_are_not_intercepted() {
+        assert!(!should_intercept_slash_command("sh", "sh uname -a"));
+        assert!(!should_intercept_slash_command("sh", "sh ls -la"));
     }
 
     /// Security: the OTP challenge message sent to the Telegram user must
