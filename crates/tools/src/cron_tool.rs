@@ -433,52 +433,32 @@ impl AgentTool for CronTool {
                     "properties": {
                         "name": { "type": "string", "description": "Human-readable job name" },
                         "schedule": {
-                            "description": "Schedule. Preferred object form: {kind:'at', at_ms}, {kind:'every', every_ms, anchor_ms?}, or {kind:'cron', expr, tz?}. Shorthand also accepted: cron expression string (e.g. '5 11 * * *') or epoch milliseconds number (one-shot).",
-                            "oneOf": [
-                                {
-                                    "type": "string",
-                                    "description": "Cron expression shorthand, e.g. '5 11 * * *'"
-                                },
-                                {
-                                    "type": "number",
-                                    "description": "One-shot epoch milliseconds shorthand"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "kind": { "type": "string", "enum": ["at", "every", "cron"] },
-                                        "at_ms": { "type": "integer" },
-                                        "every_ms": { "type": "integer" },
-                                        "anchor_ms": { "type": "integer" },
-                                        "expr": { "type": "string" },
-                                        "tz": { "type": "string" }
-                                    },
-                                    "required": ["kind"]
-                                }
-                            ]
+                            "type": "object",
+                            "description": "Schedule object. Use {kind:'at', at_ms}, {kind:'every', every_ms, anchor_ms?}, or {kind:'cron', expr, tz?}. This tool also accepts shorthand schedule strings/numbers at runtime.",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["at", "every", "cron"] },
+                                "at_ms": { "type": "integer", "description": "Used when kind='at'" },
+                                "every_ms": { "type": "integer", "description": "Used when kind='every'" },
+                                "anchor_ms": { "type": "integer", "description": "Optional anchor when kind='every'" },
+                                "expr": { "type": "string", "description": "Cron expression used when kind='cron'" },
+                                "tz": { "type": "string", "description": "Optional timezone used when kind='cron'" }
+                            },
+                            "required": ["kind"]
                         },
                         "payload": {
-                            "description": "What to do: preferred object form {kind:'systemEvent', text} or {kind:'agentTurn', message, model?, deliver?, channel?, to?}. Shorthand also accepted: a string message (auto-mapped by sessionTarget).",
-                            "oneOf": [
-                                {
-                                    "type": "string",
-                                    "description": "Payload message shorthand"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
-                                        "text": { "type": "string" },
-                                        "message": { "type": "string" },
-                                        "model": { "type": "string" },
-                                        "timeout_secs": { "type": "integer" },
-                                        "deliver": { "type": "boolean" },
-                                        "channel": { "type": "string" },
-                                        "to": { "type": "string" }
-                                    },
-                                    "required": ["kind"]
-                                }
-                            ]
+                            "type": "object",
+                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, deliver?, channel?, to?}. This tool also accepts a shorthand message string at runtime.",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
+                                "text": { "type": "string" },
+                                "message": { "type": "string" },
+                                "model": { "type": "string" },
+                                "timeout_secs": { "type": "integer" },
+                                "deliver": { "type": "boolean" },
+                                "channel": { "type": "string" },
+                                "to": { "type": "string" }
+                            },
+                            "required": ["kind"]
                         },
                         "sessionTarget": { "type": "string", "enum": ["main", "isolated"], "default": "isolated" },
                         "deleteAfterRun": { "type": "boolean", "default": false },
@@ -803,6 +783,29 @@ mod tests {
         assert_eq!(add_result["payload"]["kind"], "agentTurn");
         assert_eq!(add_result["payload"]["message"], "do work");
         assert_eq!(add_result["payload"]["timeout_secs"], 30);
+    }
+
+    #[test]
+    fn test_parameters_schema_has_no_one_of() {
+        fn contains_one_of(value: &Value) -> bool {
+            match value {
+                Value::Object(obj) => {
+                    if obj.contains_key("oneOf") {
+                        return true;
+                    }
+                    obj.values().any(contains_one_of)
+                },
+                Value::Array(items) => items.iter().any(contains_one_of),
+                _ => false,
+            }
+        }
+
+        let tool = make_tool();
+        let schema = tool.parameters_schema();
+        assert!(
+            !contains_one_of(&schema),
+            "cron tool schema must avoid oneOf for OpenAI Responses API compatibility"
+        );
     }
 
     #[tokio::test]
