@@ -162,6 +162,26 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 // ── Transport Errors ──────────────────────────────────────────────────
 
+/// Typed manager errors for MCP lifecycle/auth flows.
+#[derive(Debug, thiserror::Error)]
+pub enum McpManagerError {
+    /// Server requires OAuth before it can be started.
+    #[error("MCP server '{server}' requires OAuth authentication")]
+    OAuthRequired { server: String },
+    /// OAuth callback state did not match any pending flow.
+    #[error("unknown or expired MCP OAuth state")]
+    OAuthStateNotFound,
+    /// Operation requires an SSE server.
+    #[error("MCP server '{server}' is not configured for SSE transport")]
+    NotSseTransport { server: String },
+    /// Operation requires an SSE URL.
+    #[error("MCP server '{server}' is missing an SSE URL")]
+    MissingSseUrl { server: String },
+    /// Server was not found in the MCP registry.
+    #[error("MCP server '{server}' not found in registry")]
+    ServerNotFound { server: String },
+}
+
 /// Typed transport errors for MCP SSE connections.
 ///
 /// Used by `SseTransport` to distinguish recoverable auth errors (401)

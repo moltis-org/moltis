@@ -14,7 +14,7 @@ use crate::{
     registry::{McpOAuthConfig, McpRegistry, McpServerConfig, TransportType},
     tool_bridge::McpToolBridge,
     traits::McpClientTrait,
-    types::{McpToolDef, McpTransportError},
+    types::{McpManagerError, McpToolDef, McpTransportError},
 };
 
 /// Status of a managed MCP server.
@@ -34,6 +34,9 @@ pub struct ServerStatus {
     /// OAuth authentication state (only for SSE servers with auth).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_state: Option<McpAuthState>,
+    /// Pending OAuth URL to open in browser (when auth_state is awaiting_browser).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_url: Option<String>,
 }
 
 /// Mutable state behind the single `RwLock` on [`McpManager`].
@@ -113,7 +116,7 @@ impl McpManager {
     /// Start a single server connection.
     ///
     /// For SSE servers: attempts unauthenticated first. On 401 Unauthorized,
-    /// creates an OAuth provider, runs the auth flow, and retries with auth.
+    /// stores auth context and returns `McpManagerError::OAuthRequired`.
     pub async fn start_server(&self, name: &str, config: &McpServerConfig) -> Result<()> {
         // Shut down existing connection if any.
         self.stop_server(name).await;
@@ -163,18 +166,21 @@ impl McpManager {
                             {
                                 info!(
                                     server = %name,
-                                    "SSE server requires auth, starting OAuth flow"
+                                    "SSE server requires auth"
                                 );
 
-                                // Trigger the OAuth flow.
+                                // Mark auth as required and persist challenge metadata.
                                 let auth_ok = auth_provider
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
 
                                 if !auth_ok {
-                                    anyhow::bail!(
-                                        "OAuth authentication failed for MCP server '{name}'"
-                                    );
+                                    let mut inner = self.inner.write().await;
+                                    inner.auth_providers.insert(name.to_string(), auth_provider);
+                                    return Err(McpManagerError::OAuthRequired {
+                                        server: name.to_string(),
+                                    }
+                                    .into());
                                 }
 
                                 // Retry with auth.
@@ -249,25 +255,79 @@ impl McpManager {
         self.start_server(name, &config).await
     }
 
-    /// Trigger re-authentication for an SSE server.
-    pub async fn reauth_server(&self, name: &str) -> Result<()> {
-        let auth = {
+    /// Start OAuth for an SSE server and return the browser authorization URL.
+    pub async fn oauth_start_server(&self, name: &str, redirect_uri: &str) -> Result<String> {
+        let config =
+            {
+                let inner = self.inner.read().await;
+                inner.registry.get(name).cloned().ok_or_else(|| {
+                    McpManagerError::ServerNotFound {
+                        server: name.to_string(),
+                    }
+                })?
+            };
+
+        if !matches!(config.transport, TransportType::Sse) {
+            return Err(McpManagerError::NotSseTransport {
+                server: name.to_string(),
+            }
+            .into());
+        }
+
+        let url = config
+            .url
+            .as_deref()
+            .ok_or_else(|| McpManagerError::MissingSseUrl {
+                server: name.to_string(),
+            })?;
+
+        let existing_auth = {
             let inner = self.inner.read().await;
             inner.auth_providers.get(name).cloned()
         };
+        let has_existing_auth_provider = existing_auth.is_some();
+        let auth_provider = existing_auth
+            .unwrap_or_else(|| Self::build_auth_provider(name, url, config.oauth.as_ref()));
 
-        if let Some(auth) = auth {
-            let ok = auth.handle_unauthorized(None).await?;
-            if !ok {
-                anyhow::bail!("re-authentication failed for MCP server '{name}'");
-            }
-            // Restart to pick up new tokens
-            self.restart_server(name).await?;
-        } else {
-            anyhow::bail!("MCP server '{name}' has no auth provider");
+        if !has_existing_auth_provider {
+            let mut inner = self.inner.write().await;
+            inner
+                .auth_providers
+                .insert(name.to_string(), auth_provider.clone());
         }
 
-        Ok(())
+        auth_provider
+            .start_oauth(redirect_uri, None)
+            .await?
+            .with_context(|| format!("MCP server '{name}' does not support OAuth"))
+    }
+
+    /// Complete an OAuth callback by matching state across MCP auth providers.
+    ///
+    /// Returns the server name whose OAuth flow was completed.
+    pub async fn oauth_complete_callback(&self, state: &str, code: &str) -> Result<String> {
+        let providers: Vec<(String, SharedAuthProvider)> = {
+            let inner = self.inner.read().await;
+            inner
+                .auth_providers
+                .iter()
+                .map(|(name, provider)| (name.clone(), provider.clone()))
+                .collect()
+        };
+
+        for (name, provider) in providers {
+            if provider.complete_oauth(state, code).await? {
+                self.restart_server(&name).await?;
+                return Ok(name);
+            }
+        }
+
+        Err(McpManagerError::OAuthStateNotFound.into())
+    }
+
+    /// Trigger re-authentication for an SSE server.
+    pub async fn reauth_server(&self, name: &str, redirect_uri: &str) -> Result<String> {
+        self.oauth_start_server(name, redirect_uri).await
     }
 
     /// Get the status of all configured servers.
@@ -295,6 +355,10 @@ impl McpManager {
             };
 
             let auth_state = inner.auth_providers.get(name).map(|a| a.auth_state());
+            let auth_url = inner
+                .auth_providers
+                .get(name)
+                .and_then(|a| a.pending_auth_url());
 
             statuses.push(ServerStatus {
                 name: name.clone(),
@@ -308,6 +372,7 @@ impl McpManager {
                 transport: config.transport,
                 url: config.url.clone(),
                 auth_state,
+                auth_url,
             });
         }
         statuses
@@ -498,7 +563,44 @@ mod tests {
     #[tokio::test]
     async fn test_reauth_server_no_auth_provider() {
         let mgr = McpManager::new(McpRegistry::new());
-        let result = mgr.reauth_server("nonexistent").await;
+        let result = mgr
+            .reauth_server("nonexistent", "https://example.com/auth/callback")
+            .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_oauth_start_server_requires_sse_transport() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert(
+            "stdio".into(),
+            McpServerConfig {
+                command: "echo".into(),
+                transport: TransportType::Stdio,
+                ..Default::default()
+            },
+        );
+        let mgr = McpManager::new(reg);
+        let err = mgr
+            .oauth_start_server("stdio", "https://example.com/auth/callback")
+            .await
+            .expect_err("expected oauth start to fail for stdio transport");
+        assert!(
+            err.downcast_ref::<McpManagerError>()
+                .is_some_and(|e| matches!(e, McpManagerError::NotSseTransport { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oauth_complete_callback_unknown_state() {
+        let mgr = McpManager::new(McpRegistry::new());
+        let err = mgr
+            .oauth_complete_callback("unknown-state", "code")
+            .await
+            .expect_err("expected unknown state to fail");
+        assert!(
+            err.downcast_ref::<McpManagerError>()
+                .is_some_and(|e| matches!(e, McpManagerError::OAuthStateNotFound))
+        );
     }
 }

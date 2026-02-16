@@ -41,15 +41,45 @@ async function refreshServers() {
 }
 
 async function addServer(payload) {
-	var res = await sendRpc("mcp.add", payload);
+	var req = { ...payload };
+	if ((payload.transport || "stdio") === "sse") {
+		req.redirectUri = oauthCallbackUrl();
+	}
+	var res = await sendRpc("mcp.add", req);
 	if (res?.ok) {
 		var finalName = res.payload?.name || payload.name;
 		showToast(`Added MCP tool "${finalName}"`, "success");
+		if (res?.payload?.oauthPending && res?.payload?.authUrl) {
+			window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+		}
 	} else {
 		var msg = res?.error?.message || res?.error || "unknown error";
 		showToast(`Failed to add "${payload.name}": ${msg}`, "error");
 	}
 	await refreshServers();
+}
+
+function oauthCallbackUrl() {
+	return `${window.location.origin}/auth/callback`;
+}
+
+async function startMcpOAuth(name, authUrl) {
+	var finalUrl = authUrl;
+	if (!finalUrl) {
+		var res = await sendRpc("mcp.oauth.start", {
+			name,
+			redirectUri: oauthCallbackUrl(),
+		});
+		if (!res?.ok) {
+			var err = res?.error?.message || res?.error || "unknown error";
+			throw new Error(err);
+		}
+		finalUrl = res?.payload?.authUrl;
+	}
+	if (!finalUrl) {
+		throw new Error("OAuth URL missing from response");
+	}
+	window.open(finalUrl, "_blank", "noopener,noreferrer");
 }
 
 /** Parse "KEY=VALUE" lines into an object. */
@@ -467,10 +497,25 @@ function ServerCard({ server }) {
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: OAuth-pending and enable/disable branches are handled inline for clarity.
 	async function toggleEnabled() {
 		toggling.value = true;
 		var method = server.enabled ? "mcp.disable" : "mcp.enable";
-		await sendRpc(method, { name: server.name });
+		var payload = server.enabled ? { name: server.name } : { name: server.name, redirectUri: oauthCallbackUrl() };
+		var res = await sendRpc(method, payload);
+		if (res?.ok) {
+			if (res?.payload?.oauthPending) {
+				showToast(`OAuth required for "${server.name}"`, "success");
+				if (res?.payload?.authUrl) {
+					window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+				}
+			} else {
+				showToast(`${server.enabled ? "Disabled" : "Enabled"} "${server.name}"`, "success");
+			}
+		} else {
+			var msg = res?.error?.message || res?.error || "unknown error";
+			showToast(`Failed to ${server.enabled ? "disable" : "enable"}: ${msg}`, "error");
+		}
 		await refreshServers();
 		toggling.value = false;
 	}
@@ -484,12 +529,31 @@ function ServerCard({ server }) {
 	async function reauth(e) {
 		e.stopPropagation();
 		reauthing.value = true;
-		var res = await sendRpc("mcp.reauth", { name: server.name });
+		var res = await sendRpc("mcp.reauth", {
+			name: server.name,
+			redirectUri: oauthCallbackUrl(),
+		});
 		if (res?.ok) {
-			showToast(`Re-auth started for "${server.name}"`, "success");
+			if (res?.payload?.authUrl) {
+				window.open(res.payload.authUrl, "_blank", "noopener,noreferrer");
+			}
+			showToast(`OAuth started for "${server.name}"`, "success");
 		} else {
 			var msg = res?.error?.message || res?.error || "unknown error";
 			showToast(`Failed to re-auth: ${msg}`, "error");
+		}
+		reauthing.value = false;
+		await refreshServers();
+	}
+
+	async function connectAuth(e) {
+		e.stopPropagation();
+		reauthing.value = true;
+		try {
+			await startMcpOAuth(server.name, server.auth_url || null);
+			showToast(`OAuth started for "${server.name}"`, "success");
+		} catch (error) {
+			showToast(`Failed to start OAuth: ${error.message}`, "error");
 		}
 		reauthing.value = false;
 		await refreshServers();
@@ -673,6 +737,20 @@ function ServerCard({ server }) {
 	        <span class="opacity-60">AUTH</span>
 	        <span class="${authState === "failed" ? "text-[var(--error)]" : "text-[var(--text)]"}">${authStateLabel(authState)}</span>
 	      </div>
+	      ${
+					server.auth_url &&
+					html`<div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+	        <span class="opacity-60">AUTH URL</span>
+	        <code class="font-mono text-[var(--text)] overflow-hidden text-ellipsis whitespace-nowrap">${server.auth_url}</code>
+	      </div>`
+				}
+	      ${
+					(authState === "awaiting_browser" || authState === "failed") &&
+					html`<div class="py-1.5">
+	        <button onClick=${connectAuth} disabled=${reauthing.value}
+	          class="provider-btn provider-btn-secondary provider-btn-sm">${reauthing.value ? "\u2026" : "Connect OAuth"}</button>
+	      </div>`
+				}
 	    </div>`
 					: html`<div class="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
         <span class="opacity-60">$</span>

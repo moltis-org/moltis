@@ -4,7 +4,7 @@
 //! - Protected resource metadata discovery (RFC 9728)
 //! - Authorization server metadata discovery (RFC 8414)
 //! - Dynamic client registration (RFC 7591)
-//! - PKCE authorization code flow with browser callback
+//! - PKCE authorization code flow (web UI callback driven)
 
 use std::sync::Arc;
 
@@ -18,9 +18,8 @@ use {
 };
 
 use moltis_oauth::{
-    CallbackServer, OAuthConfig, OAuthFlow, OAuthTokens, RegistrationStore, StoredRegistration,
-    TokenStore, fetch_as_metadata, fetch_resource_metadata, parse_www_authenticate,
-    register_client,
+    OAuthConfig, OAuthFlow, OAuthTokens, RegistrationStore, StoredRegistration, TokenStore,
+    fetch_as_metadata, fetch_resource_metadata, parse_www_authenticate, register_client,
 };
 
 // ── Auth state ─────────────────────────────────────────────────────────────
@@ -52,6 +51,21 @@ pub trait McpAuthProvider: Send + Sync {
     /// Returns `true` if authentication succeeded and the request should be retried.
     async fn handle_unauthorized(&self, www_authenticate: Option<&str>) -> Result<bool>;
 
+    /// Start an OAuth flow using the provided redirect URI and return an auth URL.
+    async fn start_oauth(
+        &self,
+        redirect_uri: &str,
+        www_authenticate: Option<&str>,
+    ) -> Result<Option<String>>;
+
+    /// Complete a pending OAuth flow for this provider.
+    ///
+    /// Returns `true` when `state` matched and completion was attempted.
+    async fn complete_oauth(&self, state: &str, code: &str) -> Result<bool>;
+
+    /// Pending OAuth authorization URL for this provider, if any.
+    fn pending_auth_url(&self) -> Option<String>;
+
     /// Current authentication state.
     fn auth_state(&self) -> McpAuthState;
 }
@@ -76,8 +90,18 @@ pub struct McpOAuthProvider {
     registration_store: RegistrationStore,
     state: RwLock<McpAuthState>,
     cached_token: RwLock<Option<OAuthTokens>>,
+    pending_oauth: RwLock<Option<PendingOAuthFlow>>,
+    last_www_authenticate: RwLock<Option<String>>,
     /// Optional manual override (skip discovery).
     oauth_override: Option<McpOAuthOverride>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingOAuthFlow {
+    state: String,
+    verifier: String,
+    config: OAuthConfig,
+    auth_url: String,
 }
 
 impl McpOAuthProvider {
@@ -90,6 +114,8 @@ impl McpOAuthProvider {
             registration_store: RegistrationStore::new(),
             state: RwLock::new(McpAuthState::NotRequired),
             cached_token: RwLock::new(None),
+            pending_oauth: RwLock::new(None),
+            last_www_authenticate: RwLock::new(None),
             oauth_override: None,
         }
     }
@@ -109,6 +135,8 @@ impl McpOAuthProvider {
             registration_store,
             state: RwLock::new(McpAuthState::NotRequired),
             cached_token: RwLock::new(None),
+            pending_oauth: RwLock::new(None),
+            last_www_authenticate: RwLock::new(None),
             oauth_override: None,
         }
     }
@@ -183,36 +211,11 @@ impl McpOAuthProvider {
         }
     }
 
-    /// Perform the full OAuth flow: discovery → registration → PKCE → browser → callback.
-    async fn perform_oauth_flow(&self, www_authenticate: Option<&str>) -> Result<()> {
-        *self.state.write().await = McpAuthState::AwaitingBrowser;
-
-        let result = self.perform_oauth_flow_inner(www_authenticate).await;
-
-        match &result {
-            Ok(()) => {
-                *self.state.write().await = McpAuthState::Authenticated;
-            },
-            Err(e) => {
-                warn!(server = %self.server_name, error = %e, "MCP OAuth flow failed");
-                *self.state.write().await = McpAuthState::Failed;
-            },
-        }
-
-        result
-    }
-
-    async fn perform_oauth_flow_inner(&self, www_authenticate: Option<&str>) -> Result<()> {
-        // Bind ephemeral port for callback FIRST — this port must be used for
-        // both dynamic client registration and the authorization request.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .context("failed to bind callback listener")?;
-        let callback_port = listener.local_addr()?.port();
-        drop(listener); // Release so CallbackServer can bind
-
-        let redirect_uri = format!("http://127.0.0.1:{callback_port}/auth/callback");
-
+    async fn start_web_oauth_flow(
+        &self,
+        redirect_uri: &str,
+        www_authenticate: Option<&str>,
+    ) -> Result<String> {
         let (client_id, auth_url, token_url, scopes, resource) =
             if let Some(ov) = &self.oauth_override {
                 // Manual override: skip discovery
@@ -225,7 +228,15 @@ impl McpOAuthProvider {
                 )
             } else {
                 // Full discovery flow
-                self.discover_and_register(www_authenticate, &redirect_uri)
+                // Re-register for each interactive flow so redirect URI always
+                // matches the current web origin callback.
+                let _ = self.registration_store.delete(&self.server_url);
+                let header = if let Some(v) = www_authenticate {
+                    Some(v.to_string())
+                } else {
+                    self.last_www_authenticate.read().await.clone()
+                };
+                self.discover_and_register(header.as_deref(), redirect_uri)
                     .await?
             };
 
@@ -233,7 +244,7 @@ impl McpOAuthProvider {
             client_id,
             auth_url,
             token_url,
-            redirect_uri,
+            redirect_uri: redirect_uri.to_string(),
             resource: Some(resource),
             scopes,
             extra_auth_params: Vec::new(),
@@ -246,39 +257,55 @@ impl McpOAuthProvider {
             "starting MCP OAuth authorization flow"
         );
 
-        let flow = OAuthFlow::new(config);
+        let flow = OAuthFlow::new(config.clone());
         let auth_req = flow.start()?;
+
+        *self.pending_oauth.write().await = Some(PendingOAuthFlow {
+            state: auth_req.state.clone(),
+            verifier: auth_req.pkce.verifier,
+            config,
+            auth_url: auth_req.url.clone(),
+        });
+        *self.state.write().await = McpAuthState::AwaitingBrowser;
 
         info!(
             server = %self.server_name,
-            port = callback_port,
-            "opening browser for MCP OAuth flow"
+            auth_url = %auth_req.url,
+            "MCP OAuth authorization URL prepared"
         );
 
-        // Open browser
-        if let Err(e) = open::that(&auth_req.url) {
-            warn!(error = %e, "failed to open browser for OAuth — please open manually");
-            info!(url = %auth_req.url, "OAuth authorization URL");
-        }
+        Ok(auth_req.url)
+    }
 
-        // Wait for callback (120s timeout, handled by CallbackServer's own 60s + our select)
-        let code = CallbackServer::wait_for_code(callback_port, auth_req.state)
-            .await
-            .context("OAuth callback failed")?;
+    async fn complete_web_oauth_flow(&self, state: &str, code: &str) -> Result<bool> {
+        let pending = {
+            let mut slot = self.pending_oauth.write().await;
+            let Some(current) = slot.as_ref() else {
+                return Ok(false);
+            };
+            if current.state != state {
+                return Ok(false);
+            }
+            slot.take()
+        };
 
-        // Exchange code for tokens
+        let Some(pending) = pending else {
+            return Ok(false);
+        };
+
+        let flow = OAuthFlow::new(pending.config);
         let tokens = flow
-            .exchange(&code, &auth_req.pkce.verifier)
+            .exchange(code, &pending.verifier)
             .await
             .context("OAuth token exchange failed")?;
 
-        // Persist tokens
         self.token_store.save(&self.store_key(), &tokens)?;
         *self.cached_token.write().await = Some(tokens);
+        *self.state.write().await = McpAuthState::Authenticated;
 
         info!(server = %self.server_name, "MCP OAuth authentication complete");
 
-        Ok(())
+        Ok(true)
     }
 
     /// Extract the origin (scheme + host + port) from a URL, stripping the path.
@@ -493,18 +520,51 @@ impl McpAuthProvider for McpOAuthProvider {
     }
 
     async fn handle_unauthorized(&self, www_authenticate: Option<&str>) -> Result<bool> {
-        // Clear only in-memory cache before re-auth. We intentionally keep
-        // persisted credentials until a new flow succeeds so an interrupted
-        // browser flow does not permanently wipe usable tokens.
+        // Clear in-memory cache and mark auth as failed, but never launch
+        // a browser from the server process. OAuth continuation is driven
+        // explicitly by the web UI via `start_oauth` + callback completion.
         *self.cached_token.write().await = None;
+        if let Some(value) = www_authenticate {
+            *self.last_www_authenticate.write().await = Some(value.to_string());
+        }
+        *self.state.write().await = McpAuthState::Failed;
+        Ok(false)
+    }
 
-        match self.perform_oauth_flow(www_authenticate).await {
-            Ok(()) => Ok(true),
+    async fn start_oauth(
+        &self,
+        redirect_uri: &str,
+        www_authenticate: Option<&str>,
+    ) -> Result<Option<String>> {
+        if let Some(value) = www_authenticate {
+            *self.last_www_authenticate.write().await = Some(value.to_string());
+        }
+        let auth_url = self
+            .start_web_oauth_flow(redirect_uri, www_authenticate)
+            .await?;
+        Ok(Some(auth_url))
+    }
+
+    async fn complete_oauth(&self, state: &str, code: &str) -> Result<bool> {
+        match self.complete_web_oauth_flow(state, code).await {
+            Ok(done) => Ok(done),
             Err(e) => {
-                warn!(server = %self.server_name, error = %e, "OAuth re-auth failed");
-                Ok(false)
+                warn!(
+                    server = %self.server_name,
+                    error = %e,
+                    "MCP OAuth callback completion failed"
+                );
+                *self.state.write().await = McpAuthState::Failed;
+                Err(e)
             },
         }
+    }
+
+    fn pending_auth_url(&self) -> Option<String> {
+        self.pending_oauth
+            .try_read()
+            .ok()
+            .and_then(|flow| flow.as_ref().map(|f| f.auth_url.clone()))
     }
 
     fn auth_state(&self) -> McpAuthState {
@@ -527,6 +587,22 @@ impl McpAuthProvider for NoAuthProvider {
 
     async fn handle_unauthorized(&self, _www_authenticate: Option<&str>) -> Result<bool> {
         Ok(false)
+    }
+
+    async fn start_oauth(
+        &self,
+        _redirect_uri: &str,
+        _www_authenticate: Option<&str>,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn complete_oauth(&self, _state: &str, _code: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn pending_auth_url(&self) -> Option<String> {
+        None
     }
 
     fn auth_state(&self) -> McpAuthState {

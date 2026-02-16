@@ -517,6 +517,22 @@ mod tests {
                 Ok(false)
             }
 
+            async fn start_oauth(
+                &self,
+                _redirect_uri: &str,
+                _www_authenticate: Option<&str>,
+            ) -> Result<Option<String>> {
+                Ok(None)
+            }
+
+            async fn complete_oauth(&self, _state: &str, _code: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            fn pending_auth_url(&self) -> Option<String> {
+                None
+            }
+
             fn auth_state(&self) -> McpAuthState {
                 McpAuthState::Authenticated
             }
@@ -590,6 +606,22 @@ mod tests {
             async fn handle_unauthorized(&self, _www_authenticate: Option<&str>) -> Result<bool> {
                 self.reauth_calls.fetch_add(1, Ordering::SeqCst);
                 Ok(false)
+            }
+
+            async fn start_oauth(
+                &self,
+                _redirect_uri: &str,
+                _www_authenticate: Option<&str>,
+            ) -> Result<Option<String>> {
+                Ok(None)
+            }
+
+            async fn complete_oauth(&self, _state: &str, _code: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            fn pending_auth_url(&self) -> Option<String> {
+                None
             }
 
             fn auth_state(&self) -> McpAuthState {

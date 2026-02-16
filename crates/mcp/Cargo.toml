@@ -13,7 +13,6 @@ async-trait    = { workspace = true }
 futures        = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { workspace = true }
-open           = { workspace = true }
 reqwest        = { workspace = true }
 secrecy        = { workspace = true }
 serde          = { workspace = true }

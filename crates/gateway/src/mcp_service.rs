@@ -231,6 +231,12 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        let redirect_uri = params
+            .get("redirectUri")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
         let config = parse_server_config(&params, None)?;
 
         // If a server with this name already exists, append a numeric suffix.
@@ -246,14 +252,43 @@ impl McpService for LiveMcpService {
         };
 
         info!(server = %final_name, "adding MCP server via API");
-        self.manager
+        match self
+            .manager
             .add_server(final_name.clone(), config, true)
             .await
-            .map_err(|e| e.to_string())?;
-
-        self.sync_tools_if_ready().await;
-
-        Ok(serde_json::json!({ "ok": true, "name": final_name }))
+        {
+            Ok(_) => {
+                self.sync_tools_if_ready().await;
+                Ok(serde_json::json!({ "ok": true, "name": final_name }))
+            },
+            Err(e) => {
+                if let Some(moltis_mcp::McpManagerError::OAuthRequired { .. }) =
+                    e.downcast_ref::<moltis_mcp::McpManagerError>()
+                {
+                    if let Some(uri) = redirect_uri {
+                        let auth_url = self
+                            .manager
+                            .oauth_start_server(&final_name, &uri)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok(serde_json::json!({
+                            "ok": true,
+                            "name": final_name,
+                            "oauthPending": true,
+                            "authUrl": auth_url
+                        }))
+                    } else {
+                        Ok(serde_json::json!({
+                            "ok": true,
+                            "name": final_name,
+                            "oauthPending": true
+                        }))
+                    }
+                } else {
+                    Err(e.to_string())
+                }
+            },
+        }
     }
 
     async fn remove(&self, params: Value) -> ServiceResult {
@@ -278,15 +313,44 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        let redirect_uri = params
+            .get("redirectUri")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
 
-        self.manager
-            .enable_server(name)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        self.sync_tools_if_ready().await;
-
-        Ok(serde_json::json!({ "enabled": true }))
+        match self.manager.enable_server(name).await {
+            Ok(_) => {
+                self.sync_tools_if_ready().await;
+                Ok(serde_json::json!({ "enabled": true }))
+            },
+            Err(e) => {
+                if let Some(moltis_mcp::McpManagerError::OAuthRequired { .. }) =
+                    e.downcast_ref::<moltis_mcp::McpManagerError>()
+                {
+                    if let Some(uri) = redirect_uri {
+                        let auth_url = self
+                            .manager
+                            .oauth_start_server(name, &uri)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        Ok(serde_json::json!({
+                            "enabled": false,
+                            "oauthPending": true,
+                            "authUrl": auth_url
+                        }))
+                    } else {
+                        Ok(serde_json::json!({
+                            "enabled": false,
+                            "oauthPending": true
+                        }))
+                    }
+                } else {
+                    Err(e.to_string())
+                }
+            },
+        }
     }
 
     async fn disable(&self, params: Value) -> ServiceResult {
@@ -376,15 +440,73 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        let redirect_uri = params
+            .get("redirectUri")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
 
-        self.manager
-            .reauth_server(name)
+        let auth_url = self
+            .manager
+            .reauth_server(name, redirect_uri)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "oauthPending": true,
+            "authUrl": auth_url
+        }))
+    }
+
+    async fn oauth_start(&self, params: Value) -> ServiceResult {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        let redirect_uri = params
+            .get("redirectUri")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
+
+        let auth_url = self
+            .manager
+            .oauth_start_server(name, redirect_uri)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "oauthPending": true,
+            "authUrl": auth_url
+        }))
+    }
+
+    async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let state = params
+            .get("state")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'state' parameter".to_string())?;
+        let code = params
+            .get("code")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'code' parameter".to_string())?;
+
+        let server_name = self
+            .manager
+            .oauth_complete_callback(state, code)
             .await
             .map_err(|e| e.to_string())?;
 
         self.sync_tools_if_ready().await;
 
-        Ok(serde_json::json!({ "ok": true }))
+        Ok(serde_json::json!({
+            "ok": true,
+            "name": server_name
+        }))
     }
 }
 
