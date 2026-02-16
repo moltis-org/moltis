@@ -1206,8 +1206,7 @@ impl ModelService for LiveModelService {
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
-        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
-        info!(model_count = model_ids.len(), model_ids = ?model_ids, "models.list response");
+        info!(model_count = prioritized.len(), "models.list response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()
@@ -1241,12 +1240,7 @@ impl ModelService for LiveModelService {
                 .iter()
                 .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
         );
-        let model_ids: Vec<String> = prioritized.iter().map(|m| m.id.clone()).collect();
-        info!(
-            model_count = model_ids.len(),
-            model_ids = ?model_ids,
-            "models.list_all response"
-        );
+        info!(model_count = prioritized.len(), "models.list_all response");
         let models: Vec<_> = prioritized
             .iter()
             .copied()

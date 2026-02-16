@@ -772,7 +772,7 @@ fn known_providers() -> Vec<KnownProvider> {
             auth_type: "api-key",
             env_key: Some("OPENROUTER_API_KEY"),
             default_base_url: Some("https://openrouter.ai/api/v1"),
-            requires_model: true,
+            requires_model: false,
             key_optional: false,
         },
         KnownProvider {

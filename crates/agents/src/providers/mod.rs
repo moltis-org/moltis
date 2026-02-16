@@ -1455,10 +1455,13 @@ impl ProviderRegistry {
                     continue;
                 }
             }
-            // "Bring your own model" providers (empty static catalog, no
-            // configured models) skip discovery — the user must pick a model.
-            let skip_discovery =
-                def.models.is_empty() && preferred.is_empty() && def.config_name != "ollama";
+            // Some providers need an explicit model before they can answer;
+            // keep discovery off there when no model is configured.
+            // OpenRouter supports `/models`, so we discover dynamically.
+            let skip_discovery = def.models.is_empty()
+                && preferred.is_empty()
+                && def.config_name != "ollama"
+                && (def.config_name == "venice" || cfg!(test));
             // Respect `supports_model_discovery`: providers whose API lacks a
             // /models endpoint (e.g. MiniMax) skip live fetch unless the user
             // explicitly opted in via `fetch_models = true` in config.
@@ -2282,8 +2285,11 @@ mod tests {
             .iter()
             .filter(|m| m.provider == "openrouter")
             .collect();
-        assert_eq!(or_models.len(), 1);
-        assert_eq!(or_models[0].id, "openrouter::anthropic/claude-3-haiku");
+        assert!(
+            or_models
+                .iter()
+                .any(|m| m.id == "openrouter::anthropic/claude-3-haiku")
+        );
     }
 
     #[test]

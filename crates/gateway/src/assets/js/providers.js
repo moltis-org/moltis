@@ -51,7 +51,7 @@ var OPENAI_COMPATIBLE_PROVIDERS = [
 	"ollama",
 ];
 
-var BYOM_PROVIDERS = ["openrouter", "venice"];
+var BYOM_PROVIDERS = ["venice"];
 var VALIDATION_HINT_TEXT = "Validation can take up to 20 seconds for some providers.";
 var VALIDATION_HINT_RUNNING_TEXT = "Validating models... this can take up to 20 seconds.";
 var VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
