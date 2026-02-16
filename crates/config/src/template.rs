@@ -342,6 +342,7 @@ timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache fetched pages for this many minutes (0 = no cache)
 max_redirects = 3                 # Maximum HTTP redirects to follow
 readability = true                # Use readability extraction for HTML (cleaner output)
+# ssrf_allowlist = ["172.22.0.0/16"] # CIDR ranges exempt from SSRF blocking (e.g. Docker networks)
 
 # ── Browser Automation ────────────────────────────────────────────────────────
 # Full browser control via Chrome DevTools Protocol (CDP).
