@@ -866,6 +866,51 @@ function normalizeProviderToken(value) {
 		.replace(/[^a-z0-9]/g, "");
 }
 
+function normalizeModelToken(value) {
+	return String(value || "")
+		.trim()
+		.toLowerCase();
+}
+
+function stripModelNamespace(modelId) {
+	if (!modelId || typeof modelId !== "string") return "";
+	var sep = modelId.lastIndexOf("::");
+	return sep >= 0 ? modelId.slice(sep + 2) : modelId;
+}
+
+function resolveSavedModelSelection(savedModels, availableModels) {
+	var selected = new Set();
+	if (!(savedModels?.length > 0) || availableModels.length === 0) return selected;
+
+	var exactIdLookup = new Map();
+	var rawIdLookup = new Map();
+	for (var model of availableModels) {
+		var id = String(model?.id || "").trim();
+		if (!id) continue;
+		exactIdLookup.set(normalizeModelToken(id), id);
+		var rawId = normalizeModelToken(stripModelNamespace(id));
+		if (rawId && !rawIdLookup.has(rawId)) {
+			rawIdLookup.set(rawId, id);
+		}
+	}
+
+	for (var savedModel of savedModels) {
+		var savedNorm = normalizeModelToken(savedModel);
+		if (!savedNorm) continue;
+		var exact = exactIdLookup.get(savedNorm);
+		if (exact) {
+			selected.add(exact);
+			continue;
+		}
+		var raw = normalizeModelToken(stripModelNamespace(savedModel));
+		var mapped = rawIdLookup.get(raw);
+		if (mapped) {
+			selected.add(mapped);
+		}
+	}
+	return selected;
+}
+
 function modelBelongsToProvider(providerName, model) {
 	var needle = normalizeProviderToken(providerName);
 	if (!needle) return false;
@@ -1012,11 +1057,8 @@ function ProviderStep({ onNext, onBack }) {
 		var existingModels = await loadModelsForProvider(provider.name);
 		if (existingModels.length === 0) return false;
 
-		// Pre-select already-saved preferred models.
-		var saved = new Set();
-		if (provider.models) {
-			for (var sm of provider.models) saved.add(sm);
-		}
+		// Pre-select already-saved preferred models, mapping raw IDs to namespaced IDs.
+		var saved = resolveSavedModelSelection(provider.models || [], existingModels);
 
 		setModelSelectProvider(provider.name);
 		setConfiguring(provider.name);

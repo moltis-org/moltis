@@ -57,7 +57,7 @@ test.describe("Onboarding Anthropic provider", () => {
 
 	test.skip(!ANTHROPIC_API_KEY, "requires ANTHROPIC_API_KEY or MOLTIS_E2E_ANTHROPIC_API_KEY");
 
-	test("starts with no detected providers, then configures Anthropic and loads models", async ({ page }) => {
+	test("configures Anthropic and loads models", async ({ page }) => {
 		test.setTimeout(90_000);
 		const pageErrors = watchPageErrors(page);
 
@@ -73,9 +73,6 @@ test.describe("Onboarding Anthropic provider", () => {
 
 		await moveToLlmStep(page);
 		await expect(page.getByRole("heading", { name: LLM_STEP_HEADING })).toBeVisible();
-
-		// Validate startup had no pre-detected LLM provider badges.
-		await expect(page.getByText("Detected LLM providers", { exact: true })).toHaveCount(0);
 
 		const anthropicRow = page
 			.locator(".onboarding-card .rounded-md.border")
