@@ -91,8 +91,8 @@ test("mobile menu drives settings and sessions", async ({ page }) => {
 
 const routeCases = [
 	{
-		path: "/crons/jobs",
-		expectedUrl: /\/crons\/jobs$/,
+		path: "/settings/crons",
+		expectedUrl: /\/settings\/crons$/,
 		heading: "Cron Jobs",
 	},
 	{
