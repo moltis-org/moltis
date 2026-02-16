@@ -69,7 +69,7 @@ async fn health_endpoint_returns_json() {
 #[tokio::test]
 async fn ws_handshake_returns_hello_ok() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 
@@ -110,7 +110,7 @@ async fn ws_handshake_returns_hello_ok() {
 #[tokio::test]
 async fn ws_health_method_after_handshake() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 
@@ -159,7 +159,7 @@ async fn ws_health_method_after_handshake() {
 #[tokio::test]
 async fn ws_system_presence_shows_connected_client() {
     let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
         .await
         .expect("ws connect failed");
 

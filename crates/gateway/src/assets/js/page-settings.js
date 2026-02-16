@@ -20,6 +20,7 @@ import { initMcp, teardownMcp } from "./page-mcp.js";
 import { initMonitoring, teardownMonitoring } from "./page-metrics.js";
 import { initProviders, teardownProviders } from "./page-providers.js";
 import { initSkills, teardownSkills } from "./page-skills.js";
+import { initTerminal, teardownTerminal } from "./page-terminal.js";
 import { detectPasskeyName } from "./passkey-detect.js";
 import * as push from "./push.js";
 import { isStandalone } from "./pwa.js";
@@ -162,6 +163,12 @@ var sections = [
 		icon: html`<span class="icon icon-microphone"></span>`,
 	},
 	{ group: "Systems" },
+	{
+		id: "terminal",
+		label: "Terminal",
+		icon: html`<span class="icon icon-terminal"></span>`,
+		page: true,
+	},
 	{
 		id: "sandboxes",
 		label: "Sandboxes",
@@ -3248,6 +3255,7 @@ var pageSectionHandlers = {
 	mcp: { init: initMcp, teardown: teardownMcp },
 	hooks: { init: initHooks, teardown: teardownHooks },
 	skills: { init: initSkills, teardown: teardownSkills },
+	terminal: { init: initTerminal, teardown: teardownTerminal },
 	sandboxes: { init: initImages, teardown: teardownImages },
 	monitoring: {
 		init: (container) => initMonitoring(container, null, { syncPath: false }),

@@ -235,7 +235,9 @@ fn build_system_prompt_full(
 - `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
 - `Host: sudo_non_interactive=true` means non-interactive sudo is available for host installs; otherwise ask the user before host package installation.\n\
-- If sandbox is missing required tools/packages and host installation is needed, ask the user before requesting host install or changing sandbox mode.\n\n",
+- If sandbox is missing required tools/packages and host installation is needed, ask the user before requesting host install or changing sandbox mode.\n\
+- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\
+- If outputs differ after a routing change, state the active route briefly and continue.\n\n",
                 );
             } else {
                 prompt.push('\n');
@@ -366,7 +368,10 @@ fn build_system_prompt_full(
             "- Use the exec tool when the user asks you to run shell commands, or when system interaction ",
             "is required to complete the task.\n",
             "- If the user starts a message with `/sh `, treat the remaining text as an explicit shell ",
-            "command and run it with `exec`.\n",
+            "command and run it with `exec` exactly as written.\n",
+            "- Do not express surprise about sandbox vs host execution. Route changes are normal.\n",
+            "- Do not suggest disabling sandbox unless the user explicitly asks for host execution or ",
+            "the task cannot be completed in sandbox.\n",
             "- Use the browser tool to open URLs and interact with web pages. Call it when the user ",
             "asks to visit a website, check a page, read web content, or perform any web browsing task.\n",
             "- Before executing commands or opening pages, briefly explain what you're going to do.\n",
@@ -762,6 +767,7 @@ mod tests {
         assert!(prompt.contains("backend=docker"));
         assert!(prompt.contains("network=disabled"));
         assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
     }
 
     #[test]
@@ -860,6 +866,8 @@ mod tests {
         assert!(prompt.contains("empty response"));
         assert!(prompt.contains("Do not call tools for greetings"));
         assert!(prompt.contains("`/sh `"));
+        assert!(prompt.contains("run it with `exec` exactly as written"));
+        assert!(prompt.contains("Do not express surprise about sandbox vs host execution"));
         assert!(!prompt.contains("__SILENT__"));
     }
 

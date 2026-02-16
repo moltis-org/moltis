@@ -10,7 +10,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
-    "tailwindcss": "^4.1.0",
-    "@tailwindcss/cli": "^4.1.0"
+    "@tailwindcss/cli": "^4.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "tailwindcss": "^4.1.0"
   }
 }

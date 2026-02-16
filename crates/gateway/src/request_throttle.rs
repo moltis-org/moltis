@@ -51,7 +51,7 @@ impl ThrottleScope {
         if path.starts_with("/share/") {
             return Some(Self::Share);
         }
-        if path == "/ws" {
+        if path.starts_with("/ws/") {
             return Some(Self::Ws);
         }
         None
@@ -354,9 +354,14 @@ mod tests {
     #[test]
     fn classify_ws_request() {
         assert_eq!(
-            ThrottleScope::from_request(&Method::GET, "/ws"),
+            ThrottleScope::from_request(&Method::GET, "/ws/chat"),
             Some(ThrottleScope::Ws)
         );
+    }
+
+    #[test]
+    fn legacy_ws_root_path_is_not_classified() {
+        assert_eq!(ThrottleScope::from_request(&Method::GET, "/ws"), None);
     }
 
     #[test]

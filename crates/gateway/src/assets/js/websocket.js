@@ -619,9 +619,19 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 
 function handleChatNotice(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	// Show notice message with title if provided
+	// Render titled notices as markdown so emphasis is visible.
 	var msg = p.title ? `**${p.title}:** ${p.message}` : p.message;
-	chatAddMsg("system", msg);
+	var noticeEl = p.title ? chatAddMsg("system", renderMarkdown(msg), true) : chatAddMsg("system", msg);
+	if (!(noticeEl && p.title)) return;
+	noticeEl.classList.add("system-notice");
+	if (String(p.title).toLowerCase() !== "sandbox") return;
+	noticeEl.classList.add("system-notice-sandbox");
+	var normalizedMessage = String(p.message || "").toLowerCase();
+	if (normalizedMessage.indexOf("enabled") !== -1) {
+		noticeEl.classList.add("is-enabled");
+	} else if (normalizedMessage.indexOf("disabled") !== -1) {
+		noticeEl.classList.add("is-disabled");
+	}
 }
 
 function handleChatQueueCleared(_p, isActive, isChatPage) {

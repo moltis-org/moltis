@@ -3,23 +3,28 @@ use std::{
     fs::OpenOptions,
     io::Write,
     net::SocketAddr,
-    path::Path as FsPath,
+    path::{Path as FsPath, PathBuf},
     sync::Arc,
 };
 
 use secrecy::ExposeSecret;
 
-#[cfg(feature = "tls")]
-use std::path::PathBuf;
-
 #[cfg(feature = "web-ui")]
 use askama::Template;
+#[cfg(feature = "web-ui")]
+use axum::extract::ws::{Message, WebSocket};
 #[cfg(feature = "web-ui")]
 use axum::response::{Html, Redirect};
 #[cfg(feature = "web-ui")]
 use base64::Engine as _;
 #[cfg(feature = "web-ui")]
 use chrono::{Local, TimeZone, Utc};
+#[cfg(feature = "web-ui")]
+use futures::{SinkExt, StreamExt};
+#[cfg(feature = "web-ui")]
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+#[cfg(feature = "web-ui")]
+use std::io::Read;
 use {
     axum::{
         Router,
@@ -582,6 +587,7 @@ fn build_api_routes() -> Router<AppState> {
             "/api/sandbox/daemon/restart",
             axum::routing::post(api_restart_daemon_handler),
         )
+        .route("/api/terminal/ws", get(api_terminal_ws_upgrade_handler))
         .route(
             "/api/env",
             get(crate::env_routes::env_list).post(crate::env_routes::env_set),
@@ -797,7 +803,7 @@ pub fn build_gateway_app(
 
     let mut router = Router::new()
         .route("/health", get(health_handler))
-        .route("/ws", get(ws_upgrade_handler));
+        .route("/ws/chat", get(ws_upgrade_handler));
 
     // Nest auth routes if credential store is available.
     if let Some(ref cred_store) = state.credential_store {
@@ -864,7 +870,7 @@ pub fn build_gateway_app(
 
     let mut router = Router::new()
         .route("/health", get(health_handler))
-        .route("/ws", get(ws_upgrade_handler));
+        .route("/ws/chat", get(ws_upgrade_handler));
 
     // Add Prometheus metrics endpoint (unauthenticated for scraping).
     #[cfg(feature = "prometheus")]
@@ -3684,6 +3690,321 @@ async fn ws_upgrade_handler(
     .into_response()
 }
 
+/// Dedicated host terminal WebSocket stream (`Settings > Terminal`).
+#[cfg(feature = "web-ui")]
+async fn api_terminal_ws_upgrade_handler(
+    ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // CSWSH protection: only same-origin browser upgrades are allowed.
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        let host = headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !is_same_origin(origin, host) {
+            warn!(
+                origin,
+                host,
+                remote = %addr,
+                "rejected cross-origin terminal WebSocket upgrade"
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                "cross-origin WebSocket connections are not allowed",
+            )
+                .into_response();
+        }
+    }
+
+    let is_local = is_local_connection(&headers, addr, state.gateway.behind_proxy);
+    let header_authenticated =
+        websocket_header_authenticated(&headers, state.gateway.credential_store.as_ref(), is_local)
+            .await;
+    if !header_authenticated {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "not authenticated" })),
+        )
+            .into_response();
+    }
+
+    ws.on_upgrade(move |socket| handle_terminal_ws_connection(socket, addr))
+        .into_response()
+}
+
+#[cfg(feature = "web-ui")]
+async fn terminal_ws_send_json(
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    payload: serde_json::Value,
+) -> bool {
+    match serde_json::to_string(&payload) {
+        Ok(text) => ws_tx.send(Message::Text(text.into())).await.is_ok(),
+        Err(err) => {
+            warn!(error = %err, "failed to serialize terminal ws payload");
+            false
+        },
+    }
+}
+
+#[cfg(feature = "web-ui")]
+async fn terminal_ws_send_status(
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    text: &str,
+    level: &str,
+) -> bool {
+    terminal_ws_send_json(
+        ws_tx,
+        serde_json::json!({
+            "type": "status",
+            "text": text,
+            "level": level,
+        }),
+    )
+    .await
+}
+
+#[cfg(feature = "web-ui")]
+async fn terminal_ws_send_output(
+    ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    data: &str,
+) -> bool {
+    terminal_ws_send_json(
+        ws_tx,
+        serde_json::json!({
+            "type": "output",
+            "data": data,
+        }),
+    )
+    .await
+}
+
+#[cfg(feature = "web-ui")]
+async fn handle_terminal_ws_connection(socket: WebSocket, remote_addr: SocketAddr) {
+    let conn_id = uuid::Uuid::new_v4().to_string();
+    info!(conn_id = %conn_id, remote = %remote_addr, "terminal ws: new connection");
+
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    let is_root = detect_host_root_user_for_terminal();
+    let prompt_symbol = if is_root.unwrap_or(false) {
+        "#"
+    } else {
+        "$"
+    };
+    let user = host_terminal_user_name();
+    let persistence_available = host_terminal_tmux_available();
+    let tmux_install_command = host_terminal_tmux_install_hint();
+    let mut current_cols = HOST_TERMINAL_DEFAULT_COLS;
+    let mut current_rows = HOST_TERMINAL_DEFAULT_ROWS;
+    let mut runtime =
+        match spawn_host_terminal_runtime(current_cols, current_rows, persistence_available) {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                let _ = terminal_ws_send_status(&mut ws_tx, &err, "error").await;
+                return;
+            },
+        };
+
+    if !terminal_ws_send_json(
+        &mut ws_tx,
+        serde_json::json!({
+            "type": "ready",
+            "available": true,
+            "mode": "host",
+            "sandboxed": false,
+            "user": user,
+            "isRoot": is_root,
+            "promptSymbol": prompt_symbol,
+            "persistenceAvailable": persistence_available,
+            "persistenceEnabled": persistence_available,
+            "persistenceMode": if persistence_available { "tmux" } else { "ephemeral" },
+            "sessionName": if persistence_available { Some(HOST_TERMINAL_SESSION_NAME) } else { None::<&str> },
+            "tmuxInstallCommand": tmux_install_command,
+        }),
+    )
+    .await
+    {
+        host_terminal_stop_runtime(&mut runtime);
+        return;
+    }
+
+    if !persistence_available && let Some(install_cmd) = host_terminal_tmux_install_hint() {
+        let hint = format!(
+            "tmux is not installed, session persistence is disabled. Install tmux for persistence: {install_cmd}"
+        );
+        if !terminal_ws_send_status(&mut ws_tx, &hint, "info").await {
+            host_terminal_stop_runtime(&mut runtime);
+            return;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            maybe_output = runtime.output_rx.recv() => {
+                match maybe_output {
+                    Some(HostTerminalOutputEvent::Output(data)) => {
+                        if !terminal_ws_send_output(&mut ws_tx, &data).await {
+                            break;
+                        }
+                    }
+                    Some(HostTerminalOutputEvent::Error(err)) => {
+                        if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                            break;
+                        }
+                    }
+                    Some(HostTerminalOutputEvent::Closed) | None => {
+                        let _ = terminal_ws_send_status(
+                            &mut ws_tx,
+                            "host terminal process exited",
+                            "error",
+                        )
+                        .await;
+                        break;
+                    }
+                }
+            }
+            maybe_msg = ws_rx.next() => {
+                let Some(msg_result) = maybe_msg else {
+                    break;
+                };
+                let Ok(msg) = msg_result else {
+                    break;
+                };
+
+                match msg {
+                    Message::Text(text) => {
+                        if text.len() > HOST_TERMINAL_MAX_INPUT_BYTES * 2 {
+                            if !terminal_ws_send_status(
+                                &mut ws_tx,
+                                "terminal ws message too large",
+                                "error",
+                            )
+                            .await
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        let parsed: Result<HostTerminalWsClientMessage, _> = serde_json::from_str(&text);
+                        match parsed {
+                            Ok(HostTerminalWsClientMessage::Input { data }) => {
+                                if data.is_empty() {
+                                    continue;
+                                }
+                                if data.len() > HOST_TERMINAL_MAX_INPUT_BYTES {
+                                    if !terminal_ws_send_status(
+                                        &mut ws_tx,
+                                        &format!(
+                                            "input chunk too large (max {} bytes)",
+                                            HOST_TERMINAL_MAX_INPUT_BYTES
+                                        ),
+                                        "error",
+                                    )
+                                    .await
+                                    {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                if let Err(err) = host_terminal_write_input(&mut runtime, &data) {
+                                    if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+                            Ok(HostTerminalWsClientMessage::Resize {
+                                cols: next_cols,
+                                rows: next_rows,
+                            }) => {
+                                if next_cols < 2 || next_rows < 1 {
+                                    continue;
+                                }
+                                if let Err(err) = host_terminal_resize(&runtime, next_cols, next_rows) {
+                                    if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                                        break;
+                                    }
+                                } else {
+                                    // Keep restart size aligned with latest client viewport.
+                                    current_cols = next_cols;
+                                    current_rows = next_rows;
+                                }
+                            }
+                            Ok(HostTerminalWsClientMessage::Control { action }) => {
+                                let action_result = match action {
+                                    HostTerminalWsControlAction::Restart => {
+                                        host_terminal_stop_runtime(&mut runtime);
+                                        match spawn_host_terminal_runtime(
+                                            current_cols,
+                                            current_rows,
+                                            persistence_available,
+                                        ) {
+                                            Ok(next_runtime) => {
+                                                runtime = next_runtime;
+                                                Ok(())
+                                            }
+                                            Err(err) => Err(err),
+                                        }
+                                    }
+                                    HostTerminalWsControlAction::CtrlC => {
+                                        host_terminal_write_input(&mut runtime, "\u{3}")
+                                    }
+                                    HostTerminalWsControlAction::Clear => {
+                                        host_terminal_write_input(&mut runtime, "\u{c}")
+                                    }
+                                };
+                                if let Err(err) = action_result
+                                    && !terminal_ws_send_status(&mut ws_tx, &err, "error").await
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(HostTerminalWsClientMessage::Ping) => {
+                                if !terminal_ws_send_json(
+                                    &mut ws_tx,
+                                    serde_json::json!({ "type": "pong" }),
+                                )
+                                .await
+                                {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                if !terminal_ws_send_status(
+                                    &mut ws_tx,
+                                    &format!("invalid terminal ws message: {err}"),
+                                    "error",
+                                )
+                                .await
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Message::Ping(payload) => {
+                        if ws_tx.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Close(_) => break,
+                    Message::Binary(_) | Message::Pong(_) => {}
+                }
+            }
+        }
+    }
+
+    host_terminal_stop_runtime(&mut runtime);
+    info!(conn_id = %conn_id, remote = %remote_addr, "terminal ws: connection closed");
+}
+
 /// Extract the client IP from proxy headers, falling back to the direct connection address.
 fn extract_ws_client_ip(headers: &axum::http::HeaderMap, conn_addr: SocketAddr) -> Option<String> {
     // X-Forwarded-For (may contain multiple IPs — take the leftmost/client IP)
@@ -5982,6 +6303,298 @@ async fn api_restart_daemon_handler() -> impl IntoResponse {
     }
 }
 
+#[cfg(feature = "web-ui")]
+const HOST_TERMINAL_SESSION_NAME: &str = "moltis-host-terminal";
+#[cfg(feature = "web-ui")]
+const HOST_TERMINAL_MAX_INPUT_BYTES: usize = 8 * 1024;
+#[cfg(feature = "web-ui")]
+const HOST_TERMINAL_DEFAULT_COLS: u16 = 220;
+#[cfg(feature = "web-ui")]
+const HOST_TERMINAL_DEFAULT_ROWS: u16 = 56;
+
+#[cfg(feature = "web-ui")]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum HostTerminalWsClientMessage {
+    Input { data: String },
+    Resize { cols: u16, rows: u16 },
+    Control { action: HostTerminalWsControlAction },
+    Ping,
+}
+
+#[cfg(feature = "web-ui")]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HostTerminalWsControlAction {
+    Restart,
+    CtrlC,
+    Clear,
+}
+
+#[cfg(feature = "web-ui")]
+enum HostTerminalOutputEvent {
+    Output(String),
+    Error(String),
+    Closed,
+}
+
+#[cfg(feature = "web-ui")]
+struct HostTerminalPtyRuntime {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    output_rx: tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>,
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_working_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_user_name() -> String {
+    std::env::var("USER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("LOGNAME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_tmux_available() -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    which::which("tmux").is_ok()
+}
+
+#[cfg(feature = "web-ui")]
+fn tmux_install_command_for_linux(
+    has_debian: bool,
+    has_redhat: bool,
+    has_arch: bool,
+    has_alpine: bool,
+) -> &'static str {
+    if has_debian {
+        return "sudo apt install tmux";
+    }
+    if has_redhat {
+        return "sudo dnf install tmux";
+    }
+    if has_arch {
+        return "sudo pacman -S tmux";
+    }
+    if has_alpine {
+        return "sudo apk add tmux";
+    }
+    "install tmux using your package manager"
+}
+
+#[cfg(feature = "web-ui")]
+fn tmux_install_command_for_host_os() -> Option<&'static str> {
+    if cfg!(windows) {
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        return Some("brew install tmux");
+    }
+    if cfg!(target_os = "linux") {
+        return Some(tmux_install_command_for_linux(
+            FsPath::new("/etc/debian_version").exists(),
+            FsPath::new("/etc/redhat-release").exists(),
+            FsPath::new("/etc/arch-release").exists(),
+            FsPath::new("/etc/alpine-release").exists(),
+        ));
+    }
+    Some("install tmux using your package manager")
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_tmux_install_hint() -> Option<String> {
+    tmux_install_command_for_host_os().map(str::to_string)
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_command_builder(use_tmux_persistence: bool) -> CommandBuilder {
+    if use_tmux_persistence {
+        let mut cmd = CommandBuilder::new("tmux");
+        cmd.args(["new-session", "-A", "-s", HOST_TERMINAL_SESSION_NAME]);
+        if let Some(working_dir) = host_terminal_working_dir() {
+            cmd.cwd(working_dir);
+        }
+        return cmd;
+    }
+
+    if cfg!(windows) {
+        let comspec = std::env::var("COMSPEC")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        let mut cmd = CommandBuilder::new(comspec);
+        if let Some(working_dir) = host_terminal_working_dir() {
+            cmd.cwd(working_dir);
+        }
+        return cmd;
+    }
+
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+    let mut cmd = CommandBuilder::new(shell);
+    cmd.arg("-l");
+    if let Some(working_dir) = host_terminal_working_dir() {
+        cmd.cwd(working_dir);
+    }
+    cmd
+}
+
+#[cfg(feature = "web-ui")]
+fn spawn_host_terminal_runtime(
+    cols: u16,
+    rows: u16,
+    use_tmux_persistence: bool,
+) -> Result<HostTerminalPtyRuntime, String> {
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(2),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|err| format!("failed to allocate host PTY: {err}"))?;
+
+    let portable_pty::PtyPair { master, slave } = pair;
+    let cmd = host_terminal_command_builder(use_tmux_persistence);
+    let child = slave
+        .spawn_command(cmd)
+        .map_err(|err| format!("failed to spawn host shell: {err}"))?;
+    drop(slave);
+
+    let writer = master
+        .take_writer()
+        .map_err(|err| format!("failed to open host terminal writer: {err}"))?;
+    let reader = master
+        .try_clone_reader()
+        .map_err(|err| format!("failed to open host terminal reader: {err}"))?;
+    let output_rx = spawn_host_terminal_reader(reader)?;
+
+    Ok(HostTerminalPtyRuntime {
+        master,
+        writer,
+        child,
+        output_rx,
+    })
+}
+
+#[cfg(feature = "web-ui")]
+fn spawn_host_terminal_reader(
+    mut reader: Box<dyn Read + Send>,
+) -> Result<tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>, String> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<HostTerminalOutputEvent>();
+    std::thread::Builder::new()
+        .name("moltis-host-terminal-reader".to_string())
+        .spawn(move || {
+            let mut buf = vec![0_u8; 16 * 1024];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = tx.send(HostTerminalOutputEvent::Closed);
+                        break;
+                    },
+                    Ok(n) => {
+                        let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                        if tx.send(HostTerminalOutputEvent::Output(data)).is_err() {
+                            break;
+                        }
+                    },
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(err) => {
+                        let _ = tx.send(HostTerminalOutputEvent::Error(format!(
+                            "host terminal stream error: {err}"
+                        )));
+                        let _ = tx.send(HostTerminalOutputEvent::Closed);
+                        break;
+                    },
+                }
+            }
+        })
+        .map_err(|err| format!("failed to launch host terminal reader thread: {err}"))?;
+    Ok(rx)
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_write_input(
+    runtime: &mut HostTerminalPtyRuntime,
+    input: &str,
+) -> Result<(), String> {
+    runtime
+        .writer
+        .write_all(input.as_bytes())
+        .map_err(|err| format!("failed to write to host terminal: {err}"))?;
+    runtime
+        .writer
+        .flush()
+        .map_err(|err| format!("failed to flush host terminal input: {err}"))?;
+    Ok(())
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_resize(
+    runtime: &HostTerminalPtyRuntime,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    runtime
+        .master
+        .resize(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(2),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|err| format!("failed to resize host terminal: {err}"))
+}
+
+#[cfg(feature = "web-ui")]
+fn host_terminal_stop_runtime(runtime: &mut HostTerminalPtyRuntime) {
+    let _ = runtime.child.kill();
+}
+
+#[cfg(feature = "web-ui")]
+fn detect_host_root_user_for_terminal() -> Option<bool> {
+    if cfg!(windows) {
+        return None;
+    }
+
+    if let Some(uid) = std::env::var("EUID")
+        .ok()
+        .or_else(|| std::env::var("UID").ok())
+        .and_then(|value| value.trim().parse::<u32>().ok())
+    {
+        return Some(uid == 0);
+    }
+
+    if let Some(user) = std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("LOGNAME").ok())
+    {
+        let trimmed = user.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed == "root");
+        }
+    }
+
+    None
+}
+
 /// Build a custom image from a base + apt packages.
 #[cfg(feature = "web-ui")]
 async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
@@ -7015,6 +7628,33 @@ mod tests {
         // One has port, other doesn't — different origins.
         assert!(!is_same_origin("http://localhost:8080", "localhost"));
         assert!(!is_same_origin("http://localhost", "localhost:8080"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn tmux_install_command_prefers_debian_when_detected() {
+        assert_eq!(
+            tmux_install_command_for_linux(true, false, false, false),
+            "sudo apt install tmux"
+        );
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn tmux_install_command_prefers_redhat_before_arch() {
+        assert_eq!(
+            tmux_install_command_for_linux(false, true, true, false),
+            "sudo dnf install tmux"
+        );
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn tmux_install_command_falls_back_to_generic_hint() {
+        assert_eq!(
+            tmux_install_command_for_linux(false, false, false, false),
+            "install tmux using your package manager"
+        );
     }
 
     #[cfg(feature = "web-ui")]

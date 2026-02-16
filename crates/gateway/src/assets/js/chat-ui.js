@@ -25,6 +25,9 @@ export function chatAddMsg(cls, content, isHtml) {
 	if (welcome) welcome.remove();
 	var el = document.createElement("div");
 	el.className = `msg ${cls}`;
+	if (cls === "system") {
+		el.classList.add("system-notice");
+	}
 	if (isHtml) {
 		// Safe: content is produced by renderMarkdown which escapes via esc() first,
 		// then only adds our own formatting tags (pre, code, strong).

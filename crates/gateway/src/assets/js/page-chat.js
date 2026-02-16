@@ -32,7 +32,7 @@ var slashCommands = [
 	{ name: "clear", description: "Clear conversation history" },
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
-	{ name: "sh", description: "Enter command mode (/sh off to exit)" },
+	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
 ];
 var slashMenuEl = null;
 var slashMenuIdx = 0;
@@ -783,11 +783,15 @@ function handleSlashCommand(cmdName, cmdArgs) {
 		var normalized = (cmdArgs || "").toLowerCase();
 		if (normalized === "off" || normalized === "exit") {
 			setCommandMode(false);
-			chatAddMsg("system", "Command mode disabled");
+			chatAddMsg("system", renderMarkdown("**Command:** mode disabled"), true);
 			return;
 		}
 		setCommandMode(true);
-		chatAddMsg("system", `Command mode enabled (${commandModeSummary()})`);
+		chatAddMsg(
+			"system",
+			renderMarkdown(`**Command:** mode enabled (${commandModeSummary()}) · exit with /sh off or Esc`),
+			true,
+		);
 	}
 }
 
