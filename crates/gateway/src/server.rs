@@ -3969,6 +3969,8 @@ struct GonData {
     /// Central SPA route definitions so JS can read paths from gon
     /// instead of hardcoding them.
     routes: SpaRoutes,
+    /// Unix epoch (milliseconds) when the server process started.
+    started_at: u64,
 }
 
 /// Sandbox runtime snapshot included in gon data so the settings page
@@ -4129,6 +4131,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         update: gw.inner.read().await.update.clone(),
         sandbox,
         routes: SPA_ROUTES.clone(),
+        started_at: *PROCESS_STARTED_AT_MS,
     }
 }
 
@@ -4598,6 +4601,15 @@ fn share_social_image_url(
         None => path,
     }
 }
+
+/// Unix epoch (milliseconds) captured once at process startup.
+#[cfg(feature = "web-ui")]
+static PROCESS_STARTED_AT_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+});
 
 #[cfg(feature = "web-ui")]
 static SHARE_SOCIAL_BRAND_ICON_DATA_URL: std::sync::LazyLock<String> =
