@@ -57,10 +57,11 @@ export function isModelServiceNotConfigured(error) {
  * Validate provider credentials without saving them.
  * Returns { valid, models?, error? }.
  */
-export async function validateProviderKey(provider, apiKey, baseUrl, model) {
+export async function validateProviderKey(provider, apiKey, baseUrl, model, requestId) {
 	var payload = { provider, apiKey };
 	if (baseUrl) payload.baseUrl = baseUrl;
 	if (model) payload.model = model;
+	if (requestId) payload.requestId = requestId;
 
 	var res = await sendRpc("providers.validate_key", payload);
 	if (!res?.ok) {

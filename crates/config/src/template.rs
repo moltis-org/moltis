@@ -84,7 +84,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 #   alias     - Custom name for metrics labels (useful for multiple instances)
 
 [providers]
-offered = ["local-llm", "github-copilot", "openai", "anthropic", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
+offered = ["local-llm", "github-copilot", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"] # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # All available providers:
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
 #   "mistral", "openrouter", "cerebras", "minimax", "moonshot",
@@ -342,6 +342,7 @@ timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache fetched pages for this many minutes (0 = no cache)
 max_redirects = 3                 # Maximum HTTP redirects to follow
 readability = true                # Use readability extraction for HTML (cleaner output)
+# ssrf_allowlist = ["172.22.0.0/16"] # CIDR ranges exempt from SSRF blocking (e.g. Docker networks)
 
 # ── Browser Automation ────────────────────────────────────────────────────────
 # Full browser control via Chrome DevTools Protocol (CDP).
@@ -518,7 +519,8 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
                                   #   "openai"  - OpenAI API
                                   #   "custom"  - Custom endpoint
                                   #   (none)    - Auto-detect from available providers
-# base_url = "http://localhost:11434/v1"  # API endpoint for embeddings
+# disable_rag = false             # true => keyword-only search (no embeddings)
+# base_url = "http://localhost:11434/v1"  # Embedding API base (host, /v1, or /embeddings)
 # model = "nomic-embed-text"      # Embedding model name
 # api_key = "..."                 # API key (optional for local endpoints like Ollama)
 

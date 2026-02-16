@@ -131,7 +131,7 @@ fn is_likely_model_id(model_id: &str) -> bool {
     }
     model_id
         .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':' | '/'))
 }
 
 /// Delegates to the shared [`super::is_chat_capable_model`] for filtering
@@ -596,6 +596,7 @@ impl LlmProvider for OpenAiProvider {
 
         let status = http_resp.status();
         if !status.is_success() {
+            let retry_after_ms = super::retry_after_ms_from_headers(http_resp.headers());
             let body_text = http_resp.text().await.unwrap_or_default();
             if should_warn_on_api_error(status, &body_text) {
                 warn!(
@@ -613,7 +614,13 @@ impl LlmProvider for OpenAiProvider {
                     "openai model unsupported for chat/completions endpoint"
                 );
             }
-            anyhow::bail!("OpenAI API error HTTP {status}: {body_text}");
+            anyhow::bail!(
+                "{}",
+                super::with_retry_after_marker(
+                    format!("OpenAI API error HTTP {status}: {body_text}"),
+                    retry_after_ms,
+                )
+            );
         }
 
         let resp = http_resp.json::<serde_json::Value>().await?;
@@ -692,8 +699,12 @@ impl LlmProvider for OpenAiProvider {
                 Ok(r) => {
                     if let Err(e) = r.error_for_status_ref() {
                         let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
                         let body_text = r.text().await.unwrap_or_default();
-                        yield StreamEvent::Error(format!("HTTP {status}: {body_text}"));
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
                         return;
                     }
                     r
@@ -1330,6 +1341,22 @@ mod tests {
         assert_eq!(ids, vec!["gpt-5.2", "o3", "gpt-4o-mini", "o1"]);
         assert_eq!(models[0].created_at, Some(3000));
         assert_eq!(models[3].created_at, None);
+    }
+
+    #[test]
+    fn parse_models_payload_accepts_provider_prefixed_model_ids() {
+        let payload = serde_json::json!({
+            "data": [
+                { "id": "openai/gpt-5.2", "created": 3000 },
+                { "id": "google/gemini-2.0-flash", "created": 2000 },
+                { "id": "openai/gpt-image-1", "created": 1000 },
+                { "id": "openai/gpt-4o-mini-tts", "created": 900 }
+            ]
+        });
+
+        let models = parse_models_payload(&payload);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["openai/gpt-5.2", "google/gemini-2.0-flash"]);
     }
 
     #[test]

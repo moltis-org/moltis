@@ -87,6 +87,12 @@ backend = "builtin"
 # Embedding provider: "local", "ollama", "openai", "custom", or auto-detect
 provider = "local"
 
+# Disable RAG embeddings and force keyword-only search
+disable_rag = false
+
+# Embedding API base URL (host, /v1, or full /embeddings endpoint)
+base_url = "http://localhost:11434/v1"
+
 # Citation mode: "on", "off", or "auto"
 citations = "auto"
 

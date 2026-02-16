@@ -27,10 +27,9 @@ impl FileStore {
         }
     }
 
-    /// Create a store using the default `~/.clawdbot/cron/` layout.
+    /// Create a store using the default `<data_dir>/cron/` layout.
     pub fn default_path() -> Result<Self> {
-        let home = dirs_next::home_dir().context("cannot determine home directory")?;
-        let base = home.join(".clawdbot").join("cron");
+        let base = moltis_config::data_dir().join("cron");
         Ok(Self::new(base.join("jobs.json"), base.join("runs")))
     }
 

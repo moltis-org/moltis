@@ -438,6 +438,9 @@ pub struct BrowserConfig {
     /// Allowed domains for navigation (empty = all allowed).
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    /// Total system RAM threshold (MB) below which memory-saving Chrome flags
+    /// are injected automatically. Set to 0 to disable. Default: 2048.
+    pub low_memory_threshold_mb: u64,
 }
 
 fn default_sandbox_image() -> String {
@@ -466,6 +469,7 @@ impl Default for BrowserConfig {
             sandbox_image: default_sandbox_image(),
             container_prefix: default_container_prefix(),
             allowed_domains: Vec::new(),
+            low_memory_threshold_mb: 2048,
         }
     }
 }
@@ -488,6 +492,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             sandbox_image: cfg.sandbox_image.clone(),
             container_prefix: default_container_prefix(),
             allowed_domains: cfg.allowed_domains.clone(),
+            low_memory_threshold_mb: cfg.low_memory_threshold_mb,
         }
     }
 }

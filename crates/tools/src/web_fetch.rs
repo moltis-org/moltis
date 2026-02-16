@@ -27,6 +27,7 @@ pub struct WebFetchTool {
     cache_ttl: Duration,
     max_redirects: u8,
     readability: bool,
+    ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
 }
 
@@ -36,12 +37,24 @@ impl WebFetchTool {
         if !config.enabled {
             return None;
         }
+        let ssrf_allowlist: Vec<ipnet::IpNet> = config
+            .ssrf_allowlist
+            .iter()
+            .filter_map(|s| match s.parse::<ipnet::IpNet>() {
+                Ok(net) => Some(net),
+                Err(e) => {
+                    tracing::warn!("ignoring invalid ssrf_allowlist entry \"{s}\": {e}");
+                    None
+                },
+            })
+            .collect();
         Some(Self {
             max_chars: config.max_chars,
             timeout: Duration::from_secs(config.timeout_seconds),
             cache_ttl: Duration::from_secs(config.cache_ttl_minutes * 60),
             max_redirects: config.max_redirects,
             readability: config.readability,
+            ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
         })
     }
@@ -97,7 +110,7 @@ impl WebFetchTool {
 
         loop {
             // SSRF check before each request.
-            ssrf_check(&current_url).await?;
+            ssrf_check(&current_url, &self.ssrf_allowlist).await?;
             visited.push(current_url.to_string());
 
             let mut req = client.get(current_url.as_str());
@@ -171,15 +184,20 @@ impl WebFetchTool {
     }
 }
 
+/// Check if an IP is covered by an SSRF allowlist entry.
+fn is_ssrf_allowed(ip: &IpAddr, allowlist: &[ipnet::IpNet]) -> bool {
+    allowlist.iter().any(|net| net.contains(ip))
+}
+
 /// SSRF protection: resolve the URL host and reject private/loopback/link-local IPs.
-async fn ssrf_check(url: &Url) -> Result<()> {
+async fn ssrf_check(url: &Url, allowlist: &[ipnet::IpNet]) -> Result<()> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
 
     // Try parsing as IP directly.
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
+        if is_private_ip(&ip) && !is_ssrf_allowed(&ip, allowlist) {
             bail!("SSRF blocked: {host} resolves to private IP {ip}");
         }
         return Ok(());
@@ -196,7 +214,7 @@ async fn ssrf_check(url: &Url) -> Result<()> {
     }
 
     for addr in &addrs {
-        if is_private_ip(&addr.ip()) {
+        if is_private_ip(&addr.ip()) && !is_ssrf_allowed(&addr.ip(), allowlist) {
             bail!("SSRF blocked: {host} resolves to private IP {}", addr.ip());
         }
     }
@@ -464,6 +482,7 @@ mod tests {
             cache_ttl: Duration::from_secs(60),
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -516,7 +535,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_localhost_url() {
         let url = Url::parse("http://127.0.0.1/secret").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("SSRF"));
     }
@@ -524,7 +543,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_private_ip() {
         let url = Url::parse("http://192.168.1.1/admin").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("SSRF"));
     }
@@ -532,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssrf_blocks_link_local() {
         let url = Url::parse("http://169.254.1.1/metadata").unwrap();
-        let result = ssrf_check(&url).await;
+        let result = ssrf_check(&url, &[]).await;
         assert!(result.is_err());
     }
 
@@ -650,5 +669,76 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unsupported"));
+    }
+
+    // --- SSRF allowlist tests ---
+
+    #[test]
+    fn test_is_ssrf_allowed_matching_cidr() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let ip: IpAddr = "172.22.1.5".parse().unwrap();
+        assert!(is_ssrf_allowed(&ip, &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_non_matching() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip, &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_empty_blocks_all() {
+        let ip: IpAddr = "172.22.1.5".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip, &[]));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_single_host() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.5/32".parse().unwrap()];
+        assert!(is_ssrf_allowed(&"172.22.0.5".parse().unwrap(), &allowlist));
+        assert!(!is_ssrf_allowed(&"172.22.0.6".parse().unwrap(), &allowlist));
+    }
+
+    #[test]
+    fn test_is_ssrf_allowed_ipv6() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["fd00::/8".parse().unwrap()];
+        let ip: IpAddr = "fd12::1".parse().unwrap();
+        assert!(is_ssrf_allowed(&ip, &allowlist));
+        let ip_outside: IpAddr = "fe80::1".parse().unwrap();
+        assert!(!is_ssrf_allowed(&ip_outside, &allowlist));
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_check_allowlist_permits_private_ip() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let url = Url::parse("http://172.22.1.5/api").unwrap();
+        let result = ssrf_check(&url, &allowlist).await;
+        assert!(result.is_ok(), "allowlisted IP should pass SSRF check");
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_check_allowlist_still_blocks_non_matching() {
+        let allowlist: Vec<ipnet::IpNet> = vec!["172.22.0.0/16".parse().unwrap()];
+        let url = Url::parse("http://10.0.0.1/admin").unwrap();
+        let result = ssrf_check(&url, &allowlist).await;
+        assert!(
+            result.is_err(),
+            "non-allowlisted private IP should be blocked"
+        );
+    }
+
+    #[test]
+    fn test_from_config_parses_ssrf_allowlist() {
+        let cfg = WebFetchConfig {
+            ssrf_allowlist: vec![
+                "172.22.0.0/16".into(),
+                "invalid".into(),
+                "10.0.0.0/8".into(),
+            ],
+            ..Default::default()
+        };
+        let tool = WebFetchTool::from_config(&cfg).unwrap();
+        assert_eq!(tool.ssrf_allowlist.len(), 2);
     }
 }

@@ -38,6 +38,22 @@ fn get_memory_usage_percent() -> u8 {
     percent.min(100)
 }
 
+/// Returns memory-saving Chrome flags when `total_mb` is below `threshold_mb`.
+///
+/// Returns an empty slice when the threshold is 0 (disabled) or when the system
+/// has enough memory.
+#[must_use]
+pub(crate) fn low_memory_chrome_args(total_mb: u64, threshold_mb: u64) -> &'static [&'static str] {
+    if threshold_mb == 0 || total_mb >= threshold_mb {
+        return &[];
+    }
+    &[
+        "--single-process",
+        "--renderer-process-limit=1",
+        "--js-flags=--max-old-space-size=128",
+    ]
+}
+
 /// A pooled browser instance with one or more pages.
 struct BrowserInstance {
     browser: Browser,
@@ -332,6 +348,7 @@ impl BrowserPool {
             &self.config.container_prefix,
             self.config.viewport_width,
             self.config.viewport_height,
+            self.config.low_memory_threshold_mb,
         )
         .map_err(|e| {
             BrowserError::LaunchFailed(format!("failed to start browser container: {e}"))
@@ -495,6 +512,24 @@ impl BrowserPool {
             .arg("--no-sandbox")
             .arg("--disable-setuid-sandbox");
 
+        // Auto-inject low-memory flags on constrained systems
+        if self.config.low_memory_threshold_mb > 0 {
+            let mut sys = System::new();
+            sys.refresh_memory();
+            let total_mb = sys.total_memory() / (1024 * 1024);
+            let extra = low_memory_chrome_args(total_mb, self.config.low_memory_threshold_mb);
+            if !extra.is_empty() {
+                info!(
+                    total_mb,
+                    threshold = self.config.low_memory_threshold_mb,
+                    "low memory detected, adding constrained Chrome flags"
+                );
+                for arg in extra {
+                    builder = builder.arg(*arg);
+                }
+            }
+        }
+
         let config = builder.build().map_err(|e| {
             BrowserError::LaunchFailed(format!("failed to build browser config: {e}"))
         })?;
@@ -603,5 +638,25 @@ mod tests {
     fn drop_empty_pool_does_not_panic() {
         let pool = BrowserPool::new(test_config());
         drop(pool);
+    }
+
+    #[test]
+    fn low_memory_args_injected_below_threshold() {
+        let args = low_memory_chrome_args(1024, 2048);
+        assert_eq!(args.len(), 3);
+        assert!(args.contains(&"--single-process"));
+        assert!(args.contains(&"--renderer-process-limit=1"));
+        assert!(args.contains(&"--js-flags=--max-old-space-size=128"));
+    }
+
+    #[test]
+    fn low_memory_args_empty_at_or_above_threshold() {
+        assert!(low_memory_chrome_args(2048, 2048).is_empty());
+        assert!(low_memory_chrome_args(4096, 2048).is_empty());
+    }
+
+    #[test]
+    fn low_memory_args_disabled_when_threshold_zero() {
+        assert!(low_memory_chrome_args(512, 0).is_empty());
     }
 }
