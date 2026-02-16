@@ -763,9 +763,10 @@ function CronJobsPanel() {
 // ── Main page ───────────────────────────────────────────────
 
 function CronsPage() {
+	var showSidebar = syncCronsRoute;
 	return html`
-    <div class="settings-layout">
-      <${CronsSidebar} />
+    <div class=${showSidebar ? "settings-layout" : ""}>
+      ${showSidebar && html`<${CronsSidebar} />`}
       <div class="flex-1 overflow-y-auto">
         ${activeSection.value === "jobs" && html`<${CronJobsPanel} />`}
         ${activeSection.value === "heartbeat" && html`<${HeartbeatPanel} />`}
@@ -783,7 +784,9 @@ export function initCrons(container, param, options) {
 	cronsRouteBase = options?.routeBase || routes.crons;
 	syncCronsRoute = options?.syncRoute !== false;
 
-	container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
+	container.style.cssText = syncCronsRoute
+		? "flex-direction:row;padding:0;overflow:hidden;"
+		: "padding:0;overflow:hidden;";
 	cronJobs.value = gon.get("crons") || [];
 	cronStatus.value = gon.get("cron_status");
 	heartbeatConfig.value = gon.get("heartbeat_config") || {};
