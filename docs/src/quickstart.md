@@ -96,8 +96,8 @@ Extend capabilities with [MCP servers](mcp.md):
 
 ```toml
 # In moltis.toml
-[[mcp.servers]]
-name = "github"
+[mcp]
+[mcp.servers.github]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
@@ -110,7 +110,8 @@ Enable long-term memory for context across sessions:
 ```toml
 # In moltis.toml
 [memory]
-enabled = true
+provider = "openai"
+model = "text-embedding-3-small"
 ```
 
 Add knowledge by placing Markdown files in `~/.moltis/memory/`.

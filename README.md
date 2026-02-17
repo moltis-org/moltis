@@ -441,18 +441,19 @@ action via exit code and stdout:
 ### Configuration
 
 ```toml
-[[hooks]]
+[hooks]
+[[hooks.hooks]]
 name = "audit-tool-calls"
 command = "./examples/hooks/log-tool-calls.sh"
 events = ["BeforeToolCall"]
 
-[[hooks]]
+[[hooks.hooks]]
 name = "block-dangerous"
 command = "./examples/hooks/block-dangerous-commands.sh"
 events = ["BeforeToolCall"]
 timeout = 5
 
-[[hooks]]
+[[hooks.hooks]]
 name = "notify-discord"
 command = "./examples/hooks/notify-discord.sh"
 events = ["SessionEnd"]

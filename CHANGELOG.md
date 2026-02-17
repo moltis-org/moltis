@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Settings > Cron job editor now supports per-job LLM model selection and
-  execution target selection (`host` or `sandbox`), including optional
-  sandbox image override when sandbox execution is selected.
 - Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
   self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
   Docker socket mount guidance for sandboxed exec support.
@@ -23,6 +20,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+
+- Onboarding identity save now captures browser timezone and persists it to
+  `USER.md` via `user_timezone`, so first-run profile setup records the user's
+  timezone alongside their name.
+- Runtime prompt host metadata now prefers user/browser timezone over server
+  local fallback and includes an explicit `today=YYYY-MM-DD` field so models
+  can reliably reason about the user's current date.
+
+- Skills installation now supports Claude marketplace repos that define skills
+  directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
+  (for example `anthropics/skills`), including loading `SKILL.md` entries under
+  `skills/*` and exposing them through the existing plugin-skill workflow.
+
+### Security
+
+## [0.9.0] - 2026-02-17
+
+
+### Added
+
+- Settings > Cron job editor now supports per-job LLM model selection and
+  execution target selection (`host` or `sandbox`), including optional
+  sandbox image override when sandbox execution is selected.
+
+### Changed
+
+- Configuration documentation examples now match the current schema
+  (`[server]`, `[identity]`, `[tools]`, `[hooks.hooks]`,
+  `[mcp.servers.<name>]`, and `[channels.telegram.<account>]`), including
+  updated provider and local-LLM snippets.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Agent loop iteration limit is now configurable via
+  `tools.agent_max_iterations` in `moltis.toml` (default `25`) instead of
+  being hardcoded at runtime.
 
 ### Security
 

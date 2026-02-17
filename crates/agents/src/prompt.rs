@@ -13,6 +13,8 @@ pub struct PromptHostRuntimeContext {
     pub shell: Option<String>,
     /// Current datetime string for prompt context, localized when timezone is known.
     pub time: Option<String>,
+    /// Current date string (`YYYY-MM-DD`) for prompt context.
+    pub today: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
@@ -480,6 +482,7 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("arch", host.arch.as_deref()),
         ("shell", host.shell.as_deref()),
         ("time", host.time.as_deref()),
+        ("today", host.today.as_deref()),
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
         ("session", host.session_key.as_deref()),
@@ -781,6 +784,7 @@ mod tests {
                 arch: Some("aarch64".into()),
                 shell: Some("zsh".into()),
                 time: Some("2026-02-17 16:18:00 CET".into()),
+                today: Some("2026-02-17".into()),
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
@@ -820,6 +824,7 @@ mod tests {
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
         assert!(prompt.contains("time=2026-02-17 16:18:00 CET"));
+        assert!(prompt.contains("today=2026-02-17"));
         assert!(prompt.contains("provider=openai"));
         assert!(prompt.contains("model=gpt-5"));
         assert!(prompt.contains("sudo_non_interactive=true"));

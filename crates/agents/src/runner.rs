@@ -19,8 +19,19 @@ use crate::{
 
 use futures::StreamExt;
 
-/// Maximum number of tool-call loop iterations before giving up.
-const MAX_ITERATIONS: usize = 25;
+/// Fallback loop limit when config is missing or invalid.
+const DEFAULT_AGENT_MAX_ITERATIONS: usize = 25;
+
+fn resolve_agent_max_iterations(configured: usize) -> usize {
+    if configured == 0 {
+        warn!(
+            default = DEFAULT_AGENT_MAX_ITERATIONS,
+            "tools.agent_max_iterations was 0; falling back to default"
+        );
+        return DEFAULT_AGENT_MAX_ITERATIONS;
+    }
+    configured
+}
 
 /// Error patterns that indicate the context window has been exceeded.
 const CONTEXT_WINDOW_PATTERNS: &[&str] = &[
@@ -739,9 +750,9 @@ pub async fn run_agent_loop_with_context(
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
-    let max_tool_result_bytes = moltis_config::discover_and_load()
-        .tools
-        .max_tool_result_bytes;
+    let config = moltis_config::discover_and_load();
+    let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     let tool_schemas = tools.list_schemas();
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
@@ -791,8 +802,8 @@ pub async fn run_agent_loop_with_context(
 
     loop {
         iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            warn!("agent loop exceeded max iterations ({})", MAX_ITERATIONS);
+        if iterations > max_iterations {
+            warn!("agent loop exceeded max iterations ({})", max_iterations);
             return Err(AgentRunError::Other(anyhow::anyhow!(
                 "agent loop exceeded max iterations"
             )));
@@ -1212,9 +1223,9 @@ pub async fn run_agent_loop_streaming(
     hook_registry: Option<Arc<HookRegistry>>,
 ) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
-    let max_tool_result_bytes = moltis_config::discover_and_load()
-        .tools
-        .max_tool_result_bytes;
+    let config = moltis_config::discover_and_load();
+    let max_tool_result_bytes = config.tools.max_tool_result_bytes;
+    let max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
     let tool_schemas = tools.list_schemas();
 
     let is_multimodal = matches!(user_content, UserContent::Multimodal(_));
@@ -1272,10 +1283,10 @@ pub async fn run_agent_loop_streaming(
 
     loop {
         iterations += 1;
-        if iterations > MAX_ITERATIONS {
+        if iterations > max_iterations {
             warn!(
                 "streaming agent loop exceeded max iterations ({})",
-                MAX_ITERATIONS
+                max_iterations
             );
             return Err(AgentRunError::Other(anyhow::anyhow!(
                 "agent loop exceeded max iterations"
@@ -1900,6 +1911,14 @@ mod tests {
         assert_eq!(
             explicit_shell_command_from_user_content(&uc).as_deref(),
             Some("uname -a")
+        );
+    }
+
+    #[test]
+    fn test_resolve_agent_max_iterations_falls_back_for_zero() {
+        assert_eq!(
+            resolve_agent_max_iterations(0),
+            DEFAULT_AGENT_MAX_ITERATIONS
         );
     }
 

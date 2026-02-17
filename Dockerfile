@@ -37,15 +37,19 @@ FROM debian:bookworm-slim
 # - curl: makes it possible to run healthchecks from docker
 # - sudo: allows moltis user to install packages at runtime (passwordless)
 # - docker.io: Docker CLI for sandbox execution (talks to mounted socket)
+# - tmux: terminal multiplexer available in deployed container
+# - vim-tiny: lightweight terminal text editor
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
         ca-certificates \
         chromium \
-		curl \
+        curl \
         libgomp1 \
         sudo \
-        docker.io && \
+        docker.io \
+        tmux \
+        vim-tiny && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user and add to docker group for socket access.

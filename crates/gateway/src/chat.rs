@@ -1028,6 +1028,7 @@ async fn build_prompt_runtime_context(
 
 fn refresh_runtime_prompt_time(host: &mut PromptHostRuntimeContext) {
     host.time = Some(prompt_now_for_timezone(host.timezone.as_deref()));
+    host.today = Some(prompt_today_for_timezone(host.timezone.as_deref()));
 }
 
 fn server_prompt_timezone(configured_timezone: Option<&str>) -> String {
@@ -1067,6 +1068,67 @@ fn prompt_now_for_timezone(timezone: Option<&str>) -> String {
         let tz = timezone.unwrap_or("server-local");
         format!("unix={unix_secs} {tz}")
     }
+}
+
+fn prompt_today_for_timezone(timezone: Option<&str>) -> String {
+    #[cfg(any(feature = "web-ui", feature = "push-notifications"))]
+    {
+        use chrono::{Local, Utc};
+
+        let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
+
+        if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+            return Utc::now().with_timezone(&tz).format("%Y-%m-%d").to_string();
+        }
+
+        Local::now().format("%Y-%m-%d").to_string()
+    }
+
+    #[cfg(not(any(feature = "web-ui", feature = "push-notifications")))]
+    {
+        let unix_days = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / 86_400;
+        format!("unix-day={unix_days}")
+    }
+}
+
+fn normalized_iana_timezone(timezone: Option<&str>) -> Option<String> {
+    timezone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<chrono_tz::Tz>().ok())
+        .map(|tz| tz.to_string())
+}
+
+fn default_user_prompt_timezone() -> Option<String> {
+    let user = moltis_config::load_user()?;
+    user.timezone
+        .as_ref()
+        .map(|timezone| timezone.name().to_string())
+        .and_then(|timezone| normalized_iana_timezone(Some(&timezone)))
+}
+
+fn apply_request_runtime_context(host: &mut PromptHostRuntimeContext, params: &Value) {
+    host.accept_language = params
+        .get("_accept_language")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    host.remote_ip = params
+        .get("_remote_ip")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    if let Some(timezone) =
+        normalized_iana_timezone(params.get("_timezone").and_then(|v| v.as_str()))
+            .or_else(default_user_prompt_timezone)
+    {
+        host.timezone = Some(timezone);
+    }
+
+    refresh_runtime_prompt_time(host);
 }
 
 fn prompt_sandbox_no_network_state(backend: &str, configured_no_network: bool) -> Option<bool> {
@@ -2874,15 +2936,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
-        runtime_context.host.accept_language = params
-            .get("_accept_language")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        runtime_context.host.remote_ip = params
-            .get("_remote_ip")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        refresh_runtime_prompt_time(&mut runtime_context.host);
+        apply_request_runtime_context(&mut runtime_context.host, &params);
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
@@ -4126,15 +4180,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
-        runtime_context.host.accept_language = params
-            .get("_accept_language")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        runtime_context.host.remote_ip = params
-            .get("_remote_ip")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        refresh_runtime_prompt_time(&mut runtime_context.host);
+        apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Resolve project context.
         let project_context = self
@@ -4252,15 +4298,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
-        runtime_context.host.accept_language = params
-            .get("_accept_language")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        runtime_context.host.remote_ip = params
-            .get("_remote_ip")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        refresh_runtime_prompt_time(&mut runtime_context.host);
+        apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Resolve project context.
         let project_context = self
@@ -7084,6 +7122,12 @@ mod tests {
     }
 
     #[test]
+    fn prompt_today_for_timezone_returns_non_empty_string() {
+        let value = prompt_today_for_timezone(Some("UTC"));
+        assert!(!value.is_empty());
+    }
+
+    #[test]
     fn server_prompt_timezone_prefers_configured_value() {
         assert_eq!(
             server_prompt_timezone(Some("Europe/Paris")),
@@ -7105,6 +7149,28 @@ mod tests {
         };
         refresh_runtime_prompt_time(&mut host);
         assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
+        assert!(host.today.as_deref().is_some_and(|value| !value.is_empty()));
+    }
+
+    #[test]
+    fn apply_request_runtime_context_uses_request_timezone() {
+        let params = serde_json::json!({
+            "_accept_language": "en-US,en;q=0.9",
+            "_remote_ip": "203.0.113.10",
+            "_timezone": "America/New_York",
+        });
+
+        let mut host = PromptHostRuntimeContext {
+            timezone: Some("server-local".to_string()),
+            ..Default::default()
+        };
+        apply_request_runtime_context(&mut host, &params);
+
+        assert_eq!(host.accept_language.as_deref(), Some("en-US,en;q=0.9"));
+        assert_eq!(host.remote_ip.as_deref(), Some("203.0.113.10"));
+        assert_eq!(host.timezone.as_deref(), Some("America/New_York"));
+        assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
+        assert!(host.today.as_deref().is_some_and(|value| value.len() >= 10));
     }
 
     #[test]

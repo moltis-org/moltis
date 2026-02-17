@@ -155,7 +155,7 @@ impl LiveOnboardingService {
 
     /// Update identity fields by merging partial JSON into the existing config.
     ///
-    /// Accepts: `{name?, emoji?, creature?, vibe?, soul?, user_name?}`
+    /// Accepts: `{name?, emoji?, creature?, vibe?, soul?, user_name?, user_timezone?}`
     pub fn identity_update(&self, params: Value) -> anyhow::Result<Value> {
         let mut config = if self.config_path.exists() {
             moltis_config::loader::load_config(&self.config_path).unwrap_or_default()
@@ -177,6 +177,20 @@ impl LiveOnboardingService {
                 .get(key)
                 .and_then(|v| v.as_str())
                 .map(|v| (!v.is_empty()).then(|| v.to_string()))
+        }
+
+        /// Extract optional timezone field, mapping:
+        /// - missing key => None (no-op)
+        /// - empty string => Some(None) (clear timezone)
+        /// - valid IANA timezone => Some(Some(Timezone))
+        /// - invalid timezone => None (ignore)
+        fn timezone_field(params: &Value, key: &str) -> Option<Option<moltis_config::Timezone>> {
+            let raw = params.get(key).and_then(|v| v.as_str())?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Some(None);
+            }
+            trimmed.parse::<moltis_config::Timezone>().ok().map(Some)
         }
 
         if let Some(v) = str_field(&params, "name") {
@@ -202,6 +216,11 @@ impl LiveOnboardingService {
         if let Some(v) = str_field(&params, "user_name") {
             user.name = v;
         }
+        if let Some(v) =
+            timezone_field(&params, "user_timezone").or_else(|| timezone_field(&params, "timezone"))
+        {
+            user.timezone = v;
+        }
 
         config.identity = identity.clone();
         config.user = user.clone();
@@ -222,6 +241,7 @@ impl LiveOnboardingService {
             "vibe": identity.vibe,
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
+            "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
         }))
     }
 
@@ -443,10 +463,12 @@ mod tests {
                 "creature": "dog",
                 "vibe": "chill",
                 "user_name": "Alice",
+                "user_timezone": "America/New_York",
             }))
             .unwrap();
         assert_eq!(res["name"], "Rex");
         assert_eq!(res["user_name"], "Alice");
+        assert_eq!(res["user_timezone"], "America/New_York");
 
         // Partial update: only change vibe
         let res = svc.identity_update(json!({ "vibe": "playful" })).unwrap();
@@ -459,6 +481,11 @@ mod tests {
         assert_eq!(id.name, "Rex");
         assert_eq!(id.vibe.as_deref(), Some("playful"));
         assert_eq!(id.user_name.as_deref(), Some("Alice"));
+        let user = moltis_config::load_user().expect("load user");
+        assert_eq!(
+            user.timezone.as_ref().map(|tz| tz.name()),
+            Some("America/New_York")
+        );
 
         // Update soul
         let res = svc

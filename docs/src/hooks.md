@@ -285,20 +285,20 @@ Project-local hooks take precedence over global hooks with the same name.
 You can also define hooks directly in the config file:
 
 ```toml
-[[hooks]]
+[hooks]
+[[hooks.hooks]]
 name = "audit-log"
 command = "./hooks/audit.sh"
 events = ["BeforeToolCall", "AfterToolCall"]
 timeout = 5
-priority = 100  # Higher = runs first
 
-[[hooks]]
+[[hooks.hooks]]
 name = "llm-filter"
 command = "./hooks/filter-injection.sh"
 events = ["BeforeLLMCall", "AfterLLMCall"]
 timeout = 10
 
-[[hooks]]
+[[hooks.hooks]]
 name = "notify-slack"
 command = "./hooks/slack-notify.sh"
 events = ["SessionEnd"]

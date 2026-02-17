@@ -25,7 +25,7 @@ export function validateIdentityFields(name, userName) {
 
 /**
  * Update agent identity fields.
- * @param {object} fields - any subset of { name, emoji, creature, vibe, soul, user_name }
+ * @param {object} fields - any subset of { name, emoji, creature, vibe, soul, user_name, user_timezone }
  * @returns {Promise} RPC response
  */
 export function updateIdentity(fields) {

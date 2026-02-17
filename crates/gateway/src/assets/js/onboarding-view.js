@@ -52,6 +52,15 @@ function preferredChatPath() {
 	return `/chats/${key.replace(/:/g, "/")}`;
 }
 
+function detectBrowserTimezone() {
+	try {
+		var timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return typeof timezone === "string" ? timezone.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
 function ErrorPanel({ message }) {
 	return html`<div role="alert" class="alert-error-text whitespace-pre-line">
 		<span class="text-[var(--error)] font-medium">Error:</span> ${message}
@@ -491,12 +500,14 @@ function IdentityStep({ onNext, onBack }) {
 		}
 		setError(null);
 		setSaving(true);
+		var userTimezone = detectBrowserTimezone();
 		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
 			creature: creature.trim() || "",
 			vibe: vibe.trim() || "",
 			user_name: userName.trim(),
+			user_timezone: userTimezone || "",
 		}).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
