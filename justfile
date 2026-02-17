@@ -208,10 +208,12 @@ ui-e2e-install:
 
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
+    cargo build --bin moltis
     cd crates/gateway/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
+    cargo build --bin moltis
     cd crates/gateway/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
