@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.38] - 2026-02-17
+
+
+### Added
+
 - `show_map` now supports multi-point maps via `points[]`, rendering all
   destinations in one screenshot with auto-fit zoom/centering, while keeping
   legacy single-point fields for backward compatibility.
