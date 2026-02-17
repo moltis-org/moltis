@@ -2120,9 +2120,11 @@ pub async fn start_gateway(
             info!("{} telegram account(s) started", started.len());
         }
 
-        // Grab shared outbound before moving tg_plugin into the channel service.
+        // Grab shared outbound adapters before moving tg_plugin into the channel service.
         let tg_outbound = tg_plugin.shared_outbound();
+        let tg_stream_outbound = tg_plugin.shared_stream_outbound();
         services = services.with_channel_outbound(tg_outbound);
+        services = services.with_channel_stream_outbound(tg_stream_outbound);
 
         services.channel = Arc::new(crate::channel::LiveChannelService::new(
             tg_plugin,

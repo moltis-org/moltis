@@ -12,7 +12,7 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::Value,
     tokio::{
-        sync::{OnceCell, OwnedSemaphorePermit, RwLock, Semaphore, mpsc},
+        sync::{Mutex, OnceCell, OwnedSemaphorePermit, RwLock, Semaphore, mpsc},
         task::AbortHandle,
     },
     tokio_stream::StreamExt,
@@ -404,7 +404,7 @@ struct ProbeRateLimitState {
 
 #[derive(Debug, Default)]
 struct ProbeRateLimiter {
-    by_provider: tokio::sync::Mutex<HashMap<String, ProbeRateLimitState>>,
+    by_provider: Mutex<HashMap<String, ProbeRateLimitState>>,
 }
 
 impl ProbeRateLimiter {
@@ -461,14 +461,14 @@ fn is_probe_rate_limited_error(error_obj: &Value, error_text: &str) -> bool {
 #[derive(Debug)]
 struct ProbeProviderLimiter {
     permits_per_provider: usize,
-    by_provider: tokio::sync::Mutex<HashMap<String, Arc<Semaphore>>>,
+    by_provider: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl ProbeProviderLimiter {
     fn new(permits_per_provider: usize) -> Self {
         Self {
             permits_per_provider,
-            by_provider: tokio::sync::Mutex::new(HashMap::new()),
+            by_provider: Mutex::new(HashMap::new()),
         }
     }
 
@@ -4472,6 +4472,158 @@ fn ordered_runner_event_callback() -> (
     (callback, rx)
 }
 
+const CHANNEL_STREAM_BUFFER_SIZE: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ChannelReplyTargetKey {
+    channel_type: moltis_channels::ChannelType,
+    account_id: String,
+    chat_id: String,
+    message_id: Option<String>,
+}
+
+impl From<&moltis_channels::ChannelReplyTarget> for ChannelReplyTargetKey {
+    fn from(target: &moltis_channels::ChannelReplyTarget) -> Self {
+        Self {
+            channel_type: target.channel_type,
+            account_id: target.account_id.clone(),
+            chat_id: target.chat_id.clone(),
+            message_id: target.message_id.clone(),
+        }
+    }
+}
+
+struct ChannelStreamWorker {
+    sender: moltis_channels::StreamSender,
+}
+
+/// Fan out model deltas to channel stream workers (Telegram edit-in-place).
+///
+/// Workers are lazily started on the first delta so sessions that do not emit
+/// any streaming text never create placeholder messages in Telegram.
+struct ChannelStreamDispatcher {
+    outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound>,
+    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    workers: Vec<ChannelStreamWorker>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
+    started: bool,
+}
+
+impl ChannelStreamDispatcher {
+    async fn for_session(state: &Arc<GatewayState>, session_key: &str) -> Option<Self> {
+        let outbound = state.services.channel_stream_outbound_arc()?;
+        let targets: Vec<moltis_channels::ChannelReplyTarget> = state
+            .peek_channel_replies(session_key)
+            .await
+            .into_iter()
+            .filter(|target| target.channel_type == moltis_channels::ChannelType::Telegram)
+            .collect();
+        if targets.is_empty() {
+            return None;
+        }
+        Some(Self {
+            outbound,
+            targets,
+            workers: Vec::new(),
+            tasks: Vec::new(),
+            completed: Arc::new(Mutex::new(HashSet::new())),
+            started: false,
+        })
+    }
+
+    async fn ensure_started(&mut self) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+
+        for target in self.targets.iter().cloned() {
+            if !self.outbound.is_stream_enabled(&target.account_id).await {
+                debug!(
+                    account_id = target.account_id.as_str(),
+                    chat_id = target.chat_id.as_str(),
+                    "channel streaming disabled for target account"
+                );
+                continue;
+            }
+
+            let key = ChannelReplyTargetKey::from(&target);
+            let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
+            let outbound = Arc::clone(&self.outbound);
+            let completed = Arc::clone(&self.completed);
+            let account_id = target.account_id.clone();
+            let chat_id = target.chat_id.clone();
+            let reply_to = target.message_id.clone();
+            let key_for_insert = key.clone();
+            let account_for_log = account_id.clone();
+            let chat_for_log = chat_id.clone();
+
+            self.workers.push(ChannelStreamWorker { sender: tx });
+            self.tasks.push(tokio::spawn(async move {
+                match outbound
+                    .send_stream(&account_id, &chat_id, reply_to.as_deref(), rx)
+                    .await
+                {
+                    Ok(()) => {
+                        completed.lock().await.insert(key_for_insert);
+                    },
+                    Err(e) => {
+                        warn!(
+                            account_id = account_for_log,
+                            chat_id = chat_for_log,
+                            "channel stream outbound failed: {e}"
+                        );
+                    },
+                }
+            }));
+        }
+    }
+
+    async fn send_delta(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        self.ensure_started().await;
+        let event = moltis_channels::StreamEvent::Delta(delta.to_string());
+        for worker in &self.workers {
+            if worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream delta dropped: worker closed");
+            }
+        }
+    }
+
+    async fn finish(&mut self) {
+        self.send_terminal(moltis_channels::StreamEvent::Done).await;
+        self.join_workers().await;
+    }
+
+    async fn send_terminal(&mut self, event: moltis_channels::StreamEvent) {
+        if self.workers.is_empty() {
+            return;
+        }
+        let workers = std::mem::take(&mut self.workers);
+        for worker in &workers {
+            if worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream terminal event dropped: worker closed");
+            }
+        }
+    }
+
+    async fn join_workers(&mut self) {
+        let tasks = std::mem::take(&mut self.tasks);
+        for task in tasks {
+            if let Err(e) = task.await {
+                warn!(error = %e, "channel stream worker task join failed");
+            }
+        }
+    }
+
+    async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
+        self.completed.lock().await.clone()
+    }
+}
+
 async fn run_explicit_shell_command(
     state: &Arc<GatewayState>,
     run_id: &str,
@@ -4614,7 +4766,15 @@ async fn run_explicit_shell_command(
     }
 
     if !final_text.trim().is_empty() {
-        deliver_channel_replies(state, session_key, &final_text, ReplyMedium::Text).await;
+        let streamed_target_keys = HashSet::new();
+        deliver_channel_replies(
+            state,
+            session_key,
+            &final_text,
+            ReplyMedium::Text,
+            &streamed_target_keys,
+        )
+        .await;
     }
 
     let final_payload = ChatFinalBroadcast {
@@ -4744,6 +4904,10 @@ async fn run_with_tools(
     let session_store_for_events = session_store.map(Arc::clone);
     let provider_name_for_events = provider_name.to_string();
     let (on_event, mut event_rx) = ordered_runner_event_callback();
+    let channel_stream_dispatcher = ChannelStreamDispatcher::for_session(state, session_key)
+        .await
+        .map(|dispatcher| Arc::new(Mutex::new(dispatcher)));
+    let channel_stream_for_events = channel_stream_dispatcher.as_ref().map(Arc::clone);
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
@@ -5000,13 +5164,18 @@ async fn run_with_tools(
                         "seq": seq,
                     })
                 },
-                RunnerEvent::TextDelta(text) => serde_json::json!({
-                    "runId": run_id,
-                    "sessionKey": sk,
-                    "state": "delta",
-                    "text": text,
-                    "seq": seq,
-                }),
+                RunnerEvent::TextDelta(text) => {
+                    if let Some(ref dispatcher) = channel_stream_for_events {
+                        dispatcher.lock().await.send_delta(&text).await;
+                    }
+                    serde_json::json!({
+                        "runId": run_id,
+                        "sessionKey": sk,
+                        "state": "delta",
+                        "text": text,
+                        "seq": seq,
+                    })
+                },
                 RunnerEvent::Iteration(n) => serde_json::json!({
                     "runId": run_id,
                     "sessionKey": sk,
@@ -5206,6 +5375,17 @@ async fn run_with_tools(
         let trimmed = reasoning_text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     };
+    let streamed_target_keys = if let Some(ref dispatcher) = channel_stream_dispatcher {
+        let mut dispatcher = dispatcher.lock().await;
+        dispatcher.finish().await;
+        if desired_reply_medium == ReplyMedium::Text {
+            dispatcher.completed_target_keys().await
+        } else {
+            HashSet::new()
+        }
+    } else {
+        HashSet::new()
+    };
 
     match result {
         Ok(result) => {
@@ -5297,8 +5477,14 @@ async fn run_with_tools(
                     tracing::info!("push: checking push notification (agent mode)");
                     send_chat_push_notification(state, session_key, &display_text).await;
                 }
-                deliver_channel_replies(state, session_key, &display_text, desired_reply_medium)
-                    .await;
+                deliver_channel_replies(
+                    state,
+                    session_key,
+                    &display_text,
+                    desired_reply_medium,
+                    &streamed_target_keys,
+                )
+                .await;
             }
             Some(AssistantTurnOutput {
                 text: display_text,
@@ -5531,6 +5717,8 @@ async fn run_streaming(
     let mut server_retries_remaining: u8 = STREAM_SERVER_MAX_RETRIES;
     let mut rate_limit_retries_remaining: u8 = STREAM_RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
+    let mut channel_stream_dispatcher =
+        ChannelStreamDispatcher::for_session(state, session_key).await;
 
     'attempts: loop {
         #[cfg(feature = "metrics")]
@@ -5545,6 +5733,9 @@ async fn run_streaming(
             match event {
                 StreamEvent::Delta(delta) => {
                     accumulated.push_str(&delta);
+                    if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
+                        dispatcher.send_delta(&delta).await;
+                    }
                     broadcast(
                         state,
                         "chat",
@@ -5628,6 +5819,17 @@ async fn run_streaming(
                         let trimmed = accumulated_reasoning.trim();
                         (!trimmed.is_empty()).then(|| trimmed.to_string())
                     };
+                    let streamed_target_keys =
+                        if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
+                            dispatcher.finish().await;
+                            if desired_reply_medium == ReplyMedium::Text {
+                                dispatcher.completed_target_keys().await
+                            } else {
+                                HashSet::new()
+                            }
+                        } else {
+                            HashSet::new()
+                        };
 
                     info!(
                         run_id,
@@ -5712,6 +5914,7 @@ async fn run_streaming(
                             session_key,
                             &accumulated,
                             desired_reply_medium,
+                            &streamed_target_keys,
                         )
                         .await;
                     }
@@ -5781,6 +5984,9 @@ async fn run_streaming(
                     }
 
                     warn!(run_id, error = %msg, "chat stream error");
+                    if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
+                        dispatcher.finish().await;
+                    }
                     state.set_run_error(run_id, msg.clone()).await;
                     mark_unsupported_model(state, model_store, model_id, provider_name, &error_obj)
                         .await;
@@ -5871,20 +6077,30 @@ async fn deliver_channel_replies(
     session_key: &str,
     text: &str,
     desired_reply_medium: ReplyMedium,
+    streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
 ) {
-    let targets = state.drain_channel_replies(session_key).await;
+    let mut targets = state.drain_channel_replies(session_key).await;
+    if !streamed_target_keys.is_empty() {
+        targets.retain(|target| {
+            let key = ChannelReplyTargetKey::from(target);
+            !streamed_target_keys.contains(&key)
+        });
+    }
     let is_telegram_session = session_key.starts_with("telegram:");
     if targets.is_empty() {
+        let _ = state.drain_channel_status_log(session_key).await;
         if is_telegram_session {
             info!(
                 session_key,
                 text_len = text.len(),
-                "telegram reply delivery skipped: no pending targets"
+                streamed_count = streamed_target_keys.len(),
+                "telegram reply delivery skipped: no pending targets after stream dedupe"
             );
         }
         return;
     }
     if text.is_empty() {
+        let _ = state.drain_channel_status_log(session_key).await;
         if is_telegram_session {
             info!(
                 session_key,
@@ -6713,6 +6929,22 @@ mod tests {
         delay: Duration,
     }
 
+    struct MockChannelStreamOutbound {
+        deltas: Arc<Mutex<Vec<String>>>,
+        reply_tos: Arc<Mutex<Vec<Option<String>>>>,
+        completions: Arc<AtomicUsize>,
+        fail: bool,
+        stream_enabled: bool,
+    }
+
+    fn test_auth() -> crate::auth::ResolvedAuth {
+        crate::auth::ResolvedAuth {
+            mode: crate::auth::AuthMode::Token,
+            token: None,
+            password: None,
+        }
+    }
+
     struct MockExecTool {
         calls: Arc<AtomicUsize>,
         commands: Arc<std::sync::Mutex<Vec<String>>>,
@@ -6837,6 +7069,41 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl moltis_channels::plugin::ChannelStreamOutbound for MockChannelStreamOutbound {
+        async fn send_stream(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            reply_to: Option<&str>,
+            mut stream: moltis_channels::StreamReceiver,
+        ) -> Result<()> {
+            if self.fail {
+                anyhow::bail!("stream failed");
+            }
+            self.reply_tos
+                .lock()
+                .await
+                .push(reply_to.map(ToString::to_string));
+            while let Some(event) = stream.recv().await {
+                match event {
+                    moltis_channels::StreamEvent::Delta(delta) => {
+                        self.deltas.lock().await.push(delta);
+                    },
+                    moltis_channels::StreamEvent::Done | moltis_channels::StreamEvent::Error(_) => {
+                        break;
+                    },
+                }
+            }
+            self.completions.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+            self.stream_enabled
+        }
+    }
+
     async fn sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
@@ -6864,14 +7131,7 @@ mod tests {
             chat_id: "123".to_string(),
             message_id: None,
         }];
-        let state = GatewayState::new(
-            crate::auth::ResolvedAuth {
-                mode: crate::auth::AuthMode::Token,
-                token: None,
-                password: None,
-            },
-            crate::services::GatewayServices::noop(),
-        );
+        let state = GatewayState::new(test_auth(), crate::services::GatewayServices::noop());
 
         let start = Instant::now();
         deliver_channel_replies_to_targets(
@@ -6890,6 +7150,158 @@ mod tests {
             "delivery should wait for outbound send completion"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn deliver_channel_replies_skips_targets_already_streamed() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound> =
+            Arc::new(MockChannelOutbound {
+                calls: Arc::clone(&calls),
+                delay: Duration::from_millis(0),
+            });
+        let services = crate::services::GatewayServices::noop().with_channel_outbound(outbound);
+        let state = GatewayState::new(test_auth(), services);
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("42".to_string()),
+        };
+
+        state
+            .push_channel_reply("telegram:acct:123", target.clone())
+            .await;
+
+        let mut streamed = HashSet::new();
+        streamed.insert(ChannelReplyTargetKey::from(&target));
+        deliver_channel_replies(
+            &state,
+            "telegram:acct:123",
+            "hello",
+            ReplyMedium::Text,
+            &streamed,
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            state
+                .peek_channel_replies("telegram:acct:123")
+                .await
+                .is_empty(),
+            "channel targets should be drained even when skipped by stream dedupe"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_stream_dispatcher_records_completed_targets() {
+        let deltas = Arc::new(Mutex::new(Vec::new()));
+        let reply_tos = Arc::new(Mutex::new(Vec::new()));
+        let completions = Arc::new(AtomicUsize::new(0));
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::clone(&deltas),
+                reply_tos: Arc::clone(&reply_tos),
+                completions: Arc::clone(&completions),
+                fail: false,
+                stream_enabled: true,
+            });
+
+        let services =
+            crate::services::GatewayServices::noop().with_channel_stream_outbound(stream_outbound);
+        let state = GatewayState::new(test_auth(), services);
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("55".to_string()),
+        };
+        let session_key = "telegram:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.send_delta("Hel").await;
+        dispatcher.send_delta("lo").await;
+        dispatcher.finish().await;
+
+        let completed = dispatcher.completed_target_keys().await;
+        assert!(completed.contains(&ChannelReplyTargetKey::from(&target)));
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
+        assert_eq!(deltas.lock().await.join(""), "Hello");
+        assert_eq!(reply_tos.lock().await.as_slice(), &[Some("55".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn channel_stream_dispatcher_skips_failed_workers_from_dedupe() {
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::new(Mutex::new(Vec::new())),
+                reply_tos: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::new(AtomicUsize::new(0)),
+                fail: true,
+                stream_enabled: true,
+            });
+        let services =
+            crate::services::GatewayServices::noop().with_channel_stream_outbound(stream_outbound);
+        let state = GatewayState::new(test_auth(), services);
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("55".to_string()),
+        };
+        let session_key = "telegram:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.send_delta("Hello").await;
+        dispatcher.finish().await;
+
+        let completed = dispatcher.completed_target_keys().await;
+        assert!(
+            !completed.contains(&ChannelReplyTargetKey::from(&target)),
+            "failed stream workers must not be excluded from final fallback delivery"
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_stream_dispatcher_skips_stream_disabled_targets() {
+        let deltas = Arc::new(Mutex::new(Vec::new()));
+        let completions = Arc::new(AtomicUsize::new(0));
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::clone(&deltas),
+                reply_tos: Arc::new(Mutex::new(Vec::new())),
+                completions: Arc::clone(&completions),
+                fail: false,
+                stream_enabled: false,
+            });
+        let services =
+            crate::services::GatewayServices::noop().with_channel_stream_outbound(stream_outbound);
+        let state = GatewayState::new(test_auth(), services);
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "123".to_string(),
+            message_id: Some("55".to_string()),
+        };
+        let session_key = "telegram:acct:123";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.send_delta("Hello").await;
+        dispatcher.finish().await;
+
+        assert!(dispatcher.completed_target_keys().await.is_empty());
+        assert_eq!(completions.load(Ordering::SeqCst), 0);
+        assert!(deltas.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -7036,7 +7448,7 @@ mod tests {
     #[tokio::test]
     async fn ordered_runner_event_callback_stays_in_order_with_variable_processing_latency() {
         let (on_event, mut rx) = ordered_runner_event_callback();
-        let seen = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen_for_worker = Arc::clone(&seen);
 
         let worker = tokio::spawn(async move {

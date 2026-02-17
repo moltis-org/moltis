@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `show_map` now supports multi-point maps via `points[]`, rendering all
   destinations in one screenshot with auto-fit zoom/centering, while keeping
   legacy single-point fields for backward compatibility.
+- Telegram channel reply streaming via edit-in-place updates, with per-account
+  `stream_mode` gating so `off` keeps the classic final-message delivery path.
+- Telegram per-account `stream_notify_on_complete` option to send a final
+  non-silent completion message after edit-in-place streaming finishes.
+- Telegram per-account `stream_min_initial_chars` option (default `30`) to
+  delay the first streamed message until enough text has accumulated.
 
 ### Changed
 
