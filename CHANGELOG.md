@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so windows created inside tmux (for example `Ctrl-b c`) appear in the web UI.
 - Host terminal tmux integration now uses a dedicated tmux socket and applies
   a Moltis-friendly profile (status off, mouse on, stable window naming).
+- Settings > Terminal subtitle now omits the prompt symbol hint so it does not
+  show stale `$`/`#` information after privilege changes inside the shell.
 
 ### Deprecated
 
@@ -48,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chat auto-compaction now uses estimated next-request prompt tokens (current
   context pressure) instead of cumulative session token totals, and chat context
   UI now separates cumulative usage from current/estimated request context.
+- Settings > Terminal tab switching now uses in-band tmux window switching over
+  the active websocket, reducing redraw/cursor corruption when switching
+  between tmux windows (including fullscreen apps like `vim`).
+- Host terminal tmux attach now resets window sizing to auto (`resize-window -A`)
+  to prevent stale oversized window dimensions across reconnects.
 
 ### Security
 

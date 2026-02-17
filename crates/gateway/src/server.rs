@@ -4107,6 +4107,68 @@ async fn handle_terminal_ws_connection(
                                     current_rows = next_rows;
                                 }
                             }
+                            Ok(HostTerminalWsClientMessage::SwitchWindow { window }) => {
+                                if !persistence_available {
+                                    if !terminal_ws_send_status(
+                                        &mut ws_tx,
+                                        "tmux window switching is unavailable",
+                                        "error",
+                                    )
+                                    .await
+                                    {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                let windows = match host_terminal_tmux_list_windows() {
+                                    Ok(windows) => windows,
+                                    Err(err) => {
+                                        if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                };
+                                let Some(target_window_id) =
+                                    host_terminal_resolve_window_target(&windows, &window)
+                                else {
+                                    if !terminal_ws_send_status(
+                                        &mut ws_tx,
+                                        "requested terminal window does not exist",
+                                        "error",
+                                    )
+                                    .await
+                                    {
+                                        break;
+                                    }
+                                    continue;
+                                };
+                                if let Err(err) = host_terminal_tmux_select_window(&target_window_id) {
+                                    if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                host_terminal_tmux_reset_window_size(Some(&target_window_id));
+                                if let Err(err) = host_terminal_resize(&runtime, current_cols, current_rows) {
+                                    if !terminal_ws_send_status(&mut ws_tx, &err, "error").await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                current_window_target = Some(target_window_id.clone());
+                                if !terminal_ws_send_json(
+                                    &mut ws_tx,
+                                    serde_json::json!({
+                                        "type": "active_window",
+                                        "windowId": target_window_id,
+                                    }),
+                                )
+                                .await
+                                {
+                                    break;
+                                }
+                            }
                             Ok(HostTerminalWsClientMessage::Control { action }) => {
                                 let action_result = match action {
                                     HostTerminalWsControlAction::Restart => {
@@ -6515,6 +6577,7 @@ struct HostTerminalCreateWindowRequest {
 enum HostTerminalWsClientMessage {
     Input { data: String },
     Resize { cols: u16, rows: u16 },
+    SwitchWindow { window: String },
     Control { action: HostTerminalWsControlAction },
     Ping,
 }
@@ -8304,6 +8367,22 @@ mod tests {
             Some("@1".to_string())
         );
         assert_eq!(host_terminal_resolve_window_target(&windows, "99"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn host_terminal_ws_switch_window_message_deserializes() {
+        let msg: HostTerminalWsClientMessage = serde_json::from_value(serde_json::json!({
+            "type": "switch_window",
+            "window": "@3"
+        }))
+        .expect("switch_window message should deserialize");
+        match msg {
+            HostTerminalWsClientMessage::SwitchWindow { window } => {
+                assert_eq!(window, "@3");
+            },
+            _ => panic!("expected switch_window message"),
+        }
     }
 
     #[cfg(feature = "web-ui")]

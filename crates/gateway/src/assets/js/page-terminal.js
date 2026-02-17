@@ -275,19 +275,44 @@ function startWindowsRefreshLoop() {
 	}, WINDOW_REFRESH_MS);
 }
 
+function requestWindowSwitch(windowId) {
+	if (!tmuxPersistenceEnabled) return false;
+	if (!windowId) return false;
+	pendingWindowId = windowId;
+	activeWindowId = windowId;
+	renderWindowTabs();
+	setStatus("Switching tmux window...", "ok");
+	if (
+		socket &&
+		socket.readyState === WebSocket.OPEN &&
+		sendSocketMessage({ type: "switch_window", window: windowId })
+	) {
+		return true;
+	}
+	return false;
+}
+
+function handleActiveWindowEvent(payload) {
+	var windowId = typeof payload?.windowId === "string" ? payload.windowId.trim() : "";
+	if (!windowId) return;
+	activeWindowId = windowId;
+	pendingWindowId = null;
+	renderWindowTabs();
+	setStatus("Switched tmux window.", "ok");
+	scheduleFit();
+	sendResizeIfChanged();
+	if (xterm) xterm.focus();
+	void refreshTerminalWindows({ preferredWindowId: windowId, silent: true });
+}
+
 function onWindowTabClick(windowId) {
 	if (!tmuxPersistenceEnabled) return;
 	if (!windowId || windowId === activeWindowId) return;
 	clearWindowsRefreshTimer();
-	pendingWindowId = windowId;
-	activeWindowId = windowId;
-	renderWindowTabs();
+	if (requestWindowSwitch(windowId)) return;
 	terminalAvailable = false;
 	setControlsEnabled(false);
-	setStatus("Switching tmux window...", "ok");
-	if (xterm) {
-		xterm.reset();
-	}
+	if (xterm) xterm.reset();
 	connectTerminalSocket();
 }
 
@@ -322,14 +347,15 @@ async function createTerminalWindow() {
 			await refreshTerminalWindows({ preferredWindowId: createdWindowId, silent: true });
 		}
 		if (createdWindowId && activeWindowId !== createdWindowId) {
-			pendingWindowId = createdWindowId;
-			activeWindowId = createdWindowId;
-			renderWindowTabs();
+			var switchedInBand = requestWindowSwitch(createdWindowId);
+			if (!switchedInBand) {
+				if (xterm) xterm.reset();
+				connectTerminalSocket();
+			}
+		} else {
+			if (xterm) xterm.reset();
+			connectTerminalSocket();
 		}
-		if (xterm) {
-			xterm.reset();
-		}
-		connectTerminalSocket();
 		setStatus("Created tmux window.", "ok");
 	} catch (err) {
 		setStatus(err?.message || "Failed to create tmux window", "error");
@@ -604,12 +630,11 @@ function applyReadyPayload(payload) {
 
 	if (metaEl) {
 		if (terminalAvailable) {
-			var prompt = payload.promptSymbol || "$";
 			var user = payload.user || "unknown";
 			if (persistenceEnabled) {
-				metaEl.textContent = `Persistent tmux session, user ${user}, prompt ${prompt}`;
+				metaEl.textContent = `Persistent tmux session, user ${user}`;
 			} else {
-				metaEl.textContent = `Ephemeral host shell, user ${user}, prompt ${prompt}`;
+				metaEl.textContent = `Ephemeral host shell, user ${user}`;
 			}
 		} else {
 			metaEl.textContent = "Host shell unavailable";
@@ -668,6 +693,9 @@ function handleTerminalMessage(payload) {
 	switch (payload.type) {
 		case "ready":
 			applyReadyPayload(payload);
+			break;
+		case "active_window":
+			handleActiveWindowEvent(payload);
 			break;
 		case "output":
 			appendOutputChunk(payload.data || "", false);
