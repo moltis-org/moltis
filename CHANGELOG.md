@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.37] - 2026-02-17
+
+
+### Added
+
 - Settings > Terminal now includes tmux window tabs for the managed
   `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
   windows from the UI.
