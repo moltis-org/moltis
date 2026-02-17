@@ -9,12 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `show_map` now supports multi-point maps via `points[]`, rendering all
+  destinations in one screenshot with auto-fit zoom/centering, while keeping
+  legacy single-point fields for backward compatibility.
 - Telegram channel reply streaming via edit-in-place updates, with per-account
   `stream_mode` gating so `off` keeps the classic final-message delivery path.
 - Telegram per-account `stream_notify_on_complete` option to send a final
   non-silent completion message after edit-in-place streaming finishes.
 - Telegram per-account `stream_min_initial_chars` option (default `30`) to
   delay the first streamed message until enough text has accumulated.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.37] - 2026-02-17
+
+
+### Added
+
 - Settings > Terminal now includes tmux window tabs for the managed
   `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
   windows from the UI.
@@ -22,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST /api/terminal/windows` to list and create host tmux windows.
 - Host terminal websocket now supports `?window=<id|index>` targeting and
   returns `activeWindowId` in the ready payload.
+
 ### Changed
 
 - Web chat now supports `/sh` command mode: entering `/sh` toggles a dedicated
@@ -47,8 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron tool job creation/update now accepts common shorthand schedule/payload
   shapes (including cron expression strings) and normalizes them before
   validation, reducing model-side schema mismatch failures.
-- Telegram long replies now use markdown-aware chunking plus HTML->plain fallback
-  on parse failures, preventing tail loss on long streamed responses.
 - Force-exec fallback now triggers only for explicit `/sh ...` input (including
   `/sh@bot ...`), preventing casual chat messages like `hey` from being treated
   as shell commands while still allowing normal model-driven exec tool use.

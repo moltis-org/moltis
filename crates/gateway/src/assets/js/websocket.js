@@ -17,6 +17,7 @@ import {
 	formatTokens,
 	renderAudioPlayer,
 	renderMapLinks,
+	renderMapPointGroups,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
@@ -238,7 +239,8 @@ function appendToolResult(toolCard, result, eventSession) {
 		renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
 	}
 	// Map link buttons (show_map tool)
-	if (result.map_links) {
+	var renderedPointGroups = renderMapPointGroups(toolCard, result.points, result.label);
+	if (!renderedPointGroups && result.map_links) {
 		renderMapLinks(toolCard, result.map_links, result.label);
 	}
 }
