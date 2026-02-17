@@ -47,6 +47,45 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
+async function setSwitchRpcSendMode(page, mode, delayMs = 0) {
+	await page.evaluate(
+		async ({ desiredMode, desiredDelayMs }) => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const stateModule = await import(`${prefix}js/state.js`);
+			const ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			if (!window.__origSwitchWsSend) {
+				window.__origSwitchWsSend = ws.send.bind(ws);
+			}
+			if (desiredMode === "restore") {
+				ws.send = window.__origSwitchWsSend;
+				return;
+			}
+
+			ws.send = (payload) => {
+				try {
+					const parsed = JSON.parse(payload);
+					if (parsed?.method === "sessions.switch") {
+						if (desiredMode === "drop") return;
+						if (desiredMode === "delay") {
+							setTimeout(() => window.__origSwitchWsSend(payload), desiredDelayMs);
+							return;
+						}
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return window.__origSwitchWsSend(payload);
+			};
+		},
+		{ desiredMode: mode, desiredDelayMs: delayMs },
+	);
+}
+
 test.describe("Session management", () => {
 	test("session list renders on load", async ({ page }) => {
 		await navigateAndWait(page, "/");
@@ -138,6 +177,58 @@ test.describe("Session management", () => {
 
 		await expect(page).not.toHaveURL(newSessionUrl);
 		await expectPageContentMounted(page);
+	});
+
+	test("shows loading indicator while uncached session switch is pending", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await setSwitchRpcSendMode(page, "drop");
+		await page.locator("#newSessionBtn").click();
+		await expect(page.locator("#sessionLoadIndicator")).toBeVisible();
+		await setSwitchRpcSendMode(page, "restore");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("cached session history renders instantly while switch refreshes in background", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await createSession(page);
+		const sessionPath = new URL(page.url()).pathname;
+		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+
+		const cachedText = "cached history should appear instantly";
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey,
+				state: "final",
+				text: cachedText,
+				messageIndex: 0,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+				runId: "run-cached-session",
+			},
+		});
+		await expect(page.locator("#messages .msg.assistant").filter({ hasText: cachedText })).toBeVisible();
+
+		await page.locator('#sessionList .session-item[data-session-key="main"]').click();
+		await expect(page).toHaveURL(/\/chats\/main$/);
+
+		await setSwitchRpcSendMode(page, "delay", 900);
+		await page.locator(`#sessionList .session-item[data-session-key="${sessionKey}"]`).click();
+		await expect(page.locator("#messages .msg.assistant").filter({ hasText: cachedText })).toBeVisible({
+			timeout: 300,
+		});
+		await expect(page.locator("#sessionLoadIndicator")).toHaveCount(0);
+		await setSwitchRpcSendMode(page, "restore");
+
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("main session shows clear action while non-main sessions show delete", async ({ page }) => {

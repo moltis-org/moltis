@@ -118,6 +118,7 @@ export class Session {
 export var sessions = signal([]);
 export var activeSessionKey = signal(localStorage.getItem("moltis-session") || "main");
 export var switchInProgress = signal(false);
+export var refreshInProgressKey = signal("");
 
 export var activeSession = computed(() => {
 	var key = activeSessionKey.value;
@@ -203,6 +204,7 @@ export var sessionStore = {
 	activeSessionKey,
 	activeSession,
 	switchInProgress,
+	refreshInProgressKey,
 	Session,
 	setAll,
 	upsert,

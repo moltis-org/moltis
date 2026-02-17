@@ -320,18 +320,23 @@
 }
 
 .session-spinner {
-  color: var(--warn);
-  -webkit-user-select: none;
-  user-select: none;
-  font-family: monospace;
-  font-size: 0.85rem;
-  line-height: 16px;
-  display: none;
+	color: var(--muted);
+	-webkit-user-select: none;
+	user-select: none;
+	font-family: monospace;
+	font-size: 0.85rem;
+	line-height: 16px;
+	display: none;
 }
 
 .session-item.replying .session-icon > svg,
-.session-item.replying .session-icon > .icon { display: none; }
-.session-item.replying .session-spinner { display: inline; }
+.session-item.replying .session-icon > .icon,
+.session-item.loading .session-icon > svg,
+.session-item.loading .session-icon > .icon { display: none; }
+.session-item.replying .session-spinner,
+.session-item.loading .session-spinner { display: inline; }
+.session-item.replying .session-spinner { color: var(--warn); }
+.session-item.loading .session-spinner { color: var(--accent); }
 
 
 /* ── Search ── */

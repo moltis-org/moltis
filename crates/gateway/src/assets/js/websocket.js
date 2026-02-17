@@ -34,6 +34,8 @@ import { currentPage, currentPrefix, mount } from "./router.js";
 import {
 	appendLastMessageTimestamp,
 	bumpSessionCount,
+	cacheSessionHistoryMessage,
+	clearSessionHistoryCache,
 	fetchSessions,
 	setSessionActiveRunId,
 	setSessionReplying,
@@ -81,6 +83,18 @@ function makeThinkingDots() {
 function updateSessionRunId(sessionKey, runId) {
 	if (!runId) return;
 	setSessionActiveRunId(sessionKey, runId);
+}
+
+function updateSessionHistoryIndex(sessionKey, messageIndex) {
+	var idx = Number(messageIndex);
+	if (!Number.isInteger(idx) || idx < 0) return;
+	var session = sessionStore.getByKey(sessionKey);
+	if (session && idx > session.lastHistoryIndex.value) {
+		session.lastHistoryIndex.value = idx;
+	}
+	if (sessionKey === sessionStore.activeSessionKey.value && idx > S.lastHistoryIndex) {
+		S.setLastHistoryIndex(idx);
+	}
 }
 
 function moveFirstQueuedToChat() {
@@ -296,6 +310,27 @@ function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	// Always bump badge — the server persists a tool_result message for each call.
 	bumpSessionCount(eventSession, 1);
+	var toolHistoryIndex = p.messageIndex;
+	if (toolHistoryIndex === undefined || toolHistoryIndex === null) {
+		var toolSession = sessionStore.getByKey(eventSession);
+		if (toolSession && typeof toolSession.messageCount === "number" && toolSession.messageCount > 0) {
+			toolHistoryIndex = toolSession.messageCount - 1;
+		}
+	}
+	cacheSessionHistoryMessage(
+		eventSession,
+		{
+			role: "tool_result",
+			tool_call_id: p.toolCallId || "",
+			tool_name: p.toolName || "",
+			success: p.success === true,
+			result: p.result || null,
+			error: p.error?.detail || p.error?.message || (typeof p.error === "string" ? p.error : null),
+			created_at: Date.now(),
+		},
+		toolHistoryIndex,
+	);
+	updateSessionHistoryIndex(eventSession, toolHistoryIndex);
 	if (!(isActive && isChatPage)) return;
 	var toolCard = document.getElementById(toolCallCardId(p));
 	if (!toolCard) {
@@ -309,15 +344,29 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	// Always bump the badge so the total message count stays accurate,
 	// even when the user is not on the chat page (e.g. Telegram messages).
 	bumpSessionCount(eventSession, 1);
+	cacheSessionHistoryMessage(
+		eventSession,
+		{
+			role: "user",
+			content: p.text || "",
+			channel: p.channel || null,
+			created_at: Date.now(),
+		},
+		p.messageIndex,
+	);
 	if (!isActive) {
 		setSessionUnread(eventSession, true);
 	}
-	if (!(isChatPage && isActive)) return;
+	if (!(isChatPage && isActive)) {
+		updateSessionHistoryIndex(eventSession, p.messageIndex);
+		return;
+	}
 	// Compare against the per-session history index, not the global one,
 	// to avoid skipping events when viewing a different session.
 	var chanSession = sessionStore.getByKey(p.sessionKey || S.activeSessionKey);
 	var chanLastIdx = chanSession ? chanSession.lastHistoryIndex.value : S.lastHistoryIndex;
 	if (p.messageIndex !== undefined && p.messageIndex <= chanLastIdx) return;
+	updateSessionHistoryIndex(eventSession, p.messageIndex);
 	var cleanText = stripChannelPrefix(p.text || "");
 	var el = chatAddMsg("user", renderMarkdown(cleanText), true);
 	if (el && p.channel) {
@@ -449,6 +498,32 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	updateSessionRunId(eventSession, p.runId);
 	// Always bump badge — the server persists the final assistant message.
 	bumpSessionCount(eventSession, 1);
+	var finalText = String(p.text || "");
+	var hasVisibleFinal =
+		hasNonWhitespaceContent(finalText) ||
+		hasNonWhitespaceContent(p.reasoning || "") ||
+		hasNonWhitespaceContent(p.audio || "");
+	if (hasVisibleFinal) {
+		cacheSessionHistoryMessage(
+			eventSession,
+			{
+				role: "assistant",
+				content: finalText,
+				model: p.model || "",
+				provider: p.provider || "",
+				inputTokens: p.inputTokens || 0,
+				outputTokens: p.outputTokens || 0,
+				durationMs: p.durationMs || 0,
+				requestInputTokens: p.requestInputTokens,
+				requestOutputTokens: p.requestOutputTokens,
+				reasoning: p.reasoning || null,
+				audio: p.audio || null,
+				run_id: p.runId || null,
+				created_at: Date.now(),
+			},
+			p.messageIndex,
+		);
+	}
 	// Compare against the per-session history index so cross-session
 	// events aren't wrongly skipped by another session's index.
 	var evtSession = sessionStore.getByKey(eventSession);
@@ -458,6 +533,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 		setSessionActiveRunId(eventSession, null);
 		return;
 	}
+	updateSessionHistoryIndex(eventSession, p.messageIndex);
 	setSessionReplying(eventSession, false);
 	setSessionActiveRunId(eventSession, null);
 	if (!isActive) {
@@ -671,6 +747,7 @@ function handleChatQueueCleared(_p, isActive, isChatPage) {
 function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	clearPendingToolCallEndsForSession(eventSession);
 	setSessionActiveRunId(eventSession, null);
+	clearSessionHistoryCache(eventSession);
 	// Reset badge, unread state, and history index for every client.
 	var session = sessionStore.getByKey(eventSession);
 	if (session) {

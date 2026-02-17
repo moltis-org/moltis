@@ -18,6 +18,7 @@ import { routes } from "./routes.js";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import {
 	bumpSessionCount,
+	cacheOutgoingUserMessage,
 	clearActiveSession,
 	seedSessionPreviewFromUserText,
 	setSessionActiveRunId,
@@ -883,6 +884,7 @@ function sendChat() {
 		setSessionModel(S.activeSessionKey, selectedModel);
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
+	cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
 	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {

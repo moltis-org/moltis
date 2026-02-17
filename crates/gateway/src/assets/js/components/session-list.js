@@ -122,7 +122,7 @@ function SessionMeta({ session }) {
 }
 
 // ── SessionItem component ───────────────────────────────────
-function SessionItem({ session, activeKey, depth, keyMap }) {
+function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 	var isBranch = depth > 0;
 	var active = session.key === activeKey;
 	// Read per-session signals — auto-subscribes for re-render.
@@ -140,6 +140,7 @@ function SessionItem({ session, activeKey, depth, keyMap }) {
 	if (active) className += " active";
 	if (unread) className += " unread";
 	if (replying) className += " replying";
+	if (refreshing) className += " loading";
 
 	var style = isBranch ? { paddingLeft: `${12 + depth * 16}px` } : {};
 
@@ -183,6 +184,7 @@ function SessionItem({ session, activeKey, depth, keyMap }) {
 export function SessionList() {
 	var allSessions = sessionStore.sessions.value;
 	var activeKey = sessionStore.activeSessionKey.value;
+	var refreshingKey = sessionStore.refreshInProgressKey.value;
 	var filterId = projectStore.projectFilterId.value;
 
 	var filtered = filterId ? allSessions.filter((s) => s.projectId === filterId) : allSessions;
@@ -206,7 +208,9 @@ export function SessionList() {
 		var timer = setInterval(() => {
 			idx = (idx + 1) % spinnerFrames.length;
 			if (!spinnersRef.current) return;
-			var els = spinnersRef.current.querySelectorAll(".session-item.replying .session-spinner");
+			var els = spinnersRef.current.querySelectorAll(
+				".session-item.replying .session-spinner, .session-item.loading .session-spinner",
+			);
 			for (var el of els) el.textContent = spinnerFrames[idx];
 		}, 80);
 		return () => clearInterval(timer);
@@ -221,6 +225,7 @@ export function SessionList() {
 				activeKey=${activeKey}
 				depth=${depth}
 				keyMap=${keyMap}
+				refreshing=${session.key === refreshingKey}
 			/>
 			${children.map((child) => renderTree(child, depth + 1))}
 		`;

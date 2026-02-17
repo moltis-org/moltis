@@ -30,10 +30,19 @@ import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
 import * as S from "./state.js";
 import { modelStore } from "./stores/model-store.js";
 import { projectStore } from "./stores/project-store.js";
+import {
+	clearSessionHistory,
+	getHistoryRevision,
+	getSessionHistory,
+	replaceSessionHistory,
+	upsertSessionHistoryMessage,
+} from "./stores/session-history-cache.js";
 import { sessionStore } from "./stores/session-store.js";
 import { confirmDialog } from "./ui.js";
 
 var SESSION_PREVIEW_MAX_CHARS = 200;
+var switchRequestSeq = 0;
+var latestSwitchRequestBySession = new Map();
 
 function truncateSessionPreview(text) {
 	var trimmed = (text || "").trim();
@@ -95,6 +104,7 @@ export function clearActiveSession() {
 				session.replying.value = false;
 				session.activeRunId.value = null;
 			}
+			clearSessionHistory(activeKey);
 			fetchSessions();
 			return res;
 		}
@@ -188,6 +198,74 @@ export function seedSessionPreviewFromUserText(key, text) {
 	}
 }
 
+function toValidHistoryIndex(value) {
+	if (value === null || value === undefined) return null;
+	var idx = Number(value);
+	if (!Number.isInteger(idx) || idx < 0) return null;
+	return idx;
+}
+
+function historyIndexFromMessage(message) {
+	if (!(message && typeof message === "object")) return null;
+	var idx = toValidHistoryIndex(message.historyIndex);
+	if (idx !== null) return idx;
+	return toValidHistoryIndex(message.messageIndex);
+}
+
+function computeHistoryTailIndex(history) {
+	var max = -1;
+	if (!Array.isArray(history)) return max;
+	for (var i = 0; i < history.length; i += 1) {
+		var indexed = historyIndexFromMessage(history[i]);
+		if (indexed !== null) {
+			if (indexed > max) max = indexed;
+			continue;
+		}
+		if (i > max) max = i;
+	}
+	return max;
+}
+
+function historyHasUnindexedMessages(history) {
+	if (!Array.isArray(history)) return false;
+	for (var msg of history) {
+		if (historyIndexFromMessage(msg) === null) return true;
+	}
+	return false;
+}
+
+function currentSessionTailIndex(key) {
+	var session = sessionStore.getByKey(key);
+	if (session && typeof session.messageCount === "number" && session.messageCount > 0) {
+		return session.messageCount - 1;
+	}
+	if (key === S.activeSessionKey && S.lastHistoryIndex >= 0) {
+		return S.lastHistoryIndex + 1;
+	}
+	return null;
+}
+
+export function cacheSessionHistoryMessage(key, message, historyIndex) {
+	return upsertSessionHistoryMessage(key, message, historyIndex);
+}
+
+export function cacheOutgoingUserMessage(key, chatParams) {
+	if (!(key && chatParams)) return;
+	var historyIndex = currentSessionTailIndex(key);
+	var next = {
+		role: "user",
+		content: chatParams.content && Array.isArray(chatParams.content) ? chatParams.content : chatParams.text || "",
+		created_at: Date.now(),
+		seq: chatParams._seq || null,
+	};
+	if (historyIndex !== null) next.historyIndex = historyIndex;
+	upsertSessionHistoryMessage(key, next, historyIndex);
+}
+
+export function clearSessionHistoryCache(key) {
+	clearSessionHistory(key);
+}
+
 // ── New session button ──────────────────────────────────────
 var newSessionBtn = S.$("newSessionBtn");
 newSessionBtn.addEventListener("click", () => {
@@ -230,6 +308,7 @@ if (clearAllBtn) {
 				clearAllBtn.disabled = false;
 				clearAllBtn.textContent = "Clear";
 				if (res?.ok) {
+					clearSessionHistory();
 					// If the active session was deleted, switch to main.
 					var active = sessionStore.getByKey(sessionStore.activeSessionKey.value);
 					var wasKept =
@@ -645,12 +724,50 @@ function ensureSessionInClientStore(key, entry, projectId) {
 	return createdSession;
 }
 
-export function switchSession(key, searchContext, projectId) {
-	sessionStore.setActive(key);
-	// Dual-write to state.js for backward compat
-	S.setActiveSessionKey(key);
-	localStorage.setItem("moltis-session", key);
-	history.replaceState(null, "", sessionPath(key));
+function showSessionLoadIndicator() {
+	if (!S.chatMsgBox) return;
+	hideSessionLoadIndicator();
+	var loading = document.createElement("div");
+	loading.id = "sessionLoadIndicator";
+	loading.className = "msg assistant thinking session-loading";
+	loading.appendChild(makeThinkingDots());
+	var label = document.createElement("span");
+	label.className = "session-loading-label";
+	label.textContent = "Loading session…";
+	loading.appendChild(label);
+	S.chatMsgBox.appendChild(loading);
+}
+
+function hideSessionLoadIndicator() {
+	var loading = document.getElementById("sessionLoadIndicator");
+	if (loading) loading.remove();
+}
+
+function startSwitchRequest(key) {
+	switchRequestSeq += 1;
+	latestSwitchRequestBySession.set(key, switchRequestSeq);
+	return switchRequestSeq;
+}
+
+function isLatestSwitchRequest(key, requestId) {
+	return latestSwitchRequestBySession.get(key) === requestId;
+}
+
+function startSessionRefresh(key, blockRealtimeEvents) {
+	sessionStore.refreshInProgressKey.value = key;
+	sessionStore.switchInProgress.value = !!blockRealtimeEvents;
+	S.setSessionSwitchInProgress(!!blockRealtimeEvents);
+}
+
+function finishSessionRefresh(key) {
+	if (sessionStore.refreshInProgressKey.value !== key) return;
+	sessionStore.refreshInProgressKey.value = "";
+	sessionStore.switchInProgress.value = false;
+	S.setSessionSwitchInProgress(false);
+}
+
+function resetSwitchViewState() {
+	hideSessionLoadIndicator();
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	var tray = document.getElementById("queuedMessages");
 	if (tray) {
@@ -659,95 +776,174 @@ export function switchSession(key, searchContext, projectId) {
 	}
 	S.setStreamEl(null);
 	S.setStreamText("");
+	S.setLastToolOutput("");
+	S.setVoicePending(false);
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);
 	S.setSessionContextWindow(0);
 	updateTokenBar();
-	// Preact SessionList auto-rerenders active/unread from signals.
+}
 
-	sessionStore.switchInProgress.value = true;
-	S.setSessionSwitchInProgress(true);
-	var switchParams = { key: key };
-	if (projectId) switchParams.project_id = projectId;
-	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Session switch handles many state updates
-	sendRpc("sessions.switch", switchParams).then((res) => {
-		if (res?.ok && res.payload) {
-			var entry = res.payload.entry || {};
-			ensureSessionInClientStore(key, entry, projectId);
-			restoreSessionState(entry, projectId);
-			var history = res.payload.history || [];
-			var msgEls = [];
-			S.setSessionTokens({ input: 0, output: 0 });
-			S.setSessionCurrentInputTokens(0);
-			S.setChatBatchLoading(true);
-			history.forEach((msg) => {
-				if (msg.role === "user") {
-					msgEls.push(renderHistoryUserMessage(msg));
-				} else if (msg.role === "assistant") {
-					msgEls.push(renderHistoryAssistantMessage(msg));
-				} else if (msg.role === "notice") {
-					msgEls.push(chatAddMsg("system", renderMarkdown(msg.content || ""), true));
-				} else if (msg.role === "tool_result") {
-					msgEls.push(renderHistoryToolResult(msg));
-				} else {
-					msgEls.push(null);
-				}
-			});
-			S.setChatBatchLoading(false);
-			S.setLastHistoryIndex(history.length > 0 ? history.length - 1 : -1);
-			// Resume chatSeq from the highest user message seq in history
-			// so the counter continues from where it left off after reload.
-			var maxSeq = 0;
-			for (var hm of history) {
-				if (hm.role === "user" && hm.seq > maxSeq) {
-					maxSeq = hm.seq;
-				}
-			}
-			S.setChatSeq(maxSeq);
-			if (history.length === 0) {
-				showWelcomeCard();
-			}
-			if (history.length > 0) {
-				var lastMsg = history[history.length - 1];
-				var ts = lastMsg.created_at;
-				if (ts) appendLastMessageTimestamp(ts);
-			}
-			// Sync the store entry — syncCounts calls updateBadge() for re-render.
-			var sessionEntry = sessionStore.getByKey(key);
-			if (sessionEntry) {
-				sessionEntry.syncCounts(history.length, history.length);
-				sessionEntry.localUnread.value = false;
-				sessionEntry.lastHistoryIndex.value = history.length > 0 ? history.length - 1 : -1;
-			}
-			// Also sync the plain S.sessions entry for backward compat
-			var sEntry = S.sessions.find((s) => s.key === key);
-			if (sEntry) {
-				sEntry.messageCount = history.length;
-				sEntry.lastSeenMessageCount = history.length;
-				sEntry._localUnread = false;
-			}
-			// Restore server-side replying state so thinking dots appear
-			// after a full page reload while the model is still generating.
-			if (res.payload.replying) {
-				setSessionReplying(key, true);
-				// Restore voice-pending state so the final handler renders
-				// the audio player instead of treating it as a text stream.
-				if (res.payload.voicePending) {
-					S.setVoicePending(true);
-					var voiceSession = sessionStore.getByKey(key);
-					if (voiceSession) voiceSession.voicePending.value = true;
-				}
-			}
-			sessionStore.switchInProgress.value = false;
-			S.setSessionSwitchInProgress(false);
-			var thinkingText = res.payload.replying ? res.payload.thinkingText || null : null;
-			postHistoryLoadActions(key, searchContext, msgEls, thinkingText);
-			if (S.chatInput) S.chatInput.focus();
+function syncHistoryState(key, history, historyTailIndex) {
+	var count = Array.isArray(history) ? history.length : 0;
+	var sessionEntry = sessionStore.getByKey(key);
+	if (sessionEntry) {
+		sessionEntry.syncCounts(count, count);
+		sessionEntry.localUnread.value = false;
+		sessionEntry.lastHistoryIndex.value = historyTailIndex;
+	}
+	var legacy = S.sessions.find((s) => s.key === key);
+	if (legacy) {
+		legacy.messageCount = count;
+		legacy.lastSeenMessageCount = count;
+		legacy._localUnread = false;
+	}
+	S.setLastHistoryIndex(historyTailIndex);
+}
+
+function renderHistory(key, history, searchContext, thinkingText) {
+	hideSessionLoadIndicator();
+	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
+	var msgEls = [];
+	S.setSessionTokens({ input: 0, output: 0 });
+	S.setSessionCurrentInputTokens(0);
+	S.setChatBatchLoading(true);
+	history.forEach((msg) => {
+		if (msg.role === "user") {
+			msgEls.push(renderHistoryUserMessage(msg));
+		} else if (msg.role === "assistant") {
+			msgEls.push(renderHistoryAssistantMessage(msg));
+		} else if (msg.role === "notice") {
+			msgEls.push(chatAddMsg("system", renderMarkdown(msg.content || ""), true));
+		} else if (msg.role === "tool_result") {
+			msgEls.push(renderHistoryToolResult(msg));
 		} else {
-			sessionStore.switchInProgress.value = false;
-			S.setSessionSwitchInProgress(false);
-			if (S.chatInput) S.chatInput.focus();
+			msgEls.push(null);
 		}
 	});
+	S.setChatBatchLoading(false);
+	var historyTailIndex = computeHistoryTailIndex(history);
+	syncHistoryState(key, history, historyTailIndex);
+
+	// Resume chatSeq from the highest user message seq in history
+	// so the counter continues from where it left off after reload.
+	var maxSeq = 0;
+	for (var hm of history) {
+		if (hm.role === "user" && hm.seq > maxSeq) {
+			maxSeq = hm.seq;
+		}
+	}
+	S.setChatSeq(maxSeq);
+	if (history.length === 0) {
+		showWelcomeCard();
+	} else {
+		var lastMsg = history[history.length - 1];
+		var ts = lastMsg.created_at;
+		if (ts) appendLastMessageTimestamp(ts);
+	}
+	postHistoryLoadActions(key, searchContext, msgEls, thinkingText);
+}
+
+function shouldApplyServerHistory(key, serverHistory, requestRevision) {
+	var current = getSessionHistory(key);
+	if (!current) return true;
+	var serverTail = computeHistoryTailIndex(serverHistory);
+	var currentTail = computeHistoryTailIndex(current);
+	if (serverTail > currentTail) return true;
+	if (serverTail < currentTail) return false;
+	var currentRevision = getHistoryRevision(key);
+	if (currentRevision === requestRevision) return true;
+	return !historyHasUnindexedMessages(current);
+}
+
+function applyReplyingStateFromSwitchPayload(key, payload) {
+	var replying = payload.replying === true;
+	setSessionReplying(key, replying);
+	var voiceSession = sessionStore.getByKey(key);
+	if (replying && payload.voicePending) {
+		S.setVoicePending(true);
+		if (voiceSession) voiceSession.voicePending.value = true;
+	} else {
+		S.setVoicePending(false);
+		if (voiceSession) voiceSession.voicePending.value = false;
+	}
+	if (!replying && key === sessionStore.activeSessionKey.value) {
+		removeThinking();
+	}
+}
+
+export function switchSession(key, searchContext, projectId) {
+	sessionStore.setActive(key);
+	// Dual-write to state.js for backward compat
+	S.setActiveSessionKey(key);
+	localStorage.setItem("moltis-session", key);
+	history.replaceState(null, "", sessionPath(key));
+	resetSwitchViewState();
+	var cachedEntry = sessionStore.getByKey(key);
+	if (cachedEntry) {
+		restoreSessionState(cachedEntry, projectId);
+	}
+	// Preact SessionList auto-rerenders active/unread from signals.
+
+	var switchReqId = startSwitchRequest(key);
+	var switchParams = { key: key };
+	if (projectId) switchParams.project_id = projectId;
+	var cachedHistory = getSessionHistory(key);
+	var hasCache = Array.isArray(cachedHistory);
+	var cacheRevisionAtRequest = getHistoryRevision(key);
+	startSessionRefresh(key, !hasCache);
+	if (hasCache) {
+		renderHistory(key, cachedHistory, searchContext, null);
+	} else {
+		showSessionLoadIndicator();
+	}
+
+	sendRpc("sessions.switch", switchParams)
+		.then((res) => {
+			if (!isLatestSwitchRequest(key, switchReqId)) return;
+			var stillActive = sessionStore.activeSessionKey.value === key;
+			if (!(res?.ok && res.payload)) {
+				if (stillActive && !hasCache) {
+					hideSessionLoadIndicator();
+					chatAddMsg("error", res?.error?.message || "Failed to load session");
+				}
+				finishSessionRefresh(key);
+				if (stillActive && S.chatInput) S.chatInput.focus();
+				return;
+			}
+
+			var entry = res.payload.entry || {};
+			ensureSessionInClientStore(key, entry, projectId);
+			var serverHistory = Array.isArray(res.payload.history) ? res.payload.history : [];
+			var appliedServerHistory = false;
+			if (shouldApplyServerHistory(key, serverHistory, cacheRevisionAtRequest)) {
+				replaceSessionHistory(key, serverHistory);
+				appliedServerHistory = true;
+			}
+			var history = getSessionHistory(key) || serverHistory;
+			if (stillActive) {
+				restoreSessionState(entry, projectId);
+				applyReplyingStateFromSwitchPayload(key, res.payload);
+				var thinkingText = res.payload.replying ? res.payload.thinkingText || null : null;
+				var shouldRerender = !hasCache || Boolean(searchContext?.query) || appliedServerHistory;
+				if (shouldRerender) {
+					renderHistory(key, history, searchContext, thinkingText);
+				} else {
+					postHistoryLoadActions(key, searchContext, [], thinkingText);
+				}
+				if (S.chatInput) S.chatInput.focus();
+			}
+			finishSessionRefresh(key);
+		})
+		.catch(() => {
+			if (!isLatestSwitchRequest(key, switchReqId)) return;
+			var stillActive = sessionStore.activeSessionKey.value === key;
+			if (stillActive && !hasCache) {
+				hideSessionLoadIndicator();
+				chatAddMsg("error", "Failed to load session");
+			}
+			finishSessionRefresh(key);
+			if (stillActive && S.chatInput) S.chatInput.focus();
+		});
 }

@@ -186,6 +186,17 @@
   display: flex;
 }
 
+.msg.thinking.session-loading {
+  gap: 10px;
+  align-self: center;
+}
+
+.session-loading-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
 .thinking-dots {
   align-items: center;
   gap: 5px;
