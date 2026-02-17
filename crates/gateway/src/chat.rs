@@ -710,6 +710,42 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+fn runtime_datetime_prompt_tail(runtime_context: Option<&PromptRuntimeContext>) -> Option<String> {
+    let runtime = runtime_context?;
+    if let Some(time) = runtime
+        .host
+        .time
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        return Some(format!("\nThe current user datetime is {time}.\n"));
+    }
+    runtime
+        .host
+        .today
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|today| format!("\nThe current user date is {today}.\n"))
+}
+
+fn apply_voice_reply_suffix(
+    system_prompt: String,
+    desired_reply_medium: ReplyMedium,
+    runtime_context: Option<&PromptRuntimeContext>,
+) -> String {
+    if desired_reply_medium != ReplyMedium::Voice {
+        return system_prompt;
+    }
+
+    if let Some(tail) = runtime_datetime_prompt_tail(runtime_context)
+        && let Some(prefix) = system_prompt.strip_suffix(&tail)
+    {
+        return format!("{prefix}{VOICE_REPLY_SUFFIX}{tail}");
+    }
+
+    format!("{system_prompt}{VOICE_REPLY_SUFFIX}")
+}
+
 fn parse_explicit_shell_command(text: &str) -> Option<&str> {
     let trimmed = text.trim_start();
     let rest = trimmed.strip_prefix("/sh")?;
@@ -3432,13 +3468,14 @@ impl ChatService for LiveChatService {
         let _ = self.session_metadata.upsert(&session_key, None).await;
         self.session_metadata.touch(&session_key, 1).await;
         let session_entry = self.session_metadata.get(&session_key).await;
-        let runtime_context = build_prompt_runtime_context(
+        let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
             &session_key,
             session_entry.as_ref(),
         )
         .await;
+        apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Load conversation history (excluding the message we just appended).
         let mut history = self
@@ -4974,11 +5011,9 @@ async fn run_with_tools(
     };
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
-    let system_prompt = if desired_reply_medium == ReplyMedium::Voice {
-        format!("{system_prompt}{VOICE_REPLY_SUFFIX}")
-    } else {
-        system_prompt
-    };
+    // Keep the runtime datetime/date sentence as the final prompt line for better cache locality.
+    let system_prompt =
+        apply_voice_reply_suffix(system_prompt, desired_reply_medium, runtime_context);
 
     // Determine sandbox mode for this session.
     let session_is_sandboxed = if let Some(ref router) = state.sandbox_router {
@@ -5790,11 +5825,9 @@ async fn run_streaming(
     );
 
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
-    let system_prompt = if desired_reply_medium == ReplyMedium::Voice {
-        format!("{system_prompt}{VOICE_REPLY_SUFFIX}")
-    } else {
-        system_prompt
-    };
+    // Keep the runtime datetime/date sentence as the final prompt line for better cache locality.
+    let system_prompt =
+        apply_voice_reply_suffix(system_prompt, desired_reply_medium, runtime_context);
 
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
@@ -7181,6 +7214,40 @@ mod tests {
         assert_eq!(host.timezone.as_deref(), Some("America/New_York"));
         assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
         assert!(host.today.as_deref().is_some_and(|value| value.len() >= 10));
+    }
+
+    #[test]
+    fn apply_voice_reply_suffix_keeps_datetime_tail_at_end() {
+        let runtime_context = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                time: Some("2026-02-17 16:18:00 CET".to_string()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+        let base_prompt =
+            "You are a helpful assistant.\nThe current user datetime is 2026-02-17 16:18:00 CET.\n"
+                .to_string();
+
+        let prompt =
+            apply_voice_reply_suffix(base_prompt, ReplyMedium::Voice, Some(&runtime_context));
+
+        assert!(prompt.contains("## Voice Reply Mode"));
+        assert!(
+            prompt
+                .trim_end()
+                .ends_with("The current user datetime is 2026-02-17 16:18:00 CET.")
+        );
+        let voice_ix = prompt.find("## Voice Reply Mode");
+        let datetime_ix = prompt.rfind("The current user datetime is 2026-02-17 16:18:00 CET.");
+        assert!(voice_ix.is_some_and(|idx| datetime_ix.is_some_and(|tail| idx < tail)));
+    }
+
+    #[test]
+    fn apply_voice_reply_suffix_noop_for_text_reply_mode() {
+        let base_prompt = "You are a helpful assistant.".to_string();
+        let prompt = apply_voice_reply_suffix(base_prompt.clone(), ReplyMedium::Text, None);
+        assert_eq!(prompt, base_prompt);
     }
 
     #[test]
