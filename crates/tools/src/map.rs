@@ -666,18 +666,7 @@ impl AgentTool for ShowMapTool {
                     "description": "Longitude of the user's current location (for showing both positions)"
                 }
             },
-            "anyOf": [
-                {
-                    "type": "object",
-                    "required": ["latitude", "longitude"],
-                    "additionalProperties": false
-                },
-                {
-                    "type": "object",
-                    "required": ["points"],
-                    "additionalProperties": false
-                }
-            ],
+            "required": [],
             "additionalProperties": false
         })
     }
@@ -863,17 +852,11 @@ mod tests {
         assert!(schema["properties"]["points"].is_object());
         assert!(schema["properties"]["user_latitude"].is_object());
         assert!(schema["properties"]["user_longitude"].is_object());
-        let any_of = schema["anyOf"].as_array().unwrap();
-        assert!(
-            any_of
-                .iter()
-                .any(|item| { item["required"] == serde_json::json!(["latitude", "longitude"]) })
-        );
-        assert!(
-            any_of
-                .iter()
-                .any(|item| item["required"] == serde_json::json!(["points"]))
-        );
+        assert!(schema.get("anyOf").is_none());
+        assert!(schema.get("oneOf").is_none());
+        assert!(schema.get("allOf").is_none());
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.is_empty());
     }
 
     #[tokio::test]
