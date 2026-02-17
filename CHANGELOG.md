@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Terminal now ignores OSC color/palette mutation sequences from
   full-screen apps to avoid invisible-text redraw glitches when switching tmux
   tabs (notably seen with `vim`).
+- Settings > Terminal now re-sends forced resize updates during a short
+  post-connect settle window, fixing initial page-reload cases where tmux
+  windows stayed at stale dimensions until a manual tab switch.
 
 ### Security
 

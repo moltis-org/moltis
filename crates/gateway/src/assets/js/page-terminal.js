@@ -6,6 +6,7 @@ var themeObserver = null;
 var fitRaf = 0;
 var windowResizeListener = null;
 var fontsReadyListener = null;
+var resizeSettleTimers = [];
 
 var reconnectTimer = null;
 var socket = null;
@@ -106,6 +107,13 @@ function clearReconnectTimer() {
 		clearTimeout(reconnectTimer);
 		reconnectTimer = null;
 	}
+}
+
+function clearResizeSettleTimers() {
+	for (const timer of resizeSettleTimers) {
+		clearTimeout(timer);
+	}
+	resizeSettleTimers = [];
 }
 
 function clearInputQueue() {
@@ -301,7 +309,7 @@ function handleActiveWindowEvent(payload) {
 	renderWindowTabs();
 	setStatus("Switched tmux window.", "ok");
 	startWindowsRefreshLoop();
-	scheduleFit(true);
+	kickResizeSettleLoop();
 	if (xterm) xterm.focus();
 	void refreshTerminalWindows({ preferredWindowId: windowId, silent: true });
 }
@@ -460,6 +468,20 @@ function scheduleFit(forceResize) {
 	});
 }
 
+function kickResizeSettleLoop() {
+	if (!xterm) return;
+	clearResizeSettleTimers();
+	var settleDelays = [0, 50, 160, 380, 800];
+	for (const delay of settleDelays) {
+		var timer = setTimeout(() => {
+			if (!xterm) return;
+			scheduleFit(true);
+			sendResizeIfChanged(true);
+		}, delay);
+		resizeSettleTimers.push(timer);
+	}
+}
+
 async function ensureXtermModules() {
 	if (TerminalCtor && FitAddonCtor) return;
 	var [xtermMod, fitAddonMod] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
@@ -566,6 +588,7 @@ async function initXterm() {
 function disposeXterm() {
 	clearObservers();
 	clearScheduledFit();
+	clearResizeSettleTimers();
 	clearOscStabilityGuards();
 	if (xtermDataDisposable) {
 		xtermDataDisposable.dispose();
@@ -713,7 +736,7 @@ function applyReadyPayload(payload) {
 	setWindowControlsEnabled();
 
 	if (terminalAvailable) {
-		scheduleFit(true);
+		kickResizeSettleLoop();
 		updateSizeIndicator(xterm?.cols || 0, xterm?.rows || 0);
 		if (persistenceEnabled) {
 			setStatus("Connected to host shell with persistent tmux session.", "ok");
@@ -724,7 +747,6 @@ function applyReadyPayload(payload) {
 			clearWindowsRefreshTimer();
 		}
 		flushInputQueue();
-		sendResizeIfChanged(true);
 		if (xterm) xterm.focus();
 	} else {
 		clearWindowsRefreshTimer();
@@ -772,6 +794,7 @@ function connectTerminalSocket() {
 	}
 
 	clearReconnectTimer();
+	clearResizeSettleTimers();
 	closeTerminalSocket();
 	lastSentCols = 0;
 	lastSentRows = 0;
@@ -943,6 +966,7 @@ export async function initTerminal(container) {
 export function teardownTerminal() {
 	shuttingDown = true;
 	clearReconnectTimer();
+	clearResizeSettleTimers();
 	closeTerminalSocket();
 	clearInputQueue();
 	clearWindowsRefreshTimer();
