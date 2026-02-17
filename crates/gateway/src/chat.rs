@@ -6674,6 +6674,22 @@ fn format_tool_status_message(tool_name: &str, arguments: &Value) -> String {
                 "🔍 Searching...".to_string()
             }
         },
+        "calc" => {
+            let expr = arguments
+                .get("expression")
+                .or_else(|| arguments.get("expr"))
+                .and_then(|v| v.as_str());
+            if let Some(expression) = expr {
+                let display = if expression.len() > 50 {
+                    format!("{}...", truncate_at_char_boundary(expression, 50))
+                } else {
+                    expression.to_string()
+                };
+                format!("🧮 Calculating: {}", display)
+            } else {
+                "🧮 Calculating...".to_string()
+            }
+        },
         "memory_search" => "🧠 Searching memory...".to_string(),
         "memory_store" => "🧠 Storing to memory...".to_string(),
         _ => format!("🔧 {}", tool_name),
@@ -7028,6 +7044,20 @@ mod tests {
         assert!(parse_explicit_shell_command("/sh").is_none());
         assert!(parse_explicit_shell_command("/shell ls").is_none());
         assert!(parse_explicit_shell_command("uname -a").is_none());
+    }
+
+    #[test]
+    fn format_tool_status_message_calc_uses_expression() {
+        let message =
+            format_tool_status_message("calc", &serde_json::json!({ "expression": "2 + 2 * 3" }));
+        assert!(message.contains("🧮 Calculating:"));
+        assert!(message.contains("2 + 2 * 3"));
+    }
+
+    #[test]
+    fn format_tool_status_message_calc_handles_missing_expression() {
+        let message = format_tool_status_message("calc", &serde_json::json!({}));
+        assert_eq!(message, "🧮 Calculating...");
     }
 
     #[test]

@@ -2650,6 +2650,7 @@ pub async fn start_gateway(
             .with_sandbox_router(Arc::clone(&sandbox_router));
 
         tool_registry.register(Box::new(exec_tool));
+        tool_registry.register(Box::new(moltis_tools::calc::CalcTool::new()));
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
