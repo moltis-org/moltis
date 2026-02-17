@@ -2,9 +2,9 @@
 //! Google Maps, Apple Maps, and OpenStreetMap.
 //!
 //! Composes a static map from OSM tiles (no API key required), draws marker
-//! pins for the destination and optionally the user's current location, and
-//! returns clickable links so the user can open the location in their
-//! preferred mapping application.
+//! pins for one or more destinations and optionally the user's current
+//! location, and returns clickable links so the user can open locations in
+//! their preferred mapping application.
 
 use std::io::Cursor;
 
@@ -21,9 +21,19 @@ use {
 // ── Parameters ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct ShowMapParams {
+struct ShowMapPointParams {
     latitude: f64,
     longitude: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShowMapParams {
+    #[serde(default)]
+    latitude: Option<f64>,
+    #[serde(default)]
+    longitude: Option<f64>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default)]
@@ -32,6 +42,60 @@ struct ShowMapParams {
     user_latitude: Option<f64>,
     #[serde(default)]
     user_longitude: Option<f64>,
+    #[serde(default)]
+    points: Vec<ShowMapPointParams>,
+}
+
+#[derive(Debug, Clone)]
+struct DestinationPoint {
+    latitude: f64,
+    longitude: f64,
+    label: Option<String>,
+}
+
+fn validate_latitude(value: f64, field: &str) -> Result<()> {
+    if !(-90.0..=90.0).contains(&value) {
+        bail!("{field} must be between -90 and 90, got {value}");
+    }
+    Ok(())
+}
+
+fn validate_longitude(value: f64, field: &str) -> Result<()> {
+    if !(-180.0..=180.0).contains(&value) {
+        bail!("{field} must be between -180 and 180, got {value}");
+    }
+    Ok(())
+}
+
+fn normalize_destination_points(params: &ShowMapParams) -> Result<Vec<DestinationPoint>> {
+    if !params.points.is_empty() {
+        let mut points = Vec::with_capacity(params.points.len());
+        for (idx, point) in params.points.iter().enumerate() {
+            validate_latitude(point.latitude, &format!("points[{idx}].latitude"))?;
+            validate_longitude(point.longitude, &format!("points[{idx}].longitude"))?;
+            points.push(DestinationPoint {
+                latitude: point.latitude,
+                longitude: point.longitude,
+                label: point.label.clone(),
+            });
+        }
+        return Ok(points);
+    }
+
+    match (params.latitude, params.longitude) {
+        (Some(latitude), Some(longitude)) => {
+            validate_latitude(latitude, "latitude")?;
+            validate_longitude(longitude, "longitude")?;
+            Ok(vec![DestinationPoint {
+                latitude,
+                longitude,
+                label: params.label.clone(),
+            }])
+        },
+        (Some(_), None) => bail!("longitude is required when latitude is provided"),
+        (None, Some(_)) => bail!("latitude is required when longitude is provided"),
+        (None, None) => bail!("provide either `points` or `latitude`/`longitude`"),
+    }
 }
 
 // ── Map links ───────────────────────────────────────────────────────────────
@@ -108,21 +172,124 @@ fn lat_lon_to_tile(lat: f64, lon: f64, zoom: u8) -> (f64, f64) {
     (x, y)
 }
 
-/// Choose a zoom level that fits two points within the given pixel dimensions,
+/// Convert lat/lon to normalized Web Mercator world coordinates [0, 1].
+fn lat_lon_to_world(lat: f64, lon: f64) -> (f64, f64) {
+    let x = ((lon + 180.0) / 360.0).rem_euclid(1.0);
+    let lat_rad = lat.to_radians();
+    let y = (1.0 - lat_rad.tan().asinh() / std::f64::consts::PI) / 2.0;
+    (x, y.clamp(0.0, 1.0))
+}
+
+/// Convert normalized Web Mercator world coordinates [0, 1] back to lat/lon.
+fn world_to_lat_lon(x: f64, y: f64) -> (f64, f64) {
+    let lon = x.rem_euclid(1.0) * 360.0 - 180.0;
+    let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * y.clamp(0.0, 1.0)))
+        .sinh()
+        .atan();
+    (lat_rad.to_degrees(), lon)
+}
+
+/// Find minimal wrapped x-span and center on a [0, 1) circle.
+fn wrapped_span_and_center(values: &[f64]) -> Option<(f64, f64)> {
+    if values.is_empty() {
+        return None;
+    }
+
+    if values.len() == 1 {
+        return Some((0.0, values[0].rem_euclid(1.0)));
+    }
+
+    let mut sorted: Vec<f64> = values.iter().map(|v| v.rem_euclid(1.0)).collect();
+    sorted.sort_by(f64::total_cmp);
+
+    let mut max_gap = f64::NEG_INFINITY;
+    let mut max_gap_idx = 0usize;
+    for idx in 0..sorted.len() {
+        let current = sorted[idx];
+        let next = if idx + 1 < sorted.len() {
+            sorted[idx + 1]
+        } else {
+            sorted[0] + 1.0
+        };
+        let gap = next - current;
+        if gap > max_gap {
+            max_gap = gap;
+            max_gap_idx = idx;
+        }
+    }
+
+    let span = (1.0 - max_gap).clamp(0.0, 1.0);
+    let arc_start = if max_gap_idx + 1 < sorted.len() {
+        sorted[max_gap_idx + 1]
+    } else {
+        sorted[0]
+    };
+    let center = (arc_start + span / 2.0).rem_euclid(1.0);
+    Some((span, center))
+}
+
+/// Compute the map center that keeps points tightly framed, including
+/// international date-line crossings.
+fn center_for_points(points: &[(f64, f64)]) -> Option<(f64, f64)> {
+    if points.is_empty() {
+        return None;
+    }
+    if points.len() == 1 {
+        return Some(points[0]);
+    }
+
+    let world_points: Vec<(f64, f64)> = points
+        .iter()
+        .map(|(lat, lon)| lat_lon_to_world(*lat, *lon))
+        .collect();
+    let xs: Vec<f64> = world_points.iter().map(|(x, _)| *x).collect();
+    let ys: Vec<f64> = world_points.iter().map(|(_, y)| *y).collect();
+    let (_, center_x) = wrapped_span_and_center(&xs)?;
+    let min_y = ys.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let center_y = (min_y + max_y) / 2.0;
+    Some(world_to_lat_lon(center_x, center_y))
+}
+
+/// Choose a zoom level that fits all points within the given pixel dimensions,
 /// with some padding so markers aren't at the very edge.
-fn auto_zoom(lat1: f64, lon1: f64, lat2: f64, lon2: f64, width: u32, height: u32) -> u8 {
+fn auto_zoom_points(points: &[(f64, f64)], width: u32, height: u32) -> u8 {
+    if points.len() <= 1 {
+        return 18;
+    }
+
+    let world_points: Vec<(f64, f64)> = points
+        .iter()
+        .map(|(lat, lon)| lat_lon_to_world(*lat, *lon))
+        .collect();
+    let xs: Vec<f64> = world_points.iter().map(|(x, _)| *x).collect();
+    let ys: Vec<f64> = world_points.iter().map(|(_, y)| *y).collect();
+    let (x_span, _) = match wrapped_span_and_center(&xs) {
+        Some(v) => v,
+        None => return 18,
+    };
+    let min_y = ys.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_y = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let y_span = (max_y - min_y).abs();
+
     // Try zoom levels from 18 down to 2, pick the highest that fits.
     for z in (2..=18).rev() {
-        let (x1, y1) = lat_lon_to_tile(lat1, lon1, z);
-        let (x2, y2) = lat_lon_to_tile(lat2, lon2, z);
-        let dx = (x1 - x2).abs() * f64::from(TILE_SIZE);
-        let dy = (y1 - y2).abs() * f64::from(TILE_SIZE);
+        let world_px = f64::from(TILE_SIZE) * f64::from(1u32 << z);
+        let dx = x_span * world_px;
+        let dy = y_span * world_px;
         // Leave 40% padding on each side so markers aren't at the edge.
         if dx < f64::from(width) * 0.6 && dy < f64::from(height) * 0.6 {
             return z;
         }
     }
+
     2
+}
+
+/// Choose a zoom level that fits two points (legacy helper kept for tests).
+#[cfg(test)]
+fn auto_zoom(lat1: f64, lon1: f64, lat2: f64, lon2: f64, width: u32, height: u32) -> u8 {
+    auto_zoom_points(&[(lat1, lon1), (lat2, lon2)], width, height)
 }
 
 // ── Static map compositing ──────────────────────────────────────────────────
@@ -137,6 +304,15 @@ struct Marker {
 const MAP_WIDTH: u32 = 600;
 const MAP_HEIGHT: u32 = 400;
 const MARKER_RADIUS: i32 = 10;
+const USER_MARKER_COLOR: [u8; 4] = [50, 120, 220, 255];
+const DESTINATION_MARKER_COLORS: [[u8; 4]; 6] = [
+    [220, 50, 50, 255],
+    [217, 119, 6, 255],
+    [5, 150, 105, 255],
+    [124, 58, 237, 255],
+    [14, 116, 144, 255],
+    [185, 28, 28, 255],
+];
 
 /// Compose a static map from OSM tiles with markers.
 ///
@@ -430,12 +606,12 @@ impl AgentTool for ShowMapTool {
     }
 
     fn description(&self) -> &str {
-        "Show a map image to the user for a specific location. Displays a map with a red \
-         pin at the destination and an optional blue pin at the user's current location, \
-         plus clickable links to Google Maps, Apple Maps, and OpenStreetMap. Always pass \
-         user_latitude and user_longitude when available so the user can see both their \
-         position and the destination on the map. Requires latitude and longitude \
-         coordinates (get them from get_user_location or from your knowledge)."
+        "Show a map image to the user for one or more locations. Displays destination \
+         pins and an optional blue pin at the user's current location, plus clickable \
+         links to Google Maps, Apple Maps, and OpenStreetMap. Supports either a single \
+         destination via latitude/longitude or multiple destinations via points[]. Always \
+         pass user_latitude and user_longitude when available so the user can see both \
+         their position and destinations on the map."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -454,9 +630,32 @@ impl AgentTool for ShowMapTool {
                     "type": "string",
                     "description": "Optional pin label (e.g. business name)"
                 },
+                "points": {
+                    "type": "array",
+                    "description": "Optional list of destination points to render on a single map.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "latitude": {
+                                "type": "number",
+                                "description": "Latitude of the destination (-90 to 90)"
+                            },
+                            "longitude": {
+                                "type": "number",
+                                "description": "Longitude of the destination (-180 to 180)"
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Optional label for this destination"
+                            }
+                        },
+                        "required": ["latitude", "longitude"],
+                        "additionalProperties": false
+                    }
+                },
                 "zoom": {
                     "type": "integer",
-                    "description": "Map zoom level (1-18). Auto-calculated when user location is provided."
+                    "description": "Map zoom level (1-18). Auto-calculated when multiple points are shown."
                 },
                 "user_latitude": {
                     "type": "number",
@@ -467,70 +666,70 @@ impl AgentTool for ShowMapTool {
                     "description": "Longitude of the user's current location (for showing both positions)"
                 }
             },
-            "required": ["latitude", "longitude"],
+            "required": [],
             "additionalProperties": false
         })
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
         let p: ShowMapParams = serde_json::from_value(params)?;
-
-        // Validate coordinate ranges.
-        if !(-90.0..=90.0).contains(&p.latitude) {
-            bail!("latitude must be between -90 and 90, got {}", p.latitude);
-        }
-        if !(-180.0..=180.0).contains(&p.longitude) {
-            bail!(
-                "longitude must be between -180 and 180, got {}",
-                p.longitude
-            );
-        }
+        let destinations = normalize_destination_points(&p)?;
+        let Some(primary) = destinations.first() else {
+            bail!("at least one destination is required");
+        };
+        let primary_lat = primary.latitude;
+        let primary_lon = primary.longitude;
+        let primary_label = primary.label.clone();
 
         let user_loc = match (p.user_latitude, p.user_longitude) {
             (Some(ulat), Some(ulon)) => {
-                if !(-90.0..=90.0).contains(&ulat) {
-                    bail!("user_latitude must be between -90 and 90, got {ulat}");
-                }
-                if !(-180.0..=180.0).contains(&ulon) {
-                    bail!("user_longitude must be between -180 and 180, got {ulon}");
-                }
+                validate_latitude(ulat, "user_latitude")?;
+                validate_longitude(ulon, "user_longitude")?;
                 Some((ulat, ulon))
             },
             _ => None,
         };
 
-        // Auto-calculate zoom to fit both points, or use explicit/default.
+        let mut fit_points: Vec<(f64, f64)> = destinations
+            .iter()
+            .map(|point| (point.latitude, point.longitude))
+            .collect();
+        if let Some((ulat, ulon)) = user_loc {
+            fit_points.push((ulat, ulon));
+        }
+
+        // Auto-calculate zoom to fit all points, or use explicit/default.
         let zoom = if let Some(z) = p.zoom {
             z.clamp(1, 18)
-        } else if let Some((ulat, ulon)) = user_loc {
-            auto_zoom(p.latitude, p.longitude, ulat, ulon, MAP_WIDTH, MAP_HEIGHT)
+        } else if fit_points.len() > 1 {
+            auto_zoom_points(&fit_points, MAP_WIDTH, MAP_HEIGHT)
         } else {
             15
         };
 
-        let label = p.label.as_deref();
-        let map_links = build_map_links(p.latitude, p.longitude, zoom, label);
+        let map_links = build_map_links(primary_lat, primary_lon, zoom, primary_label.as_deref());
 
-        // Build markers: red for destination, blue for user.
-        let mut markers = vec![Marker {
-            lat: p.latitude,
-            lon: p.longitude,
-            color: [220, 50, 50, 255], // red
-        }];
+        // Build markers: multi-color destinations and blue for user.
+        let mut markers: Vec<Marker> = destinations
+            .iter()
+            .enumerate()
+            .map(|(idx, point)| Marker {
+                lat: point.latitude,
+                lon: point.longitude,
+                color: DESTINATION_MARKER_COLORS[idx % DESTINATION_MARKER_COLORS.len()],
+            })
+            .collect();
         if let Some((ulat, ulon)) = user_loc {
             markers.push(Marker {
                 lat: ulat,
                 lon: ulon,
-                color: [50, 120, 220, 255], // blue
+                color: USER_MARKER_COLOR,
             });
         }
 
-        // Calculate center: midpoint of user + destination, or just destination.
-        let (center_lat, center_lon) = if let Some((ulat, ulon)) = user_loc {
-            ((p.latitude + ulat) / 2.0, (p.longitude + ulon) / 2.0)
-        } else {
-            (p.latitude, p.longitude)
-        };
+        // Calculate center that frames all visible points.
+        let (center_lat, center_lon) =
+            center_for_points(&fit_points).unwrap_or((primary_lat, primary_lon));
 
         // Compose the static map image from OSM tiles (in-process via image crate).
         // Falls back to ImageMagick CLI if the in-process approach fails.
@@ -544,14 +743,35 @@ impl AgentTool for ShowMapTool {
             },
         };
 
+        let points_result: Vec<serde_json::Value> = destinations
+            .iter()
+            .map(|point| {
+                let mut item = serde_json::json!({
+                    "latitude": point.latitude,
+                    "longitude": point.longitude,
+                    "map_links": build_map_links(
+                        point.latitude,
+                        point.longitude,
+                        zoom,
+                        point.label.as_deref()
+                    ),
+                });
+                if let Some(label) = &point.label {
+                    item["label"] = serde_json::Value::String(label.clone());
+                }
+                item
+            })
+            .collect();
+
         let mut result = serde_json::json!({
-            "latitude": p.latitude,
-            "longitude": p.longitude,
+            "latitude": primary_lat,
+            "longitude": primary_lon,
             "map_links": map_links,
+            "points": points_result,
         });
 
-        if let Some(label) = label {
-            result["label"] = serde_json::Value::String(label.to_string());
+        if let Some(label) = primary_label {
+            result["label"] = serde_json::Value::String(label);
         }
 
         if let Some(data_uri) = screenshot {
@@ -629,11 +849,14 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["latitude"].is_object());
         assert!(schema["properties"]["longitude"].is_object());
+        assert!(schema["properties"]["points"].is_object());
         assert!(schema["properties"]["user_latitude"].is_object());
         assert!(schema["properties"]["user_longitude"].is_object());
+        assert!(schema.get("anyOf").is_none());
+        assert!(schema.get("oneOf").is_none());
+        assert!(schema.get("allOf").is_none());
         let required = schema["required"].as_array().unwrap();
-        assert!(required.contains(&serde_json::json!("latitude")));
-        assert!(required.contains(&serde_json::json!("longitude")));
+        assert!(required.is_empty());
     }
 
     #[tokio::test]
@@ -719,6 +942,7 @@ mod tests {
         assert!(result["map_links"]["google_maps"].is_string());
         assert!(result["map_links"]["apple_maps"].is_string());
         assert!(result["map_links"]["openstreetmap"].is_string());
+        assert_eq!(result["points"].as_array().map(Vec::len), Some(1));
     }
 
     #[tokio::test]
@@ -733,6 +957,57 @@ mod tests {
             .await
             .unwrap();
         assert!(result["map_links"].is_object());
+    }
+
+    #[tokio::test]
+    async fn execute_supports_points_input() {
+        let tool = ShowMapTool::new();
+        let result = tool
+            .execute(serde_json::json!({
+                "points": [
+                    { "latitude": 37.788473, "longitude": -122.408997, "label": "Sears Fine Food" },
+                    { "latitude": 37.80026, "longitude": -122.41028, "label": "Mama's on Washington Square" }
+                ]
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["latitude"], 37.788473);
+        assert_eq!(result["longitude"], -122.408997);
+        assert_eq!(result["label"], "Sears Fine Food");
+        let points = result["points"].as_array().unwrap();
+        assert_eq!(points.len(), 2);
+        assert!(points[0]["map_links"]["google_maps"].is_string());
+        assert_eq!(points[1]["label"], "Mama's on Washington Square");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_destinations() {
+        let tool = ShowMapTool::new();
+        let err = tool
+            .execute(serde_json::json!({
+                "zoom": 10
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("provide either `points` or `latitude`/`longitude`")
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_validates_points_latitude_range() {
+        let tool = ShowMapTool::new();
+        let err = tool
+            .execute(serde_json::json!({
+                "points": [{ "latitude": 91.0, "longitude": 0.0 }]
+            }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("points[0].latitude must be between")
+        );
     }
 
     // ── Tile math tests ─────────────────────────────────────────────────────
@@ -771,6 +1046,29 @@ mod tests {
     fn auto_zoom_same_point() {
         let z = auto_zoom(37.76, -122.42, 37.76, -122.42, 600, 400);
         assert_eq!(z, 18, "same point should give max zoom");
+    }
+
+    #[test]
+    fn auto_zoom_multiple_points() {
+        let points = vec![
+            (37.788473, -122.408997),
+            (37.79062, -122.42238),
+            (37.76966, -122.43125),
+            (37.80895, -122.41576),
+        ];
+        let z = auto_zoom_points(&points, 600, 400);
+        assert!(
+            (12..=16).contains(&z),
+            "zoom={z}, expected neighborhood-level zoom for SF points"
+        );
+    }
+
+    #[test]
+    fn center_for_points_handles_date_line() {
+        let points = vec![(0.0, 179.0), (0.0, -179.0)];
+        let (lat, lon) = center_for_points(&points).unwrap();
+        assert!(lat.abs() < 1.0, "lat={lat}");
+        assert!(lon.abs() > 170.0, "lon={lon}");
     }
 
     // ── Marker drawing tests ────────────────────────────────────────────────
