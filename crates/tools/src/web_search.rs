@@ -27,8 +27,8 @@ struct CacheEntry {
 
 /// Web search tool — lets the LLM search the web via Brave Search or Perplexity.
 ///
-/// When the configured provider's API key is missing, the tool automatically
-/// falls back to DuckDuckGo HTML search so the LLM never has to ask the user.
+/// When the configured provider's API key is missing and fallback is enabled,
+/// the tool falls back to DuckDuckGo HTML search.
 pub struct WebSearchTool {
     provider: SearchProvider,
     api_key: Secret<String>,
@@ -37,8 +37,8 @@ pub struct WebSearchTool {
     cache_ttl: Duration,
     cache: Mutex<HashMap<String, CacheEntry>>,
     /// Whether to fall back to DuckDuckGo when the API key is missing.
-    /// Always `true` in production; set to `false` in unit tests to avoid
-    /// network calls.
+    /// Defaults to `false` in production. Tests also set this to `false` to
+    /// avoid network calls.
     fallback_enabled: bool,
     /// When DuckDuckGo returns a CAPTCHA, block it until this instant so
     /// subsequent calls fail fast instead of wasting network round-trips.
@@ -140,7 +140,7 @@ impl WebSearchTool {
                     config.max_results,
                     Duration::from_secs(config.timeout_seconds),
                     Duration::from_secs(config.cache_ttl_minutes * 60),
-                    true,
+                    config.duckduckgo_fallback,
                 ))
             },
             ConfigSearchProvider::Perplexity => {
@@ -157,7 +157,7 @@ impl WebSearchTool {
                     config.max_results,
                     Duration::from_secs(config.timeout_seconds),
                     Duration::from_secs(config.cache_ttl_minutes * 60),
-                    true,
+                    config.duckduckgo_fallback,
                 ))
             },
         }
@@ -816,6 +816,23 @@ mod tests {
             ..Default::default()
         };
         assert!(WebSearchTool::from_config(&cfg).is_none());
+    }
+
+    #[test]
+    fn test_from_config_disables_ddg_fallback_by_default() {
+        let cfg = WebSearchConfig::default();
+        let tool = WebSearchTool::from_config(&cfg).expect("web search should be enabled");
+        assert!(!tool.fallback_enabled);
+    }
+
+    #[test]
+    fn test_from_config_can_enable_ddg_fallback() {
+        let cfg = WebSearchConfig {
+            duckduckgo_fallback: true,
+            ..Default::default()
+        };
+        let tool = WebSearchTool::from_config(&cfg).expect("web search should be enabled");
+        assert!(tool.fallback_enabled);
     }
 
     #[test]

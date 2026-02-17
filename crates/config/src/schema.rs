@@ -1066,6 +1066,7 @@ pub struct ToolsConfig {
     pub exec: ExecConfig,
     pub policy: ToolPolicyConfig,
     pub web: WebConfig,
+    pub maps: MapsConfig,
     pub browser: BrowserConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
@@ -1084,6 +1085,7 @@ impl Default for ToolsConfig {
             exec: ExecConfig::default(),
             policy: ToolPolicyConfig::default(),
             web: WebConfig::default(),
+            maps: MapsConfig::default(),
             browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
             agent_max_iterations: default_agent_max_iterations(),
@@ -1102,6 +1104,26 @@ fn default_agent_max_iterations() -> usize {
 
 fn default_max_tool_result_bytes() -> usize {
     50_000
+}
+
+/// Map tools configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MapsConfig {
+    /// Preferred map provider used by `show_map`.
+    pub provider: MapProvider,
+}
+
+/// Map provider selection for map links.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MapProvider {
+    #[default]
+    #[serde(rename = "google_maps")]
+    GoogleMaps,
+    #[serde(rename = "apple_maps")]
+    AppleMaps,
+    #[serde(rename = "openstreetmap")]
+    OpenStreetMap,
 }
 
 /// Web tools configuration (search, fetch).
@@ -1141,6 +1163,9 @@ pub struct WebSearchConfig {
     pub timeout_seconds: u64,
     /// In-memory cache TTL in minutes (0 to disable).
     pub cache_ttl_minutes: u64,
+    /// Enable DuckDuckGo HTML fallback when no provider API key is configured.
+    /// Disabled by default because it may trigger CAPTCHA challenges.
+    pub duckduckgo_fallback: bool,
     /// Perplexity-specific settings.
     pub perplexity: PerplexityConfig,
 }
@@ -1154,6 +1179,7 @@ impl Default for WebSearchConfig {
             max_results: 5,
             timeout_seconds: 30,
             cache_ttl_minutes: 15,
+            duckduckgo_fallback: false,
             perplexity: PerplexityConfig::default(),
         }
     }

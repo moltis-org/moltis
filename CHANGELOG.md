@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
   (for example `anthropics/skills`), including loading `SKILL.md` entries under
   `skills/*` and exposing them through the existing plugin-skill workflow.
+- Web search no longer falls back to DuckDuckGo by default when search API keys
+  are missing, avoiding repeated CAPTCHA failures; fallback is now opt-in via
+  `tools.web.search.duckduckgo_fallback = true`.
 
 ### Security
 

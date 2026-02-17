@@ -156,6 +156,7 @@ fn build_schema_map() -> KnownKeys {
             ("max_results", Leaf),
             ("timeout_seconds", Leaf),
             ("cache_ttl_minutes", Leaf),
+            ("duckduckgo_fallback", Leaf),
             ("perplexity", perplexity()),
         ]))
     };
@@ -223,6 +224,7 @@ fn build_schema_map() -> KnownKeys {
                     ("fetch", web_fetch()),
                 ])),
             ),
+            ("maps", Struct(HashMap::from([("provider", Leaf)]))),
             ("agent_timeout_secs", Leaf),
             ("agent_max_iterations", Leaf),
             ("max_tool_result_bytes", Leaf),

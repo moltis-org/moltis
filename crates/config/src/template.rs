@@ -181,6 +181,14 @@ agent_timeout_secs = 600          # Max seconds for an agent run (0 = no timeout
 agent_max_iterations = 25         # Max LLM/tool loop iterations before stopping
 max_tool_result_bytes = 50000     # Max bytes per tool result before truncation (50KB)
 
+# ── Maps ─────────────────────────────────────────────────────────────────────
+
+[tools.maps]
+provider = "google_maps"          # Map provider used by show_map:
+                                  #   "google_maps" (default)
+                                  #   "apple_maps"
+                                  #   "openstreetmap"
+
 # ── Command Execution ─────────────────────────────────────────────────────────
 
 [tools.exec]
@@ -327,6 +335,7 @@ provider = "brave"                # Search provider: "brave" or "perplexity"
 max_results = 5                   # Number of results to return (1-10)
 timeout_seconds = 30              # HTTP request timeout
 cache_ttl_minutes = 15            # Cache results for this many minutes (0 = no cache)
+duckduckgo_fallback = false       # Off by default; enable only if you want DDG fallback without API keys
 # api_key = "..."                 # Brave API key (or set BRAVE_API_KEY env var)
 
 # Perplexity-specific settings (when provider = "perplexity")

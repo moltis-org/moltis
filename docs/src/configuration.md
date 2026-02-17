@@ -81,6 +81,31 @@ packages = [
 When you modify the packages list and restart, Moltis automatically rebuilds the sandbox image with a new tag.
 ```
 
+## Web Search
+
+Configure the built-in `web_search` tool:
+
+```toml
+[tools.web.search]
+enabled = true
+provider = "brave"               # "brave" or "perplexity"
+max_results = 5                  # 1-10
+timeout_seconds = 30
+cache_ttl_minutes = 15
+duckduckgo_fallback = false      # Default: do not use DuckDuckGo fallback
+# api_key = "..."                # Brave key, or use BRAVE_API_KEY
+
+[tools.web.search.perplexity]
+# api_key = "..."                # Or use PERPLEXITY_API_KEY / OPENROUTER_API_KEY
+# base_url = "..."               # Optional override
+# model = "perplexity/sonar-pro" # Optional override
+```
+
+If no search API key is configured:
+
+- with `duckduckgo_fallback = false` (default), Moltis returns a clear hint to set `BRAVE_API_KEY` or `PERPLEXITY_API_KEY`
+- with `duckduckgo_fallback = true`, Moltis attempts DuckDuckGo HTML search, which may hit CAPTCHA/rate limits
+
 ## Chat Message Queue
 
 When a new message arrives while an agent run is already active, Moltis can either
