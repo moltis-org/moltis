@@ -299,6 +299,7 @@ function handleActiveWindowEvent(payload) {
 	pendingWindowId = null;
 	renderWindowTabs();
 	setStatus("Switched tmux window.", "ok");
+	startWindowsRefreshLoop();
 	scheduleFit();
 	sendResizeIfChanged();
 	if (xterm) xterm.focus();
@@ -308,7 +309,6 @@ function handleActiveWindowEvent(payload) {
 function onWindowTabClick(windowId) {
 	if (!tmuxPersistenceEnabled) return;
 	if (!windowId || windowId === activeWindowId) return;
-	clearWindowsRefreshTimer();
 	if (requestWindowSwitch(windowId)) return;
 	terminalAvailable = false;
 	setControlsEnabled(false);

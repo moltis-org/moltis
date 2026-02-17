@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between tmux windows (including fullscreen apps like `vim`).
 - Host terminal tmux attach now resets window sizing to auto (`resize-window -A`)
   to prevent stale oversized window dimensions across reconnects.
+- Settings > Terminal tmux window polling now continues after tab switches, so
+  windows closed with `Ctrl-D` are removed from the tab strip automatically.
 
 ### Security
 
