@@ -44,6 +44,14 @@ pub struct TelegramAccountConfig {
     /// Minimum interval between edit-in-place updates (ms).
     pub edit_throttle_ms: u64,
 
+    /// Send a short non-silent message when edit-in-place streaming finishes.
+    /// This can trigger a reliable "completion" push notification in Telegram.
+    pub stream_notify_on_complete: bool,
+
+    /// Minimum number of characters to accumulate before sending the first
+    /// streamed message. Helps avoid early push notifications with tiny drafts.
+    pub stream_min_initial_chars: usize,
+
     /// Default model ID for this bot's sessions (e.g. "claude-sonnet-4-5-20250929").
     /// When set, channel messages use this model instead of the first registered provider.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +102,8 @@ impl Default for TelegramAccountConfig {
             group_allowlist: Vec::new(),
             stream_mode: StreamMode::default(),
             edit_throttle_ms: 300,
+            stream_notify_on_complete: false,
+            stream_min_initial_chars: 30,
             model: None,
             model_provider: None,
             otp_self_approval: true,
@@ -116,6 +126,8 @@ mod tests {
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);
         assert_eq!(cfg.edit_throttle_ms, 300);
+        assert!(!cfg.stream_notify_on_complete);
+        assert_eq!(cfg.stream_min_initial_chars, 30);
     }
 
     #[test]
@@ -124,12 +136,16 @@ mod tests {
             "token": "123:ABC",
             "dm_policy": "allowlist",
             "stream_mode": "off",
+            "stream_notify_on_complete": true,
+            "stream_min_initial_chars": 42,
             "allowlist": ["user1", "user2"]
         }"#;
         let cfg: TelegramAccountConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.token.expose_secret(), "123:ABC");
         assert_eq!(cfg.dm_policy, DmPolicy::Allowlist);
         assert_eq!(cfg.stream_mode, StreamMode::Off);
+        assert!(cfg.stream_notify_on_complete);
+        assert_eq!(cfg.stream_min_initial_chars, 42);
         assert_eq!(cfg.allowlist, vec!["user1", "user2"]);
         // defaults for unspecified fields
         assert_eq!(cfg.group_policy, GroupPolicy::Open);

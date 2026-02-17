@@ -4,7 +4,7 @@ use {
     base64::Engine,
     std::{future::Future, time::Duration},
     teloxide::{
-        RequestError,
+        ApiError, RequestError,
         payloads::{SendLocationSetters, SendMessageSetters, SendVenueSetters},
         prelude::*,
         types::{ChatAction, ChatId, InputFile, MessageId, ParseMode, ReplyParameters},
@@ -63,7 +63,7 @@ impl TelegramOutbound {
         chunk: &str,
         reply_params: Option<&ReplyParameters>,
         silent: bool,
-    ) -> Result<()> {
+    ) -> Result<MessageId> {
         match self
             .run_telegram_request_with_retry(account_id, to, "send message (html)", || {
                 let mut html_req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
@@ -77,7 +77,7 @@ impl TelegramOutbound {
             })
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(message) => Ok(message.id),
             Err(e) => {
                 warn!(
                     account_id,
@@ -85,11 +85,8 @@ impl TelegramOutbound {
                     error = %e,
                     "telegram HTML send failed, retrying as plain text"
                 );
-                self.run_telegram_request_with_retry(
-                    account_id,
-                    to,
-                    "send message (plain)",
-                    || {
+                let message = self
+                    .run_telegram_request_with_retry(account_id, to, "send message (plain)", || {
                         let mut plain_req = bot.send_message(chat_id, chunk);
                         if silent {
                             plain_req = plain_req.disable_notification(true);
@@ -98,10 +95,9 @@ impl TelegramOutbound {
                             plain_req = plain_req.reply_parameters(rp.clone());
                         }
                         async move { plain_req.await }
-                    },
-                )
-                .await?;
-                Ok(())
+                    })
+                    .await?;
+                Ok(message.id)
             },
         }
     }
@@ -126,23 +122,31 @@ impl TelegramOutbound {
         {
             Ok(_) => Ok(()),
             Err(e) => {
+                if is_message_not_modified_error(&e) {
+                    return Ok(());
+                }
                 warn!(
                     account_id,
                     chat_id = to,
                     error = %e,
                     "telegram HTML edit failed, retrying as plain text"
                 );
-                self.run_telegram_request_with_retry(
-                    account_id,
-                    to,
-                    "edit message (plain)",
-                    || {
+                match self
+                    .run_telegram_request_with_retry(account_id, to, "edit message (plain)", || {
                         let plain_req = bot.edit_message_text(chat_id, message_id, chunk);
                         async move { plain_req.await }
+                    })
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(plain_err) => {
+                        if is_message_not_modified_error(&plain_err) {
+                            Ok(())
+                        } else {
+                            Err(plain_err.into())
+                        }
                     },
-                )
-                .await?;
-                Ok(())
+                }
             },
         }
     }
@@ -211,6 +215,22 @@ fn retry_after_duration(error: &RequestError) -> Option<Duration> {
         RequestError::RetryAfter(wait) => Some(wait.duration()),
         _ => None,
     }
+}
+
+fn is_message_not_modified_error(error: &RequestError) -> bool {
+    matches!(error, RequestError::Api(ApiError::MessageNotModified))
+}
+
+fn has_reached_stream_min_initial_chars(accumulated: &str, min_initial_chars: usize) -> bool {
+    accumulated.chars().count() >= min_initial_chars
+}
+
+fn should_send_stream_completion_notification(
+    notify_on_complete: bool,
+    has_streamed_text: bool,
+    sent_non_silent_completion_chunks: bool,
+) -> bool {
+    notify_on_complete && has_streamed_text && !sent_non_silent_completion_chunks
 }
 
 #[async_trait]
@@ -727,29 +747,23 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let chat_id = ChatId(to.parse::<i64>()?);
         let rp = self.reply_params(account_id, reply_to);
 
-        let throttle_ms = {
+        let (throttle_ms, notify_on_complete, min_initial_chars) = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts
                 .get(account_id)
-                .map(|s| s.config.edit_throttle_ms)
-                .unwrap_or(300)
+                .map(|s| {
+                    (
+                        s.config.edit_throttle_ms,
+                        s.config.stream_notify_on_complete,
+                        s.config.stream_min_initial_chars,
+                    )
+                })
+                .unwrap_or((300, false, 30))
         };
 
         // Send typing indicator
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-
-        // Send initial placeholder
-        let placeholder = self
-            .run_telegram_request_with_retry(account_id, to, "send stream placeholder", || {
-                let mut placeholder_req =
-                    bot.send_message(chat_id, "…").parse_mode(ParseMode::Html);
-                if let Some(ref rp) = rp {
-                    placeholder_req = placeholder_req.reply_parameters(rp.clone());
-                }
-                async move { placeholder_req.await }
-            })
-            .await?;
-        let msg_id = placeholder.id;
+        let mut stream_message_id: Option<MessageId> = None;
 
         let mut accumulated = String::new();
         let mut last_edit = tokio::time::Instant::now();
@@ -759,15 +773,43 @@ impl ChannelStreamOutbound for TelegramOutbound {
             match event {
                 StreamEvent::Delta(delta) => {
                     accumulated.push_str(&delta);
+                    if stream_message_id.is_none() {
+                        if has_reached_stream_min_initial_chars(&accumulated, min_initial_chars) {
+                            let html = markdown::markdown_to_telegram_html(&accumulated);
+                            let display = markdown::truncate_at_char_boundary(
+                                &html,
+                                TELEGRAM_MAX_MESSAGE_LEN,
+                            );
+                            let message_id = self
+                                .send_chunk_with_fallback(
+                                    &bot,
+                                    account_id,
+                                    to,
+                                    chat_id,
+                                    display,
+                                    rp.as_ref(),
+                                    false,
+                                )
+                                .await?;
+                            stream_message_id = Some(message_id);
+                            last_edit = tokio::time::Instant::now();
+                        }
+                        continue;
+                    }
+
                     if last_edit.elapsed() >= throttle {
                         let html = markdown::markdown_to_telegram_html(&accumulated);
                         // Telegram rejects edits with identical content; truncate to limit.
                         let display =
                             markdown::truncate_at_char_boundary(&html, TELEGRAM_MAX_MESSAGE_LEN);
-                        let _ = self
-                            .edit_chunk_with_fallback(&bot, account_id, to, chat_id, msg_id, display)
-                            .await;
-                        last_edit = tokio::time::Instant::now();
+                        if let Some(msg_id) = stream_message_id {
+                            let _ = self
+                                .edit_chunk_with_fallback(
+                                    &bot, account_id, to, chat_id, msg_id, display,
+                                )
+                                .await;
+                            last_edit = tokio::time::Instant::now();
+                        }
                     }
                 },
                 StreamEvent::Done => {
@@ -783,9 +825,24 @@ impl ChannelStreamOutbound for TelegramOutbound {
         // Final edit with complete content
         if !accumulated.is_empty() {
             let chunks = markdown::chunk_markdown_html(&accumulated, TELEGRAM_MAX_MESSAGE_LEN);
+            let mut sent_non_silent_completion_chunks = false;
             if let Some((first, rest)) = chunks.split_first() {
-                self.edit_chunk_with_fallback(&bot, account_id, to, chat_id, msg_id, first)
+                if let Some(msg_id) = stream_message_id {
+                    self.edit_chunk_with_fallback(&bot, account_id, to, chat_id, msg_id, first)
+                        .await?;
+                } else {
+                    self.send_chunk_with_fallback(
+                        &bot,
+                        account_id,
+                        to,
+                        chat_id,
+                        first,
+                        rp.as_ref(),
+                        false,
+                    )
                     .await?;
+                    sent_non_silent_completion_chunks = true;
+                }
 
                 // Send remaining chunks as new messages.
                 for chunk in rest {
@@ -799,7 +856,25 @@ impl ChannelStreamOutbound for TelegramOutbound {
                         false,
                     )
                     .await?;
+                    sent_non_silent_completion_chunks = true;
                 }
+            }
+
+            if should_send_stream_completion_notification(
+                notify_on_complete,
+                true,
+                sent_non_silent_completion_chunks,
+            ) {
+                self.send_chunk_with_fallback(
+                    &bot,
+                    account_id,
+                    to,
+                    chat_id,
+                    "Reply complete.",
+                    rp.as_ref(),
+                    false,
+                )
+                .await?;
             }
         }
 
@@ -849,5 +924,52 @@ mod tests {
     fn retry_after_duration_ignores_other_errors() {
         let err = RequestError::Io(std::io::Error::other("boom"));
         assert_eq!(retry_after_duration(&err), None);
+    }
+
+    #[test]
+    fn is_message_not_modified_error_detects_variant() {
+        let err = RequestError::Api(ApiError::MessageNotModified);
+        assert!(is_message_not_modified_error(&err));
+    }
+
+    #[test]
+    fn is_message_not_modified_error_ignores_other_errors() {
+        let err = RequestError::Io(std::io::Error::other("boom"));
+        assert!(!is_message_not_modified_error(&err));
+    }
+
+    #[test]
+    fn stream_min_initial_chars_uses_character_count() {
+        assert!(has_reached_stream_min_initial_chars("hello", 5));
+        assert!(has_reached_stream_min_initial_chars("🙂🙂🙂", 3));
+        assert!(!has_reached_stream_min_initial_chars("🙂🙂🙂", 4));
+    }
+
+    #[test]
+    fn stream_completion_notification_requires_opt_in() {
+        assert!(!should_send_stream_completion_notification(
+            false, true, false
+        ));
+    }
+
+    #[test]
+    fn stream_completion_notification_skips_when_no_text() {
+        assert!(!should_send_stream_completion_notification(
+            true, false, false
+        ));
+    }
+
+    #[test]
+    fn stream_completion_notification_skips_when_already_notified_by_chunks() {
+        assert!(!should_send_stream_completion_notification(
+            true, true, true
+        ));
+    }
+
+    #[test]
+    fn stream_completion_notification_enabled_when_needed() {
+        assert!(should_send_stream_completion_notification(
+            true, true, false
+        ));
     }
 }

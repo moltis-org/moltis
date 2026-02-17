@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Telegram channel reply streaming via edit-in-place updates, with per-account
   `stream_mode` gating so `off` keeps the classic final-message delivery path.
+- Telegram per-account `stream_notify_on_complete` option to send a final
+  non-silent completion message after edit-in-place streaming finishes.
+- Telegram per-account `stream_min_initial_chars` option (default `30`) to
+  delay the first streamed message until enough text has accumulated.
 - Settings > Terminal now includes tmux window tabs for the managed
   `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
   windows from the UI.
