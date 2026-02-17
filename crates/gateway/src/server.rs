@@ -1681,6 +1681,8 @@ pub async fn start_gateway(
                 router.set_override(&session_key, req.sandbox.enabled).await;
                 if let Some(ref image) = req.sandbox.image {
                     router.set_image_override(&session_key, image.clone()).await;
+                } else {
+                    router.remove_image_override(&session_key).await;
                 }
             }
 
@@ -1696,6 +1698,7 @@ pub async fn start_gateway(
             // Clean up sandbox overrides.
             if let Some(ref router) = state.sandbox_router {
                 router.remove_override(&session_key).await;
+                router.remove_image_override(&session_key).await;
             }
 
             let val = result?;

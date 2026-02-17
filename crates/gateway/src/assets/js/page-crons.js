@@ -166,10 +166,18 @@ function HeartbeatJobStatus({ job }) {
   </div>`;
 }
 
-function heartbeatModelPlaceholder() {
+function defaultModelPlaceholder() {
 	return modelsSig.value.length > 0
 		? `(default: ${modelsSig.value[0].displayName || modelsSig.value[0].id})`
 		: "(server default)";
+}
+
+function heartbeatModelPlaceholder() {
+	return defaultModelPlaceholder();
+}
+
+function cronJobModelPlaceholder() {
+	return defaultModelPlaceholder();
 }
 
 function collectHeartbeatForm(form) {
@@ -407,6 +415,13 @@ function StatusBar() {
 
 function CronJobRow(props) {
 	var job = props.job;
+	var modelLabel = job.payload?.kind === "agentTurn" ? job.payload.model || "default" : "\u2014";
+	var executionLabel =
+		job.sandbox?.enabled === false
+			? "host"
+			: job.sandbox?.image
+				? `sandbox (${job.sandbox.image})`
+				: "sandbox (default)";
 
 	function onToggle(e) {
 		sendRpc("cron.update", {
@@ -450,6 +465,8 @@ function CronJobRow(props) {
 	return html`<tr>
     <td>${job.name}</td>
     <td class="cron-mono">${formatSchedule(job.schedule)}</td>
+    <td class="cron-mono">${modelLabel}</td>
+    <td class="cron-mono">${executionLabel}</td>
     <td class="cron-mono">${job.state?.nextRunAtMs ? html`<time data-epoch-ms="${job.state.nextRunAtMs}">${new Date(job.state.nextRunAtMs).toISOString()}</time>` : "\u2014"}</td>
     <td>${job.state?.lastStatus ? html`<span class="cron-badge ${job.state.lastStatus}">${job.state.lastStatus}</span>` : "\u2014"}</td>
     <td class="cron-actions">
@@ -480,7 +497,7 @@ function CronJobTable() {
     <thead>
       <tr>
         <th>Name</th><th>Schedule</th>
-        <th>Next Run</th><th>Last Status</th><th>Actions</th><th>Enabled</th>
+        <th>Model</th><th>Execution</th><th>Next Run</th><th>Last Status</th><th>Actions</th><th>Enabled</th>
       </tr>
     </thead>
     <tbody>
@@ -551,6 +568,8 @@ function CronModal() {
 	var saving = signal(false);
 	var schedKind = signal(isEdit ? job.schedule.kind : "cron");
 	var errorField = signal(null);
+	var jobModel = signal(isEdit && job.payload.kind === "agentTurn" ? job.payload.model || "" : "");
+	var jobSandboxImage = signal(isEdit ? job.sandbox?.image || "" : "");
 
 	function onSave(e) {
 		e.preventDefault();
@@ -570,11 +589,15 @@ function CronModal() {
 			errorField.value = "message";
 			return;
 		}
-		var payloadKind = form.querySelector("[data-field=payloadKind]").value;
+		var selectedPayloadKind = form.querySelector("[data-field=payloadKind]").value;
 		var payload =
-			payloadKind === "systemEvent"
+			selectedPayloadKind === "systemEvent"
 				? { kind: "systemEvent", text: msgText }
 				: { kind: "agentTurn", message: msgText, deliver: false };
+		if (selectedPayloadKind === "agentTurn" && jobModel.value) {
+			payload.model = jobModel.value;
+		}
+		var sandboxEnabled = form.querySelector("[data-field=executionTarget]").value === "sandbox";
 		var fields = {
 			name: name,
 			schedule: parsed.schedule,
@@ -582,6 +605,10 @@ function CronModal() {
 			sessionTarget: form.querySelector("[data-field=target]").value,
 			deleteAfterRun: form.querySelector("[data-field=deleteAfter]").checked,
 			enabled: form.querySelector("[data-field=enabled]").checked,
+			sandbox: {
+				enabled: sandboxEnabled,
+				image: sandboxEnabled ? jobSandboxImage.value || null : null,
+			},
 		};
 
 		saving.value = true;
@@ -647,12 +674,44 @@ function CronModal() {
       <textarea data-field="message" class="provider-key-input textarea-sm ${errorField.value === "message" ? "field-error" : ""}"
         placeholder="Message text">${isEdit ? job.payload.text || job.payload.message || "" : ""}</textarea>
 
+      <label class="text-xs text-[var(--muted)]">Model (Agent Turn)</label>
+      <${ModelSelect}
+        models=${modelsSig.value}
+        value=${jobModel.value}
+        onChange=${(v) => {
+					jobModel.value = v;
+				}}
+        placeholder=${cronJobModelPlaceholder()}
+      />
+      <p class="text-xs text-[var(--muted)] mt-1">Only used for Agent Turn jobs.</p>
+
       <label class="text-xs text-[var(--muted)]">Session Target</label>
       <select data-field="target" class="provider-key-input"
         value=${isEdit ? job.sessionTarget || "isolated" : "isolated"}>
         <option value="isolated">Isolated</option>
         <option value="main">Main</option>
       </select>
+
+      <label class="text-xs text-[var(--muted)]">Execution Target</label>
+      <select data-field="executionTarget" class="provider-key-input"
+        value=${isEdit && job.sandbox?.enabled === false ? "host" : "sandbox"}>
+        <option value="sandbox">Sandbox</option>
+        <option value="host">Host</option>
+      </select>
+
+      <div>
+        <label class="text-xs text-[var(--muted)]">Sandbox Image</label>
+        <${ComboSelect}
+          options=${sandboxImages.value.map((img) => ({ value: img.tag, label: img.tag }))}
+          value=${jobSandboxImage.value}
+          onChange=${(v) => {
+						jobSandboxImage.value = v;
+					}}
+          placeholder="Default image"
+          searchPlaceholder="Search images\u2026"
+        />
+        <p class="text-xs text-[var(--muted)] mt-1">Used only when execution target is Sandbox.</p>
+      </div>
 
       <label class="text-xs text-[var(--muted)] flex items-center gap-2">
         <input data-field="deleteAfter" type="checkbox" checked=${isEdit ? job.deleteAfterRun : false} />
@@ -694,6 +753,7 @@ function CronJobsPanel() {
 	useEffect(() => {
 		loadStatus();
 		loadJobs();
+		loadSandboxImages();
 	}, []);
 
 	return html`<div class="p-4 flex flex-col gap-4">

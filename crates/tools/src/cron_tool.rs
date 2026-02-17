@@ -348,12 +348,150 @@ fn normalize_session_target_field(obj: &mut Map<String, Value>) {
     take_alias(obj, "sessionTarget", &["session_target", "target"]);
 }
 
+fn normalize_execution_target(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "sandbox" | "container" | "isolated" | "enabled" | "on" | "true" => Some(true),
+        "host" | "local" | "disabled" | "off" | "none" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_sandbox_enabled(value: &Value, field: &str) -> Result<bool> {
+    match value {
+        Value::Bool(enabled) => Ok(*enabled),
+        Value::String(raw) => normalize_execution_target(raw).ok_or_else(|| {
+            anyhow::anyhow!("{field} string must be one of `host`, `local`, or `sandbox`")
+        }),
+        _ => bail!("{field} must be a boolean or execution target string"),
+    }
+}
+
+fn normalize_sandbox_value(sandbox: &mut Value, field: &str) -> Result<()> {
+    match sandbox {
+        Value::Bool(enabled) => {
+            *sandbox = json!({ "enabled": enabled });
+            Ok(())
+        },
+        Value::String(raw) => {
+            let enabled = normalize_execution_target(raw).ok_or_else(|| {
+                anyhow::anyhow!("{field} string must be one of `host`, `local`, or `sandbox`")
+            })?;
+            *sandbox = json!({ "enabled": enabled });
+            Ok(())
+        },
+        Value::Object(obj) => {
+            take_alias(obj, "enabled", &[
+                "sandboxEnabled",
+                "sandbox_enabled",
+                "sandboxed",
+                "useSandbox",
+            ]);
+            take_alias(obj, "image", &[
+                "sandboxImage",
+                "sandbox_image",
+                "containerImage",
+                "imageName",
+            ]);
+            take_alias(obj, "target", &[
+                "mode",
+                "runtime",
+                "executionTarget",
+                "execution_target",
+                "where",
+            ]);
+
+            if let Some(target_raw) = obj.get("target") {
+                let enabled = parse_sandbox_enabled(target_raw, &format!("{field}.target"))?;
+                obj.insert("enabled".to_string(), json!(enabled));
+                obj.remove("target");
+            }
+
+            if let Some(enabled_raw) = obj.get("enabled") {
+                let enabled = parse_sandbox_enabled(enabled_raw, &format!("{field}.enabled"))?;
+                obj.insert("enabled".to_string(), json!(enabled));
+            } else if obj.get("image").is_some() {
+                obj.insert("enabled".to_string(), json!(true));
+            }
+
+            if let Some(image_raw) = obj.get("image") {
+                match image_raw {
+                    Value::Null => {},
+                    Value::String(image) => {
+                        let image = image.trim();
+                        if image.is_empty() {
+                            obj.insert("image".to_string(), Value::Null);
+                        } else {
+                            obj.insert("image".to_string(), Value::String(image.to_string()));
+                        }
+                    },
+                    _ => bail!("{field}.image must be a string when provided"),
+                }
+            }
+            Ok(())
+        },
+        _ => bail!("{field} must be an object, boolean, or execution target string"),
+    }
+}
+
+fn normalize_sandbox_field(obj: &mut Map<String, Value>) -> Result<()> {
+    take_alias(obj, "sandbox", &["sandboxConfig", "sandbox_config"]);
+    let execution_value = obj
+        .remove("execution")
+        .or_else(|| obj.remove("executionTarget"))
+        .or_else(|| obj.remove("execution_target"))
+        .or_else(|| obj.remove("runtime"));
+    let sandbox_enabled_value = obj
+        .remove("sandboxEnabled")
+        .or_else(|| obj.remove("sandbox_enabled"))
+        .or_else(|| obj.remove("sandboxed"));
+    let sandbox_image_value = obj
+        .remove("sandboxImage")
+        .or_else(|| obj.remove("sandbox_image"));
+
+    if !obj.contains_key("sandbox")
+        && let Some(value) = execution_value
+    {
+        obj.insert("sandbox".to_string(), value);
+    }
+
+    if let Some(sandbox) = obj.get_mut("sandbox") {
+        if let Value::Object(sandbox_obj) = sandbox {
+            if let Some(value) = sandbox_enabled_value
+                && !sandbox_obj.contains_key("enabled")
+            {
+                sandbox_obj.insert("enabled".to_string(), value);
+            }
+            if let Some(value) = sandbox_image_value
+                && !sandbox_obj.contains_key("image")
+            {
+                sandbox_obj.insert("image".to_string(), value);
+            }
+        }
+    } else if sandbox_enabled_value.is_some() || sandbox_image_value.is_some() {
+        let mut sandbox_obj = Map::new();
+        if let Some(value) = sandbox_enabled_value {
+            sandbox_obj.insert("enabled".to_string(), value);
+        }
+        if let Some(value) = sandbox_image_value {
+            sandbox_obj.insert("image".to_string(), value);
+        }
+        obj.insert("sandbox".to_string(), Value::Object(sandbox_obj));
+    }
+
+    if let Some(sandbox) = obj.get_mut("sandbox") {
+        normalize_sandbox_value(sandbox, "sandbox")?;
+    }
+    Ok(())
+}
+
 fn normalize_job_value(job: &Value) -> Result<Value> {
     let mut normalized = job.clone();
     let obj = normalized
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("job must be an object"))?;
     normalize_session_target_field(obj);
+    normalize_sandbox_field(obj)?;
 
     let session_target_hint = obj
         .get("sessionTarget")
@@ -379,6 +517,7 @@ fn normalize_patch_value(patch: &Value) -> Result<Value> {
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("patch must be an object"))?;
     normalize_session_target_field(obj);
+    normalize_sandbox_field(obj)?;
 
     let session_target_hint = obj
         .get("sessionTarget")
@@ -415,7 +554,12 @@ impl AgentTool for CronTool {
          For isolated background tasks (no main session interaction), use:\n\
          - sessionTarget: \"isolated\"\n\
          - payload.kind: \"agentTurn\"\n\
-         - payload.message: the prompt for the isolated agent run"
+         - payload.message: the prompt for the isolated agent run\n\
+         \n\
+         Optional execution controls for agent turns:\n\
+         - payload.model: model id for this job\n\
+         - sandbox.enabled: true for sandbox execution, false for host\n\
+         - sandbox.image: optional sandbox image override"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -447,7 +591,7 @@ impl AgentTool for CronTool {
                         },
                         "payload": {
                             "type": "object",
-                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, deliver?, channel?, to?}. This tool also accepts a shorthand message string at runtime.",
+                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, deliver?, channel?, to?}. `payload.model` selects the LLM for that job. This tool also accepts a shorthand message string at runtime.",
                             "properties": {
                                 "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
                                 "text": { "type": "string" },
@@ -461,6 +605,22 @@ impl AgentTool for CronTool {
                             "required": ["kind"]
                         },
                         "sessionTarget": { "type": "string", "enum": ["main", "isolated"], "default": "isolated" },
+                        "sandbox": {
+                            "type": "object",
+                            "description": "Execution environment for agent turns. Use {enabled:false} for host execution, or {enabled:true, image?} for sandbox execution.",
+                            "properties": {
+                                "enabled": { "type": "boolean", "description": "true = sandbox execution, false = host execution" },
+                                "image": { "type": "string", "description": "Optional sandbox image tag when sandbox is enabled" }
+                            }
+                        },
+                        "execution": {
+                            "type": "object",
+                            "description": "Alias for sandbox settings. Use {target:'host'|'sandbox', image?}.",
+                            "properties": {
+                                "target": { "type": "string", "enum": ["host", "sandbox"] },
+                                "image": { "type": "string" }
+                            }
+                        },
                         "deleteAfterRun": { "type": "boolean", "default": false },
                         "enabled": { "type": "boolean", "default": true }
                     },
@@ -783,6 +943,64 @@ mod tests {
         assert_eq!(add_result["payload"]["kind"], "agentTurn");
         assert_eq!(add_result["payload"]["message"], "do work");
         assert_eq!(add_result["payload"]["timeout_secs"], 30);
+    }
+
+    #[tokio::test]
+    async fn test_add_accepts_execution_target_and_image() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "sandboxed run",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": {
+                        "kind": "agentTurn",
+                        "message": "run diagnostics",
+                        "model": "gpt-5.2"
+                    },
+                    "execution": {
+                        "target": "sandbox",
+                        "image": "ubuntu:25.10"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(add_result["payload"]["model"], "gpt-5.2");
+        assert_eq!(add_result["sandbox"]["enabled"], true);
+        assert_eq!(add_result["sandbox"]["image"], "ubuntu:25.10");
+    }
+
+    #[tokio::test]
+    async fn test_update_accepts_host_execution_string() {
+        let tool = make_tool();
+        let add_result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "switch execution",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "run task" },
+                    "sandbox": { "enabled": true, "image": "ubuntu:25.10" }
+                }
+            }))
+            .await
+            .unwrap();
+        let id = add_result["id"].as_str().unwrap();
+
+        let updated = tool
+            .execute(json!({
+                "action": "update",
+                "id": id,
+                "patch": { "execution": "host" }
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(updated["sandbox"]["enabled"], false);
+        assert!(updated["sandbox"]["image"].is_null());
     }
 
     #[test]

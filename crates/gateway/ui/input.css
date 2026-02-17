@@ -1001,7 +1001,8 @@
   .model-combo-btn {
     display: flex;
     align-items: center;
-    gap: 4px;
+    justify-content: space-between;
+    gap: 8px;
     background: var(--surface2);
     border: 1px solid var(--border);
     color: var(--muted);
@@ -1015,6 +1016,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .model-combo-btn > .model-item-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
   }
   .model-combo-btn:hover,
   .model-combo-btn:focus {
