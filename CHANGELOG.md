@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.0] - 2026-02-17
+
+
+### Added
+
 - Settings > Cron job editor now supports per-job LLM model selection and
   execution target selection (`host` or `sandbox`), including optional
   sandbox image override when sandbox execution is selected.
