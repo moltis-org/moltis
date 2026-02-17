@@ -36,6 +36,7 @@ var xtermDataDisposable = null;
 var xtermResizeDisposable = null;
 var TerminalCtor = null;
 var FitAddonCtor = null;
+var oscHandlerDisposables = [];
 
 var terminalAvailable = false;
 var lastSentCols = 0;
@@ -394,6 +395,31 @@ function applyTheme() {
 	xterm.options.theme = buildXtermTheme();
 }
 
+function registerOscStabilityGuards() {
+	if (!(xterm && xterm.parser && typeof xterm.parser.registerOscHandler === "function")) {
+		return;
+	}
+	var swallow = () => true;
+	var guardedCodes = [4, 10, 11, 12, 104, 110, 111, 112];
+	for (const code of guardedCodes) {
+		var disposable = xterm.parser.registerOscHandler(code, swallow);
+		if (disposable && typeof disposable.dispose === "function") {
+			oscHandlerDisposables.push(disposable);
+		}
+	}
+}
+
+function clearOscStabilityGuards() {
+	for (const disposable of oscHandlerDisposables) {
+		try {
+			disposable.dispose();
+		} catch {
+			// Ignore parser teardown errors during xterm disposal.
+		}
+	}
+	oscHandlerDisposables = [];
+}
+
 function sendSocketMessage(payload) {
 	if (!(socket && socket.readyState === WebSocket.OPEN)) return false;
 	try {
@@ -487,6 +513,7 @@ async function initXterm() {
 		lineHeight: 1.35,
 		theme: buildXtermTheme(),
 	});
+	registerOscStabilityGuards();
 	fitAddon = new FitAddonCtor();
 	xterm.loadAddon(fitAddon);
 	xterm.open(terminalEl);
@@ -539,6 +566,7 @@ async function initXterm() {
 function disposeXterm() {
 	clearObservers();
 	clearScheduledFit();
+	clearOscStabilityGuards();
 	if (xtermDataDisposable) {
 		xtermDataDisposable.dispose();
 		xtermDataDisposable = null;

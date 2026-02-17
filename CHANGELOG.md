@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Terminal now force-syncs terminal size on connect/window switch so
   newly created tmux windows attach at full viewport size instead of a smaller
   default geometry.
+- Settings > Terminal now ignores OSC color/palette mutation sequences from
+  full-screen apps to avoid invisible-text redraw glitches when switching tmux
+  tabs (notably seen with `vim`).
 
 ### Security
 
