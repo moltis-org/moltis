@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Skills installation now supports Claude marketplace repos that define skills
+  directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
+  (for example `anthropics/skills`), including loading `SKILL.md` entries under
+  `skills/*` and exposing them through the existing plugin-skill workflow.
+
 ### Security
 
 ## [0.9.0] - 2026-02-17
