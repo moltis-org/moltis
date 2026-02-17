@@ -35,6 +35,19 @@ Set this to the name of your cloud provider (e.g. `flyio`, `digitalocean`,
 on cloud VMs. The included deploy templates for Fly.io, DigitalOcean, and
 Render already set this variable.
 
+## Coolify (self-hosted, e.g. Hetzner)
+
+Coolify deployments can run Moltis with sandboxed exec tools, as long as the
+service mounts the host Docker socket.
+
+- Use [`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml)
+  as a starting point.
+- Run Moltis with `--no-tls` (Coolify terminates HTTPS at the proxy).
+- Set `MOLTIS_BEHIND_PROXY=true` so client IP/auth behavior is correct behind
+  reverse proxying.
+- Mount `/var/run/docker.sock:/var/run/docker.sock` to enable container-backed
+  sandbox execution.
+
 ## Fly.io
 
 The repository includes a `fly.toml` ready to use.

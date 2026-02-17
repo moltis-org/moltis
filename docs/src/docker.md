@@ -120,6 +120,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
 
+### Coolify (Hetzner/VPS)
+
+For Coolify service stacks, use
+[`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml).
+It is preconfigured for reverse-proxy deployments (`--no-tls`) and includes
+the Docker socket mount for sandboxed command execution.
+
+Key points:
+
+- Set `MOLTIS_PASSWORD` in the Coolify UI before first deploy.
+- Set `SERVICE_FQDN_MOLTIS_13131` to your app domain.
+- Keep `/var/run/docker.sock:/var/run/docker.sock` mounted if you want sandbox
+  isolation for exec tools.
+
 Start with:
 
 ```bash
