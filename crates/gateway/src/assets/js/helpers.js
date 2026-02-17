@@ -36,6 +36,33 @@ export function formatTokens(n) {
 	return String(n);
 }
 
+var TOKEN_SPEED_SLOW_TPS = 10;
+var TOKEN_SPEED_FAST_TPS = 25;
+
+export function tokenSpeedPerSecond(outputTokens, durationMs) {
+	var out = Number(outputTokens || 0);
+	var ms = Number(durationMs || 0);
+	if (!(out > 0 && ms > 0)) return null;
+	var speed = (out * 1000) / ms;
+	return Number.isFinite(speed) && speed > 0 ? speed : null;
+}
+
+export function formatTokenSpeed(outputTokens, durationMs) {
+	var speed = tokenSpeedPerSecond(outputTokens, durationMs);
+	if (speed == null) return null;
+	if (speed >= 100) return `${speed.toFixed(0)} tok/s`;
+	if (speed >= 10) return `${speed.toFixed(1)} tok/s`;
+	return `${speed.toFixed(2)} tok/s`;
+}
+
+export function tokenSpeedTone(outputTokens, durationMs) {
+	var speed = tokenSpeedPerSecond(outputTokens, durationMs);
+	if (speed == null) return null;
+	if (speed < TOKEN_SPEED_SLOW_TPS) return "slow";
+	if (speed >= TOKEN_SPEED_FAST_TPS) return "fast";
+	return "normal";
+}
+
 export function formatBytes(b) {
 	if (b >= 1024) return `${(b / 1024).toFixed(1)} KB`;
 	return `${b} B`;

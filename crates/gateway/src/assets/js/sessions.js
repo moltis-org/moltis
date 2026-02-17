@@ -14,11 +14,13 @@ import {
 } from "./chat-ui.js";
 import * as gon from "./gon.js";
 import {
+	formatTokenSpeed,
 	formatTokens,
 	renderAudioPlayer,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
+	tokenSpeedTone,
 	toolCallSummary,
 } from "./helpers.js";
 import { attachMessageVoiceControl } from "./message-voice.js";
@@ -355,7 +357,19 @@ function createModelFooter(msg) {
 	if (msg.inputTokens || msg.outputTokens) {
 		ftText += ` \u00b7 ${formatTokens(msg.inputTokens || 0)} in / ${formatTokens(msg.outputTokens || 0)} out`;
 	}
-	ft.textContent = ftText;
+	var textSpan = document.createElement("span");
+	textSpan.textContent = ftText;
+	ft.appendChild(textSpan);
+
+	var speedLabel = formatTokenSpeed(msg.outputTokens || 0, msg.durationMs || 0);
+	if (speedLabel) {
+		var speed = document.createElement("span");
+		speed.className = "msg-token-speed";
+		var tone = tokenSpeedTone(msg.outputTokens || 0, msg.durationMs || 0);
+		if (tone) speed.classList.add(`msg-token-speed-${tone}`);
+		speed.textContent = ` \u00b7 ${speedLabel}`;
+		ft.appendChild(speed);
+	}
 	return ft;
 }
 

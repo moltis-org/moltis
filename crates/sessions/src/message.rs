@@ -54,6 +54,8 @@ pub enum PersistedMessage {
         input_tokens: Option<u32>,
         #[serde(rename = "outputTokens", skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u32>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<PersistedToolCall>>,
         /// Optional provider reasoning/planning text (not final answer text).
@@ -207,6 +209,7 @@ impl PersistedMessage {
             provider: Some(provider.into()),
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
+            duration_ms: None,
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -376,6 +379,7 @@ mod tests {
             provider: Some("openai".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            duration_ms: Some(2_000),
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -390,6 +394,7 @@ mod tests {
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["inputTokens"], 100);
         assert_eq!(json["outputTokens"], 50);
+        assert_eq!(json["durationMs"], 2_000);
         assert!(json.get("audio").is_none());
     }
 

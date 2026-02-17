@@ -517,6 +517,18 @@
   font-size: 0.68rem;
 }
 
+.msg-token-speed {
+  font-variant-numeric: tabular-nums;
+}
+
+.msg-token-speed-fast {
+  color: var(--ok);
+}
+
+.msg-token-speed-slow {
+  color: var(--error);
+}
+
 .reply-medium-badge {
   display: inline-flex;
   align-items: center;

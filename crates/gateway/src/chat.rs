@@ -157,6 +157,7 @@ struct ChatFinalBroadcast {
     provider: String,
     input_tokens: u32,
     output_tokens: u32,
+    duration_ms: u64,
     message_index: usize,
     reply_medium: ReplyMedium,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +190,7 @@ struct AssistantTurnOutput {
     text: String,
     input_tokens: u32,
     output_tokens: u32,
+    duration_ms: u64,
     audio_path: Option<String>,
     reasoning: Option<String>,
     llm_api_response: Option<Value>,
@@ -2711,6 +2713,7 @@ impl ChatService for LiveChatService {
                     provider: Some(provider_name.clone()),
                     input_tokens: Some(assistant_output.input_tokens),
                     output_tokens: Some(assistant_output.output_tokens),
+                    duration_ms: Some(assistant_output.duration_ms),
                     tool_calls: None,
                     reasoning: assistant_output.reasoning,
                     llm_api_response: assistant_output.llm_api_response,
@@ -2983,6 +2986,7 @@ impl ChatService for LiveChatService {
                 provider: Some(provider_name.clone()),
                 input_tokens: Some(assistant_output.input_tokens),
                 output_tokens: Some(assistant_output.output_tokens),
+                duration_ms: Some(assistant_output.duration_ms),
                 tool_calls: None,
                 reasoning: assistant_output.reasoning.clone(),
                 llm_api_response: assistant_output.llm_api_response.clone(),
@@ -3008,6 +3012,7 @@ impl ChatService for LiveChatService {
                 "text": assistant_output.text,
                 "inputTokens": assistant_output.input_tokens,
                 "outputTokens": assistant_output.output_tokens,
+                "durationMs": assistant_output.duration_ms,
             })),
             None => {
                 // Check the last broadcast for this run to get the actual error message.
@@ -3269,6 +3274,7 @@ impl ChatService for LiveChatService {
             provider: None,
             input_tokens: None,
             output_tokens: None,
+            duration_ms: None,
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -4045,6 +4051,7 @@ async fn run_with_tools(
     client_seq: Option<u64>,
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
+    let run_started = Instant::now();
     let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
@@ -4638,6 +4645,7 @@ async fn run_with_tools(
                 provider: provider_name.to_string(),
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                duration_ms: run_started.elapsed().as_millis() as u64,
                 message_index: assistant_message_index,
                 reply_medium: desired_reply_medium,
                 iterations: Some(iterations),
@@ -4665,6 +4673,7 @@ async fn run_with_tools(
                 text: display_text,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                duration_ms: run_started.elapsed().as_millis() as u64,
                 audio_path,
                 reasoning,
                 llm_api_response,
@@ -4747,6 +4756,7 @@ async fn compact_session(
         provider: None,
         input_tokens: None,
         output_tokens: None,
+        duration_ms: None,
         tool_calls: None,
         reasoning: None,
         llm_api_response: None,
@@ -4854,6 +4864,7 @@ async fn run_streaming(
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
 ) -> Option<AssistantTurnOutput> {
+    let run_started = Instant::now();
     let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
@@ -5038,6 +5049,7 @@ async fn run_streaming(
                         provider: provider_name.to_string(),
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        duration_ms: run_started.elapsed().as_millis() as u64,
                         message_index: assistant_message_index,
                         reply_medium: desired_reply_medium,
                         iterations: None,
@@ -5072,6 +5084,7 @@ async fn run_streaming(
                         text: accumulated,
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        duration_ms: run_started.elapsed().as_millis() as u64,
                         audio_path,
                         reasoning,
                         llm_api_response,
