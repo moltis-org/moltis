@@ -215,6 +215,12 @@ pub fn markdown_to_telegram_html(md: &str) -> String {
         }
     }
 
+    // Ensure we never leave an unterminated inline code tag when input ends
+    // without a closing backtick (common when splitting long content).
+    if in_code {
+        out.push_str("</code>");
+    }
+
     out
 }
 
@@ -294,6 +300,81 @@ pub fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
     chunks
 }
 
+/// Split markdown into Telegram-safe HTML chunks that each fit `max_len`.
+///
+/// Unlike splitting rendered HTML directly, this chunks the markdown source and
+/// renders each chunk independently so we don't cut through HTML tags.
+pub fn chunk_markdown_html(markdown: &str, max_len: usize) -> Vec<String> {
+    if max_len == 0 || markdown.is_empty() {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    let mut remaining = markdown;
+    while !remaining.is_empty() {
+        let whole_html = markdown_to_telegram_html(remaining);
+        if whole_html.len() <= max_len {
+            chunks.push(whole_html);
+            break;
+        }
+
+        let split_at = best_markdown_split(remaining, max_len);
+        let head = &remaining[..split_at];
+        chunks.push(markdown_to_telegram_html(head));
+
+        remaining = &remaining[split_at..];
+        remaining = remaining.trim_start_matches('\n');
+        if remaining.starts_with(' ') {
+            remaining = &remaining[1..];
+        }
+    }
+
+    chunks
+}
+
+fn best_markdown_split(markdown: &str, max_len: usize) -> usize {
+    let mut boundaries: Vec<usize> = markdown.char_indices().map(|(i, _)| i).collect();
+    boundaries.push(markdown.len());
+
+    let mut lo = 1usize;
+    let mut hi = boundaries.len().saturating_sub(1);
+    let mut best = 0usize;
+
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let split = boundaries[mid];
+        let html_len = markdown_to_telegram_html(&markdown[..split]).len();
+        if html_len <= max_len {
+            best = split;
+            lo = mid + 1;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    if best == 0 {
+        return boundaries.get(1).copied().unwrap_or(markdown.len());
+    }
+
+    let preferred_split = markdown[..best]
+        .rfind('\n')
+        .or_else(|| markdown[..best].rfind(' '))
+        .filter(|pos| *pos > 0)
+        .unwrap_or(best);
+
+    if preferred_split == best {
+        return best;
+    }
+
+    if markdown_to_telegram_html(&markdown[..preferred_split]).len() <= max_len {
+        preferred_split
+    } else {
+        best
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -366,5 +447,37 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].len(), 4095);
         assert_eq!(chunks[1], "лz");
+    }
+
+    #[test]
+    fn markdown_to_telegram_html_closes_unterminated_inline_code() {
+        let output = markdown_to_telegram_html("prefix `unterminated");
+        assert_eq!(output, "prefix <code>unterminated</code>");
+    }
+
+    #[test]
+    fn chunk_markdown_html_respects_limit() {
+        let input = "**bold** ".repeat(2_000);
+        let chunks = chunk_markdown_html(&input, 4096);
+        assert!(!chunks.is_empty());
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 4096));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.matches("<b>").count() == chunk.matches("</b>").count())
+        );
+    }
+
+    #[test]
+    fn chunk_markdown_html_handles_long_inline_code() {
+        let input = format!("`{}`", "a".repeat(8_500));
+        let chunks = chunk_markdown_html(&input, 4096);
+        assert!(chunks.len() >= 2);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 4096));
+        assert!(
+            chunks.iter().all(|chunk| {
+                chunk.matches("<code>").count() == chunk.matches("</code>").count()
+            })
+        );
     }
 }

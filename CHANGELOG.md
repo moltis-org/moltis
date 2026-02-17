@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron tool job creation/update now accepts common shorthand schedule/payload
   shapes (including cron expression strings) and normalizes them before
   validation, reducing model-side schema mismatch failures.
+- Telegram long replies now use markdown-aware chunking plus HTML->plain fallback
+  on parse failures, preventing tail loss on long streamed responses.
 
 ### Security
 
