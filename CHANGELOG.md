@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Cron job editor now supports per-job LLM model selection and
   execution target selection (`host` or `sandbox`), including optional
   sandbox image override when sandbox execution is selected.
+- Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
+  self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
+  Docker socket mount guidance for sandboxed exec support.
 
 ### Changed
 
