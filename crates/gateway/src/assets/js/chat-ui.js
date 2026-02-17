@@ -307,7 +307,8 @@ export function updateTokenBar() {
 		formatTokens(total) +
 		" tokens";
 	if (S.sessionContextWindow > 0) {
-		var pct = Math.max(0, 100 - Math.round((total / S.sessionContextWindow) * 100));
+		var currentInput = S.sessionCurrentInputTokens || 0;
+		var pct = Math.max(0, 100 - Math.round((currentInput / S.sessionContextWindow) * 100));
 		text += ` \u00b7 Context left before auto-compact: ${pct}%`;
 	}
 	if (!S.sessionToolsEnabled) {

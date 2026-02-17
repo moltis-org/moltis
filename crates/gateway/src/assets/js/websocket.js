@@ -522,8 +522,13 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (p.inputTokens || p.outputTokens) {
 		S.sessionTokens.input += p.inputTokens || 0;
 		S.sessionTokens.output += p.outputTokens || 0;
-		updateTokenBar();
 	}
+	if (p.requestInputTokens !== undefined && p.requestInputTokens !== null) {
+		S.setSessionCurrentInputTokens(p.requestInputTokens || 0);
+	} else if (p.inputTokens || p.outputTokens) {
+		S.setSessionCurrentInputTokens(p.inputTokens || 0);
+	}
+	updateTokenBar();
 	appendLastMessageTimestamp(Date.now());
 	// Reset per-session stream state
 	var finalSession = sessionStore.getByKey(eventSession);
@@ -548,6 +553,7 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		renderCompactCard(p);
 		S.setSessionTokens({ input: 0, output: 0 });
+		S.setSessionCurrentInputTokens(0);
 		updateTokenBar();
 	} else if (p.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
@@ -652,6 +658,7 @@ function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	// Active viewer: clear the chat box and token bar.
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setSessionTokens({ input: 0, output: 0 });
+	S.setSessionCurrentInputTokens(0);
 	updateTokenBar();
 }
 

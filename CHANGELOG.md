@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron tool job creation/update now accepts common shorthand schedule/payload
   shapes (including cron expression strings) and normalizes them before
   validation, reducing model-side schema mismatch failures.
+- Chat auto-compaction now uses estimated next-request prompt tokens (current
+  context pressure) instead of cumulative session token totals, and chat context
+  UI now separates cumulative usage from current/estimated request context.
 
 ### Security
 

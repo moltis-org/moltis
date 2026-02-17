@@ -83,6 +83,7 @@ export function clearActiveSession() {
 		if (res?.ok) {
 			if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 			S.setSessionTokens({ input: 0, output: 0 });
+			S.setSessionCurrentInputTokens(0);
 			updateTokenBar();
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			var session = sessionStore.getByKey(activeKey);
@@ -399,6 +400,11 @@ function renderHistoryAssistantMessage(msg) {
 		S.sessionTokens.input += msg.inputTokens || 0;
 		S.sessionTokens.output += msg.outputTokens || 0;
 	}
+	if (msg.requestInputTokens !== undefined && msg.requestInputTokens !== null) {
+		S.setSessionCurrentInputTokens(msg.requestInputTokens || 0);
+	} else if (msg.inputTokens || msg.outputTokens) {
+		S.setSessionCurrentInputTokens(msg.inputTokens || 0);
+	}
 	return el;
 }
 
@@ -509,6 +515,7 @@ function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 					input: tu.inputTokens || 0,
 					output: tu.outputTokens || 0,
 				});
+				S.setSessionCurrentInputTokens(tu.estimatedNextInputTokens || tu.currentInputTokens || tu.inputTokens || 0);
 			}
 			S.setSessionToolsEnabled(ctxRes.payload.supportsTools !== false);
 		}
@@ -623,6 +630,7 @@ export function switchSession(key, searchContext, projectId) {
 	S.setStreamText("");
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
+	S.setSessionCurrentInputTokens(0);
 	S.setSessionContextWindow(0);
 	updateTokenBar();
 	// Preact SessionList auto-rerenders active/unread from signals.
@@ -640,6 +648,7 @@ export function switchSession(key, searchContext, projectId) {
 			var history = res.payload.history || [];
 			var msgEls = [];
 			S.setSessionTokens({ input: 0, output: 0 });
+			S.setSessionCurrentInputTokens(0);
 			S.setChatBatchLoading(true);
 			history.forEach((msg) => {
 				if (msg.role === "user") {

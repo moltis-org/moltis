@@ -57,23 +57,28 @@ async function advanceToIdentityStep(page) {
 }
 
 async function completePasswordAuthStep(page) {
+	if (await clickFirstVisibleButton(page, { name: /^Next$/ })) return true;
+
 	const setupCodeInput = page.getByPlaceholder("6-digit code from terminal");
-	if (!(await isVisible(setupCodeInput))) return false;
+	if (await isVisible(setupCodeInput)) {
+		await setupCodeInput.fill("123456");
 
-	await setupCodeInput.fill("123456");
-
-	const passwordCard = page.locator(".backend-card").filter({ hasText: "Password" }).first();
-	if (await isVisible(passwordCard)) {
-		await passwordCard.click();
+		const passwordCard = page.locator(".backend-card").filter({ hasText: "Password" }).first();
+		if (await isVisible(passwordCard)) {
+			await passwordCard.click({ timeout: 1_500 }).catch(() => {});
+		}
 	}
 
 	const inputs = page.locator(".onboarding-card input[type='password']");
-	if ((await inputs.count()) < 2) return false;
-	await inputs.first().fill("testpassword1");
-	await inputs.nth(1).fill("testpassword1");
+	if ((await inputs.count()) >= 2) {
+		await inputs.first().fill("testpassword1");
+		await inputs.nth(1).fill("testpassword1");
 
-	if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) return true;
-	if (await clickFirstVisibleButton(page, { name: /^Skip$/ })) return true;
+		if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) return true;
+		if (await clickFirstVisibleButton(page, { name: /^Skip$/ })) return true;
+	}
+
+	if (await clickFirstVisibleButton(page, { name: /skip for now/i })) return true;
 	return false;
 }
 

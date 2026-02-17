@@ -26,6 +26,8 @@ export var chatSeq = 0;
 
 // Session token usage tracking (cumulative for the current session)
 export var sessionTokens = { input: 0, output: 0 };
+// Last observed prompt input tokens (context pressure for the next turn).
+export var sessionCurrentInputTokens = 0;
 
 // Model selector elements — created dynamically inside the chat page
 export var modelCombo = null;
@@ -152,6 +154,9 @@ export function setChatSeq(v) {
 }
 export function setSessionTokens(v) {
 	sessionTokens = v;
+}
+export function setSessionCurrentInputTokens(v) {
+	sessionCurrentInputTokens = v;
 }
 export function setModelCombo(v) {
 	modelCombo = v;

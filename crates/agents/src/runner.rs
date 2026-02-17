@@ -202,7 +202,10 @@ pub struct AgentRunResult {
     pub text: String,
     pub iterations: usize,
     pub tool_calls_made: usize,
+    /// Sum of usage across all LLM requests in this run.
     pub usage: Usage,
+    /// Usage for the final LLM request in this run.
+    pub request_usage: Usage,
     pub raw_llm_responses: Vec<serde_json::Value>,
 }
 
@@ -1046,6 +1049,7 @@ pub async fn run_agent_loop_with_context(
                     output_tokens: total_output_tokens,
                     ..Default::default()
                 },
+                request_usage: response.usage.clone(),
                 raw_llm_responses: Vec::new(),
             });
         }
@@ -1643,6 +1647,11 @@ pub async fn run_agent_loop_streaming(
                 usage: Usage {
                     input_tokens: total_input_tokens,
                     output_tokens: total_output_tokens,
+                    ..Default::default()
+                },
+                request_usage: Usage {
+                    input_tokens,
+                    output_tokens,
                     ..Default::default()
                 },
                 raw_llm_responses,
