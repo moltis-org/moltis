@@ -410,29 +410,67 @@ fn merge_env_overrides(
     merged
 }
 
-fn log_startup_model_inventory(reg: &ProviderRegistry) {
-    let mut model_ids: Vec<String> = reg.list_models().iter().map(|m| m.id.clone()).collect();
-    model_ids.sort();
-    info!(
-        model_count = model_ids.len(),
-        model_ids = ?model_ids,
-        "startup model inventory"
+fn summarize_model_ids_for_logs(sorted_model_ids: &[String], max_items: usize) -> Vec<String> {
+    if max_items == 0 {
+        return Vec::new();
+    }
+
+    if sorted_model_ids.len() <= max_items || max_items < 3 {
+        return sorted_model_ids.iter().take(max_items).cloned().collect();
+    }
+
+    let head_count = max_items / 2;
+    let tail_count = max_items - head_count - 1;
+    let mut sample = Vec::with_capacity(max_items);
+    sample.extend(sorted_model_ids.iter().take(head_count).cloned());
+    sample.push("...".to_string());
+    sample.extend(
+        sorted_model_ids
+            .iter()
+            .skip(sorted_model_ids.len().saturating_sub(tail_count))
+            .cloned(),
     );
+    sample
+}
+
+fn log_startup_model_inventory(reg: &ProviderRegistry) {
+    const STARTUP_MODEL_SAMPLE_SIZE: usize = 8;
+    const STARTUP_PROVIDER_MODEL_SAMPLE_SIZE: usize = 4;
 
     let mut by_provider: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
+    let mut model_ids: Vec<String> = Vec::with_capacity(reg.list_models().len());
     for model in reg.list_models() {
+        model_ids.push(model.id.clone());
         by_provider
             .entry(model.provider.clone())
             .or_default()
             .push(model.id.clone());
     }
+    model_ids.sort();
+
+    let provider_model_counts: Vec<(String, usize)> = by_provider
+        .iter()
+        .map(|(provider, provider_models)| (provider.clone(), provider_models.len()))
+        .collect();
+
+    info!(
+        model_count = model_ids.len(),
+        provider_count = by_provider.len(),
+        provider_model_counts = ?provider_model_counts,
+        sample_model_ids = ?summarize_model_ids_for_logs(&model_ids, STARTUP_MODEL_SAMPLE_SIZE),
+        "startup model inventory"
+    );
+
     for (provider, provider_models) in &mut by_provider {
         provider_models.sort();
-        info!(
+        debug!(
             provider = %provider,
             model_count = provider_models.len(),
-            model_ids = ?provider_models,
+            sample_model_ids = ?summarize_model_ids_for_logs(
+                provider_models,
+                STARTUP_PROVIDER_MODEL_SAMPLE_SIZE
+            ),
             "startup provider model inventory"
         );
     }
@@ -2733,7 +2771,20 @@ pub async fn start_gateway(
         )));
 
         // Register map tool for showing static map images with links.
-        tool_registry.register(Box::new(moltis_tools::map::ShowMapTool::new()));
+        let map_provider = match config.tools.maps.provider {
+            moltis_config::schema::MapProvider::GoogleMaps => {
+                moltis_tools::map::MapProvider::GoogleMaps
+            },
+            moltis_config::schema::MapProvider::AppleMaps => {
+                moltis_tools::map::MapProvider::AppleMaps
+            },
+            moltis_config::schema::MapProvider::OpenStreetMap => {
+                moltis_tools::map::MapProvider::OpenStreetMap
+            },
+        };
+        tool_registry.register(Box::new(moltis_tools::map::ShowMapTool::with_provider(
+            map_provider,
+        )));
 
         // Register spawn_agent tool for sub-agent support.
         // The tool gets a snapshot of the current registry (without itself)
@@ -8005,6 +8056,33 @@ mod tests {
         super::*,
         std::collections::{HashMap, HashSet},
     };
+
+    #[test]
+    fn summarize_model_ids_for_logs_returns_all_when_within_limit() {
+        let model_ids = vec!["a", "b", "c"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        let summary = summarize_model_ids_for_logs(&model_ids, 8);
+        assert_eq!(summary, model_ids);
+    }
+
+    #[test]
+    fn summarize_model_ids_for_logs_truncates_to_head_and_tail() {
+        let model_ids = vec!["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        let summary = summarize_model_ids_for_logs(&model_ids, 7);
+        let expected = vec!["a", "b", "c", "...", "h", "i", "j"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(summary, expected);
+    }
 
     #[test]
     fn approval_manager_uses_config_values() {

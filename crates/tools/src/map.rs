@@ -1,5 +1,5 @@
-//! `show_map` tool — displays a static map image with clickable links to
-//! Google Maps, Apple Maps, and OpenStreetMap.
+//! `show_map` tool — displays a static map image with a clickable link to the
+//! configured map provider.
 //!
 //! Composes a static map from OSM tiles (no API key required), draws marker
 //! pins for one or more destinations and optionally the user's current
@@ -100,42 +100,75 @@ fn normalize_destination_points(params: &ShowMapParams) -> Result<Vec<Destinatio
 
 // ── Map links ───────────────────────────────────────────────────────────────
 
-/// Build clickable map URLs for the three major mapping services.
-fn build_map_links(lat: f64, lon: f64, zoom: u8, label: Option<&str>) -> serde_json::Value {
+/// Map provider used to generate outbound map links.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MapProvider {
+    #[default]
+    GoogleMaps,
+    AppleMaps,
+    OpenStreetMap,
+}
+
+impl MapProvider {
+    fn as_config_value(self) -> &'static str {
+        match self {
+            Self::GoogleMaps => "google_maps",
+            Self::AppleMaps => "apple_maps",
+            Self::OpenStreetMap => "openstreetmap",
+        }
+    }
+}
+
+/// Build clickable map URLs for the selected mapping provider.
+fn build_map_links(
+    provider: MapProvider,
+    lat: f64,
+    lon: f64,
+    zoom: u8,
+    label: Option<&str>,
+) -> serde_json::Value {
     // When a place name is provided, use it as the search query so the map
     // service resolves the actual business page (with reviews, hours, photos)
     // instead of just dropping an anonymous pin at raw coordinates.
-    let google = match label {
-        Some(l) => format!(
-            "https://www.google.com/maps/search/?api=1&query={}&center={lat},{lon}",
-            urlencoded(l),
-        ),
-        None => format!("https://www.google.com/maps/search/?api=1&query={lat},{lon}"),
-    };
-
-    let apple = match label {
-        Some(l) => format!(
-            "https://maps.apple.com/?ll={lat},{lon}&q={}&z={zoom}",
-            urlencoded(l),
-        ),
-        None => format!("https://maps.apple.com/?ll={lat},{lon}&z={zoom}"),
-    };
-
-    let osm = match label {
-        Some(l) => format!(
-            "https://www.openstreetmap.org/search?query={}&mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}",
-            urlencoded(l),
-        ),
-        None => {
-            format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}")
+    let url = match provider {
+        MapProvider::GoogleMaps => match label {
+            Some(l) => format!(
+                "https://www.google.com/maps/search/?api=1&query={}&center={lat},{lon}",
+                urlencoded(l),
+            ),
+            None => format!("https://www.google.com/maps/search/?api=1&query={lat},{lon}"),
+        },
+        MapProvider::AppleMaps => match label {
+            Some(l) => format!(
+                "https://maps.apple.com/?ll={lat},{lon}&q={}&z={zoom}",
+                urlencoded(l),
+            ),
+            None => format!("https://maps.apple.com/?ll={lat},{lon}&z={zoom}"),
+        },
+        MapProvider::OpenStreetMap => match label {
+            Some(l) => format!(
+                "https://www.openstreetmap.org/search?query={}&mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}",
+                urlencoded(l),
+            ),
+            None => {
+                format!(
+                    "https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map={zoom}/{lat}/{lon}"
+                )
+            },
         },
     };
 
-    serde_json::json!({
-        "google_maps": google,
-        "apple_maps": apple,
-        "openstreetmap": osm,
-    })
+    let mut links = serde_json::Map::new();
+    links.insert(
+        "provider".to_string(),
+        serde_json::Value::String(provider.as_config_value().to_string()),
+    );
+    links.insert("url".to_string(), serde_json::Value::String(url.clone()));
+    links.insert(
+        provider.as_config_value().to_string(),
+        serde_json::Value::String(url),
+    );
+    serde_json::Value::Object(links)
 }
 
 /// Minimal percent-encoding for URL query values.
@@ -583,19 +616,25 @@ fn draw_marker(canvas: &mut RgbaImage, cx: i32, cy: i32, radius: i32, color: [u8
 /// LLM-callable tool that shows a map image with links to mapping services.
 pub struct ShowMapTool {
     client: reqwest::Client,
+    provider: MapProvider,
 }
 
 impl ShowMapTool {
     pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_provider(provider: MapProvider) -> Self {
         Self {
             client: reqwest::Client::new(),
+            provider,
         }
     }
 }
 
 impl Default for ShowMapTool {
     fn default() -> Self {
-        Self::new()
+        Self::with_provider(MapProvider::default())
     }
 }
 
@@ -608,7 +647,7 @@ impl AgentTool for ShowMapTool {
     fn description(&self) -> &str {
         "Show a map image to the user for one or more locations. Displays destination \
          pins and an optional blue pin at the user's current location, plus clickable \
-         links to Google Maps, Apple Maps, and OpenStreetMap. Supports either a single \
+         map links using the configured provider (Google Maps by default). Supports either a single \
          destination via latitude/longitude or multiple destinations via points[]. Always \
          pass user_latitude and user_longitude when available so the user can see both \
          their position and destinations on the map."
@@ -707,7 +746,13 @@ impl AgentTool for ShowMapTool {
             15
         };
 
-        let map_links = build_map_links(primary_lat, primary_lon, zoom, primary_label.as_deref());
+        let map_links = build_map_links(
+            self.provider,
+            primary_lat,
+            primary_lon,
+            zoom,
+            primary_label.as_deref(),
+        );
 
         // Build markers: multi-color destinations and blue for user.
         let mut markers: Vec<Marker> = destinations
@@ -750,6 +795,7 @@ impl AgentTool for ShowMapTool {
                     "latitude": point.latitude,
                     "longitude": point.longitude,
                     "map_links": build_map_links(
+                        self.provider,
                         point.latitude,
                         point.longitude,
                         zoom,
@@ -791,45 +837,46 @@ mod tests {
 
     #[test]
     fn build_links_with_label() {
-        let links = build_map_links(37.7614, -122.4199, 15, Some("La Taqueria"));
+        let links = build_map_links(
+            MapProvider::GoogleMaps,
+            37.7614,
+            -122.4199,
+            15,
+            Some("La Taqueria"),
+        );
         // Google uses the label as search query with coordinates as center hint.
+        assert_eq!(links["provider"], "google_maps");
+        assert_eq!(
+            links["url"],
+            "https://www.google.com/maps/search/?api=1&query=La+Taqueria&center=37.7614,-122.4199"
+        );
         assert_eq!(
             links["google_maps"],
             "https://www.google.com/maps/search/?api=1&query=La+Taqueria&center=37.7614,-122.4199"
         );
-        assert_eq!(
-            links["apple_maps"],
-            "https://maps.apple.com/?ll=37.7614,-122.4199&q=La+Taqueria&z=15"
-        );
-        assert_eq!(
-            links["openstreetmap"],
-            "https://www.openstreetmap.org/search?query=La+Taqueria&mlat=37.7614&mlon=-122.4199#map=15/37.7614/-122.4199"
-        );
+        assert!(links.get("apple_maps").is_none());
+        assert!(links.get("openstreetmap").is_none());
     }
 
     #[test]
     fn build_links_without_label() {
-        let links = build_map_links(48.8566, 2.3522, 12, None);
-        // Without a label, falls back to raw coordinates.
+        let links = build_map_links(MapProvider::OpenStreetMap, 48.8566, 2.3522, 12, None);
+        assert_eq!(links["provider"], "openstreetmap");
         assert_eq!(
-            links["google_maps"],
-            "https://www.google.com/maps/search/?api=1&query=48.8566,2.3522"
-        );
-        assert_eq!(
-            links["apple_maps"],
-            "https://maps.apple.com/?ll=48.8566,2.3522&z=12"
+            links["url"],
+            "https://www.openstreetmap.org/?mlat=48.8566&mlon=2.3522#map=12/48.8566/2.3522"
         );
         assert_eq!(
             links["openstreetmap"],
             "https://www.openstreetmap.org/?mlat=48.8566&mlon=2.3522#map=12/48.8566/2.3522"
         );
+        assert!(links.get("google_maps").is_none());
+        assert!(links.get("apple_maps").is_none());
     }
 
     #[test]
     fn build_links_special_chars_in_label() {
-        let links = build_map_links(0.0, 0.0, 10, Some("Café & Bar"));
-        let google = links["google_maps"].as_str().unwrap();
-        assert!(google.contains("Caf%C3%A9+%26+Bar"));
+        let links = build_map_links(MapProvider::AppleMaps, 0.0, 0.0, 10, Some("Café & Bar"));
         let apple = links["apple_maps"].as_str().unwrap();
         assert!(apple.contains("Caf%C3%A9+%26+Bar"));
     }
@@ -911,7 +958,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_clamps_zoom() {
-        let tool = ShowMapTool::new();
+        let tool = ShowMapTool::with_provider(MapProvider::OpenStreetMap);
         // Zoom 99 should be clamped to 18 — verify via the returned links.
         let result = tool
             .execute(serde_json::json!({
@@ -921,7 +968,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        let osm = result["map_links"]["openstreetmap"].as_str().unwrap();
+        let osm = result["map_links"]["url"].as_str().unwrap();
         assert!(osm.contains("#map=18/"), "zoom should be clamped to 18");
     }
 
@@ -939,9 +986,11 @@ mod tests {
         assert_eq!(result["label"], "La Taqueria");
         assert_eq!(result["latitude"], 37.76);
         assert_eq!(result["longitude"], -122.42);
+        assert_eq!(result["map_links"]["provider"], "google_maps");
+        assert!(result["map_links"]["url"].is_string());
         assert!(result["map_links"]["google_maps"].is_string());
-        assert!(result["map_links"]["apple_maps"].is_string());
-        assert!(result["map_links"]["openstreetmap"].is_string());
+        assert!(result["map_links"].get("apple_maps").is_none());
+        assert!(result["map_links"].get("openstreetmap").is_none());
         assert_eq!(result["points"].as_array().map(Vec::len), Some(1));
     }
 
