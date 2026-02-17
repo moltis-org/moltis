@@ -300,8 +300,7 @@ function handleActiveWindowEvent(payload) {
 	renderWindowTabs();
 	setStatus("Switched tmux window.", "ok");
 	startWindowsRefreshLoop();
-	scheduleFit();
-	sendResizeIfChanged();
+	scheduleFit(true);
 	if (xterm) xterm.focus();
 	void refreshTerminalWindows({ preferredWindowId: windowId, silent: true });
 }
@@ -405,28 +404,30 @@ function sendSocketMessage(payload) {
 	}
 }
 
-function sendResizeIfChanged() {
+function sendResizeIfChanged(forceSend) {
 	if (!xterm) return;
 	if (!terminalAvailable) return;
+	var force = forceSend === true;
 	var cols = xterm.cols || 0;
 	var rows = xterm.rows || 0;
 	if (!(cols > 0 && rows > 0)) return;
 	updateSizeIndicator(cols, rows);
-	if (cols === lastSentCols && rows === lastSentRows) return;
+	if (!force && cols === lastSentCols && rows === lastSentRows) return;
 	lastSentCols = cols;
 	lastSentRows = rows;
 	sendSocketMessage({ type: "resize", cols: cols, rows: rows });
 }
 
-function scheduleFit() {
+function scheduleFit(forceResize) {
 	if (!fitAddon) return;
+	var shouldForceResize = forceResize === true;
 	clearScheduledFit();
 	fitRaf = requestAnimationFrame(() => {
 		fitRaf = 0;
 		if (!fitAddon) return;
 		try {
 			fitAddon.fit();
-			sendResizeIfChanged();
+			sendResizeIfChanged(shouldForceResize);
 		} catch {
 			// xterm may throw during transient detach or hidden layout states.
 		}
@@ -684,7 +685,7 @@ function applyReadyPayload(payload) {
 	setWindowControlsEnabled();
 
 	if (terminalAvailable) {
-		scheduleFit();
+		scheduleFit(true);
 		updateSizeIndicator(xterm?.cols || 0, xterm?.rows || 0);
 		if (persistenceEnabled) {
 			setStatus("Connected to host shell with persistent tmux session.", "ok");
@@ -695,7 +696,7 @@ function applyReadyPayload(payload) {
 			clearWindowsRefreshTimer();
 		}
 		flushInputQueue();
-		sendResizeIfChanged();
+		sendResizeIfChanged(true);
 		if (xterm) xterm.focus();
 	} else {
 		clearWindowsRefreshTimer();
@@ -744,6 +745,8 @@ function connectTerminalSocket() {
 
 	clearReconnectTimer();
 	closeTerminalSocket();
+	lastSentCols = 0;
+	lastSentRows = 0;
 
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
 	var wsUrl = `${proto}//${location.host}/api/terminal/ws`;

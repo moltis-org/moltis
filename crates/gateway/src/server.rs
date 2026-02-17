@@ -6723,7 +6723,7 @@ fn host_terminal_tmux_command() -> Command {
 fn host_terminal_apply_tmux_profile() {
     let commands: &[&[&str]] = &[
         &["set-option", "-g", "status", "off"],
-        &["set-option", "-g", "mouse", "on"],
+        &["set-option", "-g", "mouse", "off"],
         &["set-window-option", "-g", "window-size", "latest"],
         &["set-option", "-g", "allow-rename", "off"],
         &["set-window-option", "-g", "automatic-rename", "off"],

@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Terminal now polls tmux windows and updates tabs automatically,
   so windows created inside tmux (for example `Ctrl-b c`) appear in the web UI.
 - Host terminal tmux integration now uses a dedicated tmux socket and applies
-  a Moltis-friendly profile (status off, mouse on, stable window naming).
+  a Moltis-friendly profile (status off, mouse off, stable window naming).
 - Settings > Terminal subtitle now omits the prompt symbol hint so it does not
   show stale `$`/`#` information after privilege changes inside the shell.
 
@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Terminal host PTY output is now transported as raw bytes
   (base64-encoded over websocket) instead of UTF-8-decoded text, fixing
   rendering/control-sequence corruption in full-screen terminal apps like `vim`.
+- Settings > Terminal now force-syncs terminal size on connect/window switch so
+  newly created tmux windows attach at full viewport size instead of a smaller
+  default geometry.
 
 ### Security
 
