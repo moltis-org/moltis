@@ -3897,13 +3897,15 @@ async fn terminal_ws_send_status(
 #[cfg(feature = "web-ui")]
 async fn terminal_ws_send_output(
     ws_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
-    data: &str,
+    data: &[u8],
 ) -> bool {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
     terminal_ws_send_json(
         ws_tx,
         serde_json::json!({
             "type": "output",
-            "data": data,
+            "encoding": "base64",
+            "data": encoded,
         }),
     )
     .await
@@ -6601,7 +6603,7 @@ enum HostTerminalWsControlAction {
 
 #[cfg(feature = "web-ui")]
 enum HostTerminalOutputEvent {
-    Output(String),
+    Output(Vec<u8>),
     Error(String),
     Closed,
 }
@@ -7112,77 +7114,18 @@ fn spawn_host_terminal_reader(
         .name("moltis-host-terminal-reader".to_string())
         .spawn(move || {
             let mut buf = vec![0_u8; 16 * 1024];
-            let mut pending_utf8 = Vec::<u8>::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        if !pending_utf8.is_empty() {
-                            let tail = String::from_utf8_lossy(&pending_utf8).to_string();
-                            if !tail.is_empty() {
-                                let _ = tx.send(HostTerminalOutputEvent::Output(tail));
-                            }
-                        }
                         let _ = tx.send(HostTerminalOutputEvent::Closed);
                         break;
                     },
                     Ok(n) => {
-                        pending_utf8.extend_from_slice(&buf[..n]);
-                        loop {
-                            match std::str::from_utf8(&pending_utf8) {
-                                Ok(valid) => {
-                                    if !valid.is_empty()
-                                        && tx
-                                            .send(HostTerminalOutputEvent::Output(
-                                                valid.to_string(),
-                                            ))
-                                            .is_err()
-                                    {
-                                        return;
-                                    }
-                                    pending_utf8.clear();
-                                    break;
-                                },
-                                Err(err) => {
-                                    let valid_up_to = err.valid_up_to();
-                                    if valid_up_to > 0 {
-                                        let valid =
-                                            String::from_utf8_lossy(&pending_utf8[..valid_up_to])
-                                                .to_string();
-                                        if tx.send(HostTerminalOutputEvent::Output(valid)).is_err()
-                                        {
-                                            return;
-                                        }
-                                    }
-
-                                    if let Some(invalid_len) = err.error_len() {
-                                        let end = valid_up_to
-                                            .saturating_add(invalid_len)
-                                            .min(pending_utf8.len());
-                                        if end > valid_up_to {
-                                            let replacement = String::from_utf8_lossy(
-                                                &pending_utf8[valid_up_to..end],
-                                            )
-                                            .to_string();
-                                            if !replacement.is_empty()
-                                                && tx
-                                                    .send(HostTerminalOutputEvent::Output(
-                                                        replacement,
-                                                    ))
-                                                    .is_err()
-                                            {
-                                                return;
-                                            }
-                                        }
-                                        pending_utf8.drain(..end);
-                                        continue;
-                                    }
-
-                                    if valid_up_to > 0 {
-                                        pending_utf8.drain(..valid_up_to);
-                                    }
-                                    break;
-                                },
-                            }
+                        if tx
+                            .send(HostTerminalOutputEvent::Output(buf[..n].to_vec()))
+                            .is_err()
+                        {
+                            return;
                         }
                     },
                     Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,

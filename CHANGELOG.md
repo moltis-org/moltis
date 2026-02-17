@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings > Terminal now recovers from stale `?window=` reconnect targets
   after a tmux window is closed, attaching to the current window instead of
   getting stuck in a reconnect loop.
+- Settings > Terminal host PTY output is now transported as raw bytes
+  (base64-encoded over websocket) instead of UTF-8-decoded text, fixing
+  rendering/control-sequence corruption in full-screen terminal apps like `vim`.
 
 ### Security
 

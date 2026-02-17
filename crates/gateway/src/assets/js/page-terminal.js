@@ -563,10 +563,26 @@ function isNearBottom() {
 	return buffer.baseY - buffer.viewportY <= 2;
 }
 
-function writeToXterm(text, scrollBottom) {
+function decodeBase64ToBytes(encoded) {
+	if (typeof encoded !== "string" || encoded.length === 0) return null;
+	try {
+		var binary = atob(encoded);
+		var bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i += 1) {
+			bytes[i] = binary.charCodeAt(i) & 0xff;
+		}
+		return bytes;
+	} catch {
+		return null;
+	}
+}
+
+function writeToXterm(chunk, scrollBottom) {
 	if (!xterm) return;
-	var content = typeof text === "string" ? text : "";
-	if (!content) {
+	var content = typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? chunk : null;
+	var isEmptyString = typeof content === "string" && content.length === 0;
+	var isEmptyBytes = content instanceof Uint8Array && content.length === 0;
+	if (!content || isEmptyString || isEmptyBytes) {
 		if (scrollBottom) xterm.scrollToBottom();
 		return;
 	}
@@ -575,11 +591,11 @@ function writeToXterm(text, scrollBottom) {
 	});
 }
 
-function appendOutputChunk(text, forceBottom) {
+function appendOutputChunk(chunk, forceBottom) {
 	if (!xterm) return;
-	if (typeof text !== "string" || text.length === 0) return;
+	if (typeof chunk !== "string" && !(chunk instanceof Uint8Array)) return;
 	var atBottom = forceBottom || isNearBottom();
-	writeToXterm(text, atBottom);
+	writeToXterm(chunk, atBottom);
 }
 
 function closeTerminalSocket() {
@@ -698,7 +714,14 @@ function handleTerminalMessage(payload) {
 			handleActiveWindowEvent(payload);
 			break;
 		case "output":
-			appendOutputChunk(payload.data || "", false);
+			if (payload.encoding === "base64") {
+				var bytes = decodeBase64ToBytes(payload.data || "");
+				if (bytes) {
+					appendOutputChunk(bytes, false);
+				}
+			} else {
+				appendOutputChunk(payload.data || "", false);
+			}
 			break;
 		case "status":
 			setStatus(payload.text || "", payload.level || "");
