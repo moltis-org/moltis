@@ -989,10 +989,11 @@ async fn build_prompt_runtime_context(
 
     let ((sudo_non_interactive, sudo_status), sandbox_ctx) = tokio::join!(sudo_fut, sandbox_fut);
 
-    let timezone = state
+    let configured_timezone = state
         .sandbox_router
         .as_ref()
         .and_then(|r| r.config().timezone.clone());
+    let timezone = Some(server_prompt_timezone(configured_timezone.as_deref()));
 
     let location = state
         .inner
@@ -1002,11 +1003,12 @@ async fn build_prompt_runtime_context(
         .as_ref()
         .map(|loc| loc.to_string());
 
-    let host_ctx = PromptHostRuntimeContext {
+    let mut host_ctx = PromptHostRuntimeContext {
         host: Some(state.hostname.clone()),
         os: Some(std::env::consts::OS.to_string()),
         arch: Some(std::env::consts::ARCH.to_string()),
         shell: detect_runtime_shell(),
+        time: None,
         provider: Some(provider.name().to_string()),
         model: Some(provider.id().to_string()),
         session_key: Some(session_key.to_string()),
@@ -1016,10 +1018,54 @@ async fn build_prompt_runtime_context(
         location,
         ..Default::default()
     };
+    refresh_runtime_prompt_time(&mut host_ctx);
 
     PromptRuntimeContext {
         host: host_ctx,
         sandbox: sandbox_ctx,
+    }
+}
+
+fn refresh_runtime_prompt_time(host: &mut PromptHostRuntimeContext) {
+    host.time = Some(prompt_now_for_timezone(host.timezone.as_deref()));
+}
+
+fn server_prompt_timezone(configured_timezone: Option<&str>) -> String {
+    if let Some(timezone) = configured_timezone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return timezone.to_string();
+    }
+    "server-local".to_string()
+}
+
+fn prompt_now_for_timezone(timezone: Option<&str>) -> String {
+    #[cfg(any(feature = "web-ui", feature = "push-notifications"))]
+    {
+        use chrono::{Local, Utc};
+
+        let trimmed_timezone = timezone.map(str::trim).filter(|value| !value.is_empty());
+
+        if let Some(tz) = trimmed_timezone.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+            return Utc::now()
+                .with_timezone(&tz)
+                .format("%Y-%m-%d %H:%M:%S %Z")
+                .to_string();
+        }
+
+        // Fallback to server local clock when timezone is unknown/non-IANA.
+        Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string()
+    }
+
+    #[cfg(not(any(feature = "web-ui", feature = "push-notifications")))]
+    {
+        let unix_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let tz = timezone.unwrap_or("server-local");
+        format!("unix={unix_secs} {tz}")
     }
 }
 
@@ -2836,12 +2882,7 @@ impl ChatService for LiveChatService {
             .get("_remote_ip")
             .and_then(|v| v.as_str())
             .map(String::from);
-        if runtime_context.host.timezone.is_none() {
-            runtime_context.host.timezone = params
-                .get("_timezone")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-        }
+        refresh_runtime_prompt_time(&mut runtime_context.host);
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
@@ -4093,12 +4134,7 @@ impl ChatService for LiveChatService {
             .get("_remote_ip")
             .and_then(|v| v.as_str())
             .map(String::from);
-        if runtime_context.host.timezone.is_none() {
-            runtime_context.host.timezone = params
-                .get("_timezone")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-        }
+        refresh_runtime_prompt_time(&mut runtime_context.host);
 
         // Resolve project context.
         let project_context = self
@@ -4224,12 +4260,7 @@ impl ChatService for LiveChatService {
             .get("_remote_ip")
             .and_then(|v| v.as_str())
             .map(String::from);
-        if runtime_context.host.timezone.is_none() {
-            runtime_context.host.timezone = params
-                .get("_timezone")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-        }
+        refresh_runtime_prompt_time(&mut runtime_context.host);
 
         // Resolve project context.
         let project_context = self
@@ -7044,6 +7075,36 @@ mod tests {
         assert!(parse_explicit_shell_command("/sh").is_none());
         assert!(parse_explicit_shell_command("/shell ls").is_none());
         assert!(parse_explicit_shell_command("uname -a").is_none());
+    }
+
+    #[test]
+    fn prompt_now_for_timezone_returns_non_empty_string() {
+        let value = prompt_now_for_timezone(Some("UTC"));
+        assert!(!value.is_empty());
+    }
+
+    #[test]
+    fn server_prompt_timezone_prefers_configured_value() {
+        assert_eq!(
+            server_prompt_timezone(Some("Europe/Paris")),
+            "Europe/Paris".to_string()
+        );
+    }
+
+    #[test]
+    fn server_prompt_timezone_defaults_to_server_local() {
+        assert_eq!(server_prompt_timezone(None), "server-local".to_string());
+        assert_eq!(server_prompt_timezone(Some("")), "server-local".to_string());
+    }
+
+    #[test]
+    fn refresh_runtime_prompt_time_sets_host_time() {
+        let mut host = PromptHostRuntimeContext {
+            timezone: Some("UTC".to_string()),
+            ..Default::default()
+        };
+        refresh_runtime_prompt_time(&mut host);
+        assert!(host.time.as_deref().is_some_and(|value| !value.is_empty()));
     }
 
     #[test]

@@ -11,6 +11,8 @@ pub struct PromptHostRuntimeContext {
     pub os: Option<String>,
     pub arch: Option<String>,
     pub shell: Option<String>,
+    /// Current datetime string for prompt context, localized when timezone is known.
+    pub time: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
@@ -146,51 +148,44 @@ pub fn build_system_prompt_minimal_runtime(
 }
 
 /// Maximum number of characters from `MEMORY.md` injected into the system
-/// prompt. Matches OpenClaw's `bootstrapMaxChars`.
-const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 20_000;
+/// prompt to keep the context window manageable.
+const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 8_000;
+/// Maximum number of characters from project context files (`CLAUDE.md`,
+/// project docs, etc.) injected into the prompt.
+const PROJECT_CONTEXT_MAX_CHARS: usize = 8_000;
+/// Maximum number of characters from each workspace file (`AGENTS.md`,
+/// `TOOLS.md`) injected into the prompt.
+const WORKSPACE_FILE_MAX_CHARS: usize = 6_000;
 const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
 - `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available for host installs; otherwise ask the user before host package installation.\n\
-- If sandbox is missing required tools/packages and host installation is needed, ask the user before requesting host install or changing sandbox mode.\n\
-- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\
-- If outputs differ after a routing change, state the active route briefly and continue.\n\n";
+- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
+- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
 const TOOL_CALL_GUIDANCE: &str = concat!(
     "## How to call tools\n\n",
-    "To call a tool, output ONLY a JSON block with this exact format (no other text before it):\n\n",
+    "For a tool call, output ONLY this JSON block:\n\n",
     "```tool_call\n",
     "{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n",
     "```\n\n",
-    "You MUST output the tool call block as the ENTIRE response — do not add any text before or after it.\n",
-    "After the tool executes, you will receive the result and can then respond to the user.\n\n",
+    "No text before or after the block. After execution, continue normally.\n\n",
 );
 const TOOL_GUIDELINES: &str = concat!(
     "## Guidelines\n\n",
     "- Start with a normal conversational response. Do not call tools for greetings, small talk, ",
     "or questions you can answer directly.\n",
-    "- Use the calc tool for arithmetic or expression evaluation instead of estimating math in text.\n",
-    "- Use the exec tool when the user asks you to run shell commands, or when system interaction ",
-    "is required to complete the task.\n",
-    "- If the user starts a message with `/sh `, treat the remaining text as an explicit shell ",
-    "command and run it with `exec` exactly as written.\n",
+    "- Use the calc tool for arithmetic and expressions.\n",
+    "- Use the exec tool for shell/system tasks.\n",
+    "- If the user starts a message with `/sh `, run it with `exec` exactly as written.\n",
+    "- Use the browser tool when the user asks to visit/read/interact with web pages.\n",
+    "- Before tool calls, briefly state what you are about to do.\n",
+    "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
+    "- Be careful with destructive operations, confirm with the user first.\n",
     "- Do not express surprise about sandbox vs host execution. Route changes are normal.\n",
     "- Do not suggest disabling sandbox unless the user explicitly asks for host execution or ",
     "the task cannot be completed in sandbox.\n",
-    "- Use the browser tool to open URLs and interact with web pages. Call it when the user ",
-    "asks to visit a website, check a page, read web content, or perform any web browsing task.\n",
-    "- Before executing commands or opening pages, briefly explain what you're going to do.\n",
-    "- If a command or browser action fails, analyze the error and suggest fixes.\n",
-    "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
-    "- Be careful with destructive operations — confirm with the user first.\n",
-    "- IMPORTANT: The user's UI already displays tool execution results (stdout, stderr, exit code) ",
-    "in a dedicated panel. Do NOT repeat or echo raw tool output in your response. Instead, ",
-    "summarize what happened, highlight key findings, or explain errors. ",
-    "Simply parroting the output wastes the user's time.\n\n",
+    "- The UI already shows raw tool output (stdout/stderr/exit). Summarize outcomes instead.\n\n",
     "## Silent Replies\n\n",
-    "When you have nothing meaningful to add after a tool call — the output ",
-    "speaks for itself — do NOT produce any text. Simply return an empty response.\n",
-    "The user's UI already shows tool results, so there is no need to repeat or ",
-    "acknowledge them. Stay silent when the output answers the user's question.\n",
+    "When you have nothing meaningful to add after a tool call, return an empty response.\n",
 );
 const MINIMAL_GUIDELINES: &str = concat!(
     "## Guidelines\n\n",
@@ -276,7 +271,12 @@ fn append_identity_and_user_sections(
 
 fn append_project_context(prompt: &mut String, project_context: Option<&str>) {
     if let Some(context) = project_context {
-        prompt.push_str(context);
+        append_truncated_text_block(
+            prompt,
+            context,
+            PROJECT_CONTEXT_MAX_CHARS,
+            "\n*(Project context truncated for prompt size; use tools/files for full details.)*\n",
+        );
         prompt.push('\n');
     }
 }
@@ -330,12 +330,22 @@ fn append_workspace_files_section(
     prompt.push_str("## Workspace Files\n\n");
     if let Some(agents_md) = agents_text {
         prompt.push_str("### AGENTS.md (workspace)\n\n");
-        prompt.push_str(agents_md);
+        append_truncated_text_block(
+            prompt,
+            agents_md,
+            WORKSPACE_FILE_MAX_CHARS,
+            "\n*(AGENTS.md truncated for prompt size.)*\n",
+        );
         prompt.push_str("\n\n");
     }
     if let Some(tools_md) = tools_text {
         prompt.push_str("### TOOLS.md (workspace)\n\n");
-        prompt.push_str(tools_md);
+        append_truncated_text_block(
+            prompt,
+            tools_md,
+            WORKSPACE_FILE_MAX_CHARS,
+            "\n*(TOOLS.md truncated for prompt size.)*\n",
+        );
         prompt.push_str("\n\n");
     }
 }
@@ -354,12 +364,12 @@ fn append_memory_section(
 
     prompt.push_str("## Long-Term Memory\n\n");
     if let Some(text) = memory_content {
-        // Truncate to the bootstrap limit to keep the context window manageable.
-        let truncated = truncate_prompt_text(text, MEMORY_BOOTSTRAP_MAX_CHARS);
-        prompt.push_str(&truncated);
-        if text.len() > MEMORY_BOOTSTRAP_MAX_CHARS {
-            prompt.push_str("\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n");
-        }
+        append_truncated_text_block(
+            prompt,
+            text,
+            MEMORY_BOOTSTRAP_MAX_CHARS,
+            "\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n",
+        );
         prompt.push_str(concat!(
             "\n\n**The information above is what you already know about the user. ",
             "Always include it in your answers.** ",
@@ -433,7 +443,7 @@ fn append_available_tools_section(
         let params = &schema["parameters"];
         prompt.push_str(&format!(
             "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
-            serde_json::to_string_pretty(params).unwrap_or_default()
+            serde_json::to_string(params).unwrap_or_default()
         ));
     }
 }
@@ -469,6 +479,7 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("os", host.os.as_deref()),
         ("arch", host.arch.as_deref()),
         ("shell", host.shell.as_deref()),
+        ("time", host.time.as_deref()),
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
         ("session", host.session_key.as_deref()),
@@ -501,6 +512,19 @@ fn truncate_prompt_text(text: &str, max_chars: usize) -> String {
         format!("{taken}...")
     } else {
         taken
+    }
+}
+
+fn append_truncated_text_block(
+    prompt: &mut String,
+    text: &str,
+    max_chars: usize,
+    truncated_notice: &str,
+) {
+    let truncated = truncate_prompt_text(text, max_chars);
+    prompt.push_str(&truncated);
+    if text.chars().count() > max_chars {
+        prompt.push_str(truncated_notice);
     }
 }
 
@@ -756,6 +780,7 @@ mod tests {
                 os: Some("macos".into()),
                 arch: Some("aarch64".into()),
                 shell: Some("zsh".into()),
+                time: Some("2026-02-17 16:18:00 CET".into()),
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
@@ -794,6 +819,7 @@ mod tests {
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
+        assert!(prompt.contains("time=2026-02-17 16:18:00 CET"));
         assert!(prompt.contains("provider=openai"));
         assert!(prompt.contains("model=gpt-5"));
         assert!(prompt.contains("sudo_non_interactive=true"));
