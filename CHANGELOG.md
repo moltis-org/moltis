@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Auto-compact threshold**: use the last turn's input tokens instead of the
+  cumulative sum across all turns when deciding whether to compact. The previous
+  logic summed `inputTokens` from every persisted message, which double-counts
+  the system prompt and tool schemas on every API round-trip, triggering
+  compaction far too early.
+
 ### Security
 
 ## [0.8.30] - 2026-02-15

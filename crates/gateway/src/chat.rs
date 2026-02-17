@@ -2371,16 +2371,27 @@ impl ChatService for LiveChatService {
             .get("_accept_language")
             .and_then(|v| v.as_str())
             .map(String::from);
-        // Auto-compact: if conversation input tokens exceed 95% of context window, compact first.
+        // Auto-compact: if the most recent turn's input tokens exceed 95% of the
+        // context window, compact before sending the next request.  We use the
+        // *last* assistant message's `inputTokens` — that value reflects the
+        // actual payload size the API received (system prompt + tools + full
+        // history + user message).  Summing `inputTokens` across all turns is
+        // wrong because each turn re-sends the entire context, so the sum
+        // grows ~N× faster than the real context usage.
         let context_window = provider.context_window() as u64;
-        let total_input: u64 = history
+        let last_input: u64 = history
             .iter()
-            .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
-            .sum();
+            .rev()
+            .find_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
+            .unwrap_or(0);
         let compact_threshold = (context_window * 95) / 100;
 
-        if total_input >= compact_threshold {
+        if last_input >= compact_threshold {
             let pre_compact_msg_count = history.len();
+            let total_input: u64 = history
+                .iter()
+                .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
+                .sum();
             let total_output: u64 = history
                 .iter()
                 .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
@@ -2389,9 +2400,9 @@ impl ChatService for LiveChatService {
 
             info!(
                 session = %session_key,
-                total_input,
+                last_input,
                 context_window,
-                "auto-compact triggered (95% threshold reached)"
+                "auto-compact triggered (last turn at 95% of context window)"
             );
             broadcast(
                 &self.state,
@@ -2402,6 +2413,7 @@ impl ChatService for LiveChatService {
                     "phase": "start",
                     "messageCount": pre_compact_msg_count,
                     "totalTokens": pre_compact_total,
+                    "lastTurnInput": last_input,
                     "inputTokens": total_input,
                     "outputTokens": total_output,
                     "contextWindow": context_window,
