@@ -3943,26 +3943,34 @@ async fn handle_terminal_ws_connection(
                 return;
             },
         };
+        let fallback_window_target = host_terminal_default_window_target(&windows);
         if let Some(requested) = requested_window.as_deref() {
             match host_terminal_resolve_window_target(&windows, requested) {
                 Some(target) => {
                     current_window_target = Some(target);
                 },
                 None => {
-                    let _ = terminal_ws_send_status(
-                        &mut ws_tx,
-                        "requested terminal window does not exist",
-                        "error",
-                    )
-                    .await;
-                    return;
+                    if let Some(fallback) = fallback_window_target {
+                        current_window_target = Some(fallback);
+                        let _ = terminal_ws_send_status(
+                            &mut ws_tx,
+                            "requested terminal window no longer exists, attached to the current window",
+                            "info",
+                        )
+                        .await;
+                    } else {
+                        let _ = terminal_ws_send_status(
+                            &mut ws_tx,
+                            "requested terminal window does not exist",
+                            "error",
+                        )
+                        .await;
+                        return;
+                    }
                 },
             }
         } else {
-            current_window_target = windows
-                .iter()
-                .find(|window| window.active)
-                .map(|window| window.id.clone());
+            current_window_target = fallback_window_target;
         }
     }
     let mut current_cols = HOST_TERMINAL_DEFAULT_COLS;
@@ -6804,6 +6812,15 @@ fn host_terminal_resolve_window_target(
 }
 
 #[cfg(feature = "web-ui")]
+fn host_terminal_default_window_target(windows: &[HostTerminalWindowInfo]) -> Option<String> {
+    windows
+        .iter()
+        .find(|window| window.active)
+        .or_else(|| windows.first())
+        .map(|window| window.id.clone())
+}
+
+#[cfg(feature = "web-ui")]
 fn host_terminal_ensure_tmux_session() -> Result<(), String> {
     let mut has_cmd = host_terminal_tmux_command();
     let has_output = has_cmd
@@ -8367,6 +8384,50 @@ mod tests {
             Some("@1".to_string())
         );
         assert_eq!(host_terminal_resolve_window_target(&windows, "99"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn host_terminal_default_window_target_prefers_active_then_first() {
+        let with_active = vec![
+            HostTerminalWindowInfo {
+                id: "@1".to_string(),
+                index: 0,
+                name: "shell".to_string(),
+                active: false,
+            },
+            HostTerminalWindowInfo {
+                id: "@2".to_string(),
+                index: 1,
+                name: "logs".to_string(),
+                active: true,
+            },
+        ];
+        assert_eq!(
+            host_terminal_default_window_target(&with_active),
+            Some("@2".to_string())
+        );
+
+        let without_active = vec![
+            HostTerminalWindowInfo {
+                id: "@9".to_string(),
+                index: 0,
+                name: "first".to_string(),
+                active: false,
+            },
+            HostTerminalWindowInfo {
+                id: "@10".to_string(),
+                index: 1,
+                name: "second".to_string(),
+                active: false,
+            },
+        ];
+        assert_eq!(
+            host_terminal_default_window_target(&without_active),
+            Some("@9".to_string())
+        );
+        let empty: Vec<HostTerminalWindowInfo> = Vec::new();
+        assert_eq!(host_terminal_default_window_target(&empty), None);
     }
 
     #[cfg(feature = "web-ui")]

@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to prevent stale oversized window dimensions across reconnects.
 - Settings > Terminal tmux window polling now continues after tab switches, so
   windows closed with `Ctrl-D` are removed from the tab strip automatically.
+- Settings > Terminal now recovers from stale `?window=` reconnect targets
+  after a tmux window is closed, attaching to the current window instead of
+  getting stuck in a reconnect loop.
 
 ### Security
 
