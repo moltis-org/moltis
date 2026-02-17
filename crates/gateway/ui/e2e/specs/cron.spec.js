@@ -35,6 +35,21 @@ test.describe("Cron jobs page", () => {
 		await expect(content).not.toBeEmpty();
 	});
 
+	test("cron modal exposes model and execution controls", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		await expect(page.getByText("Model (Agent Turn)", { exact: true })).toBeVisible();
+		await expect(page.getByText("Execution Target", { exact: true })).toBeVisible();
+		await expect(page.getByText("Sandbox Image", { exact: true })).toBeVisible();
+
+		await page.locator('[data-field="executionTarget"]').selectOption("host");
+		await expect(page.locator('[data-field="executionTarget"]')).toHaveValue("host");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/crons");
