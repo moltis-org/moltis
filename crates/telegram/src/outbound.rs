@@ -153,12 +153,8 @@ impl ChannelOutbound for TelegramOutbound {
             "telegram outbound text send start"
         );
 
-        for (i, chunk) in chunks.iter().enumerate() {
-            let reply_params = if i == 0 {
-                rp.as_ref()
-            } else {
-                None
-            };
+        for chunk in chunks.iter() {
+            let reply_params = rp.as_ref();
             self.send_chunk_with_fallback(
                 &bot,
                 account_id,
@@ -225,11 +221,7 @@ impl ChannelOutbound for TelegramOutbound {
                         to,
                         chat_id,
                         chunk,
-                        if i == 0 {
-                            rp.as_ref()
-                        } else {
-                            None
-                        },
+                        rp.as_ref(),
                         false,
                     )
                     .await?;
@@ -240,7 +232,7 @@ impl ChannelOutbound for TelegramOutbound {
                         to,
                         chat_id,
                         suffix_html,
-                        None,
+                        rp.as_ref(),
                         true,
                     )
                     .await?;
@@ -264,11 +256,7 @@ impl ChannelOutbound for TelegramOutbound {
                 to,
                 chat_id,
                 &content,
-                if i == 0 {
-                    rp.as_ref()
-                } else {
-                    None
-                },
+                rp.as_ref(),
                 false,
             )
             .await?;
@@ -314,21 +302,9 @@ impl ChannelOutbound for TelegramOutbound {
             "telegram outbound silent text send start"
         );
 
-        for (i, chunk) in chunks.iter().enumerate() {
-            self.send_chunk_with_fallback(
-                &bot,
-                account_id,
-                to,
-                chat_id,
-                chunk,
-                if i == 0 {
-                    rp.as_ref()
-                } else {
-                    None
-                },
-                true,
-            )
-            .await?;
+        for chunk in chunks.iter() {
+            self.send_chunk_with_fallback(&bot, account_id, to, chat_id, chunk, rp.as_ref(), true)
+                .await?;
         }
 
         info!(
@@ -724,7 +700,13 @@ impl ChannelStreamOutbound for TelegramOutbound {
                 // Send remaining chunks as new messages.
                 for chunk in rest {
                     self.send_chunk_with_fallback(
-                        &bot, account_id, to, chat_id, chunk, None, false,
+                        &bot,
+                        account_id,
+                        to,
+                        chat_id,
+                        chunk,
+                        rp.as_ref(),
+                        false,
                     )
                     .await?;
                 }
