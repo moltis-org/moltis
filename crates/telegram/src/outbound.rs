@@ -2,7 +2,9 @@ use {
     anyhow::Result,
     async_trait::async_trait,
     base64::Engine,
+    std::{future::Future, time::Duration},
     teloxide::{
+        RequestError,
         payloads::{SendLocationSetters, SendMessageSetters, SendVenueSetters},
         prelude::*,
         types::{ChatAction, ChatId, InputFile, MessageId, ParseMode, ReplyParameters},
@@ -27,6 +29,8 @@ use crate::{
 pub struct TelegramOutbound {
     pub(crate) accounts: AccountStateMap,
 }
+
+const TELEGRAM_RETRY_AFTER_MAX_RETRIES: usize = 4;
 
 impl TelegramOutbound {
     fn get_bot(&self, account_id: &str) -> Result<Bot> {
@@ -60,15 +64,19 @@ impl TelegramOutbound {
         reply_params: Option<&ReplyParameters>,
         silent: bool,
     ) -> Result<()> {
-        let mut html_req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
-        if silent {
-            html_req = html_req.disable_notification(true);
-        }
-        if let Some(rp) = reply_params {
-            html_req = html_req.reply_parameters(rp.clone());
-        }
-
-        match html_req.await {
+        match self
+            .run_telegram_request_with_retry(account_id, to, "send message (html)", || {
+                let mut html_req = bot.send_message(chat_id, chunk).parse_mode(ParseMode::Html);
+                if silent {
+                    html_req = html_req.disable_notification(true);
+                }
+                if let Some(rp) = reply_params {
+                    html_req = html_req.reply_parameters(rp.clone());
+                }
+                async move { html_req.await }
+            })
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) => {
                 warn!(
@@ -77,14 +85,22 @@ impl TelegramOutbound {
                     error = %e,
                     "telegram HTML send failed, retrying as plain text"
                 );
-                let mut plain_req = bot.send_message(chat_id, chunk);
-                if silent {
-                    plain_req = plain_req.disable_notification(true);
-                }
-                if let Some(rp) = reply_params {
-                    plain_req = plain_req.reply_parameters(rp.clone());
-                }
-                plain_req.await?;
+                self.run_telegram_request_with_retry(
+                    account_id,
+                    to,
+                    "send message (plain)",
+                    || {
+                        let mut plain_req = bot.send_message(chat_id, chunk);
+                        if silent {
+                            plain_req = plain_req.disable_notification(true);
+                        }
+                        if let Some(rp) = reply_params {
+                            plain_req = plain_req.reply_parameters(rp.clone());
+                        }
+                        async move { plain_req.await }
+                    },
+                )
+                .await?;
                 Ok(())
             },
         }
@@ -99,9 +115,13 @@ impl TelegramOutbound {
         message_id: MessageId,
         chunk: &str,
     ) -> Result<()> {
-        match bot
-            .edit_message_text(chat_id, message_id, chunk)
-            .parse_mode(ParseMode::Html)
+        match self
+            .run_telegram_request_with_retry(account_id, to, "edit message (html)", || {
+                let html_req = bot
+                    .edit_message_text(chat_id, message_id, chunk)
+                    .parse_mode(ParseMode::Html);
+                async move { html_req.await }
+            })
             .await
         {
             Ok(_) => Ok(()),
@@ -112,9 +132,68 @@ impl TelegramOutbound {
                     error = %e,
                     "telegram HTML edit failed, retrying as plain text"
                 );
-                bot.edit_message_text(chat_id, message_id, chunk).await?;
+                self.run_telegram_request_with_retry(
+                    account_id,
+                    to,
+                    "edit message (plain)",
+                    || {
+                        let plain_req = bot.edit_message_text(chat_id, message_id, chunk);
+                        async move { plain_req.await }
+                    },
+                )
+                .await?;
                 Ok(())
             },
+        }
+    }
+
+    async fn run_telegram_request_with_retry<T, F, Fut>(
+        &self,
+        account_id: &str,
+        to: &str,
+        operation: &'static str,
+        mut request: F,
+    ) -> std::result::Result<T, RequestError>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = std::result::Result<T, RequestError>>,
+    {
+        let mut retries = 0usize;
+
+        loop {
+            match request().await {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    let Some(wait) = retry_after_duration(&err) else {
+                        return Err(err);
+                    };
+
+                    if retries >= TELEGRAM_RETRY_AFTER_MAX_RETRIES {
+                        warn!(
+                            account_id,
+                            chat_id = to,
+                            operation,
+                            retries,
+                            max_retries = TELEGRAM_RETRY_AFTER_MAX_RETRIES,
+                            retry_after_secs = wait.as_secs(),
+                            "telegram rate limit persisted after retries"
+                        );
+                        return Err(err);
+                    }
+
+                    retries += 1;
+                    warn!(
+                        account_id,
+                        chat_id = to,
+                        operation,
+                        retries,
+                        max_retries = TELEGRAM_RETRY_AFTER_MAX_RETRIES,
+                        retry_after_secs = wait.as_secs(),
+                        "telegram rate limited, waiting before retry"
+                    );
+                    tokio::time::sleep(wait).await;
+                },
+            }
         }
     }
 }
@@ -125,6 +204,13 @@ fn parse_reply_params(reply_to: Option<&str>) -> Option<ReplyParameters> {
     reply_to
         .and_then(|id| id.parse::<i32>().ok())
         .map(|id| ReplyParameters::new(MessageId(id)).allow_sending_without_reply())
+}
+
+fn retry_after_duration(error: &RequestError) -> Option<Duration> {
+    match error {
+        RequestError::RetryAfter(wait) => Some(wait.duration()),
+        _ => None,
+    }
 }
 
 #[async_trait]
@@ -653,16 +739,21 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
 
         // Send initial placeholder
-        let mut placeholder_req = bot.send_message(chat_id, "…").parse_mode(ParseMode::Html);
-        if let Some(ref rp) = rp {
-            placeholder_req = placeholder_req.reply_parameters(rp.clone());
-        }
-        let placeholder = placeholder_req.await?;
+        let placeholder = self
+            .run_telegram_request_with_retry(account_id, to, "send stream placeholder", || {
+                let mut placeholder_req =
+                    bot.send_message(chat_id, "…").parse_mode(ParseMode::Html);
+                if let Some(ref rp) = rp {
+                    placeholder_req = placeholder_req.reply_parameters(rp.clone());
+                }
+                async move { placeholder_req.await }
+            })
+            .await?;
         let msg_id = placeholder.id;
 
         let mut accumulated = String::new();
         let mut last_edit = tokio::time::Instant::now();
-        let throttle = std::time::Duration::from_millis(throttle_ms);
+        let throttle = Duration::from_millis(throttle_ms);
 
         while let Some(event) = stream.recv().await {
             match event {
@@ -673,9 +764,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
                         // Telegram rejects edits with identical content; truncate to limit.
                         let display =
                             markdown::truncate_at_char_boundary(&html, TELEGRAM_MAX_MESSAGE_LEN);
-                        let _ = bot
-                            .edit_message_text(chat_id, msg_id, display)
-                            .parse_mode(ParseMode::Html)
+                        let _ = self
+                            .edit_chunk_with_fallback(&bot, account_id, to, chat_id, msg_id, display)
                             .await;
                         last_edit = tokio::time::Instant::now();
                     }
@@ -729,7 +819,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
 mod tests {
     use {
         super::*,
-        std::{collections::HashMap, sync::Arc},
+        std::{collections::HashMap, sync::Arc, time::Duration},
     };
 
     #[tokio::test]
@@ -747,5 +837,17 @@ mod tests {
             result.unwrap_err().to_string().contains("unknown account"),
             "should report unknown account"
         );
+    }
+
+    #[test]
+    fn retry_after_duration_extracts_wait() {
+        let err = RequestError::RetryAfter(teloxide::types::Seconds::from_seconds(42));
+        assert_eq!(retry_after_duration(&err), Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn retry_after_duration_ignores_other_errors() {
+        let err = RequestError::Io(std::io::Error::other("boom"));
+        assert_eq!(retry_after_duration(&err), None);
     }
 }
