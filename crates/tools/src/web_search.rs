@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -14,10 +14,10 @@ use {
 
 use {
     moltis_agents::tool_registry::AgentTool,
-    moltis_config::schema::{
-        PerplexityConfig, SearchProvider as ConfigSearchProvider, WebSearchConfig,
-    },
+    moltis_config::schema::{SearchProvider as ConfigSearchProvider, WebSearchConfig},
 };
+
+use crate::exec::EnvVarProvider;
 
 /// Cached search result with expiry.
 struct CacheEntry {
@@ -31,7 +31,7 @@ struct CacheEntry {
 /// the tool falls back to DuckDuckGo HTML search.
 pub struct WebSearchTool {
     provider: SearchProvider,
-    api_key: Secret<String>,
+    configured_api_key: Secret<String>,
     max_results: u8,
     timeout: Duration,
     cache_ttl: Duration,
@@ -43,12 +43,17 @@ pub struct WebSearchTool {
     /// When DuckDuckGo returns a CAPTCHA, block it until this instant so
     /// subsequent calls fail fast instead of wasting network round-trips.
     ddg_blocked_until: Mutex<Option<Instant>>,
+    /// Optional runtime env provider (credential store) for hot key updates.
+    env_provider: Option<Arc<dyn EnvVarProvider>>,
 }
 
 #[derive(Debug, Clone)]
 enum SearchProvider {
     Brave,
-    Perplexity { base_url: String, model: String },
+    Perplexity {
+        base_url_override: Option<String>,
+        model: String,
+    },
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -68,27 +73,6 @@ fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) 
 struct BraveResult {
     title: String,
     url: String,
-    description: String,
-}
-
-/// Brave API web search response (subset).
-#[derive(Debug, Deserialize)]
-struct BraveSearchResponse {
-    #[serde(default)]
-    web: Option<BraveWebResults>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BraveWebResults {
-    #[serde(default)]
-    results: Vec<BraveWebResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BraveWebResult {
-    title: String,
-    url: String,
-    #[serde(default)]
     description: String,
 }
 
@@ -144,16 +128,30 @@ impl WebSearchTool {
                 ))
             },
             ConfigSearchProvider::Perplexity => {
-                let (api_key, base_url) =
-                    resolve_perplexity_config(&config.perplexity, env_overrides);
+                let api_key = config
+                    .perplexity
+                    .api_key
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .or_else(|| env_value_with_overrides(env_overrides, "PERPLEXITY_API_KEY"))
+                    .or_else(|| env_value_with_overrides(env_overrides, "OPENROUTER_API_KEY"))
+                    .unwrap_or_default();
+                let base_url_override = config
+                    .perplexity
+                    .base_url
+                    .clone()
+                    .filter(|value| !value.trim().is_empty());
                 let model = config
                     .perplexity
                     .model
                     .clone()
                     .unwrap_or_else(|| "perplexity/sonar-pro".into());
                 Some(Self::new(
-                    SearchProvider::Perplexity { base_url, model },
-                    api_key,
+                    SearchProvider::Perplexity {
+                        base_url_override,
+                        model,
+                    },
+                    Secret::new(api_key),
                     config.max_results,
                     Duration::from_secs(config.timeout_seconds),
                     Duration::from_secs(config.cache_ttl_minutes * 60),
@@ -165,7 +163,7 @@ impl WebSearchTool {
 
     fn new(
         provider: SearchProvider,
-        api_key: Secret<String>,
+        configured_api_key: Secret<String>,
         max_results: u8,
         timeout: Duration,
         cache_ttl: Duration,
@@ -173,14 +171,81 @@ impl WebSearchTool {
     ) -> Self {
         Self {
             provider,
-            api_key,
+            configured_api_key,
             max_results,
             timeout,
             cache_ttl,
             cache: Mutex::new(HashMap::new()),
             fallback_enabled,
             ddg_blocked_until: Mutex::new(None),
+            env_provider: None,
         }
+    }
+
+    /// Attach a runtime environment provider (credential store).
+    pub fn with_env_provider(mut self, provider: Arc<dyn EnvVarProvider>) -> Self {
+        self.env_provider = Some(provider);
+        self
+    }
+
+    async fn runtime_env_values(&self) -> HashMap<String, String> {
+        let Some(provider) = self.env_provider.as_ref() else {
+            return HashMap::new();
+        };
+
+        provider
+            .get_env_vars()
+            .await
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let value = value.expose_secret().clone();
+                if key.trim().is_empty() || value.trim().is_empty() {
+                    None
+                } else {
+                    Some((key, value))
+                }
+            })
+            .collect()
+    }
+
+    fn lookup_env_value(env_values: &HashMap<String, String>, key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                env_values
+                    .get(key)
+                    .cloned()
+                    .filter(|value| !value.trim().is_empty())
+            })
+    }
+
+    fn api_key_candidates(&self) -> &'static [&'static str] {
+        match &self.provider {
+            SearchProvider::Brave => &["BRAVE_API_KEY"],
+            SearchProvider::Perplexity { .. } => &["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
+        }
+    }
+
+    #[cfg(test)]
+    async fn env_value_with_provider(&self, key: &str) -> Option<String> {
+        let runtime_env = self.runtime_env_values().await;
+        Self::lookup_env_value(&runtime_env, key)
+    }
+
+    async fn current_api_key(&self) -> String {
+        let configured = self.configured_api_key.expose_secret();
+        if !configured.trim().is_empty() {
+            return configured.clone();
+        }
+
+        let runtime_env = self.runtime_env_values().await;
+        for key in self.api_key_candidates() {
+            if let Some(value) = Self::lookup_env_value(&runtime_env, key) {
+                return value;
+            }
+        }
+        String::new()
     }
 
     fn cache_get(&self, key: &str) -> Option<serde_json::Value> {
@@ -216,8 +281,9 @@ impl WebSearchTool {
         count: u8,
         params: &serde_json::Value,
         accept_language: Option<&str>,
+        api_key: &str,
     ) -> Result<serde_json::Value> {
-        if self.api_key.expose_secret().is_empty() {
+        if api_key.trim().is_empty() {
             return Ok(serde_json::json!({
                 "error": "Brave Search API key not configured",
                 "hint": "Set BRAVE_API_KEY environment variable or tools.web.search.api_key in config"
@@ -247,11 +313,7 @@ impl WebSearchTool {
         let mut req = client
             .get(&url)
             .header("Accept", "application/json")
-            .header("Accept-Encoding", "gzip")
-            .header(
-                "X-Subscription-Token",
-                self.api_key.expose_secret().as_str(),
-            );
+            .header("X-Subscription-Token", api_key);
         if let Some(lang) = accept_language {
             req = req.header("Accept-Language", lang);
         }
@@ -263,20 +325,15 @@ impl WebSearchTool {
             bail!("Brave Search API returned {status}: {body}");
         }
 
-        let brave_resp: BraveSearchResponse = resp.json().await?;
-        let results: Vec<BraveResult> = brave_resp
-            .web
-            .map(|w| {
-                w.results
-                    .into_iter()
-                    .map(|r| BraveResult {
-                        title: r.title,
-                        url: r.url,
-                        description: r.description,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let body_text = resp
+            .text()
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to read Brave response body: {error}"))?;
+        let body: serde_json::Value = serde_json::from_str(&body_text).map_err(|error| {
+            let snippet: String = body_text.chars().take(400).collect();
+            anyhow::anyhow!("failed to parse Brave JSON body: {error}; body starts with: {snippet}")
+        })?;
+        let results = parse_brave_results(&body);
 
         Ok(serde_json::json!({
             "provider": "brave",
@@ -288,10 +345,11 @@ impl WebSearchTool {
     async fn search_perplexity(
         &self,
         query: &str,
+        api_key: &str,
         base_url: &str,
         model: &str,
     ) -> Result<serde_json::Value> {
-        if self.api_key.expose_secret().is_empty() {
+        if api_key.trim().is_empty() {
             return Ok(serde_json::json!({
                 "error": "Perplexity API key not configured",
                 "hint": "Set PERPLEXITY_API_KEY or OPENROUTER_API_KEY environment variable, or tools.web.search.perplexity.api_key in config"
@@ -309,10 +367,7 @@ impl WebSearchTool {
 
         let resp = client
             .post(format!("{base_url}/chat/completions"))
-            .header(
-                "Authorization",
-                format!("Bearer {}", self.api_key.expose_secret()),
-            )
+            .header("Authorization", format!("Bearer {api_key}"))
             .json(&body)
             .send()
             .await?;
@@ -402,34 +457,60 @@ impl WebSearchTool {
     }
 }
 
-/// Resolve Perplexity API key and base URL from config / env.
-fn resolve_perplexity_config(
-    cfg: &PerplexityConfig,
-    env_overrides: &HashMap<String, String>,
-) -> (Secret<String>, String) {
-    let api_key = cfg
-        .api_key
-        .as_ref()
-        .map(|s| s.expose_secret().clone())
-        .or_else(|| env_value_with_overrides(env_overrides, "PERPLEXITY_API_KEY"))
-        .or_else(|| env_value_with_overrides(env_overrides, "OPENROUTER_API_KEY"))
-        .unwrap_or_default();
-
-    let base_url = cfg.base_url.clone().unwrap_or_else(|| {
-        if api_key.starts_with("pplx-") {
-            "https://api.perplexity.ai".into()
-        } else {
-            // Assume OpenRouter for sk-or- or other keys.
-            "https://openrouter.ai/api/v1".into()
-        }
-    });
-
-    (Secret::new(api_key), base_url)
+fn resolve_perplexity_base_url(base_url_override: Option<&str>, api_key: &str) -> String {
+    if let Some(base_url) = base_url_override {
+        return base_url.to_string();
+    }
+    if api_key.starts_with("pplx-") {
+        "https://api.perplexity.ai".to_string()
+    } else {
+        // Assume OpenRouter for sk-or- or other keys.
+        "https://openrouter.ai/api/v1".to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // DuckDuckGo HTML parsing helpers
 // ---------------------------------------------------------------------------
+
+/// Parse Brave JSON response into normalized result rows.
+fn parse_brave_results(body: &serde_json::Value) -> Vec<BraveResult> {
+    body.get("web")
+        .and_then(|web| web.get("results"))
+        .and_then(serde_json::Value::as_array)
+        .map(|results| {
+            results
+                .iter()
+                .filter_map(|result| {
+                    let title = result
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    let url = result
+                        .get("url")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if title.is_empty() || url.is_empty() {
+                        return None;
+                    }
+                    let description = result
+                        .get("description")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+
+                    Some(BraveResult {
+                        title: title.to_string(),
+                        url: url.to_string(),
+                        description,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Parse DuckDuckGo HTML search results into structured result objects.
 fn parse_duckduckgo_html(html: &str, max_results: u8) -> Vec<serde_json::Value> {
@@ -615,8 +696,16 @@ impl AgentTool for WebSearchTool {
             .map(|n| n.clamp(1, 10) as u8)
             .unwrap_or(self.max_results);
 
-        // Check cache.
-        let cache_key = format!("{:?}:{query}:{count}", self.provider);
+        let api_key = self.current_api_key().await;
+
+        // Include key presence in cache key so hot key changes invalidate stale
+        // no-key results.
+        let key_state = if api_key.is_empty() {
+            "no-key"
+        } else {
+            "has-key"
+        };
+        let cache_key = format!("{:?}:{key_state}:{query}:{count}", self.provider);
         if let Some(cached) = self.cache_get(&cache_key) {
             debug!("web_search cache hit for: {query}");
             return Ok(cached);
@@ -630,7 +719,7 @@ impl AgentTool for WebSearchTool {
         // straight to the DuckDuckGo fallback. This avoids a pointless
         // round-trip that always returns an error and prevents the LLM from
         // retrying repeatedly.
-        let result = if self.fallback_enabled && self.api_key.expose_secret().is_empty() {
+        let result = if self.fallback_enabled && api_key.is_empty() {
             warn!(
                 provider = ?self.provider,
                 "search API key not configured, using DuckDuckGo directly"
@@ -639,11 +728,17 @@ impl AgentTool for WebSearchTool {
         } else {
             match &self.provider {
                 SearchProvider::Brave => {
-                    self.search_brave(query, count, &params, accept_language)
+                    self.search_brave(query, count, &params, accept_language, &api_key)
                         .await?
                 },
-                SearchProvider::Perplexity { base_url, model } => {
-                    self.search_perplexity(query, base_url, model).await?
+                SearchProvider::Perplexity {
+                    base_url_override,
+                    model,
+                } => {
+                    let base_url =
+                        resolve_perplexity_base_url(base_url_override.as_deref(), &api_key);
+                    self.search_perplexity(query, &api_key, &base_url, model)
+                        .await?
                 },
             }
         };
@@ -656,7 +751,21 @@ impl AgentTool for WebSearchTool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::sync::Arc};
+
+    struct MockEnvProvider {
+        vars: Vec<(String, String)>,
+    }
+
+    #[async_trait]
+    impl EnvVarProvider for MockEnvProvider {
+        async fn get_env_vars(&self) -> Vec<(String, Secret<String>)> {
+            self.vars
+                .iter()
+                .map(|(k, v)| (k.clone(), Secret::new(v.clone())))
+                .collect()
+        }
+    }
 
     fn brave_tool() -> WebSearchTool {
         WebSearchTool::new(
@@ -672,7 +781,7 @@ mod tests {
     fn perplexity_tool() -> WebSearchTool {
         WebSearchTool::new(
             SearchProvider::Perplexity {
-                base_url: "https://api.perplexity.ai".into(),
+                base_url_override: Some("https://api.perplexity.ai".into()),
                 model: "sonar-pro".into(),
             },
             Secret::new(String::new()),
@@ -768,10 +877,27 @@ mod tests {
                 ]
             }
         });
-        let resp: BraveSearchResponse = serde_json::from_value(json).unwrap();
-        let results = resp.web.unwrap().results;
+        let results = parse_brave_results(&json);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust");
+    }
+
+    #[test]
+    fn test_brave_response_parsing_tolerates_nulls() {
+        let json = serde_json::json!({
+            "web": {
+                "results": [
+                    {"title": "Valid", "url": "https://example.com", "description": null},
+                    {"title": null, "url": "https://invalid.example", "description": "ignored"},
+                    {"title": "MissingUrl", "url": null, "description": "ignored"}
+                ]
+            }
+        });
+        let results = parse_brave_results(&json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid");
+        assert_eq!(results[0].url, "https://example.com");
+        assert_eq!(results[0].description, "");
     }
 
     #[test]
@@ -786,27 +912,53 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_perplexity_config_pplx_prefix() {
-        let cfg = PerplexityConfig {
-            api_key: Some(Secret::new("pplx-abc123".to_string())),
-            base_url: None,
-            model: None,
-        };
-        let (key, url) = resolve_perplexity_config(&cfg, &HashMap::new());
-        assert_eq!(key.expose_secret(), "pplx-abc123");
+    fn test_resolve_perplexity_base_url_pplx_prefix() {
+        let url = resolve_perplexity_base_url(None, "pplx-abc123");
         assert!(url.contains("perplexity.ai"));
     }
 
     #[test]
-    fn test_resolve_perplexity_config_openrouter_prefix() {
-        let cfg = PerplexityConfig {
-            api_key: Some(Secret::new("sk-or-abc123".to_string())),
-            base_url: None,
-            model: None,
-        };
-        let (key, url) = resolve_perplexity_config(&cfg, &HashMap::new());
-        assert_eq!(key.expose_secret(), "sk-or-abc123");
+    fn test_resolve_perplexity_base_url_openrouter_prefix() {
+        let url = resolve_perplexity_base_url(None, "sk-or-abc123");
         assert!(url.contains("openrouter.ai"));
+    }
+
+    #[test]
+    fn test_resolve_perplexity_base_url_respects_override() {
+        let url = resolve_perplexity_base_url(Some("https://custom.example"), "pplx-abc123");
+        assert_eq!(url, "https://custom.example");
+    }
+
+    #[tokio::test]
+    async fn test_env_value_with_provider_uses_runtime_env_values() {
+        let key = format!("MOLTIS_TEST_DYNAMIC_KEY_{}", std::process::id());
+        let provider = Arc::new(MockEnvProvider {
+            vars: vec![(key.clone(), "dynamic-value".to_string())],
+        });
+        let tool = brave_tool().with_env_provider(provider);
+
+        assert_eq!(
+            tool.env_value_with_provider(&key).await.as_deref(),
+            Some("dynamic-value")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_current_api_key_prefers_configured_value() {
+        let provider = Arc::new(MockEnvProvider {
+            vars: vec![("BRAVE_API_KEY".to_string(), "runtime-key".to_string())],
+        });
+        let tool = WebSearchTool::new(
+            SearchProvider::Brave,
+            Secret::new("configured-key".to_string()),
+            5,
+            Duration::from_secs(10),
+            Duration::from_secs(60),
+            false,
+        )
+        .with_env_provider(provider);
+
+        assert_eq!(tool.current_api_key().await, "configured-key");
     }
 
     #[test]

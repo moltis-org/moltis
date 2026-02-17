@@ -2679,7 +2679,7 @@ pub async fn start_gateway(
         let exec_tool = moltis_tools::exec::ExecTool::default()
             .with_approval(Arc::clone(&approval_manager), broadcaster)
             .with_sandbox_router(Arc::clone(&sandbox_router))
-            .with_env_provider(env_provider);
+            .with_env_provider(Arc::clone(&env_provider));
 
         let cron_tool = moltis_tools::cron_tool::CronTool::new(Arc::clone(&cron_service));
 
@@ -2699,7 +2699,7 @@ pub async fn start_gateway(
             &config.tools.web.search,
             &runtime_env_overrides,
         ) {
-            tool_registry.register(Box::new(t));
+            tool_registry.register(Box::new(t.with_env_provider(Arc::clone(&env_provider))));
         }
         if let Some(t) = moltis_tools::web_fetch::WebFetchTool::from_config(&config.tools.web.fetch)
         {
