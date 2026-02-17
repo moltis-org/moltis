@@ -47,6 +47,38 @@ async fn resolve_channel_session(
     default_channel_session_key(target)
 }
 
+fn slash_command_name(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix('/')?;
+    let cmd = rest.split_whitespace().next().unwrap_or("");
+    if cmd.is_empty() {
+        None
+    } else {
+        Some(cmd)
+    }
+}
+
+fn is_channel_control_command_name(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help" | "sh"
+    )
+}
+
+fn rewrite_for_shell_mode(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(cmd) = slash_command_name(trimmed)
+        && is_channel_control_command_name(cmd)
+    {
+        return None;
+    }
+
+    Some(format!("/sh {trimmed}"))
+}
+
 /// Broadcasts channel events over the gateway WebSocket.
 ///
 /// Uses a deferred `OnceCell` reference so the sink can be created before
@@ -91,6 +123,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 resolve_channel_session(&reply_to, sm).await
             } else {
                 default_channel_session_key(&reply_to)
+            };
+            let effective_text = if state.is_channel_command_mode_enabled(&session_key).await {
+                rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
+            } else {
+                text.to_string()
             };
 
             // Broadcast a "chat" event so the web UI shows the user message
@@ -143,7 +180,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
 
             let chat = state.chat().await;
             let mut params = serde_json::json!({
-                "text": text,
+                "text": effective_text,
                 "channel": &meta,
                 "_session_key": &session_key,
                 // Defer reply-target registration until chat.send() actually
@@ -1253,6 +1290,43 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     Err(anyhow!("usage: /sandbox [on|off|image N]"))
                 }
             },
+            "sh" => {
+                let route = if let Some(ref router) = state.sandbox_router {
+                    if router.is_sandboxed(&session_key).await {
+                        "sandboxed"
+                    } else {
+                        "host"
+                    }
+                } else {
+                    "host"
+                };
+
+                match args {
+                    "" | "on" => {
+                        state.set_channel_command_mode(&session_key, true).await;
+                        Ok(format!(
+                            "Command mode enabled ({route}). Send commands as plain messages. Use /sh off (or /sh exit) to leave."
+                        ))
+                    },
+                    "off" | "exit" => {
+                        state.set_channel_command_mode(&session_key, false).await;
+                        Ok("Command mode disabled. Back to normal chat mode.".to_string())
+                    },
+                    "status" => {
+                        let enabled = state.is_channel_command_mode_enabled(&session_key).await;
+                        if enabled {
+                            Ok(format!(
+                                "Command mode is enabled ({route}). Use /sh off (or /sh exit) to leave."
+                            ))
+                        } else {
+                            Ok(format!(
+                                "Command mode is disabled ({route}). Use /sh to enable."
+                            ))
+                        }
+                    },
+                    _ => Err(anyhow!("usage: /sh [on|off|exit|status]")),
+                }
+            },
             _ => Err(anyhow!("unknown command: /{cmd}")),
         }
     }
@@ -1355,5 +1429,19 @@ mod tests {
         assert_eq!(json["kind"], "inbound_message");
         assert!(json["username"].is_null());
         assert_eq!(json["access_granted"], false);
+    }
+
+    #[test]
+    fn shell_mode_rewrite_plain_text() {
+        assert_eq!(
+            rewrite_for_shell_mode("uname -a").as_deref(),
+            Some("/sh uname -a")
+        );
+    }
+
+    #[test]
+    fn shell_mode_rewrite_skips_control_commands() {
+        assert!(rewrite_for_shell_mode("/context").is_none());
+        assert!(rewrite_for_shell_mode("/sh uname -a").is_none());
     }
 }

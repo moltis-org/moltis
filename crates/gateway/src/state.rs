@@ -289,6 +289,8 @@ pub struct GatewayInner {
     /// Per-session buffer for channel status messages (tool use, model selection).
     /// Drained when the final response is delivered to the channel.
     pub channel_status_log: HashMap<String, Vec<String>>,
+    /// Sessions currently in channel command mode (/sh passthrough).
+    pub channel_command_mode_sessions: HashSet<String>,
 }
 
 impl GatewayInner {
@@ -319,6 +321,7 @@ impl GatewayInner {
             llm_providers: None,
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
+            channel_command_mode_sessions: HashSet::new(),
         }
     }
 
@@ -595,6 +598,27 @@ impl GatewayState {
             .channel_status_log
             .remove(session_key)
             .unwrap_or_default()
+    }
+
+    /// Enable or disable /sh command mode for a channel session.
+    pub async fn set_channel_command_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner
+                .channel_command_mode_sessions
+                .insert(session_key.to_string());
+        } else {
+            inner.channel_command_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether /sh command mode is enabled for a channel session.
+    pub async fn is_channel_command_mode_enabled(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .channel_command_mode_sessions
+            .contains(session_key)
     }
 
     /// Close a client: remove from registry and unregister from nodes.

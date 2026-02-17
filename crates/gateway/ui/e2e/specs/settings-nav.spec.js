@@ -181,6 +181,19 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();
 	});
 
+	test("terminal page renders from settings", async ({ page }) => {
+		await navigateAndWait(page, "/settings/terminal");
+		await expect(page.getByRole("heading", { name: "Terminal", exact: true })).toBeVisible();
+		await expect(page.locator("#terminalOutput .xterm")).toHaveCount(1);
+		await expect(page.locator("#terminalInput")).toHaveCount(0);
+		await expect(page.locator("#terminalSize")).toHaveCount(1);
+		await expect(page.locator("#terminalSize")).toHaveText(/.+/);
+		await expect(page.locator("#terminalTabs")).toHaveCount(1);
+		await expect(page.locator("#terminalNewTab")).toHaveCount(1);
+		await expect(page.locator("#terminalHintActions")).toHaveCount(1);
+		await expect(page.locator("#terminalInstallTmux")).toHaveCount(1);
+	});
+
 	test("channels add telegram token field is treated as a password", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/channels");
@@ -222,6 +235,7 @@ test.describe("Settings navigation", () => {
 			"MCP",
 			"Skills",
 			"Voice",
+			"Terminal",
 			"Sandboxes",
 			"Monitoring",
 			"Logs",
@@ -236,6 +250,9 @@ test.describe("Settings navigation", () => {
 
 		const logsNavItem = page.locator(".settings-nav-item", { hasText: "Logs" });
 		await expect(logsNavItem.locator(".icon-document")).toHaveCount(1);
+
+		const terminalNavItem = page.locator(".settings-nav-item", { hasText: "Terminal" });
+		await expect(terminalNavItem.locator(".icon-terminal")).toHaveCount(1);
 
 		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
 		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);

@@ -142,6 +142,50 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("final footer shows token speed with slow/fast tones", async ({ page }) => {
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "slow reply",
+				messageIndex: 999903,
+				model: "test-model",
+				provider: "test-provider",
+				inputTokens: 100,
+				outputTokens: 6,
+				durationMs: 3000,
+				replyMedium: "text",
+			},
+		});
+
+		const slowAssistant = page.locator("#messages .msg.assistant").last();
+		await expect(slowAssistant.locator(".msg-token-speed.msg-token-speed-slow")).toContainText("tok/s");
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "fast reply",
+				messageIndex: 999904,
+				model: "test-model",
+				provider: "test-provider",
+				inputTokens: 120,
+				outputTokens: 90,
+				durationMs: 2000,
+				replyMedium: "text",
+			},
+		});
+
+		const fastAssistant = page.locator("#messages .msg.assistant").last();
+		await expect(fastAssistant.locator(".msg-token-speed.msg-token-speed-fast")).toContainText("tok/s");
+	});
+
 	test("voice fallback action and warning render for voice final without audio", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");

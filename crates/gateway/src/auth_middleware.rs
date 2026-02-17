@@ -121,7 +121,7 @@ pub async fn auth_gate(
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
-            } else if path.starts_with("/api/") || path == "/ws" {
+            } else if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": "setup required"})),
@@ -132,7 +132,7 @@ pub async fn auth_gate(
             }
         },
         AuthResult::Unauthorized => {
-            if path.starts_with("/api/") || path == "/ws" {
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({"error": "not authenticated"})),
@@ -244,5 +244,17 @@ mod tests {
         );
         assert_eq!(parse_cookie("other=def", "moltis_session"), None);
         assert_eq!(parse_cookie("", "moltis_session"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn terminal_ws_path_is_not_public() {
+        assert!(!is_public_path("/api/terminal/ws"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn chat_ws_path_is_not_public() {
+        assert!(!is_public_path("/ws/chat"));
     }
 }

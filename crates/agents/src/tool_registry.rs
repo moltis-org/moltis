@@ -83,6 +83,11 @@ impl ToolRegistry {
         self.tools.get(name).map(|e| e.tool.as_ref())
     }
 
+    /// Return a cloned tool handle by name.
+    pub fn get_arc(&self, name: &str) -> Option<Arc<dyn AgentTool>> {
+        self.tools.get(name).map(|e| Arc::clone(&e.tool))
+    }
+
     pub fn list_schemas(&self) -> Vec<serde_json::Value> {
         self.tools
             .values()
@@ -338,6 +343,16 @@ mod tests {
         let mut names = registry.list_names();
         names.sort();
         assert_eq!(names, vec!["exec".to_string(), "web_fetch".to_string()]);
+    }
+
+    #[test]
+    fn test_get_arc_returns_cloned_tool_handle() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DummyTool {
+            name: "exec".to_string(),
+        }));
+        assert!(registry.get_arc("exec").is_some());
+        assert!(registry.get_arc("missing").is_none());
     }
 
     #[test]

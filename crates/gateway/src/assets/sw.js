@@ -50,7 +50,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   // API requests - network only (no caching)
-  if (url.pathname.startsWith("/api/") || url.pathname === "/ws") {
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/ws/")) {
     return;
   }
 

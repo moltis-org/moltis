@@ -13,12 +13,14 @@ import {
 } from "./chat-ui.js";
 import { eventListeners } from "./events.js";
 import {
+	formatTokenSpeed,
 	formatTokens,
 	renderAudioPlayer,
 	renderMapLinks,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
+	tokenSpeedTone,
 	toolCallSummary,
 } from "./helpers.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
@@ -403,7 +405,20 @@ function appendFinalFooter(msgEl, p, eventSession) {
 	if (p.inputTokens || p.outputTokens) {
 		footerText += ` \u00b7 ${formatTokens(p.inputTokens || 0)} in / ${formatTokens(p.outputTokens || 0)} out`;
 	}
-	footer.textContent = footerText;
+	var textSpan = document.createElement("span");
+	textSpan.textContent = footerText;
+	footer.appendChild(textSpan);
+
+	var speedLabel = formatTokenSpeed(p.outputTokens || 0, p.durationMs || 0);
+	if (speedLabel) {
+		var speed = document.createElement("span");
+		speed.className = "msg-token-speed";
+		var tone = tokenSpeedTone(p.outputTokens || 0, p.durationMs || 0);
+		if (tone) speed.classList.add(`msg-token-speed-${tone}`);
+		speed.textContent = ` \u00b7 ${speedLabel}`;
+		footer.appendChild(speed);
+	}
+
 	if (p.replyMedium === "voice" || p.replyMedium === "text") {
 		var badge = document.createElement("span");
 		badge.className = "reply-medium-badge";
@@ -522,8 +537,13 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 	if (p.inputTokens || p.outputTokens) {
 		S.sessionTokens.input += p.inputTokens || 0;
 		S.sessionTokens.output += p.outputTokens || 0;
-		updateTokenBar();
 	}
+	if (p.requestInputTokens !== undefined && p.requestInputTokens !== null) {
+		S.setSessionCurrentInputTokens(p.requestInputTokens || 0);
+	} else if (p.inputTokens || p.outputTokens) {
+		S.setSessionCurrentInputTokens(p.inputTokens || 0);
+	}
+	updateTokenBar();
 	appendLastMessageTimestamp(Date.now());
 	// Reset per-session stream state
 	var finalSession = sessionStore.getByKey(eventSession);
@@ -548,6 +568,7 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		renderCompactCard(p);
 		S.setSessionTokens({ input: 0, output: 0 });
+		S.setSessionCurrentInputTokens(0);
 		updateTokenBar();
 	} else if (p.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
@@ -619,9 +640,19 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 
 function handleChatNotice(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
-	// Show notice message with title if provided
+	// Render titled notices as markdown so emphasis is visible.
 	var msg = p.title ? `**${p.title}:** ${p.message}` : p.message;
-	chatAddMsg("system", msg);
+	var noticeEl = p.title ? chatAddMsg("system", renderMarkdown(msg), true) : chatAddMsg("system", msg);
+	if (!(noticeEl && p.title)) return;
+	noticeEl.classList.add("system-notice");
+	if (String(p.title).toLowerCase() !== "sandbox") return;
+	noticeEl.classList.add("system-notice-sandbox");
+	var normalizedMessage = String(p.message || "").toLowerCase();
+	if (normalizedMessage.indexOf("enabled") !== -1) {
+		noticeEl.classList.add("is-enabled");
+	} else if (normalizedMessage.indexOf("disabled") !== -1) {
+		noticeEl.classList.add("is-disabled");
+	}
 }
 
 function handleChatQueueCleared(_p, isActive, isChatPage) {
@@ -652,6 +683,7 @@ function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
 	// Active viewer: clear the chat box and token bar.
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setSessionTokens({ input: 0, output: 0 });
+	S.setSessionCurrentInputTokens(0);
 	updateTokenBar();
 }
 

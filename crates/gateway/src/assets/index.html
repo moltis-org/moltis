@@ -48,7 +48,9 @@
     "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
     "luxon": "{{ asset_prefix }}js/vendor/luxon.mjs",
     "uplot": "{{ asset_prefix }}js/vendor/uplot.mjs",
-    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs"
+    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs",
+    "@xterm/xterm": "{{ asset_prefix }}js/vendor/xterm.mjs",
+    "@xterm/addon-fit": "{{ asset_prefix }}js/vendor/xterm-addon-fit.mjs"
   }
 }
 </script>
@@ -57,6 +59,7 @@
 <link rel="stylesheet" href="{{ asset_prefix }}css/chat.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/mobile.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/vendor/xterm.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/uplot.css">
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
 <link rel="modulepreload" href="{{ asset_prefix }}js/app.js">

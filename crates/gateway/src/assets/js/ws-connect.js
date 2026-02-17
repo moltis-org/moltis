@@ -20,7 +20,7 @@ export function connectWs(opts) {
 	lastOpts = opts;
 	var backoff = Object.assign({ factor: 1.5, max: 5000 }, opts.backoff);
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
-	var ws = new WebSocket(`${proto}//${location.host}/ws`);
+	var ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
 	S.setWs(ws);
 
 	ws.onopen = () => {

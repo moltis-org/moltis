@@ -26,6 +26,8 @@ export var chatSeq = 0;
 
 // Session token usage tracking (cumulative for the current session)
 export var sessionTokens = { input: 0, output: 0 };
+// Last observed prompt input tokens (context pressure for the next turn).
+export var sessionCurrentInputTokens = 0;
 
 // Model selector elements — created dynamically inside the chat page
 export var modelCombo = null;
@@ -64,6 +66,10 @@ export var sessionSwitchInProgress = false;
 export var lastHistoryIndex = -1;
 export var sessionContextWindow = 0;
 export var sessionToolsEnabled = true;
+export var sessionExecMode = "host";
+export var sessionExecPromptSymbol = "$";
+export var hostExecIsRoot = false;
+export var commandModeEnabled = false;
 
 // Provider/channel page refresh callbacks
 export var refreshProvidersPage = null;
@@ -153,6 +159,9 @@ export function setChatSeq(v) {
 export function setSessionTokens(v) {
 	sessionTokens = v;
 }
+export function setSessionCurrentInputTokens(v) {
+	sessionCurrentInputTokens = v;
+}
 export function setModelCombo(v) {
 	modelCombo = v;
 }
@@ -237,6 +246,18 @@ export function setSessionContextWindow(v) {
 }
 export function setSessionToolsEnabled(v) {
 	sessionToolsEnabled = v;
+}
+export function setSessionExecMode(v) {
+	sessionExecMode = v;
+}
+export function setSessionExecPromptSymbol(v) {
+	sessionExecPromptSymbol = v;
+}
+export function setHostExecIsRoot(v) {
+	hostExecIsRoot = !!v;
+}
+export function setCommandModeEnabled(v) {
+	commandModeEnabled = !!v;
 }
 export function setRefreshProvidersPage(v) {
 	refreshProvidersPage = v;

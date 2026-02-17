@@ -46,6 +46,7 @@ moltis-tools       = { workspace = true }
 moltis-voice       = { optional = true, workspace = true }
 p256               = { features = ["ecdsa"], optional = true, workspace = true }
 password-hash      = { workspace = true }
+portable-pty       = { optional = true, workspace = true }
 pulldown-cmark     = { features = ["html"], workspace = true }
 rand               = { workspace = true }
 rcgen              = { optional = true, workspace = true }
@@ -77,6 +78,7 @@ webauthn-rs-proto  = { workspace = true }
 openssl     = { workspace = true }
 url         = { workspace = true }
 urlencoding = { workspace = true }
+which       = { optional = true, workspace = true }
 
 [features]
 default = [
@@ -110,7 +112,7 @@ tls = [
   "dep:tokio-rustls",
 ]
 voice = ["dep:moltis-voice"]
-web-ui = ["dep:askama", "dep:chrono", "dep:include_dir"]
+web-ui = ["dep:askama", "dep:chrono", "dep:include_dir", "dep:portable-pty", "dep:which"]
 
 [dev-dependencies]
 reqwest           = { workspace = true }

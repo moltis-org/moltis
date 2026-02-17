@@ -9,15 +9,18 @@ import {
 	removeThinking,
 	scrollChatToBottom,
 	stripChannelPrefix,
+	updateCommandInputUI,
 	updateTokenBar,
 } from "./chat-ui.js";
 import * as gon from "./gon.js";
 import {
+	formatTokenSpeed,
 	formatTokens,
 	renderAudioPlayer,
 	renderMarkdown,
 	renderScreenshot,
 	sendRpc,
+	tokenSpeedTone,
 	toolCallSummary,
 } from "./helpers.js";
 import { attachMessageVoiceControl } from "./message-voice.js";
@@ -83,6 +86,7 @@ export function clearActiveSession() {
 		if (res?.ok) {
 			if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 			S.setSessionTokens({ input: 0, output: 0 });
+			S.setSessionCurrentInputTokens(0);
 			updateTokenBar();
 			var activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			var session = sessionStore.getByKey(activeKey);
@@ -277,6 +281,11 @@ function restoreSessionState(entry, projectId) {
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);
+	var sandboxRuntimeAvailable = (S.sandboxInfo?.backend || "none") !== "none";
+	var effectiveSandboxRoute = entry.sandbox_enabled !== false && sandboxRuntimeAvailable;
+	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
+	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
+	updateCommandInputUI();
 	restoreMcpToggle(!entry.mcpDisabled);
 	updateChatSessionHeader();
 }
@@ -349,7 +358,19 @@ function createModelFooter(msg) {
 	if (msg.inputTokens || msg.outputTokens) {
 		ftText += ` \u00b7 ${formatTokens(msg.inputTokens || 0)} in / ${formatTokens(msg.outputTokens || 0)} out`;
 	}
-	ft.textContent = ftText;
+	var textSpan = document.createElement("span");
+	textSpan.textContent = ftText;
+	ft.appendChild(textSpan);
+
+	var speedLabel = formatTokenSpeed(msg.outputTokens || 0, msg.durationMs || 0);
+	if (speedLabel) {
+		var speed = document.createElement("span");
+		speed.className = "msg-token-speed";
+		var tone = tokenSpeedTone(msg.outputTokens || 0, msg.durationMs || 0);
+		if (tone) speed.classList.add(`msg-token-speed-${tone}`);
+		speed.textContent = ` \u00b7 ${speedLabel}`;
+		ft.appendChild(speed);
+	}
 	return ft;
 }
 
@@ -398,6 +419,11 @@ function renderHistoryAssistantMessage(msg) {
 	if (msg.inputTokens || msg.outputTokens) {
 		S.sessionTokens.input += msg.inputTokens || 0;
 		S.sessionTokens.output += msg.outputTokens || 0;
+	}
+	if (msg.requestInputTokens !== undefined && msg.requestInputTokens !== null) {
+		S.setSessionCurrentInputTokens(msg.requestInputTokens || 0);
+	} else if (msg.inputTokens || msg.outputTokens) {
+		S.setSessionCurrentInputTokens(msg.inputTokens || 0);
 	}
 	return el;
 }
@@ -509,9 +535,21 @@ function postHistoryLoadActions(key, searchContext, msgEls, thinkingText) {
 					input: tu.inputTokens || 0,
 					output: tu.outputTokens || 0,
 				});
+				S.setSessionCurrentInputTokens(tu.estimatedNextInputTokens || tu.currentInputTokens || tu.inputTokens || 0);
 			}
 			S.setSessionToolsEnabled(ctxRes.payload.supportsTools !== false);
+			var execution = ctxRes.payload.execution || {};
+			var mode = execution.mode === "sandbox" ? "sandbox" : "host";
+			var hostIsRoot = execution.hostIsRoot === true;
+			var isRoot = execution.isRoot;
+			if (typeof isRoot !== "boolean") {
+				isRoot = mode === "sandbox" ? true : hostIsRoot;
+			}
+			S.setHostExecIsRoot(hostIsRoot);
+			S.setSessionExecMode(mode);
+			S.setSessionExecPromptSymbol(isRoot ? "#" : "$");
 		}
+		updateCommandInputUI();
 		updateTokenBar();
 	});
 	updateTokenBar();
@@ -623,6 +661,7 @@ export function switchSession(key, searchContext, projectId) {
 	S.setStreamText("");
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
+	S.setSessionCurrentInputTokens(0);
 	S.setSessionContextWindow(0);
 	updateTokenBar();
 	// Preact SessionList auto-rerenders active/unread from signals.
@@ -640,6 +679,7 @@ export function switchSession(key, searchContext, projectId) {
 			var history = res.payload.history || [];
 			var msgEls = [];
 			S.setSessionTokens({ input: 0, output: 0 });
+			S.setSessionCurrentInputTokens(0);
 			S.setChatBatchLoading(true);
 			history.forEach((msg) => {
 				if (msg.role === "user") {
