@@ -9,12 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settings > Terminal now includes tmux window tabs for the managed
+  `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
+  windows from the UI.
+- New terminal window APIs: `GET /api/terminal/windows` and
+  `POST /api/terminal/windows` to list and create host tmux windows.
+- Host terminal websocket now supports `?window=<id|index>` targeting and
+  returns `activeWindowId` in the ready payload.
+
 ### Changed
 
 - Web chat now supports `/sh` command mode: entering `/sh` toggles a dedicated
   command input state, command sends are automatically prefixed with `/sh`,
   and the token bar shows effective execution route (`sandboxed` vs `host`)
   plus prompt symbol (`#` for root, `$` for non-root).
+- Settings > Terminal now polls tmux windows and updates tabs automatically,
+  so windows created inside tmux (for example `Ctrl-b c`) appear in the web UI.
+- Host terminal tmux integration now uses a dedicated tmux socket and applies
+  a Moltis-friendly profile (status off, mouse on, stable window naming).
 
 ### Deprecated
 

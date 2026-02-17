@@ -558,6 +558,15 @@ body {
     padding: 10px 12px 6px;
   }
 
+  .terminal-tabs-bar {
+    padding: 8px 12px 0;
+  }
+
+  .terminal-tab {
+    font-size: 0.68rem;
+    padding: 4px 7px;
+  }
+
   .terminal-output {
     min-height: 220px;
   }

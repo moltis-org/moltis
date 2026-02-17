@@ -186,6 +186,10 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "Terminal", exact: true })).toBeVisible();
 		await expect(page.locator("#terminalOutput .xterm")).toHaveCount(1);
 		await expect(page.locator("#terminalInput")).toHaveCount(0);
+		await expect(page.locator("#terminalSize")).toHaveCount(1);
+		await expect(page.locator("#terminalSize")).toHaveText(/.+/);
+		await expect(page.locator("#terminalTabs")).toHaveCount(1);
+		await expect(page.locator("#terminalNewTab")).toHaveCount(1);
 		await expect(page.locator("#terminalHintActions")).toHaveCount(1);
 		await expect(page.locator("#terminalInstallTmux")).toHaveCount(1);
 	});

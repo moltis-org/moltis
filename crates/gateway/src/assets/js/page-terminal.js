@@ -4,6 +4,8 @@ var _container = null;
 var resizeObserver = null;
 var themeObserver = null;
 var fitRaf = 0;
+var windowResizeListener = null;
+var fontsReadyListener = null;
 
 var reconnectTimer = null;
 var socket = null;
@@ -11,6 +13,7 @@ var shuttingDown = false;
 
 var inputFlushTimer = null;
 var pendingInput = "";
+var windowsRefreshTimer = null;
 
 var terminalEl = null;
 var metaEl = null;
@@ -18,6 +21,9 @@ var statusEl = null;
 var hintEl = null;
 var hintActionsEl = null;
 var installCommandEl = null;
+var sizeEl = null;
+var tabsEl = null;
+var newTabBtn = null;
 var ctrlCBtn = null;
 var clearBtn = null;
 var restartBtn = null;
@@ -27,6 +33,7 @@ var copyInstallBtn = null;
 var xterm = null;
 var fitAddon = null;
 var xtermDataDisposable = null;
+var xtermResizeDisposable = null;
 var TerminalCtor = null;
 var FitAddonCtor = null;
 
@@ -35,9 +42,14 @@ var lastSentCols = 0;
 var lastSentRows = 0;
 var tmuxInstallCommand = "";
 var tmuxInstallPromptSeen = false;
+var tmuxPersistenceEnabled = false;
+var terminalWindows = [];
+var activeWindowId = null;
+var creatingWindow = false;
 
 var RECONNECT_DELAY_MS = 800;
 var INPUT_FLUSH_MS = 16;
+var WINDOW_REFRESH_MS = 2000;
 var MAX_INPUT_CHUNK = 512;
 var TmuxInstallPromptStorageKey = "moltis.settings.terminal.tmuxInstallPromptSeen.v1";
 
@@ -70,6 +82,14 @@ function clearObservers() {
 		themeObserver.disconnect();
 		themeObserver = null;
 	}
+	if (windowResizeListener) {
+		window.removeEventListener("resize", windowResizeListener);
+		windowResizeListener = null;
+	}
+	if (fontsReadyListener && typeof document !== "undefined" && document.fonts?.removeEventListener) {
+		document.fonts.removeEventListener("loadingdone", fontsReadyListener);
+		fontsReadyListener = null;
+	}
 }
 
 function clearScheduledFit() {
@@ -94,6 +114,13 @@ function clearInputQueue() {
 	pendingInput = "";
 }
 
+function clearWindowsRefreshTimer() {
+	if (windowsRefreshTimer) {
+		clearInterval(windowsRefreshTimer);
+		windowsRefreshTimer = null;
+	}
+}
+
 function setStatus(text, level) {
 	if (!statusEl) return;
 	statusEl.textContent = text || "";
@@ -107,11 +134,208 @@ function setControlsEnabled(enabled) {
 	if (ctrlCBtn) ctrlCBtn.disabled = !allow;
 	if (clearBtn) clearBtn.disabled = !allow;
 	if (restartBtn) restartBtn.disabled = !allow;
+	setWindowControlsEnabled();
 }
 
 function setInstallActionsVisible(visible) {
 	if (!hintActionsEl) return;
 	hintActionsEl.hidden = !visible;
+}
+
+function setWindowControlsEnabled() {
+	if (!newTabBtn) return;
+	newTabBtn.disabled = !(tmuxPersistenceEnabled && terminalAvailable) || creatingWindow;
+}
+
+function normalizeWindowPayload(payloadWindow) {
+	if (!(payloadWindow && typeof payloadWindow === "object")) return null;
+	var id = typeof payloadWindow.id === "string" ? payloadWindow.id.trim() : "";
+	if (!id) return null;
+	var index = Number(payloadWindow.index);
+	if (!Number.isFinite(index) || index < 0) return null;
+	var name = typeof payloadWindow.name === "string" ? payloadWindow.name : "";
+	return {
+		id: id,
+		index: Math.floor(index),
+		name: name,
+		active: payloadWindow.active === true,
+	};
+}
+
+function windowLabel(windowInfo) {
+	var title = windowInfo.name && windowInfo.name.trim() ? windowInfo.name.trim() : "shell";
+	return `${windowInfo.index}: ${title}`;
+}
+
+function renderWindowTabs() {
+	if (!tabsEl) return;
+	tabsEl.innerHTML = "";
+	if (!tmuxPersistenceEnabled) {
+		var unsupported = document.createElement("span");
+		unsupported.className = "terminal-tab-empty";
+		unsupported.textContent = "tmux unavailable";
+		tabsEl.appendChild(unsupported);
+		return;
+	}
+	if (!terminalWindows.length) {
+		var empty = document.createElement("span");
+		empty.className = "terminal-tab-empty";
+		empty.textContent = "No tmux windows";
+		tabsEl.appendChild(empty);
+		return;
+	}
+	for (const windowInfo of terminalWindows) {
+		var tab = document.createElement("button");
+		tab.type = "button";
+		tab.className = "terminal-tab";
+		if (windowInfo.id === activeWindowId) tab.classList.add("active");
+		tab.title = `Attach ${windowLabel(windowInfo)}`;
+		tab.textContent = windowLabel(windowInfo);
+		tab.addEventListener("click", () => {
+			onWindowTabClick(windowInfo.id);
+		});
+		tabsEl.appendChild(tab);
+	}
+}
+
+function chooseActiveWindow(windows, preferredWindowId, payloadActiveWindowId) {
+	if (!windows.length) return null;
+	var orderedCandidates = [preferredWindowId, payloadActiveWindowId, activeWindowId];
+	for (const candidate of orderedCandidates) {
+		if (!candidate) continue;
+		for (const windowInfo of windows) {
+			if (windowInfo.id === candidate) return windowInfo.id;
+		}
+	}
+	for (const windowInfo of windows) {
+		if (windowInfo.active) return windowInfo.id;
+	}
+	return windows[0].id;
+}
+
+function applyWindowsState(payload, preferredWindowId) {
+	var nextWindows = [];
+	var rawWindows = Array.isArray(payload?.windows) ? payload.windows : [];
+	for (const rawWindow of rawWindows) {
+		var parsed = normalizeWindowPayload(rawWindow);
+		if (parsed) nextWindows.push(parsed);
+	}
+	nextWindows.sort((a, b) => a.index - b.index);
+	terminalWindows = nextWindows;
+	var payloadActiveWindowId =
+		typeof payload?.activeWindowId === "string" && payload.activeWindowId.trim() ? payload.activeWindowId.trim() : null;
+	activeWindowId = chooseActiveWindow(nextWindows, preferredWindowId, payloadActiveWindowId);
+	renderWindowTabs();
+}
+
+async function fetchTerminalWindows() {
+	var response = await fetch("/api/terminal/windows", {
+		method: "GET",
+		headers: { Accept: "application/json" },
+	});
+	var payload = null;
+	try {
+		payload = await response.json();
+	} catch {
+		payload = {};
+	}
+	if (!response.ok) {
+		throw new Error(payload?.error || "Failed to list tmux windows");
+	}
+	return payload;
+}
+
+async function refreshTerminalWindows(options) {
+	var preferredWindowId = options?.preferredWindowId || null;
+	var silent = options?.silent === true;
+	try {
+		var payload = await fetchTerminalWindows();
+		tmuxPersistenceEnabled = payload?.available === true;
+		applyWindowsState(payload, preferredWindowId);
+		setWindowControlsEnabled();
+		if (!tmuxPersistenceEnabled) {
+			clearWindowsRefreshTimer();
+		}
+	} catch (err) {
+		if (!silent) {
+			setStatus(err?.message || "Failed to refresh terminal windows", "error");
+		}
+	}
+}
+
+function startWindowsRefreshLoop() {
+	clearWindowsRefreshTimer();
+	if (!tmuxPersistenceEnabled) return;
+	windowsRefreshTimer = setInterval(() => {
+		void refreshTerminalWindows({ silent: true });
+	}, WINDOW_REFRESH_MS);
+}
+
+function onWindowTabClick(windowId) {
+	if (!tmuxPersistenceEnabled) return;
+	if (!windowId || windowId === activeWindowId) return;
+	activeWindowId = windowId;
+	renderWindowTabs();
+	if (xterm) {
+		xterm.reset();
+	}
+	connectTerminalSocket();
+}
+
+async function createTerminalWindow() {
+	if (!(tmuxPersistenceEnabled && terminalAvailable) || creatingWindow) return;
+	creatingWindow = true;
+	setWindowControlsEnabled();
+	setStatus("Creating tmux window...", "ok");
+	try {
+		var response = await fetch("/api/terminal/windows", {
+			method: "POST",
+			headers: {
+				Accept: "application/json",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({}),
+		});
+		var payload = null;
+		try {
+			payload = await response.json();
+		} catch {
+			payload = {};
+		}
+		if (!response.ok) {
+			throw new Error(payload?.error || "Failed to create tmux window");
+		}
+		var createdWindowId = payload?.window?.id || payload?.windowId || null;
+		if (Array.isArray(payload?.windows)) {
+			tmuxPersistenceEnabled = true;
+			applyWindowsState(payload, createdWindowId);
+		} else {
+			await refreshTerminalWindows({ preferredWindowId: createdWindowId, silent: true });
+		}
+		if (createdWindowId && activeWindowId !== createdWindowId) {
+			activeWindowId = createdWindowId;
+			renderWindowTabs();
+		}
+		if (xterm) {
+			xterm.reset();
+		}
+		connectTerminalSocket();
+		setStatus("Created tmux window.", "ok");
+	} catch (err) {
+		setStatus(err?.message || "Failed to create tmux window", "error");
+	} finally {
+		creatingWindow = false;
+		setWindowControlsEnabled();
+	}
+}
+
+function updateSizeIndicator(cols, rows) {
+	if (!sizeEl) return;
+	if (cols > 0 && rows > 0) {
+		sizeEl.textContent = `${cols}\u00d7${rows}`;
+		return;
+	}
+	sizeEl.textContent = "\u2014\u00d7\u2014";
 }
 
 function getCssVar(name, fallback) {
@@ -151,6 +375,7 @@ function sendResizeIfChanged() {
 	var cols = xterm.cols || 0;
 	var rows = xterm.rows || 0;
 	if (!(cols > 0 && rows > 0)) return;
+	updateSizeIndicator(cols, rows);
 	if (cols === lastSentCols && rows === lastSentRows) return;
 	lastSentCols = cols;
 	lastSentRows = rows;
@@ -231,6 +456,10 @@ async function initXterm() {
 	xtermDataDisposable = xterm.onData((data) => {
 		queueInput(data);
 	});
+	xtermResizeDisposable = xterm.onResize((size) => {
+		updateSizeIndicator(size.cols || 0, size.rows || 0);
+		sendResizeIfChanged();
+	});
 	scheduleFit();
 
 	terminalEl.addEventListener("click", () => {
@@ -241,7 +470,24 @@ async function initXterm() {
 		resizeObserver = new ResizeObserver(() => {
 			scheduleFit();
 		});
-		resizeObserver.observe(terminalEl);
+		resizeObserver.observe(terminalEl.parentElement || terminalEl);
+	}
+	if (typeof window !== "undefined") {
+		windowResizeListener = () => {
+			scheduleFit();
+		};
+		window.addEventListener("resize", windowResizeListener);
+	}
+	if (typeof document !== "undefined" && document.fonts?.ready && typeof document.fonts.ready.then === "function") {
+		document.fonts.ready.then(() => {
+			scheduleFit();
+		});
+	}
+	if (typeof document !== "undefined" && document.fonts?.addEventListener) {
+		fontsReadyListener = () => {
+			scheduleFit();
+		};
+		document.fonts.addEventListener("loadingdone", fontsReadyListener);
 	}
 
 	themeObserver = new MutationObserver(() => {
@@ -260,6 +506,10 @@ function disposeXterm() {
 		xtermDataDisposable.dispose();
 		xtermDataDisposable = null;
 	}
+	if (xtermResizeDisposable) {
+		xtermResizeDisposable.dispose();
+		xtermResizeDisposable = null;
+	}
 	if (xterm) {
 		xterm.dispose();
 		xterm = null;
@@ -267,6 +517,7 @@ function disposeXterm() {
 	fitAddon = null;
 	lastSentCols = 0;
 	lastSentRows = 0;
+	updateSizeIndicator(0, 0);
 }
 
 function isNearBottom() {
@@ -320,7 +571,13 @@ function applyReadyPayload(payload) {
 	terminalAvailable = !!payload.available;
 	setControlsEnabled(terminalAvailable);
 	var persistenceEnabled = !!payload.persistenceEnabled;
+	tmuxPersistenceEnabled = persistenceEnabled;
 	var persistenceAvailable = !!payload.persistenceAvailable;
+	var payloadActiveWindowId =
+		typeof payload.activeWindowId === "string" && payload.activeWindowId.trim() ? payload.activeWindowId.trim() : null;
+	if (payloadActiveWindowId) {
+		activeWindowId = payloadActiveWindowId;
+	}
 	var installCommand = payload.tmuxInstallCommand || "";
 	var shouldOfferInstall =
 		terminalAvailable && !persistenceEnabled && !persistenceAvailable && installCommand.length > 0;
@@ -371,17 +628,26 @@ function applyReadyPayload(payload) {
 	if (firstTimeOffer) {
 		markTmuxInstallPromptSeen();
 	}
+	renderWindowTabs();
+	setWindowControlsEnabled();
 
 	if (terminalAvailable) {
+		scheduleFit();
+		updateSizeIndicator(xterm?.cols || 0, xterm?.rows || 0);
 		if (persistenceEnabled) {
 			setStatus("Connected to host shell with persistent tmux session.", "ok");
+			startWindowsRefreshLoop();
+			void refreshTerminalWindows({ preferredWindowId: activeWindowId, silent: true });
 		} else {
 			setStatus("Connected to host shell (ephemeral session).", "ok");
+			clearWindowsRefreshTimer();
 		}
 		flushInputQueue();
 		sendResizeIfChanged();
 		if (xterm) xterm.focus();
 	} else {
+		clearWindowsRefreshTimer();
+		updateSizeIndicator(0, 0);
 		setStatus("Failed to open host shell.", "error");
 	}
 }
@@ -418,7 +684,11 @@ function connectTerminalSocket() {
 	closeTerminalSocket();
 
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
-	socket = new WebSocket(`${proto}//${location.host}/api/terminal/ws`);
+	var wsUrl = `${proto}//${location.host}/api/terminal/ws`;
+	if (tmuxPersistenceEnabled && activeWindowId) {
+		wsUrl += `?window=${encodeURIComponent(activeWindowId)}`;
+	}
+	socket = new WebSocket(wsUrl);
 	setStatus("Connecting terminal websocket...");
 
 	socket.onopen = () => {
@@ -443,6 +713,8 @@ function connectTerminalSocket() {
 		socket = null;
 		setControlsEnabled(false);
 		terminalAvailable = false;
+		clearWindowsRefreshTimer();
+		setWindowControlsEnabled();
 		if (shuttingDown) return;
 		setStatus("Terminal disconnected. Reconnecting...", "error");
 		scheduleReconnect();
@@ -455,6 +727,12 @@ function sendControl(action) {
 }
 
 function bindEvents() {
+	if (newTabBtn) {
+		newTabBtn.addEventListener("click", () => {
+			void createTerminalWindow();
+		});
+	}
+
 	if (ctrlCBtn) {
 		ctrlCBtn.addEventListener("click", () => {
 			sendControl("ctrl_c");
@@ -507,7 +785,7 @@ export async function initTerminal(container) {
 	shuttingDown = false;
 	tmuxInstallPromptSeen = readTmuxInstallPromptSeen();
 	tmuxInstallCommand = "";
-	container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
+	container.style.cssText = "display:flex;flex-direction:column;padding:0;overflow:hidden;min-height:0;";
 	container.innerHTML = `
 		<div class="terminal-page">
 			<div class="terminal-toolbar">
@@ -516,10 +794,15 @@ export async function initTerminal(container) {
 					<div id="terminalMeta" class="terminal-meta"></div>
 				</div>
 				<div class="terminal-actions">
+					<div id="terminalSize" class="terminal-size" title="Terminal size (columns \u00d7 rows)">\u2014\u00d7\u2014</div>
 					<button id="terminalCtrlC" class="logs-btn" type="button" title="Send Ctrl+C">Ctrl+C</button>
 					<button id="terminalClear" class="logs-btn" type="button" title="Send Ctrl+L">Clear</button>
 					<button id="terminalRestart" class="logs-btn" type="button">Restart</button>
 				</div>
+			</div>
+			<div class="terminal-tabs-bar">
+				<div id="terminalTabs" class="terminal-tabs" aria-label="tmux windows"></div>
+				<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create tmux window">+ Tab</button>
 			</div>
 			<div class="terminal-output-wrap">
 				<div id="terminalOutput" class="terminal-output" aria-label="Host terminal output"></div>
@@ -540,6 +823,9 @@ export async function initTerminal(container) {
 	hintEl = container.querySelector("#terminalHint");
 	hintActionsEl = container.querySelector("#terminalHintActions");
 	installCommandEl = container.querySelector("#terminalInstallCommand");
+	sizeEl = container.querySelector("#terminalSize");
+	tabsEl = container.querySelector("#terminalTabs");
+	newTabBtn = container.querySelector("#terminalNewTab");
 	ctrlCBtn = container.querySelector("#terminalCtrlC");
 	clearBtn = container.querySelector("#terminalClear");
 	restartBtn = container.querySelector("#terminalRestart");
@@ -548,10 +834,12 @@ export async function initTerminal(container) {
 
 	setStatus("Initializing terminal...");
 	setControlsEnabled(false);
+	renderWindowTabs();
 	bindEvents();
 
 	try {
 		await initXterm();
+		await refreshTerminalWindows({ silent: true });
 		connectTerminalSocket();
 	} catch (err) {
 		setStatus(err.message || "Failed to initialize terminal", "error");
@@ -563,6 +851,7 @@ export function teardownTerminal() {
 	clearReconnectTimer();
 	closeTerminalSocket();
 	clearInputQueue();
+	clearWindowsRefreshTimer();
 	disposeXterm();
 	if (_container) {
 		_container.innerHTML = "";
@@ -575,11 +864,18 @@ export function teardownTerminal() {
 	hintEl = null;
 	hintActionsEl = null;
 	installCommandEl = null;
+	sizeEl = null;
+	tabsEl = null;
+	newTabBtn = null;
 	ctrlCBtn = null;
 	clearBtn = null;
 	restartBtn = null;
 	installTmuxBtn = null;
 	copyInstallBtn = null;
 	terminalAvailable = false;
+	tmuxPersistenceEnabled = false;
+	terminalWindows = [];
+	activeWindowId = null;
+	creatingWindow = false;
 	tmuxInstallCommand = "";
 }

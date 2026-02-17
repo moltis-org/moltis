@@ -484,6 +484,77 @@
   flex-wrap: wrap;
 }
 
+.terminal-size {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: 999px;
+  padding: 3px 8px;
+  min-width: 54px;
+  text-align: center;
+  user-select: none;
+}
+
+.terminal-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.terminal-tabs {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.terminal-tab {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.terminal-tab:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.terminal-tab.active {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--border));
+  background: var(--accent-subtle);
+}
+
+.terminal-tab-empty {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+.terminal-new-tab {
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
 .terminal-output-wrap {
   flex: 1;
   min-height: 0;
