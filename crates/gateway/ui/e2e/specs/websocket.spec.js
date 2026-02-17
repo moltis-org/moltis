@@ -368,7 +368,7 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("map links render branded svg icons", async ({ page }) => {
+	test("map links render place name with right-side rating details", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);
@@ -383,7 +383,7 @@ test.describe("WebSocket connection lifecycle", () => {
 				state: "tool_call_start",
 				toolCallId,
 				toolName: "show_map",
-				arguments: { label: "Tartine Bakery" },
+				arguments: { label: "Tartine Bakery ⭐4.7 - Open till 4PM" },
 			},
 		});
 
@@ -396,12 +396,11 @@ test.describe("WebSocket connection lifecycle", () => {
 				toolName: "show_map",
 				success: true,
 				result: {
-					label: "Tartine Bakery",
+					label: "Tartine Bakery ⭐4.7 - Open till 4PM",
 					map_links: {
+						provider: "google_maps",
+						url: "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery&center=37.7615,-122.4241",
 						google_maps: "https://www.google.com/maps/search/?api=1&query=Tartine+Bakery&center=37.7615,-122.4241",
-						apple_maps: "https://maps.apple.com/?ll=37.7615,-122.4241&q=Tartine+Bakery&z=15",
-						openstreetmap:
-							"https://www.openstreetmap.org/search?query=Tartine+Bakery&mlat=37.7615&mlon=-122.4241#map=15/37.7615/-122.4241",
 					},
 				},
 			},
@@ -409,19 +408,13 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		const card = page.locator(`#tool-${toolCallId}`);
 		await expect(card).toBeVisible();
-		await expect(card.locator("img.map-service-icon")).toHaveCount(3);
-		await expect(card.locator('a:has-text("Google Maps") img.map-service-icon')).toHaveAttribute(
-			"src",
-			/\/assets\/v\/[^/]+\/icons\/map-google-maps\.svg$/,
-		);
-		await expect(card.locator('a:has-text("Apple Maps") img.map-service-icon')).toHaveAttribute(
-			"src",
-			/\/assets\/v\/[^/]+\/icons\/map-apple-maps\.svg$/,
-		);
-		await expect(card.locator('a:has-text("OpenStreetMap") img.map-service-icon')).toHaveAttribute(
-			"src",
-			/\/assets\/v\/[^/]+\/icons\/map-openstreetmap\.svg$/,
-		);
+		await expect(card.locator("img.map-service-icon")).toHaveCount(0);
+		const mapLink = card.locator("a.map-link-row");
+		await expect(mapLink).toHaveCount(1);
+		await expect(mapLink.locator(".map-link-name")).toHaveText("Tartine Bakery");
+		await expect(mapLink.locator(".map-link-meta")).toHaveText("⭐4.7 - Open till 4PM");
+		await expect(mapLink).toHaveAttribute("title", 'Open "Tartine Bakery ⭐4.7 - Open till 4PM" in maps');
+		await expect(card.locator('a:has-text("Tartine Bakery")')).toHaveCount(1);
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -455,10 +448,9 @@ test.describe("WebSocket connection lifecycle", () => {
 				result: {
 					label: "Breakfast spots",
 					map_links: {
+						provider: "google_maps",
+						url: "https://www.google.com/maps/search/?api=1&query=Breakfast+spots&center=37.788473,-122.408997",
 						google_maps: "https://www.google.com/maps/search/?api=1&query=Breakfast+spots&center=37.788473,-122.408997",
-						apple_maps: "https://maps.apple.com/?ll=37.788473,-122.408997&q=Breakfast+spots&z=14",
-						openstreetmap:
-							"https://www.openstreetmap.org/search?query=Breakfast+spots&mlat=37.788473&mlon=-122.408997#map=14/37.788473/-122.408997",
 					},
 					points: [
 						{
@@ -466,11 +458,10 @@ test.describe("WebSocket connection lifecycle", () => {
 							latitude: 37.788473,
 							longitude: -122.408997,
 							map_links: {
+								provider: "google_maps",
+								url: "https://www.google.com/maps/search/?api=1&query=Sears+Fine+Food&center=37.788473,-122.408997",
 								google_maps:
 									"https://www.google.com/maps/search/?api=1&query=Sears+Fine+Food&center=37.788473,-122.408997",
-								apple_maps: "https://maps.apple.com/?ll=37.788473,-122.408997&q=Sears+Fine+Food&z=14",
-								openstreetmap:
-									"https://www.openstreetmap.org/search?query=Sears+Fine+Food&mlat=37.788473&mlon=-122.408997#map=14/37.788473/-122.408997",
 							},
 						},
 						{
@@ -478,10 +469,9 @@ test.describe("WebSocket connection lifecycle", () => {
 							latitude: 37.80895,
 							longitude: -122.41576,
 							map_links: {
+								provider: "google_maps",
+								url: "https://www.google.com/maps/search/?api=1&query=Surisan&center=37.80895,-122.41576",
 								google_maps: "https://www.google.com/maps/search/?api=1&query=Surisan&center=37.80895,-122.41576",
-								apple_maps: "https://maps.apple.com/?ll=37.80895,-122.41576&q=Surisan&z=14",
-								openstreetmap:
-									"https://www.openstreetmap.org/search?query=Surisan&mlat=37.80895&mlon=-122.41576#map=14/37.80895/-122.41576",
 							},
 						},
 					],
@@ -491,11 +481,11 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		const card = page.locator(`#tool-${toolCallId}`);
 		await expect(card).toBeVisible();
-		await expect(card.locator("img.map-service-icon")).toHaveCount(6);
-		await expect(card.locator("div.text-xs").filter({ hasText: "Sears Fine Food" })).toBeVisible();
-		await expect(card.locator("div.text-xs").filter({ hasText: "Surisan" })).toBeVisible();
-		await expect(card.locator('a[title="Open \\"Sears Fine Food\\" in Google Maps"]')).toHaveCount(1);
-		await expect(card.locator('a[title="Open \\"Surisan\\" in Google Maps"]')).toHaveCount(1);
+		await expect(card.locator("img.map-service-icon")).toHaveCount(0);
+		await expect(card.locator('a:has-text("Sears Fine Food")')).toHaveCount(1);
+		await expect(card.locator('a:has-text("Surisan")')).toHaveCount(1);
+		await expect(card.locator('a[title="Open \\"Sears Fine Food\\" in maps"]')).toHaveCount(1);
+		await expect(card.locator('a[title="Open \\"Surisan\\" in maps"]')).toHaveCount(1);
 		expect(pageErrors).toEqual([]);
 	});
 

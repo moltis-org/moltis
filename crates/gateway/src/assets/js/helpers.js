@@ -567,30 +567,21 @@ export function renderAudioPlayer(container, audioSrc, autoplay) {
 }
 
 /**
- * Render clickable map link buttons into `container`.
+ * Render a single clickable map link into `container`.
  * @param {HTMLElement} container - parent element to append into
- * @param {object} links - { google_maps, apple_maps, openstreetmap }
+ * @param {object} links - map link payload
  * @param {string} [label] - optional location label
  */
-var MAP_SERVICE_ICONS = {
-	google_maps: "map-google-maps.svg",
-	apple_maps: "map-apple-maps.svg",
-	openstreetmap: "map-openstreetmap.svg",
-};
+function resolveMapUrl(links) {
+	if (!(links && typeof links === "object")) return "";
+	if (typeof links.url === "string" && links.url.trim()) return links.url.trim();
 
-function createMapServiceIcon(serviceKey) {
-	var iconFile = MAP_SERVICE_ICONS[serviceKey];
-	if (!iconFile) return null;
-
-	var icon = document.createElement("img");
-	icon.src = new URL(`../icons/${iconFile}`, import.meta.url).toString();
-	icon.alt = "";
-	icon.width = 14;
-	icon.height = 14;
-	icon.className = "map-service-icon";
-	icon.setAttribute("aria-hidden", "true");
-	icon.setAttribute("decoding", "async");
-	return icon;
+	var providers = ["google_maps", "apple_maps", "openstreetmap"];
+	for (var provider of providers) {
+		var providerUrl = links[provider];
+		if (typeof providerUrl === "string" && providerUrl.trim()) return providerUrl.trim();
+	}
+	return "";
 }
 
 function mapPointHeading(point, index) {
@@ -602,48 +593,42 @@ function mapPointHeading(point, index) {
 	return `Location ${index + 1}`;
 }
 
+function splitMapLinkText(text) {
+	var normalized = typeof text === "string" ? text.trim() : "";
+	if (!normalized) return { primary: "", secondary: "" };
+	var starIndex = normalized.indexOf("⭐");
+	if (starIndex <= 0) return { primary: normalized, secondary: "" };
+	var primary = normalized.slice(0, starIndex).trim();
+	var secondary = normalized.slice(starIndex).trim();
+	if (!(primary && secondary)) return { primary: normalized, secondary: "" };
+	return { primary, secondary };
+}
+
 export function renderMapLinks(container, links, label, heading) {
-	if (!(links && typeof links === "object")) return false;
+	var mapUrl = resolveMapUrl(links);
+	if (!mapUrl) return false;
 
 	var block = document.createElement("div");
 	block.className = "mt-2";
-	if (heading) {
-		var headingEl = document.createElement("div");
-		headingEl.className = "text-xs";
-		headingEl.textContent = heading;
-		block.appendChild(headingEl);
+	var text = heading || (typeof label === "string" && label.trim() ? label.trim() : "Open map");
+	var textParts = splitMapLinkText(text);
+	var link = document.createElement("a");
+	link.href = mapUrl;
+	link.target = "_blank";
+	link.rel = "noopener noreferrer";
+	link.className = "text-xs map-link-row";
+	var primary = document.createElement("span");
+	primary.className = "map-link-name";
+	primary.textContent = textParts.primary || text;
+	link.appendChild(primary);
+	if (textParts.secondary) {
+		var secondary = document.createElement("span");
+		secondary.className = "map-link-meta";
+		secondary.textContent = textParts.secondary;
+		link.appendChild(secondary);
 	}
-
-	var row = document.createElement("div");
-	row.className = "flex flex-wrap gap-2";
-
-	var services = [
-		{ key: "google_maps", name: "Google Maps" },
-		{ key: "apple_maps", name: "Apple Maps" },
-		{ key: "openstreetmap", name: "OpenStreetMap" },
-	];
-	var hasLinks = false;
-
-	for (var svc of services) {
-		var url = links[svc.key];
-		if (!url) continue;
-		hasLinks = true;
-		var btn = document.createElement("a");
-		btn.href = url;
-		btn.target = "_blank";
-		btn.rel = "noopener noreferrer";
-		btn.className = "provider-btn provider-btn-secondary text-xs inline-flex items-center gap-1.5";
-		var icon = createMapServiceIcon(svc.key);
-		if (icon) btn.appendChild(icon);
-		var labelEl = document.createElement("span");
-		labelEl.textContent = svc.name;
-		btn.appendChild(labelEl);
-		if (label) btn.title = `Open "${label}" in ${svc.name}`;
-		row.appendChild(btn);
-	}
-
-	if (!hasLinks) return false;
-	block.appendChild(row);
+	link.title = `Open "${text}" in maps`;
+	block.appendChild(link);
 	container.appendChild(block);
 	return true;
 }

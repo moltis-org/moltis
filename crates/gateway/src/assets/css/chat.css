@@ -311,6 +311,27 @@
   font-size: 0.78rem;
 }
 
+.map-link-row {
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  display: flex;
+}
+
+.map-link-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-link-meta {
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ── Message inline elements ── */
 
 .msg code {
