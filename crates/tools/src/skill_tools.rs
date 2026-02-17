@@ -32,7 +32,8 @@ impl AgentTool for CreateSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new personal skill. Writes a SKILL.md file to ~/skills/<name>/. \
+        "Create a new personal skill. Writes a SKILL.md file to <data_dir>/skills/<name>/. \
+         This is persistent workspace storage (not sandbox ~/skills). \
          The skill will be available on the next message automatically."
     }
 
@@ -219,7 +220,7 @@ impl AgentTool for DeleteSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Delete a personal skill. Only works for skills in ~/skills/."
+        "Delete a personal skill. Only works for skills in <data_dir>/skills/."
     }
 
     fn parameters_schema(&self) -> Value {

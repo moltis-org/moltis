@@ -18,6 +18,9 @@ pub struct PromptHostRuntimeContext {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
+    /// Persistent Moltis workspace root (`data_dir`), e.g. `~/.moltis`
+    /// or `/home/moltis/.moltis` in containerized deploys.
+    pub data_dir: Option<String>,
     pub sudo_non_interactive: Option<bool>,
     pub sudo_status: Option<String>,
     pub timezone: Option<String>,
@@ -35,7 +38,11 @@ pub struct PromptSandboxRuntimeContext {
     pub backend: Option<String>,
     pub scope: Option<String>,
     pub image: Option<String>,
+    /// Sandbox HOME directory used for `~` and relative paths in `exec`.
+    pub home: Option<String>,
     pub workspace_mount: Option<String>,
+    /// Mounted workspace/data path inside sandbox when available.
+    pub workspace_path: Option<String>,
     pub no_network: Option<bool>,
     /// Per-session override for sandbox enablement.
     pub session_override: Option<bool>,
@@ -161,6 +168,8 @@ const WORKSPACE_FILE_MAX_CHARS: usize = 6_000;
 const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
 - `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
 - When sandbox is disabled, `exec` runs on the host and may require approval.\n\
+- In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
+- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
 - Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
 const TOOL_CALL_GUIDANCE: &str = concat!(
@@ -486,6 +495,7 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
         ("session", host.session_key.as_deref()),
+        ("data_dir", host.data_dir.as_deref()),
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
     }
@@ -539,7 +549,9 @@ fn format_sandbox_runtime_line(sandbox: &PromptSandboxRuntimeContext) -> String 
         ("backend", sandbox.backend.as_deref()),
         ("scope", sandbox.scope.as_deref()),
         ("image", sandbox.image.as_deref()),
+        ("home", sandbox.home.as_deref()),
         ("workspace_mount", sandbox.workspace_mount.as_deref()),
+        ("workspace_path", sandbox.workspace_path.as_deref()),
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
     }
@@ -788,6 +800,7 @@ mod tests {
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
+                data_dir: Some("/home/moltis/.moltis".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
                 timezone: Some("Europe/Paris".into()),
@@ -801,7 +814,9 @@ mod tests {
                 backend: Some("docker".into()),
                 scope: Some("session".into()),
                 image: Some("moltis-sandbox:abc123".into()),
+                home: Some("/home/sandbox".into()),
                 workspace_mount: Some("ro".into()),
+                workspace_path: Some("/home/moltis/.moltis".into()),
                 no_network: Some(true),
                 session_override: Some(true),
             }),
@@ -827,6 +842,7 @@ mod tests {
         assert!(prompt.contains("today=2026-02-17"));
         assert!(prompt.contains("provider=openai"));
         assert!(prompt.contains("model=gpt-5"));
+        assert!(prompt.contains("data_dir=/home/moltis/.moltis"));
         assert!(prompt.contains("sudo_non_interactive=true"));
         assert!(prompt.contains("sudo_status=passwordless"));
         assert!(prompt.contains("timezone=Europe/Paris"));
@@ -834,8 +850,11 @@ mod tests {
         assert!(prompt.contains("remote_ip=203.0.113.42"));
         assert!(prompt.contains("Sandbox(exec): enabled=true"));
         assert!(prompt.contains("backend=docker"));
+        assert!(prompt.contains("home=/home/sandbox"));
+        assert!(prompt.contains("workspace_path=/home/moltis/.moltis"));
         assert!(prompt.contains("network=disabled"));
         assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("`~` and relative paths resolve under"));
         assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
     }
 

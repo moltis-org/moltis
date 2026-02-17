@@ -957,19 +957,26 @@ async fn build_prompt_runtime_context(
     session_key: &str,
     session_entry: Option<&moltis_sessions::metadata::SessionEntry>,
 ) -> PromptRuntimeContext {
+    let data_dir = moltis_config::data_dir();
+    let data_dir_display = data_dir.display().to_string();
+
     let sudo_fut = detect_host_sudo_access();
     let sandbox_fut = async {
         if let Some(ref router) = state.sandbox_router {
             let is_sandboxed = router.is_sandboxed(session_key).await;
             let config = router.config();
             let backend_name = router.backend_name();
+            let workspace_mount = config.workspace_mount.to_string();
+            let workspace_path = (workspace_mount != "none").then(|| data_dir_display.clone());
             Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: is_sandboxed,
                 mode: Some(config.mode.to_string()),
                 backend: Some(backend_name.to_string()),
                 scope: Some(config.scope.to_string()),
                 image: Some(router.resolve_image(session_key, None).await),
-                workspace_mount: Some(config.workspace_mount.to_string()),
+                home: Some("/home/sandbox".to_string()),
+                workspace_mount: Some(workspace_mount),
+                workspace_path,
                 no_network: prompt_sandbox_no_network_state(backend_name, config.no_network),
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
@@ -980,7 +987,9 @@ async fn build_prompt_runtime_context(
                 backend: Some("none".to_string()),
                 scope: None,
                 image: None,
+                home: None,
                 workspace_mount: None,
+                workspace_path: None,
                 no_network: None,
                 session_override: None,
             })
@@ -1012,6 +1021,7 @@ async fn build_prompt_runtime_context(
         provider: Some(provider.name().to_string()),
         model: Some(provider.id().to_string()),
         session_key: Some(session_key.to_string()),
+        data_dir: Some(data_dir_display),
         sudo_non_interactive,
         sudo_status,
         timezone,
