@@ -94,8 +94,11 @@ The default soul is ~1,500 characters (~400 tokens).
 
 ### User Profile (`USER.md`)
 
-Loaded from `~/.moltis/USER.md` using YAML frontmatter. Currently only the
-`name` field is injected: *"The user's name is {name}."*
+Loaded from `~/.moltis/USER.md` using YAML frontmatter.
+
+- `name` is injected as: *"The user's name is {name}."*
+- `timezone` is used by runtime context to localize `Host: time=...` and
+  `Host: today=...` fields.
 
 ### Project Context
 
@@ -115,7 +118,7 @@ project-specific instructions override workspace-level ones.
 Injected as compact key=value lines under a `## Runtime` heading:
 
 ```
-Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | provider=openai | model=gpt-5 | session=main | sudo_non_interactive=true | timezone=Europe/Paris
+Host: host=moltis-devbox | os=macos | arch=aarch64 | shell=zsh | time=2026-02-17 16:18:00 CET | today=2026-02-17 | provider=openai | model=gpt-5 | session=main | sudo_non_interactive=true | timezone=Europe/Paris
 Sandbox(exec): enabled=true | mode=all | backend=docker | scope=session | image=moltis-sandbox:abc123 | workspace_mount=ro | network=disabled
 ```
 

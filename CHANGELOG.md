@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Onboarding identity save now captures browser timezone and persists it to
+  `USER.md` via `user_timezone`, so first-run profile setup records the user's
+  timezone alongside their name.
+- Runtime prompt host metadata now prefers user/browser timezone over server
+  local fallback and includes an explicit `today=YYYY-MM-DD` field so models
+  can reliably reason about the user's current date.
+
 - Skills installation now supports Claude marketplace repos that define skills
   directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
   (for example `anthropics/skills`), including loading `SKILL.md` entries under
