@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as shell commands while still allowing normal model-driven exec tool use.
 - Tool-mode system prompt guidance is now conversation-first and documents the
   `/sh` explicit shell prefix.
+- Chat auto-compaction now uses estimated next-request prompt tokens (current
+  context pressure) instead of cumulative session token totals, and chat context
+  UI now separates cumulative usage from current/estimated request context.
 
 ### Security
 

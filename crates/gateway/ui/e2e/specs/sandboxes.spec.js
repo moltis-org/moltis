@@ -79,10 +79,11 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 	test("shows 'No containers found' when list is empty", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		const containersResponse = page.waitForResponse(
+			(r) => r.url().includes("/api/sandbox/containers") && r.request().method() === "GET",
+		);
 		await navigateAndWait(page, "/settings/sandboxes");
-
-		// Wait for the containers fetch to complete
-		await page.waitForResponse((r) => r.url().includes("/api/sandbox/containers"));
+		await containersResponse;
 
 		// If no containers are running, we should see the empty state
 		const containerRows = page.locator(".provider-item");

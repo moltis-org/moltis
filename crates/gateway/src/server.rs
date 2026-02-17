@@ -6540,8 +6540,6 @@ struct HostTerminalPtyRuntime {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    use_tmux_persistence: bool,
-    tmux_window_target: Option<String>,
     output_rx: tokio::sync::mpsc::UnboundedReceiver<HostTerminalOutputEvent>,
 }
 
@@ -6653,6 +6651,7 @@ fn host_terminal_apply_tmux_profile() {
     let commands: &[&[&str]] = &[
         &["set-option", "-g", "status", "off"],
         &["set-option", "-g", "mouse", "on"],
+        &["set-window-option", "-g", "window-size", "latest"],
         &["set-option", "-g", "allow-rename", "off"],
         &["set-window-option", "-g", "automatic-rename", "off"],
         &["set-option", "-g", "set-titles", "off"],
@@ -6945,10 +6944,9 @@ fn spawn_host_terminal_runtime(
     use_tmux_persistence: bool,
     tmux_window_target: Option<&str>,
 ) -> Result<HostTerminalPtyRuntime, String> {
-    let tmux_window_target = tmux_window_target.map(str::to_string);
     if use_tmux_persistence {
         host_terminal_ensure_tmux_session()?;
-        if let Some(target) = tmux_window_target.as_deref() {
+        if let Some(target) = tmux_window_target {
             host_terminal_tmux_select_window(target)?;
         }
     }
@@ -6985,8 +6983,6 @@ fn spawn_host_terminal_runtime(
         master,
         writer,
         child,
-        use_tmux_persistence,
-        tmux_window_target,
         output_rx,
     })
 }
@@ -7121,64 +7117,7 @@ fn host_terminal_resize(
             pixel_height: 0,
         })
         .map_err(|err| format!("failed to resize host terminal: {err}"))?;
-    if runtime.use_tmux_persistence {
-        host_terminal_sync_tmux_window_size(
-            runtime.tmux_window_target.as_deref(),
-            next_cols,
-            next_rows,
-        );
-    }
     Ok(())
-}
-
-#[cfg(feature = "web-ui")]
-fn host_terminal_sync_tmux_window_size(window_target: Option<&str>, cols: u16, rows: u16) {
-    let cols_arg = cols.to_string();
-    let rows_arg = rows.to_string();
-    let target = window_target.unwrap_or(HOST_TERMINAL_SESSION_NAME);
-    let mut cmd = host_terminal_tmux_command();
-    let output = cmd
-        .args([
-            "resize-window",
-            "-t",
-            target,
-            "-x",
-            cols_arg.as_str(),
-            "-y",
-            rows_arg.as_str(),
-        ])
-        .output();
-    match output {
-        Ok(output) if output.status.success() => {},
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.trim();
-            if stderr.is_empty() {
-                debug!(
-                    cols,
-                    rows,
-                    status = %output.status,
-                    "tmux resize-window failed while syncing host terminal size"
-                );
-            } else {
-                debug!(
-                    cols,
-                    rows,
-                    status = %output.status,
-                    error = stderr,
-                    "tmux resize-window failed while syncing host terminal size"
-                );
-            }
-        },
-        Err(err) => {
-            debug!(
-                cols,
-                rows,
-                error = %err,
-                "failed to invoke tmux resize-window while syncing host terminal size"
-            );
-        },
-    }
 }
 
 #[cfg(feature = "web-ui")]

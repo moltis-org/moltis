@@ -45,6 +45,7 @@ var tmuxInstallPromptSeen = false;
 var tmuxPersistenceEnabled = false;
 var terminalWindows = [];
 var activeWindowId = null;
+var pendingWindowId = null;
 var creatingWindow = false;
 
 var RECONNECT_DELAY_MS = 800;
@@ -246,12 +247,15 @@ async function fetchTerminalWindows() {
 }
 
 async function refreshTerminalWindows(options) {
-	var preferredWindowId = options?.preferredWindowId || null;
+	var preferredWindowId = options?.preferredWindowId || pendingWindowId || null;
 	var silent = options?.silent === true;
 	try {
 		var payload = await fetchTerminalWindows();
 		tmuxPersistenceEnabled = payload?.available === true;
 		applyWindowsState(payload, preferredWindowId);
+		if (pendingWindowId && activeWindowId === pendingWindowId) {
+			pendingWindowId = null;
+		}
 		setWindowControlsEnabled();
 		if (!tmuxPersistenceEnabled) {
 			clearWindowsRefreshTimer();
@@ -274,8 +278,13 @@ function startWindowsRefreshLoop() {
 function onWindowTabClick(windowId) {
 	if (!tmuxPersistenceEnabled) return;
 	if (!windowId || windowId === activeWindowId) return;
+	clearWindowsRefreshTimer();
+	pendingWindowId = windowId;
 	activeWindowId = windowId;
 	renderWindowTabs();
+	terminalAvailable = false;
+	setControlsEnabled(false);
+	setStatus("Switching tmux window...", "ok");
 	if (xterm) {
 		xterm.reset();
 	}
@@ -313,6 +322,7 @@ async function createTerminalWindow() {
 			await refreshTerminalWindows({ preferredWindowId: createdWindowId, silent: true });
 		}
 		if (createdWindowId && activeWindowId !== createdWindowId) {
+			pendingWindowId = createdWindowId;
 			activeWindowId = createdWindowId;
 			renderWindowTabs();
 		}
@@ -578,6 +588,7 @@ function applyReadyPayload(payload) {
 	if (payloadActiveWindowId) {
 		activeWindowId = payloadActiveWindowId;
 	}
+	pendingWindowId = null;
 	var installCommand = payload.tmuxInstallCommand || "";
 	var shouldOfferInstall =
 		terminalAvailable && !persistenceEnabled && !persistenceAvailable && installCommand.length > 0;
@@ -596,9 +607,9 @@ function applyReadyPayload(payload) {
 			var prompt = payload.promptSymbol || "$";
 			var user = payload.user || "unknown";
 			if (persistenceEnabled) {
-				metaEl.textContent = `Host shell via PTY + tmux persistence - unsandboxed - user ${user} - prompt ${prompt}`;
+				metaEl.textContent = `Persistent tmux session, user ${user}, prompt ${prompt}`;
 			} else {
-				metaEl.textContent = `Host shell via PTY (ephemeral) - unsandboxed - user ${user} - prompt ${prompt}`;
+				metaEl.textContent = `Ephemeral host shell, user ${user}, prompt ${prompt}`;
 			}
 		} else {
 			metaEl.textContent = "Host shell unavailable";
@@ -685,8 +696,9 @@ function connectTerminalSocket() {
 
 	var proto = location.protocol === "https:" ? "wss:" : "ws:";
 	var wsUrl = `${proto}//${location.host}/api/terminal/ws`;
-	if (tmuxPersistenceEnabled && activeWindowId) {
-		wsUrl += `?window=${encodeURIComponent(activeWindowId)}`;
+	var targetWindowId = pendingWindowId || activeWindowId;
+	if (tmuxPersistenceEnabled && targetWindowId) {
+		wsUrl += `?window=${encodeURIComponent(targetWindowId)}`;
 	}
 	socket = new WebSocket(wsUrl);
 	setStatus("Connecting terminal websocket...");
@@ -876,6 +888,7 @@ export function teardownTerminal() {
 	tmuxPersistenceEnabled = false;
 	terminalWindows = [];
 	activeWindowId = null;
+	pendingWindowId = null;
 	creatingWindow = false;
 	tmuxInstallCommand = "";
 }
