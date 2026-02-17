@@ -6899,6 +6899,41 @@ fn host_terminal_tmux_select_window(window_target: &str) -> Result<(), String> {
 }
 
 #[cfg(feature = "web-ui")]
+fn host_terminal_tmux_reset_window_size(window_target: Option<&str>) {
+    let target = window_target.unwrap_or(HOST_TERMINAL_SESSION_NAME);
+    let mut cmd = host_terminal_tmux_command();
+    let output = cmd.args(["resize-window", "-A", "-t", target]).output();
+    match output {
+        Ok(output) if output.status.success() => {},
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                debug!(
+                    target,
+                    status = %output.status,
+                    "tmux resize-window -A failed while resetting host terminal window size"
+                );
+            } else {
+                debug!(
+                    target,
+                    status = %output.status,
+                    error = stderr,
+                    "tmux resize-window -A failed while resetting host terminal window size"
+                );
+            }
+        },
+        Err(err) => {
+            debug!(
+                target,
+                error = %err,
+                "failed to invoke tmux resize-window -A for host terminal window size reset"
+            );
+        },
+    }
+}
+
+#[cfg(feature = "web-ui")]
 fn host_terminal_command_builder(use_tmux_persistence: bool) -> CommandBuilder {
     if use_tmux_persistence {
         let mut cmd = CommandBuilder::new("tmux");
@@ -6949,6 +6984,7 @@ fn spawn_host_terminal_runtime(
         if let Some(target) = tmux_window_target {
             host_terminal_tmux_select_window(target)?;
         }
+        host_terminal_tmux_reset_window_size(tmux_window_target);
     }
     let pty_system = native_pty_system();
     let pair = pty_system
