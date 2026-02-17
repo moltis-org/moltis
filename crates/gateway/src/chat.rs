@@ -962,14 +962,15 @@ async fn build_prompt_runtime_context(
         if let Some(ref router) = state.sandbox_router {
             let is_sandboxed = router.is_sandboxed(session_key).await;
             let config = router.config();
+            let backend_name = router.backend_name();
             Some(PromptSandboxRuntimeContext {
                 exec_sandboxed: is_sandboxed,
                 mode: Some(config.mode.to_string()),
-                backend: Some(router.backend_name().to_string()),
+                backend: Some(backend_name.to_string()),
                 scope: Some(config.scope.to_string()),
                 image: Some(router.resolve_image(session_key, None).await),
                 workspace_mount: Some(config.workspace_mount.to_string()),
-                no_network: Some(config.no_network),
+                no_network: prompt_sandbox_no_network_state(backend_name, config.no_network),
                 session_override: session_entry.and_then(|entry| entry.sandbox_enabled),
             })
         } else {
@@ -1019,6 +1020,16 @@ async fn build_prompt_runtime_context(
     PromptRuntimeContext {
         host: host_ctx,
         sandbox: sandbox_ctx,
+    }
+}
+
+fn prompt_sandbox_no_network_state(backend: &str, configured_no_network: bool) -> Option<bool> {
+    match backend {
+        // Docker supports `--network=none`, so this value is reliable.
+        "docker" => Some(configured_no_network),
+        // Apple Container currently has no equivalent runtime toggle, and
+        // failover wrappers may switch backends dynamically.
+        _ => None,
     }
 }
 
@@ -7017,6 +7028,25 @@ mod tests {
         assert!(parse_explicit_shell_command("/sh").is_none());
         assert!(parse_explicit_shell_command("/shell ls").is_none());
         assert!(parse_explicit_shell_command("uname -a").is_none());
+    }
+
+    #[test]
+    fn prompt_sandbox_no_network_state_uses_config_for_docker() {
+        assert_eq!(prompt_sandbox_no_network_state("docker", true), Some(true));
+        assert_eq!(
+            prompt_sandbox_no_network_state("docker", false),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn prompt_sandbox_no_network_state_omits_unsupported_backends() {
+        assert_eq!(
+            prompt_sandbox_no_network_state("apple-container", true),
+            None
+        );
+        assert_eq!(prompt_sandbox_no_network_state("none", true), None);
+        assert_eq!(prompt_sandbox_no_network_state("unknown", false), None);
     }
 
     #[test]
