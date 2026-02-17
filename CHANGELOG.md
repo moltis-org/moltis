@@ -15,11 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Configuration documentation examples now match the current schema
+  (`[server]`, `[identity]`, `[tools]`, `[hooks.hooks]`,
+  `[mcp.servers.<name>]`, and `[channels.telegram.<account>]`), including
+  updated provider and local-LLM snippets.
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- Agent loop iteration limit is now configurable via
+  `tools.agent_max_iterations` in `moltis.toml` (default `25`) instead of
+  being hardcoded at runtime.
 
 ### Security
 

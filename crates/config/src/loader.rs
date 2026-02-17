@@ -1072,6 +1072,13 @@ mod tests {
     }
 
     #[test]
+    fn apply_env_overrides_tools_agent_max_iterations() {
+        let vars = vec![("MOLTIS_TOOLS__AGENT_MAX_ITERATIONS".into(), "64".into())];
+        let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+        assert_eq!(config.tools.agent_max_iterations, 64);
+    }
+
+    #[test]
     fn apply_env_overrides_ignores_excluded() {
         // MOLTIS_CONFIG_DIR should not be treated as a config field override.
         let vars = vec![("MOLTIS_CONFIG_DIR".into(), "/tmp/test".into())];

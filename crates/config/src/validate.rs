@@ -224,6 +224,7 @@ fn build_schema_map() -> KnownKeys {
                 ])),
             ),
             ("agent_timeout_secs", Leaf),
+            ("agent_max_iterations", Leaf),
             ("max_tool_result_bytes", Leaf),
         ]))
     };
@@ -841,6 +842,16 @@ fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut Vec<Diagnost
             category: "security",
             path: "tools.exec.sandbox.mode".into(),
             message: "sandbox mode is disabled — commands run without isolation".into(),
+        });
+    }
+
+    // Loop limit must be positive to avoid immediate run failures.
+    if config.tools.agent_max_iterations == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: "tools.agent_max_iterations".into(),
+            message: "tools.agent_max_iterations must be at least 1".into(),
         });
     }
 
@@ -1805,6 +1816,25 @@ enabled = true
         assert!(
             !unknown_providers.is_empty(),
             "misspelled provider should trigger unknown-provider warning"
+        );
+    }
+
+    #[test]
+    fn tools_agent_max_iterations_must_be_positive() {
+        let toml = r#"
+[tools]
+agent_max_iterations = 0
+"#;
+        let result = validate_toml_str(toml);
+        let invalid = result.diagnostics.iter().find(|d| {
+            d.path == "tools.agent_max_iterations"
+                && d.severity == Severity::Error
+                && d.category == "invalid-value"
+        });
+        assert!(
+            invalid.is_some(),
+            "expected tools.agent_max_iterations invalid-value error, got: {:?}",
+            result.diagnostics
         );
     }
 }

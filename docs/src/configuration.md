@@ -14,15 +14,16 @@ On first run, a complete configuration file is generated with sensible defaults.
 ## Basic Settings
 
 ```toml
-[gateway]
+[server]
 port = 13131                    # HTTP/WebSocket port
-host = "0.0.0.0"               # Listen address
+bind = "0.0.0.0"               # Listen address
 
-[agent]
+[identity]
 name = "Moltis"                 # Agent display name
-model = "gpt-5.2-codex"         # Default model
-timeout = 600                   # Agent run timeout (seconds)
-max_iterations = 25             # Max tool call iterations per run
+
+[tools]
+agent_timeout_secs = 600        # Agent run timeout (seconds, 0 = no timeout)
+agent_max_iterations = 25       # Max tool call iterations per run
 ```
 
 ## LLM Providers
@@ -31,17 +32,21 @@ Provider API keys are stored separately in `~/.config/moltis/provider_keys.json`
 
 ```toml
 [providers]
-default = "openai-codex"        # Default provider
+offered = ["openai", "anthropic", "local-llm"]
 
-[providers.openai-codex]
+[providers.openai]
+enabled = true
+models = ["gpt-5.3", "gpt-5.2"]
+
+[providers.anthropic]
 enabled = true
 
-[providers.github-copilot]
+[providers.local-llm]
 enabled = true
+models = ["qwen2.5-coder-7b-q4_k_m"]
 
-[providers.local]
-enabled = true
-model = "qwen2.5-coder-7b-q4_k_m"
+[chat]
+priority_models = ["gpt-5.2"]
 ```
 
 See [Providers](providers.md) for detailed provider configuration.
@@ -54,9 +59,11 @@ Commands run inside isolated containers for security:
 
 ```toml
 [tools.exec.sandbox]
-enabled = true
-backend = "docker"              # "docker" or "apple" (macOS 15+)
-base_image = "ubuntu:25.10"
+mode = "all"                    # "off", "non-main", or "all"
+scope = "session"               # "command", "session", or "global"
+workspace_mount = "ro"          # "ro", "rw", or "none"
+backend = "auto"                # "auto", "docker", or "apple-container"
+no_network = true
 
 # Packages installed in the sandbox image
 packages = [
@@ -94,15 +101,12 @@ Long-term memory uses embeddings for semantic search:
 
 ```toml
 [memory]
-enabled = true
-embedding_model = "text-embedding-3-small"  # OpenAI embedding model
-chunk_size = 512                # Characters per chunk
-chunk_overlap = 50              # Overlap between chunks
-
-# Directories to watch for memory files
-watch_dirs = [
-    "~/.moltis/memory",
-]
+backend = "builtin"             # Or "qmd"
+provider = "openai"             # Or "local", "ollama", "custom"
+model = "text-embedding-3-small"
+citations = "auto"              # "on", "off", or "auto"
+llm_reranking = false
+session_export = false
 ```
 
 ## Authentication
@@ -114,9 +118,6 @@ When you access Moltis from a network address (e.g., `http://192.168.1.100:13131
 ```toml
 [auth]
 disabled = false                # Set true to disable auth entirely
-
-# Session settings
-session_expiry = 604800         # Session lifetime in seconds (7 days)
 ```
 
 ```admonish warning
@@ -128,13 +129,14 @@ Only set `disabled = true` if Moltis is running on a trusted private network. Ne
 Configure lifecycle hooks:
 
 ```toml
-[[hooks]]
+[hooks]
+[[hooks.hooks]]
 name = "my-hook"
 command = "./hooks/my-hook.sh"
 events = ["BeforeToolCall", "AfterToolCall"]
 timeout = 5                     # Timeout in seconds
 
-[hooks.env]
+[hooks.hooks.env]
 MY_VAR = "value"               # Environment variables for the hook
 ```
 
@@ -145,13 +147,13 @@ See [Hooks](hooks.md) for the full hook system documentation.
 Connect to Model Context Protocol servers:
 
 ```toml
-[[mcp.servers]]
-name = "filesystem"
+[mcp]
+
+[mcp.servers.filesystem]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
 
-[[mcp.servers]]
-name = "github"
+[mcp.servers.github]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "ghp_..." }
@@ -160,9 +162,8 @@ env = { GITHUB_TOKEN = "ghp_..." }
 ## Telegram Integration
 
 ```toml
-[telegram]
-enabled = true
-# Token is stored in provider_keys.json, not here
+[channels.telegram.my-bot]
+token = "123456:ABC..."
 allowed_users = [123456789]     # Telegram user IDs allowed to chat
 ```
 
@@ -176,7 +177,7 @@ key_path = "~/.config/moltis/key.pem"
 # If paths don't exist, a self-signed certificate is generated
 
 # Port for the plain-HTTP redirect / CA-download server.
-# Defaults to the gateway port + 1 when not set.
+# Defaults to the server port + 1 when not set.
 # http_redirect_port = 13132
 ```
 
@@ -188,16 +189,16 @@ Expose Moltis over your Tailscale network:
 
 ```toml
 [tailscale]
-enabled = true
-mode = "serve"                  # "serve" (private) or "funnel" (public)
+mode = "serve"                  # "off", "serve", or "funnel"
+reset_on_exit = true
 ```
 
 ## Observability
 
 ```toml
-[telemetry]
+[metrics]
 enabled = true
-otlp_endpoint = "http://localhost:4317"  # OpenTelemetry collector
+prometheus_endpoint = true
 ```
 
 ## Process Environment Variables (`[env]`)
@@ -232,8 +233,10 @@ All settings can be overridden via environment variables:
 |----------|-------------|
 | `MOLTIS_CONFIG_DIR` | Configuration directory |
 | `MOLTIS_DATA_DIR` | Data directory |
-| `MOLTIS_PORT` | Gateway port |
-| `MOLTIS_HOST` | Listen address |
+| `MOLTIS_SERVER__PORT` | Server port override |
+| `MOLTIS_SERVER__BIND` | Server bind address override |
+| `MOLTIS_TOOLS__AGENT_TIMEOUT_SECS` | Agent run timeout override |
+| `MOLTIS_TOOLS__AGENT_MAX_ITERATIONS` | Agent loop iteration cap override |
 
 ## CLI Flags
 
@@ -244,32 +247,38 @@ moltis --config-dir /path/to/config --data-dir /path/to/data
 ## Complete Example
 
 ```toml
-[gateway]
+[server]
 port = 13131
-host = "0.0.0.0"
+bind = "0.0.0.0"
 
-[agent]
+[identity]
 name = "Atlas"
-model = "gpt-5.2-codex"
-timeout = 600
-max_iterations = 25
+
+[tools]
+agent_timeout_secs = 600
+agent_max_iterations = 25
 
 [providers]
-default = "openai-codex"
+offered = ["openai", "anthropic", "local-llm"]
 
 [tools.exec.sandbox]
-enabled = true
-backend = "docker"
-base_image = "ubuntu:25.10"
+mode = "all"
+scope = "session"
+workspace_mount = "ro"
+backend = "auto"
+no_network = true
 packages = ["curl", "git", "jq", "python3", "nodejs"]
 
 [memory]
-enabled = true
+backend = "builtin"
+provider = "openai"
+model = "text-embedding-3-small"
 
 [auth]
 disabled = false
 
-[[hooks]]
+[hooks]
+[[hooks.hooks]]
 name = "audit-log"
 command = "./hooks/audit.sh"
 events = ["BeforeToolCall"]

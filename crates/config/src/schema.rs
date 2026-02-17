@@ -1070,6 +1070,9 @@ pub struct ToolsConfig {
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Maximum number of agent loop iterations before aborting. Default 25.
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: usize,
     /// Maximum bytes for a single tool result before truncation. Default 50KB.
     #[serde(default = "default_max_tool_result_bytes")]
     pub max_tool_result_bytes: usize,
@@ -1083,6 +1086,7 @@ impl Default for ToolsConfig {
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
+            agent_max_iterations: default_agent_max_iterations(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
         }
     }
@@ -1090,6 +1094,10 @@ impl Default for ToolsConfig {
 
 fn default_agent_timeout_secs() -> u64 {
     600
+}
+
+fn default_agent_max_iterations() -> usize {
+    25
 }
 
 fn default_max_tool_result_bytes() -> usize {
