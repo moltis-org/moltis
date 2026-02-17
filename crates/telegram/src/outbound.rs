@@ -32,6 +32,23 @@ pub struct TelegramOutbound {
 
 const TELEGRAM_RETRY_AFTER_MAX_RETRIES: usize = 4;
 
+#[derive(Debug, Clone, Copy)]
+struct StreamSendConfig {
+    edit_throttle_ms: u64,
+    notify_on_complete: bool,
+    min_initial_chars: usize,
+}
+
+impl Default for StreamSendConfig {
+    fn default() -> Self {
+        Self {
+            edit_throttle_ms: 300,
+            notify_on_complete: false,
+            min_initial_chars: 30,
+        }
+    }
+}
+
 impl TelegramOutbound {
     fn get_bot(&self, account_id: &str) -> Result<Bot> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -52,6 +69,18 @@ impl TelegramOutbound {
         } else {
             None
         }
+    }
+
+    fn stream_send_config(&self, account_id: &str) -> StreamSendConfig {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .map(|s| StreamSendConfig {
+                edit_throttle_ms: s.config.edit_throttle_ms,
+                notify_on_complete: s.config.stream_notify_on_complete,
+                min_initial_chars: s.config.stream_min_initial_chars,
+            })
+            .unwrap_or_default()
     }
 
     async fn send_chunk_with_fallback(
@@ -746,20 +775,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
         let rp = self.reply_params(account_id, reply_to);
-
-        let (throttle_ms, notify_on_complete, min_initial_chars) = {
-            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
-            accounts
-                .get(account_id)
-                .map(|s| {
-                    (
-                        s.config.edit_throttle_ms,
-                        s.config.stream_notify_on_complete,
-                        s.config.stream_min_initial_chars,
-                    )
-                })
-                .unwrap_or((300, false, 30))
-        };
+        let stream_cfg = self.stream_send_config(account_id);
 
         // Send typing indicator
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
@@ -767,14 +783,17 @@ impl ChannelStreamOutbound for TelegramOutbound {
 
         let mut accumulated = String::new();
         let mut last_edit = tokio::time::Instant::now();
-        let throttle = Duration::from_millis(throttle_ms);
+        let throttle = Duration::from_millis(stream_cfg.edit_throttle_ms);
 
         while let Some(event) = stream.recv().await {
             match event {
                 StreamEvent::Delta(delta) => {
                     accumulated.push_str(&delta);
                     if stream_message_id.is_none() {
-                        if has_reached_stream_min_initial_chars(&accumulated, min_initial_chars) {
+                        if has_reached_stream_min_initial_chars(
+                            &accumulated,
+                            stream_cfg.min_initial_chars,
+                        ) {
                             let html = markdown::markdown_to_telegram_html(&accumulated);
                             let display = markdown::truncate_at_char_boundary(
                                 &html,
@@ -861,7 +880,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
             }
 
             if should_send_stream_completion_notification(
-                notify_on_complete,
+                stream_cfg.notify_on_complete,
                 true,
                 sent_non_silent_completion_chunks,
             ) {
