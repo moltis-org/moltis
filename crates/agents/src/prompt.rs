@@ -240,6 +240,7 @@ fn build_system_prompt_full(
     append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
     append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
     append_guidelines_section(&mut prompt, include_tools);
+    append_runtime_datetime_tail(&mut prompt, runtime_context);
 
     prompt
 }
@@ -477,6 +478,38 @@ fn append_guidelines_section(prompt: &mut String, include_tools: bool) {
     });
 }
 
+fn append_runtime_datetime_tail(
+    prompt: &mut String,
+    runtime_context: Option<&PromptRuntimeContext>,
+) {
+    let Some(runtime) = runtime_context else {
+        return;
+    };
+
+    if let Some(time) = runtime
+        .host
+        .time
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\nThe current user datetime is ");
+        prompt.push_str(time);
+        prompt.push_str(".\n");
+        return;
+    }
+
+    if let Some(today) = runtime
+        .host
+        .today
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\nThe current user date is ");
+        prompt.push_str(today);
+        prompt.push_str(".\n");
+    }
+}
+
 fn push_non_empty_runtime_field(parts: &mut Vec<String>, key: &str, value: Option<&str>) {
     if let Some(value) = value.filter(|value| !value.is_empty()) {
         parts.push(format!("{key}={value}"));
@@ -490,7 +523,6 @@ fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
         ("os", host.os.as_deref()),
         ("arch", host.arch.as_deref()),
         ("shell", host.shell.as_deref()),
-        ("time", host.time.as_deref()),
         ("today", host.today.as_deref()),
         ("provider", host.provider.as_deref()),
         ("model", host.model.as_deref()),
@@ -838,8 +870,9 @@ mod tests {
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
-        assert!(prompt.contains("time=2026-02-17 16:18:00 CET"));
+        assert!(!prompt.contains("time=2026-02-17 16:18:00 CET"));
         assert!(prompt.contains("today=2026-02-17"));
+        assert!(prompt.contains("The current user datetime is 2026-02-17 16:18:00 CET."));
         assert!(prompt.contains("provider=openai"));
         assert!(prompt.contains("model=gpt-5"));
         assert!(prompt.contains("data_dir=/home/moltis/.moltis"));
@@ -1141,5 +1174,94 @@ mod tests {
         assert!(prompt.contains("Likes coffee"));
         assert!(prompt.contains("memory_search"));
         assert!(prompt.contains("MUST call `memory_save`"));
+    }
+
+    #[test]
+    fn test_datetime_tail_appended_at_end_when_runtime_time_present() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                time: Some("2026-02-17 16:18:00 CET".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        let expected = "The current user datetime is 2026-02-17 16:18:00 CET.";
+        assert!(prompt.contains(expected));
+        assert!(prompt.trim_end().ends_with(expected));
+    }
+
+    #[test]
+    fn test_datetime_tail_falls_back_to_today_when_time_missing() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                today: Some("2026-02-17".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("The current user date is 2026-02-17."));
+        assert!(
+            prompt
+                .trim_end()
+                .ends_with("The current user date is 2026-02-17.")
+        );
+    }
+
+    #[test]
+    fn test_datetime_tail_not_injected_without_time_or_date() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext::default(),
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(!prompt.contains("The current user datetime is "));
+        assert!(!prompt.contains("The current user date is "));
     }
 }
