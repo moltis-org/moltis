@@ -142,6 +142,74 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("markdown and ansi tables render as structured HTML tables", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+		await expectRpcOk(page, "chat.clear", {});
+
+		const markdownTableText = [
+			"Here are nearby cafes:",
+			"",
+			"| # | Cafe | Rating |",
+			"|---|------|--------|",
+			"| 1 | **Mellis Cafe** | ⭐4.8 |",
+			"| 2 | **Scullery** | ⭐4.7 |",
+		].join("\n");
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: markdownTableText,
+				messageIndex: 999905,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+			},
+		});
+
+		const markdownAssistant = page.locator("#messages .msg.assistant").last();
+		const markdownTable = markdownAssistant.locator("table.msg-table");
+		await expect(markdownTable).toHaveCount(1);
+		await expect(markdownTable.locator("thead th")).toHaveText(["#", "Cafe", "Rating"]);
+		await expect(markdownTable.locator("tbody tr")).toHaveCount(2);
+		await expect(markdownTable.locator("tbody tr").first().locator("strong")).toHaveText("Mellis Cafe");
+
+		const ansiTableText = [
+			"Same data from an ANSI output table:",
+			"",
+			"\u001b[32m+----+--------------------+\u001b[0m",
+			"\u001b[32m| #  | Cafe               |\u001b[0m",
+			"\u001b[32m+----+--------------------+\u001b[0m",
+			"\u001b[32m| 1  | Mellis Cafe        |\u001b[0m",
+			"\u001b[32m| 2  | The Coffee Movement |\u001b[0m",
+			"\u001b[32m+----+--------------------+\u001b[0m",
+		].join("\n");
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: ansiTableText,
+				messageIndex: 999906,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+			},
+		});
+
+		const ansiAssistant = page.locator("#messages .msg.assistant").last();
+		const ansiTable = ansiAssistant.locator("table.msg-table");
+		await expect(ansiTable).toHaveCount(1);
+		await expect(ansiTable.locator("thead th")).toHaveText(["#", "Cafe"]);
+		await expect(ansiTable.locator("tbody tr")).toHaveCount(2);
+		await expect(ansiAssistant).not.toContainText("\u001b[");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("final footer shows token speed with slow/fast tones", async ({ page }) => {
 		await page.goto("/chats/main");
 		await waitForWsConnected(page);

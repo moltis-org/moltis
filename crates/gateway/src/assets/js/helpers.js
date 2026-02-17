@@ -10,11 +10,149 @@ export function esc(s) {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function stripAnsi(text) {
+	var input = String(text || "");
+	var out = "";
+	for (var i = 0; i < input.length; i++) {
+		if (input.charCodeAt(i) === 27 && input[i + 1] === "[") {
+			i += 2;
+			while (i < input.length) {
+				var ch = input[i];
+				if (ch >= "@" && ch <= "~") break;
+				i++;
+			}
+			continue;
+		}
+		out += input[i];
+	}
+	return out;
+}
+
+function splitPipeCells(line) {
+	var plain = stripAnsi(line).trim();
+	if (plain.startsWith("|")) plain = plain.slice(1);
+	if (plain.endsWith("|")) plain = plain.slice(0, -1);
+	return plain.split("|").map((cell) => cell.trim());
+}
+
+function normalizeTableRow(cells, columnCount) {
+	var row = cells.slice(0, columnCount);
+	while (row.length < columnCount) row.push("");
+	return row;
+}
+
+function buildTableHtml(headerCells, bodyRows) {
+	var columnCount = headerCells.length;
+	var headerRow = normalizeTableRow(headerCells, columnCount);
+	var bodyHtml = bodyRows
+		.map((row) => normalizeTableRow(row, columnCount))
+		.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
+		.join("");
+	var thead = `<thead><tr>${headerRow.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead>`;
+	var tbody = bodyRows.length > 0 ? `<tbody>${bodyHtml}</tbody>` : "";
+	return `<div class="msg-table-wrap"><table class="msg-table">${thead}${tbody}</table></div>`;
+}
+
+function isMarkdownPipeRow(line) {
+	if (!stripAnsi(line).includes("|")) return false;
+	return splitPipeCells(line).length >= 2;
+}
+
+function isMarkdownSeparatorRow(line, expectedCols) {
+	var cells = splitPipeCells(line);
+	if (cells.length !== expectedCols) return false;
+	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function parseMarkdownTable(lines, start) {
+	if (start + 1 >= lines.length) return null;
+	if (!isMarkdownPipeRow(lines[start])) return null;
+	var headerCells = splitPipeCells(lines[start]);
+	if (headerCells.length < 2) return null;
+	if (!isMarkdownSeparatorRow(lines[start + 1], headerCells.length)) return null;
+
+	var bodyRows = [];
+	var next = start + 2;
+	while (next < lines.length) {
+		var candidate = lines[next];
+		if (!candidate.trim()) break;
+		if (!isMarkdownPipeRow(candidate)) break;
+		bodyRows.push(splitPipeCells(candidate));
+		next++;
+	}
+	return {
+		html: buildTableHtml(headerCells, bodyRows),
+		next: next,
+	};
+}
+
+function isAsciiBorderRow(line) {
+	return /^\+(?:[-=]+\+)+$/.test(stripAnsi(line).trim());
+}
+
+function isAsciiPipeRow(line) {
+	return /^\|.*\|$/.test(stripAnsi(line).trim());
+}
+
+function parseAsciiTable(lines, start) {
+	if (!isAsciiBorderRow(lines[start])) return null;
+	var next = start + 1;
+	var rows = [];
+
+	while (next < lines.length) {
+		var line = lines[next];
+		if (isAsciiBorderRow(line)) {
+			next++;
+			continue;
+		}
+		if (!isAsciiPipeRow(line)) break;
+		rows.push(splitPipeCells(line));
+		next++;
+	}
+	if (rows.length === 0) return null;
+
+	return {
+		html: buildTableHtml(rows[0], rows.slice(1)),
+		next: next,
+	};
+}
+
+function renderTables(s) {
+	var lines = s.split("\n");
+	var out = [];
+	for (var i = 0; i < lines.length; ) {
+		var markdownTable = parseMarkdownTable(lines, i);
+		if (markdownTable) {
+			out.push(markdownTable.html);
+			i = markdownTable.next;
+			continue;
+		}
+
+		var asciiTable = parseAsciiTable(lines, i);
+		if (asciiTable) {
+			out.push(asciiTable.html);
+			i = asciiTable.next;
+			continue;
+		}
+
+		out.push(lines[i]);
+		i++;
+	}
+	return out.join("\n");
+}
+
 export function renderMarkdown(raw) {
 	var s = esc(raw);
-	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => `<pre><code>${code}</code></pre>`);
+	var codeBlocks = [];
+	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, _lang, code) => `@@MOLTIS_CODE_BLOCK_${codeBlocks.push(code) - 1}@@`);
+	s = renderTables(s);
 	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
 	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+	s = s.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_, idx) => {
+		var code = codeBlocks[Number(idx)];
+		if (typeof code !== "string") return "";
+		return `<pre><code>${code}</code></pre>`;
+	});
 	return s;
 }
 

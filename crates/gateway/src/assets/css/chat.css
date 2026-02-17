@@ -332,6 +332,34 @@
   flex-shrink: 0;
 }
 
+.msg-table-wrap {
+  max-width: 100%;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+
+.msg-table {
+  border: 1px solid var(--border);
+  border-collapse: collapse;
+  min-width: 100%;
+  background: var(--surface);
+  white-space: normal;
+}
+
+.msg-table th,
+.msg-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.msg-table th {
+  background: var(--surface2);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
 /* ── Message inline elements ── */
 
 .msg code {
