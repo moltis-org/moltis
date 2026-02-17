@@ -325,12 +325,23 @@ function renderContextSandboxSection(card, data) {
 
 function renderContextTokensSection(card, data) {
 	var tu = data.tokenUsage || {};
+	var sessionInput = tu.inputTokens || 0;
+	var sessionOutput = tu.outputTokens || 0;
+	var sessionTotal = tu.total || 0;
+	var currentInput = tu.currentInputTokens || sessionInput;
+	var currentOutput = tu.currentOutputTokens || 0;
+	var currentTotal = tu.currentTotal || currentInput + currentOutput;
+	var estimatedNextInput = tu.estimatedNextInputTokens || currentInput;
 	var tokenSection = ctxSection("Token Usage");
-	tokenSection.appendChild(ctxRow("Input", formatTokens(tu.inputTokens || 0), true));
-	tokenSection.appendChild(ctxRow("Output", formatTokens(tu.outputTokens || 0), true));
-	tokenSection.appendChild(ctxRow("Total", formatTokens(tu.total || 0), true));
+	tokenSection.appendChild(ctxRow("Session input", formatTokens(sessionInput), true));
+	tokenSection.appendChild(ctxRow("Session output", formatTokens(sessionOutput), true));
+	tokenSection.appendChild(ctxRow("Session total", formatTokens(sessionTotal), true));
+	tokenSection.appendChild(ctxRow("Current input", formatTokens(currentInput), true));
+	tokenSection.appendChild(ctxRow("Current output", formatTokens(currentOutput), true));
+	tokenSection.appendChild(ctxRow("Current total", formatTokens(currentTotal), true));
+	tokenSection.appendChild(ctxRow("Estimated next input", formatTokens(estimatedNextInput), true));
 	if (tu.contextWindow > 0) {
-		var pct = Math.max(0, 100 - Math.round(((tu.total || 0) / tu.contextWindow) * 100));
+		var pct = Math.max(0, 100 - Math.round((estimatedNextInput / tu.contextWindow) * 100));
 		tokenSection.appendChild(ctxRow("Context left", `${pct}% of ${formatTokens(tu.contextWindow)}`, true));
 	}
 	card.appendChild(tokenSection);
@@ -391,8 +402,12 @@ export function renderCompactCard(data) {
 	var statsSection = ctxSection("Before compact");
 	statsSection.appendChild(ctxRow("Messages", String(data.messageCount || 0)));
 	statsSection.appendChild(ctxRow("Total tokens", formatTokens(data.totalTokens || 0)));
+	if (data.estimatedNextInputTokens) {
+		statsSection.appendChild(ctxRow("Estimated next input", formatTokens(data.estimatedNextInputTokens), true));
+	}
 	if (data.contextWindow) {
-		var pctUsed = Math.round(((data.totalTokens || 0) / data.contextWindow) * 100);
+		var basis = data.estimatedNextInputTokens || data.totalTokens || 0;
+		var pctUsed = Math.round((basis / data.contextWindow) * 100);
 		statsSection.appendChild(ctxRow("Context usage", `${pctUsed}% of ${formatTokens(data.contextWindow)}`));
 	}
 	card.appendChild(statsSection);

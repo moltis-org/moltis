@@ -50,10 +50,21 @@ pub enum PersistedMessage {
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         provider: Option<String>,
+        /// Total input tokens spent during this assistant turn.
         #[serde(rename = "inputTokens", skip_serializing_if = "Option::is_none")]
         input_tokens: Option<u32>,
+        /// Total output tokens produced during this assistant turn.
         #[serde(rename = "outputTokens", skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u32>,
+        /// Input tokens sent in the final LLM request for this turn.
+        #[serde(rename = "requestInputTokens", skip_serializing_if = "Option::is_none")]
+        request_input_tokens: Option<u32>,
+        /// Output tokens produced in the final LLM request for this turn.
+        #[serde(
+            rename = "requestOutputTokens",
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_output_tokens: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<PersistedToolCall>>,
         /// Optional provider reasoning/planning text (not final answer text).
@@ -207,6 +218,8 @@ impl PersistedMessage {
             provider: Some(provider.into()),
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
+            request_input_tokens: Some(input_tokens),
+            request_output_tokens: Some(output_tokens),
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -376,6 +389,8 @@ mod tests {
             provider: Some("openai".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            request_input_tokens: Some(100),
+            request_output_tokens: Some(50),
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -390,6 +405,8 @@ mod tests {
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["inputTokens"], 100);
         assert_eq!(json["outputTokens"], 50);
+        assert_eq!(json["requestInputTokens"], 100);
+        assert_eq!(json["requestOutputTokens"], 50);
         assert!(json.get("audio").is_none());
     }
 
@@ -513,6 +530,8 @@ mod tests {
                 provider,
                 input_tokens,
                 output_tokens,
+                request_input_tokens,
+                request_output_tokens,
                 reasoning,
                 audio,
                 ..
@@ -522,6 +541,8 @@ mod tests {
                 assert_eq!(provider.as_deref(), Some("openai"));
                 assert_eq!(input_tokens, Some(100));
                 assert_eq!(output_tokens, Some(50));
+                assert_eq!(request_input_tokens, Some(100));
+                assert_eq!(request_output_tokens, Some(50));
                 assert!(reasoning.is_none());
                 assert!(audio.is_none());
             },
@@ -564,9 +585,17 @@ mod tests {
         });
         let msg: PersistedMessage = serde_json::from_value(json).unwrap();
         match msg {
-            PersistedMessage::Assistant { audio, content, .. } => {
+            PersistedMessage::Assistant {
+                audio,
+                content,
+                request_input_tokens,
+                request_output_tokens,
+                ..
+            } => {
                 assert_eq!(content, "old message");
                 assert!(audio.is_none());
+                assert!(request_input_tokens.is_none());
+                assert!(request_output_tokens.is_none());
             },
             _ => panic!("expected Assistant message"),
         }

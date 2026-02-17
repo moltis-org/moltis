@@ -157,6 +157,10 @@ struct ChatFinalBroadcast {
     provider: String,
     input_tokens: u32,
     output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_input_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_output_tokens: Option<u32>,
     message_index: usize,
     reply_medium: ReplyMedium,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,9 +193,66 @@ struct AssistantTurnOutput {
     text: String,
     input_tokens: u32,
     output_tokens: u32,
+    request_input_tokens: u32,
+    request_output_tokens: u32,
     audio_path: Option<String>,
     reasoning: Option<String>,
     llm_api_response: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SessionTokenUsage {
+    session_input_tokens: u64,
+    session_output_tokens: u64,
+    current_request_input_tokens: u64,
+    current_request_output_tokens: u64,
+}
+
+#[must_use]
+fn session_token_usage_from_messages(messages: &[Value]) -> SessionTokenUsage {
+    let session_input_tokens = messages
+        .iter()
+        .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
+        .sum();
+    let session_output_tokens = messages
+        .iter()
+        .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
+        .sum();
+
+    let (current_request_input_tokens, current_request_output_tokens) = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
+        .map_or((0, 0), |m| {
+            let input = m
+                .get("requestInputTokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| m.get("inputTokens").and_then(|v| v.as_u64()))
+                .unwrap_or(0);
+            let output = m
+                .get("requestOutputTokens")
+                .and_then(|v| v.as_u64())
+                .or_else(|| m.get("outputTokens").and_then(|v| v.as_u64()))
+                .unwrap_or(0);
+            (input, output)
+        });
+
+    SessionTokenUsage {
+        session_input_tokens,
+        session_output_tokens,
+        current_request_input_tokens,
+        current_request_output_tokens,
+    }
+}
+
+#[must_use]
+fn estimate_text_tokens(text: &str) -> u64 {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let bytes = trimmed.len() as u64;
+    bytes.div_ceil(4).max(1)
 }
 
 fn now_ms() -> u64 {
@@ -2402,27 +2463,26 @@ impl ChatService for LiveChatService {
             .get("_accept_language")
             .and_then(|v| v.as_str())
             .map(String::from);
-        // Auto-compact: if conversation input tokens exceed 95% of context window, compact first.
+        // Auto-compact when the next request is likely to exceed 95% of the
+        // model context window.
         let context_window = provider.context_window() as u64;
-        let total_input: u64 = history
-            .iter()
-            .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
-            .sum();
+        let token_usage = session_token_usage_from_messages(&history);
+        let estimated_next_input = token_usage
+            .current_request_input_tokens
+            .saturating_add(estimate_text_tokens(&text));
         let compact_threshold = (context_window * 95) / 100;
 
-        if total_input >= compact_threshold {
+        if estimated_next_input >= compact_threshold {
             let pre_compact_msg_count = history.len();
-            let total_output: u64 = history
-                .iter()
-                .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
-                .sum();
-            let pre_compact_total = total_input + total_output;
+            let pre_compact_total = token_usage
+                .current_request_input_tokens
+                .saturating_add(token_usage.current_request_output_tokens);
 
             info!(
                 session = %session_key,
-                total_input,
+                estimated_next_input,
                 context_window,
-                "auto-compact triggered (95% threshold reached)"
+                "auto-compact triggered (estimated next request over 95% threshold)"
             );
             broadcast(
                 &self.state,
@@ -2433,8 +2493,11 @@ impl ChatService for LiveChatService {
                     "phase": "start",
                     "messageCount": pre_compact_msg_count,
                     "totalTokens": pre_compact_total,
-                    "inputTokens": total_input,
-                    "outputTokens": total_output,
+                    "inputTokens": token_usage.current_request_input_tokens,
+                    "outputTokens": token_usage.current_request_output_tokens,
+                    "estimatedNextInputTokens": estimated_next_input,
+                    "sessionInputTokens": token_usage.session_input_tokens,
+                    "sessionOutputTokens": token_usage.session_output_tokens,
                     "contextWindow": context_window,
                 }),
                 BroadcastOpts::default(),
@@ -2674,6 +2737,8 @@ impl ChatService for LiveChatService {
                     provider: Some(provider_name.clone()),
                     input_tokens: Some(assistant_output.input_tokens),
                     output_tokens: Some(assistant_output.output_tokens),
+                    request_input_tokens: Some(assistant_output.request_input_tokens),
+                    request_output_tokens: Some(assistant_output.request_output_tokens),
                     tool_calls: None,
                     reasoning: assistant_output.reasoning,
                     llm_api_response: assistant_output.llm_api_response,
@@ -2946,6 +3011,8 @@ impl ChatService for LiveChatService {
                 provider: Some(provider_name.clone()),
                 input_tokens: Some(assistant_output.input_tokens),
                 output_tokens: Some(assistant_output.output_tokens),
+                request_input_tokens: Some(assistant_output.request_input_tokens),
+                request_output_tokens: Some(assistant_output.request_output_tokens),
                 tool_calls: None,
                 reasoning: assistant_output.reasoning.clone(),
                 llm_api_response: assistant_output.llm_api_response.clone(),
@@ -3232,6 +3299,8 @@ impl ChatService for LiveChatService {
             provider: None,
             input_tokens: None,
             output_tokens: None,
+            request_input_tokens: None,
+            request_output_tokens: None,
             tool_calls: None,
             reasoning: None,
             llm_api_response: None,
@@ -3410,21 +3479,16 @@ impl ChatService for LiveChatService {
             vec![]
         };
 
-        // Token usage from actual API-reported counts stored in messages.
+        // Token usage from API-reported counts stored in messages.
         let messages = self
             .session_store
             .read(&session_key)
             .await
             .unwrap_or_default();
-        let total_input: u64 = messages
-            .iter()
-            .filter_map(|m| m.get("inputTokens").and_then(|v| v.as_u64()))
-            .sum();
-        let total_output: u64 = messages
-            .iter()
-            .filter_map(|m| m.get("outputTokens").and_then(|v| v.as_u64()))
-            .sum();
-        let total_tokens = total_input + total_output;
+        let usage = session_token_usage_from_messages(&messages);
+        let total_tokens = usage.session_input_tokens + usage.session_output_tokens;
+        let current_total_tokens =
+            usage.current_request_input_tokens + usage.current_request_output_tokens;
 
         // Context window from the session's provider
         let context_window = {
@@ -3516,9 +3580,13 @@ impl ChatService for LiveChatService {
             "sandbox": sandbox_info,
             "supportsTools": supports_tools,
             "tokenUsage": {
-                "inputTokens": total_input,
-                "outputTokens": total_output,
+                "inputTokens": usage.session_input_tokens,
+                "outputTokens": usage.session_output_tokens,
                 "total": total_tokens,
+                "currentInputTokens": usage.current_request_input_tokens,
+                "currentOutputTokens": usage.current_request_output_tokens,
+                "currentTotal": current_total_tokens,
+                "estimatedNextInputTokens": usage.current_request_input_tokens,
                 "contextWindow": context_window,
             },
         }))
@@ -4517,6 +4585,7 @@ async fn run_with_tools(
             let iterations = result.iterations;
             let tool_calls_made = result.tool_calls_made;
             let usage = result.usage;
+            let request_usage = result.request_usage;
             let llm_api_response = (!result.raw_llm_responses.is_empty())
                 .then_some(Value::Array(result.raw_llm_responses));
             let display_text = result.text;
@@ -4576,6 +4645,8 @@ async fn run_with_tools(
                 provider: provider_name.to_string(),
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                request_input_tokens: Some(request_usage.input_tokens),
+                request_output_tokens: Some(request_usage.output_tokens),
                 message_index: assistant_message_index,
                 reply_medium: desired_reply_medium,
                 iterations: Some(iterations),
@@ -4603,6 +4674,8 @@ async fn run_with_tools(
                 text: display_text,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                request_input_tokens: request_usage.input_tokens,
+                request_output_tokens: request_usage.output_tokens,
                 audio_path,
                 reasoning,
                 llm_api_response,
@@ -4685,6 +4758,8 @@ async fn compact_session(
         provider: None,
         input_tokens: None,
         output_tokens: None,
+        request_input_tokens: None,
+        request_output_tokens: None,
         tool_calls: None,
         reasoning: None,
         llm_api_response: None,
@@ -4976,6 +5051,8 @@ async fn run_streaming(
                         provider: provider_name.to_string(),
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        request_input_tokens: Some(usage.input_tokens),
+                        request_output_tokens: Some(usage.output_tokens),
                         message_index: assistant_message_index,
                         reply_medium: desired_reply_medium,
                         iterations: None,
@@ -5010,6 +5087,8 @@ async fn run_streaming(
                         text: accumulated,
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        request_input_tokens: usage.input_tokens,
+                        request_output_tokens: usage.output_tokens,
                         audio_path,
                         reasoning,
                         llm_api_response,
@@ -5969,6 +6048,51 @@ mod tests {
         let truncated = truncate_at_char_boundary(&text, 100);
         assert_eq!(truncated.len(), 99);
         assert!(truncated.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn session_token_usage_prefers_request_fields_for_current_context() {
+        let messages = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "inputTokens": 50,
+                "outputTokens": 10,
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "inputTokens": 120,
+                "outputTokens": 40,
+                "requestInputTokens": 75,
+                "requestOutputTokens": 20,
+            }),
+        ];
+
+        let usage = session_token_usage_from_messages(&messages);
+        assert_eq!(usage.session_input_tokens, 170);
+        assert_eq!(usage.session_output_tokens, 50);
+        assert_eq!(usage.current_request_input_tokens, 75);
+        assert_eq!(usage.current_request_output_tokens, 20);
+    }
+
+    #[test]
+    fn session_token_usage_falls_back_to_legacy_turn_fields() {
+        let messages = vec![serde_json::json!({
+            "role": "assistant",
+            "inputTokens": 33,
+            "outputTokens": 11,
+        })];
+
+        let usage = session_token_usage_from_messages(&messages);
+        assert_eq!(usage.current_request_input_tokens, 33);
+        assert_eq!(usage.current_request_output_tokens, 11);
+    }
+
+    #[test]
+    fn estimate_text_tokens_uses_non_empty_floor_and_byte_ratio() {
+        assert_eq!(estimate_text_tokens(""), 0);
+        assert_eq!(estimate_text_tokens("a"), 1);
+        assert_eq!(estimate_text_tokens("abcd"), 1);
+        assert_eq!(estimate_text_tokens("abcde"), 2);
     }
 
     #[test]

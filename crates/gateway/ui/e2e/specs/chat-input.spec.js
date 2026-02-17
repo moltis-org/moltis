@@ -244,6 +244,29 @@ test.describe("Chat input and slash commands", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("token bar context-left uses current request input, not cumulative totals", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			state.setSessionTokens({ input: 200000, output: 0 });
+			state.setSessionCurrentInputTokens(50000);
+			state.setSessionContextWindow(200000);
+			state.setSessionToolsEnabled(true);
+			chatUi.updateTokenBar();
+		});
+
+		const tokenBar = page.locator("#tokenBar");
+		await expect(tokenBar).toBeVisible();
+		await expect(tokenBar).toContainText("Context left before auto-compact: 75%");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("audio duration formatter handles invalid values", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const formatted = await page.evaluate(async () => {
