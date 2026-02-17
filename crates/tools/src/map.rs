@@ -667,8 +667,16 @@ impl AgentTool for ShowMapTool {
                 }
             },
             "anyOf": [
-                { "required": ["latitude", "longitude"] },
-                { "required": ["points"] }
+                {
+                    "type": "object",
+                    "required": ["latitude", "longitude"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "required": ["points"],
+                    "additionalProperties": false
+                }
             ],
             "additionalProperties": false
         })
