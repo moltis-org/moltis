@@ -15,7 +15,9 @@ use {
 use moltis_channels::{
     ChannelEventSink,
     message_log::MessageLog,
-    plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
+    plugin::{
+        ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus, ChannelStreamOutbound,
+    },
 };
 
 use crate::{
@@ -61,6 +63,13 @@ impl TelegramPlugin {
 
     /// Get a shared reference to the outbound sender (for use outside the plugin).
     pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
+        Arc::new(TelegramOutbound {
+            accounts: Arc::clone(&self.accounts),
+        })
+    }
+
+    /// Get a shared reference to streaming outbound sender.
+    pub fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
         Arc::new(TelegramOutbound {
             accounts: Arc::clone(&self.accounts),
         })

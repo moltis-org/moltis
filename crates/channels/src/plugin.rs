@@ -339,7 +339,18 @@ pub type StreamSender = mpsc::Sender<StreamEvent>;
 #[async_trait]
 pub trait ChannelStreamOutbound: Send + Sync {
     /// Send a streaming response that updates a message in place.
-    async fn send_stream(&self, account_id: &str, to: &str, stream: StreamReceiver) -> Result<()>;
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<()>;
+
+    /// Whether streaming is enabled for this account.
+    async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

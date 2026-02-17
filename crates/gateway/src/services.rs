@@ -4,7 +4,7 @@
 
 use {
     async_trait::async_trait,
-    moltis_channels::ChannelOutbound,
+    moltis_channels::{ChannelOutbound, ChannelStreamOutbound},
     serde_json::Value,
     std::{collections::HashSet, path::Path, sync::Arc},
     tracing::warn,
@@ -2139,6 +2139,8 @@ pub struct GatewayServices {
     pub local_llm: Arc<dyn LocalLlmService>,
     /// Optional channel outbound for sending replies back to channels.
     channel_outbound: Option<Arc<dyn ChannelOutbound>>,
+    /// Optional channel stream outbound for edit-in-place channel streaming.
+    channel_stream_outbound: Option<Arc<dyn ChannelStreamOutbound>>,
     /// Optional session metadata for cross-service access (e.g. channel binding).
     pub session_metadata: Option<Arc<moltis_sessions::metadata::SqliteSessionMetadata>>,
     /// Optional session store for message-index lookups (e.g. deduplication).
@@ -2173,8 +2175,20 @@ impl GatewayServices {
         self
     }
 
+    pub fn with_channel_stream_outbound(
+        mut self,
+        outbound: Arc<dyn ChannelStreamOutbound>,
+    ) -> Self {
+        self.channel_stream_outbound = Some(outbound);
+        self
+    }
+
     pub fn channel_outbound_arc(&self) -> Option<Arc<dyn ChannelOutbound>> {
         self.channel_outbound.clone()
+    }
+
+    pub fn channel_stream_outbound_arc(&self) -> Option<Arc<dyn ChannelStreamOutbound>> {
+        self.channel_stream_outbound.clone()
     }
 
     /// Create a service bundle with all noop implementations.
@@ -2203,6 +2217,7 @@ impl GatewayServices {
             project: Arc::new(NoopProjectService),
             local_llm: Arc::new(NoopLocalLlmService),
             channel_outbound: None,
+            channel_stream_outbound: None,
             session_metadata: None,
             session_store: None,
             session_share_store: None,

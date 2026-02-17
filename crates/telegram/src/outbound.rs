@@ -18,6 +18,7 @@ use {
 };
 
 use crate::{
+    config::StreamMode,
     markdown::{self, TELEGRAM_MAX_MESSAGE_LEN},
     state::AccountStateMap,
 };
@@ -566,10 +567,12 @@ impl ChannelStreamOutbound for TelegramOutbound {
         &self,
         account_id: &str,
         to: &str,
+        reply_to: Option<&str>,
         mut stream: StreamReceiver,
     ) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = self.reply_params(account_id, reply_to);
 
         let throttle_ms = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
@@ -583,10 +586,11 @@ impl ChannelStreamOutbound for TelegramOutbound {
         let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
 
         // Send initial placeholder
-        let placeholder = bot
-            .send_message(chat_id, "…")
-            .parse_mode(ParseMode::Html)
-            .await?;
+        let mut placeholder_req = bot.send_message(chat_id, "…").parse_mode(ParseMode::Html);
+        if let Some(ref rp) = rp {
+            placeholder_req = placeholder_req.reply_parameters(rp.clone());
+        }
+        let placeholder = placeholder_req.await?;
         let msg_id = placeholder.id;
 
         let mut accumulated = String::new();
@@ -614,7 +618,6 @@ impl ChannelStreamOutbound for TelegramOutbound {
                 },
                 StreamEvent::Error(e) => {
                     debug!("stream error: {e}");
-                    accumulated.push_str(&format!("\n\n⚠ Error: {e}"));
                     break;
                 },
             }
@@ -640,6 +643,13 @@ impl ChannelStreamOutbound for TelegramOutbound {
         }
 
         Ok(())
+    }
+
+    async fn is_stream_enabled(&self, account_id: &str) -> bool {
+        let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+        accounts
+            .get(account_id)
+            .is_some_and(|s| s.config.stream_mode != StreamMode::Off)
     }
 }
 
