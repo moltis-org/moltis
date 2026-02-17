@@ -425,6 +425,80 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("map links render per-point groups when show_map returns points", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats/main");
+		await waitForWsConnected(page);
+
+		await expectRpcOk(page, "chat.clear", {});
+
+		const toolCallId = "map-links-points-1";
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_start",
+				toolCallId,
+				toolName: "show_map",
+				arguments: { label: "Breakfast spots" },
+			},
+		});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "tool_call_end",
+				toolCallId,
+				toolName: "show_map",
+				success: true,
+				result: {
+					label: "Breakfast spots",
+					map_links: {
+						google_maps: "https://www.google.com/maps/search/?api=1&query=Breakfast+spots&center=37.788473,-122.408997",
+						apple_maps: "https://maps.apple.com/?ll=37.788473,-122.408997&q=Breakfast+spots&z=14",
+						openstreetmap:
+							"https://www.openstreetmap.org/search?query=Breakfast+spots&mlat=37.788473&mlon=-122.408997#map=14/37.788473/-122.408997",
+					},
+					points: [
+						{
+							label: "Sears Fine Food",
+							latitude: 37.788473,
+							longitude: -122.408997,
+							map_links: {
+								google_maps:
+									"https://www.google.com/maps/search/?api=1&query=Sears+Fine+Food&center=37.788473,-122.408997",
+								apple_maps: "https://maps.apple.com/?ll=37.788473,-122.408997&q=Sears+Fine+Food&z=14",
+								openstreetmap:
+									"https://www.openstreetmap.org/search?query=Sears+Fine+Food&mlat=37.788473&mlon=-122.408997#map=14/37.788473/-122.408997",
+							},
+						},
+						{
+							label: "Surisan",
+							latitude: 37.80895,
+							longitude: -122.41576,
+							map_links: {
+								google_maps: "https://www.google.com/maps/search/?api=1&query=Surisan&center=37.80895,-122.41576",
+								apple_maps: "https://maps.apple.com/?ll=37.80895,-122.41576&q=Surisan&z=14",
+								openstreetmap:
+									"https://www.openstreetmap.org/search?query=Surisan&mlat=37.80895&mlon=-122.41576#map=14/37.80895/-122.41576",
+							},
+						},
+					],
+				},
+			},
+		});
+
+		const card = page.locator(`#tool-${toolCallId}`);
+		await expect(card).toBeVisible();
+		await expect(card.locator("img.map-service-icon")).toHaveCount(6);
+		await expect(card.locator("div.text-xs").filter({ hasText: "Sears Fine Food" })).toBeVisible();
+		await expect(card.locator("div.text-xs").filter({ hasText: "Surisan" })).toBeVisible();
+		await expect(card.locator('a[title="Open \\"Sears Fine Food\\" in Google Maps"]')).toHaveCount(1);
+		await expect(card.locator('a[title="Open \\"Surisan\\" in Google Maps"]')).toHaveCount(1);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("thinking text is preserved as reasoning disclosure when tool call follows", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");

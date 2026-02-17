@@ -593,19 +593,41 @@ function createMapServiceIcon(serviceKey) {
 	return icon;
 }
 
-export function renderMapLinks(container, links, label) {
+function mapPointHeading(point, index) {
+	var label = typeof point?.label === "string" ? point.label.trim() : "";
+	if (label) return label;
+	var latOk = typeof point?.latitude === "number" && Number.isFinite(point.latitude);
+	var lonOk = typeof point?.longitude === "number" && Number.isFinite(point.longitude);
+	if (latOk && lonOk) return `${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`;
+	return `Location ${index + 1}`;
+}
+
+export function renderMapLinks(container, links, label, heading) {
+	if (!(links && typeof links === "object")) return false;
+
+	var block = document.createElement("div");
+	block.className = "mt-2";
+	if (heading) {
+		var headingEl = document.createElement("div");
+		headingEl.className = "text-xs";
+		headingEl.textContent = heading;
+		block.appendChild(headingEl);
+	}
+
 	var row = document.createElement("div");
-	row.className = "flex flex-wrap gap-2 mt-2";
+	row.className = "flex flex-wrap gap-2";
 
 	var services = [
 		{ key: "google_maps", name: "Google Maps" },
 		{ key: "apple_maps", name: "Apple Maps" },
 		{ key: "openstreetmap", name: "OpenStreetMap" },
 	];
+	var hasLinks = false;
 
 	for (var svc of services) {
 		var url = links[svc.key];
 		if (!url) continue;
+		hasLinks = true;
 		var btn = document.createElement("a");
 		btn.href = url;
 		btn.target = "_blank";
@@ -620,7 +642,25 @@ export function renderMapLinks(container, links, label) {
 		row.appendChild(btn);
 	}
 
-	container.appendChild(row);
+	if (!hasLinks) return false;
+	block.appendChild(row);
+	container.appendChild(block);
+	return true;
+}
+
+export function renderMapPointGroups(container, points, fallbackLabel) {
+	if (!Array.isArray(points) || points.length === 0) return false;
+
+	var rendered = false;
+	var showHeadings = points.length > 1;
+	for (var i = 0; i < points.length; i++) {
+		var point = points[i];
+		if (!(point && typeof point === "object")) continue;
+		var label = typeof point.label === "string" && point.label.trim() ? point.label.trim() : fallbackLabel;
+		var heading = showHeadings ? mapPointHeading(point, i) : "";
+		if (renderMapLinks(container, point.map_links, label, heading)) rendered = true;
+	}
+	return rendered;
 }
 
 export function createEl(tag, attrs, children) {
