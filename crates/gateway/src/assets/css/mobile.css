@@ -545,6 +545,46 @@ body {
     max-width: 100%;
   }
 
+  .terminal-toolbar {
+    padding: 10px 12px;
+  }
+
+  .terminal-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .terminal-output-wrap {
+    padding: 10px 12px 6px;
+  }
+
+  .terminal-tabs-bar {
+    padding: 8px 12px 0;
+  }
+
+  .terminal-tab {
+    font-size: 0.68rem;
+    padding: 4px 7px;
+  }
+
+  .terminal-output {
+    min-height: 220px;
+  }
+
+  .terminal-hint {
+    padding: 0 12px 12px;
+  }
+
+  .terminal-hint-actions {
+    padding: 0 12px 12px;
+  }
+
+  .terminal-hint-code {
+    width: 100%;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
   .project-form-row {
     flex-direction: column;
     align-items: stretch;

@@ -1,5 +1,6 @@
 // ── Sandbox toggle + image selector ─────────────────────────
 
+import { updateCommandInputUI, updateTokenBar } from "./chat-ui.js";
 import { sendRpc } from "./helpers.js";
 import * as S from "./state.js";
 
@@ -63,6 +64,11 @@ function applySandboxControlAvailability() {
 
 export function updateSandboxUI(enabled) {
 	S.setSessionSandboxEnabled(!!enabled);
+	var effectiveSandboxRoute = !!enabled && sandboxRuntimeAvailable();
+	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
+	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
+	updateCommandInputUI();
+	updateTokenBar();
 	if (!(S.sandboxLabel && S.sandboxToggleBtn)) return;
 	if (!applySandboxControlAvailability()) {
 		S.sandboxLabel.textContent = "disabled";

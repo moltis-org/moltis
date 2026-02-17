@@ -282,97 +282,46 @@ fn parse_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
     parse_fenced_tool_call_from_text(text).or_else(|| parse_function_tool_call_from_text(text))
 }
 
-/// Detect a direct shell command in the latest user turn.
+/// Detect an explicit shell command in the latest user turn.
 ///
-/// This is intentionally conservative and only targets command-shaped inputs
-/// like `pwd`, `ls -la`, `uname -a`, etc. Natural-language requests are ignored.
-fn direct_shell_command_from_user_content(user_content: &UserContent) -> Option<String> {
+/// Only `/sh ...` commands are treated as explicit shell execution requests.
+/// This keeps normal chat turns (`hey`, `hello`, etc.) out of the forced-exec path.
+///
+/// Supported forms:
+/// - `/sh pwd`
+/// - `/sh@mybot uname -a`
+fn explicit_shell_command_from_user_content(user_content: &UserContent) -> Option<String> {
     let text = match user_content {
         UserContent::Text(text) => text.trim(),
         UserContent::Multimodal(_) => return None,
     };
 
-    if text.is_empty()
-        || text.len() > 512
-        || text.contains('\n')
-        || text.contains('\r')
-        || text.starts_with('/')
-        || text.starts_with("```")
-        || text.ends_with('?')
-        || text.ends_with('.')
-        || text.ends_with('!')
-    {
+    if text.is_empty() || text.len() > 4096 || text.contains('\n') || text.contains('\r') {
         return None;
     }
 
-    // Keep this scoped to shell-ish ASCII input.
-    let is_allowed_char = |c: char| {
-        c.is_ascii_alphanumeric()
-            || c.is_ascii_whitespace()
-            || "_-./~:$@=%+,'\"|&*()[]{}<>!?\\".contains(c)
+    let rest = text.strip_prefix('/')?;
+    let split_idx = rest.find(char::is_whitespace)?;
+    let head = &rest[..split_idx];
+    let command = rest[split_idx..].trim_start();
+    if command.is_empty() {
+        return None;
+    }
+
+    let head_lower = head.to_ascii_lowercase();
+    let is_sh_prefix = if head_lower == "sh" {
+        true
+    } else {
+        head_lower
+            .strip_prefix("sh@")
+            .is_some_and(|mention| !mention.is_empty())
     };
-    if !text.chars().all(is_allowed_char) {
+
+    if !is_sh_prefix {
         return None;
     }
 
-    let lower = text.to_ascii_lowercase();
-    let conversational_prefixes = [
-        "can you",
-        "could you",
-        "would you",
-        "please ",
-        "show ",
-        "tell ",
-        "explain ",
-        "what ",
-        "why ",
-        "how ",
-        "when ",
-        "where ",
-        "who ",
-        "i ",
-        "we ",
-        "let's ",
-    ];
-    if conversational_prefixes
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-    {
-        return None;
-    }
-
-    let mut parts = text.split_whitespace();
-    let first = parts.next()?;
-    let first_lower = first.to_ascii_lowercase();
-    if matches!(
-        first_lower.as_str(),
-        "run"
-            | "execute"
-            | "show"
-            | "tell"
-            | "explain"
-            | "describe"
-            | "what"
-            | "why"
-            | "how"
-            | "can"
-            | "could"
-            | "would"
-            | "please"
-    ) {
-        return None;
-    }
-
-    // Require the first token to look like a command/path.
-    let first_token_ok = first
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "_-./~+".contains(c))
-        || first.contains('=');
-    if !first_token_ok {
-        return None;
-    }
-
-    Some(text.to_string())
+    Some(command.to_string())
 }
 
 fn parse_fenced_tool_call_from_text(text: &str) -> Option<(ToolCall, Option<String>)> {
@@ -815,7 +764,7 @@ pub async fn run_agent_loop_with_context(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
-    let direct_shell_command = direct_shell_command_from_user_content(user_content);
+    let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -962,16 +911,16 @@ pub async fn run_agent_loop_with_context(
             response.tool_calls = vec![tc];
         }
 
-        // Final fallback: if the user turn is a direct shell command and the
-        // model returned plain text, force one exec tool call instead of a
-        // text-only reply so command turns are deterministic in the UI.
+        // Final fallback: if the user turn is an explicit `/sh ...` command and
+        // the model returned plain text, force one exec tool call so this path
+        // is deterministic in the UI.
         if response.tool_calls.is_empty()
             && iterations == 1
             && total_tool_calls == 0
-            && let Some(command) = direct_shell_command.as_ref()
+            && let Some(command) = explicit_shell_command.as_ref()
             && tools.get("exec").is_some()
         {
-            info!(command = %command, "forcing exec tool call from direct command input");
+            info!(command = %command, "forcing exec tool call from explicit /sh command");
             // Preserve the model's planning/reasoning text on the assistant
             // tool-call message. Some providers (e.g. Moonshot thinking mode)
             // require this history field for follow-up tool turns.
@@ -1288,7 +1237,7 @@ pub async fn run_agent_loop_streaming(
     messages.push(ChatMessage::User {
         content: user_content.clone(),
     });
-    let direct_shell_command = direct_shell_command_from_user_content(user_content);
+    let explicit_shell_command = explicit_shell_command_from_user_content(user_content);
 
     // Only send tool schemas to providers that support them natively.
     let schemas_for_api = if native_tools {
@@ -1570,16 +1519,16 @@ pub async fn run_agent_loop_streaming(
             tool_calls = vec![tc];
         }
 
-        // Final fallback: if the user turn is a direct shell command and the
-        // model returned plain text, force one exec tool call instead of a
-        // text-only reply so command turns are deterministic in the UI.
+        // Final fallback: if the user turn is an explicit `/sh ...` command and
+        // the model returned plain text, force one exec tool call so this path
+        // is deterministic in the UI.
         if tool_calls.is_empty()
             && iterations == 1
             && total_tool_calls == 0
-            && let Some(command) = direct_shell_command.as_ref()
+            && let Some(command) = explicit_shell_command.as_ref()
             && tools.get("exec").is_some()
         {
-            info!(command = %command, "forcing exec tool call from direct command input");
+            info!(command = %command, "forcing exec tool call from explicit /sh command");
             // Preserve streamed reasoning/planning text on the assistant tool
             // message so providers that validate thinking history accept the
             // next iteration.
@@ -1928,6 +1877,30 @@ mod tests {
         assert!(remaining.contains("Done."));
         assert!(!remaining.contains("<tool_call>"));
         assert!(!remaining.contains("</tool_call>"));
+    }
+
+    #[test]
+    fn test_explicit_shell_command_requires_sh_prefix() {
+        let uc = UserContent::text("pwd");
+        assert!(explicit_shell_command_from_user_content(&uc).is_none());
+    }
+
+    #[test]
+    fn test_explicit_shell_command_extracts_command() {
+        let uc = UserContent::text("/sh pwd");
+        assert_eq!(
+            explicit_shell_command_from_user_content(&uc).as_deref(),
+            Some("pwd")
+        );
+    }
+
+    #[test]
+    fn test_explicit_shell_command_supports_telegram_style_bot_mention() {
+        let uc = UserContent::text("/sh@MoltisBot uname -a");
+        assert_eq!(
+            explicit_shell_command_from_user_content(&uc).as_deref(),
+            Some("uname -a")
+        );
     }
 
     // ── Mock helpers ─────────────────────────────────────────────────
@@ -2497,7 +2470,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_direct_command_forces_exec_non_streaming() {
+    async fn test_explicit_sh_command_forces_exec_non_streaming() {
         let provider = Arc::new(DirectCommandNoToolProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -2511,7 +2484,7 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
-        let uc = UserContent::text("pwd");
+        let uc = UserContent::text("/sh pwd");
         let result = run_agent_loop(
             provider,
             &tools,
@@ -2542,6 +2515,46 @@ mod tests {
         let (name, args) = tool_start.unwrap();
         assert_eq!(name, "exec");
         assert_eq!(args["command"], "pwd");
+    }
+
+    #[tokio::test]
+    async fn test_unprefixed_command_like_text_does_not_force_exec_non_streaming() {
+        let provider = Arc::new(MockProvider {
+            response_text: "plain response".to_string(),
+        });
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let uc = UserContent::text("pwd");
+        let result = run_agent_loop(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &uc,
+            Some(&on_event),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls_made, 0);
+        assert_eq!(result.text, "plain response");
+
+        let evts = events.lock().unwrap();
+        assert!(
+            !evts
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::ToolCallStart { .. })),
+            "should not emit ToolCallStart for unprefixed command-like text"
+        );
     }
 
     /// Native-tool provider that emits XML-like function text instead of
@@ -3619,7 +3632,7 @@ mod tests {
     }
 
     /// Streaming provider that returns plain text only (no tool calls) on
-    /// a command-like prompt. Runner should force an exec call on iteration 1.
+    /// an explicit `/sh` prompt. Runner should force an exec call on iteration 1.
     struct DirectCommandNoToolStreamProvider {
         call_count: std::sync::atomic::AtomicUsize,
     }
@@ -3722,7 +3735,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_direct_command_forces_exec_streaming() {
+    async fn test_explicit_sh_command_forces_exec_streaming() {
         let provider = Arc::new(DirectCommandNoToolStreamProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -3736,7 +3749,7 @@ mod tests {
             events_clone.lock().unwrap().push(event);
         });
 
-        let user_content = UserContent::Text("uname -a".to_string());
+        let user_content = UserContent::Text("/sh uname -a".to_string());
         let result = run_agent_loop_streaming(
             provider,
             &tools,
@@ -3769,6 +3782,97 @@ mod tests {
         let (name, args) = tool_start.unwrap();
         assert_eq!(name, "exec");
         assert_eq!(args["command"], "uname -a");
+    }
+
+    struct PlainTextOnlyStreamProvider;
+
+    #[async_trait]
+    impl LlmProvider for PlainTextOnlyStreamProvider {
+        fn name(&self) -> &str {
+            "mock-plain-text-stream"
+        }
+
+        fn id(&self) -> &str {
+            "mock-plain-text-stream"
+        }
+
+        fn supports_tools(&self) -> bool {
+            true
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::iter(vec![
+                StreamEvent::Delta("plain response".into()),
+                StreamEvent::Done(Usage {
+                    input_tokens: 2,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            ]))
+        }
+
+        fn stream_with_tools(
+            &self,
+            messages: Vec<ChatMessage>,
+            _tools: Vec<serde_json::Value>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            self.stream(messages)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unprefixed_command_like_text_does_not_force_exec_streaming() {
+        let provider = Arc::new(PlainTextOnlyStreamProvider);
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(TestExecTool));
+
+        let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+
+        let user_content = UserContent::Text("pwd".to_string());
+        let result = run_agent_loop_streaming(
+            provider,
+            &tools,
+            "You are a test bot.",
+            &user_content,
+            Some(&on_event),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls_made, 0);
+        assert_eq!(result.text, "plain response");
+
+        let evts = events.lock().unwrap();
+        assert!(
+            !evts
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::ToolCallStart { .. })),
+            "should not emit ToolCallStart for unprefixed command-like text"
+        );
     }
 
     struct ReasoningThenAnswerStreamProvider;

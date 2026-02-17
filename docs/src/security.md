@@ -299,7 +299,7 @@ allowed.
 | `POST /api/auth/login` | 5 requests per 60 seconds |
 | Other `/api/auth/*` | 120 requests per 60 seconds |
 | Other `/api/*` | 180 requests per 60 seconds |
-| `/ws` upgrade | 30 requests per 60 seconds |
+| `/ws/chat` upgrade | 30 requests per 60 seconds |
 
 ### When Limits Are Hit
 

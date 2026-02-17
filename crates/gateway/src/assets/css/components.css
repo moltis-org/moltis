@@ -444,6 +444,209 @@
   min-width: 0;
 }
 
+/* ── Settings Terminal ── */
+
+.terminal-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: var(--surface);
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.terminal-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.terminal-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-size {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: 999px;
+  padding: 3px 8px;
+  min-width: 54px;
+  text-align: center;
+  user-select: none;
+}
+
+.terminal-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.terminal-tabs {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.terminal-tab {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.terminal-tab:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.terminal-tab.active {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--border));
+  background: var(--accent-subtle);
+}
+
+.terminal-tab-empty {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+.terminal-new-tab {
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.terminal-output-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px 8px;
+}
+
+.terminal-output {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  max-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  position: relative;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.terminal-output:focus-within {
+  border-color: var(--border-strong);
+}
+
+.terminal-output .xterm {
+  height: 100%;
+  padding: 8px 10px;
+}
+
+.terminal-output .xterm .xterm-viewport {
+  background: transparent;
+}
+
+.terminal-status {
+  color: var(--muted);
+  min-height: 1.25rem;
+  font-size: 0.74rem;
+  padding: 0 16px 8px;
+}
+
+.terminal-status-error {
+  color: var(--error);
+}
+
+.terminal-status-ok {
+  color: var(--ok);
+}
+
+.terminal-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  padding: 0 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.terminal-hint-actions {
+  padding: 0 16px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-hint-actions[hidden] {
+  display: none;
+}
+
+.terminal-hint-code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+}
+
+.terminal-hint-btn {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+}
+
+.terminal-hint-btn-primary {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+}
+
+.terminal-hint-btn-primary:hover {
+  background: var(--accent-subtle);
+}
+
 /* ── Channels Page ── */
 
 .channel-form {

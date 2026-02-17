@@ -2,7 +2,7 @@
 
 import { html } from "htm/preact";
 import { render } from "preact";
-import { chatAddMsg, chatAddMsgWithImages } from "./chat-ui.js";
+import { chatAddMsg, chatAddMsgWithImages, updateCommandInputUI } from "./chat-ui.js";
 import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
 import {
@@ -32,6 +32,7 @@ var slashCommands = [
 	{ name: "clear", description: "Clear conversation history" },
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
+	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
 ];
 var slashMenuEl = null;
 var slashMenuIdx = 0;
@@ -168,6 +169,44 @@ function slashUpdateActive() {
 	items.forEach((el, i) => {
 		el.classList.toggle("active", i === slashMenuIdx);
 	});
+}
+
+function parseSlashCommand(text) {
+	if (!text || text.charAt(0) !== "/") return null;
+	var body = text.substring(1).trim();
+	if (!body) return null;
+	var spaceIdx = body.indexOf(" ");
+	if (spaceIdx === -1) {
+		return { name: body.toLowerCase(), args: "" };
+	}
+	return {
+		name: body.substring(0, spaceIdx).toLowerCase(),
+		args: body.substring(spaceIdx + 1).trim(),
+	};
+}
+
+function isShLocalToggle(args) {
+	if (!args) return true;
+	var normalized = args.toLowerCase();
+	return normalized === "on" || normalized === "off" || normalized === "exit";
+}
+
+function shouldHandleSlashLocally(cmdName, args) {
+	if (cmdName === "sh") {
+		return isShLocalToggle(args);
+	}
+	return slashCommands.some((c) => c.name === cmdName);
+}
+
+function commandModeSummary() {
+	var execModeLabel = S.sessionExecMode === "sandbox" ? "sandboxed" : "host";
+	var promptSymbol = S.sessionExecPromptSymbol || "$";
+	return `${execModeLabel}, prompt ${promptSymbol}`;
+}
+
+function setCommandMode(enabled) {
+	S.setCommandModeEnabled(!!enabled);
+	updateCommandInputUI();
 }
 
 // ── Context card helpers ─────────────────────────────────
@@ -310,8 +349,16 @@ function renderContextMcpSection(card, data) {
 
 function renderContextSandboxSection(card, data) {
 	var sb = data.sandbox || {};
+	var exec = data.execution || {};
 	var sandboxSection = ctxSection("Sandbox");
 	sandboxSection.appendChild(ctxRow("Enabled", sb.enabled ? "yes" : "no", true));
+	if (exec.mode) {
+		var execLabel = exec.mode === "sandbox" ? "sandboxed" : "host";
+		if (exec.promptSymbol) {
+			execLabel += ` (${exec.promptSymbol})`;
+		}
+		sandboxSection.appendChild(ctxRow("Command route", execLabel, true));
+	}
 	if (sb.backend) {
 		sandboxSection.appendChild(ctxRow("Backend", sb.backend));
 		if (sb.mode) sandboxSection.appendChild(ctxRow("Mode", sb.mode));
@@ -715,7 +762,7 @@ export function showModelNotice(model) {
 }
 
 // ── Slash command handlers ───────────────────────────────
-function handleSlashCommand(cmdName) {
+function handleSlashCommand(cmdName, cmdArgs) {
 	if (cmdName === "clear") {
 		clearActiveSession();
 		return;
@@ -745,11 +792,27 @@ function handleSlashCommand(cmdName) {
 				chatAddMsg("error", res?.error?.message || "Context failed");
 			}
 		});
+		return;
+	}
+	if (cmdName === "sh") {
+		var normalized = (cmdArgs || "").toLowerCase();
+		if (normalized === "off" || normalized === "exit") {
+			setCommandMode(false);
+			chatAddMsg("system", renderMarkdown("**Command:** mode disabled"), true);
+			return;
+		}
+		setCommandMode(true);
+		chatAddMsg(
+			"system",
+			renderMarkdown(`**Command:** mode enabled (${commandModeSummary()}) · exit with /sh off or Esc`),
+			true,
+		);
 	}
 }
 
 // ── Build chat params (text-only or multimodal) ─────────
-function buildChatMessage(text, seq) {
+function buildChatMessage(text, seq, displayText) {
+	var userText = displayText !== undefined ? displayText : text;
 	var images = hasPendingImages() ? getPendingImages() : [];
 	if (images.length > 0) {
 		var content = [];
@@ -758,13 +821,13 @@ function buildChatMessage(text, seq) {
 			content.push({ type: "image_url", image_url: { url: img.dataUrl } });
 		}
 		var params = { content: content, _seq: seq };
-		var el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
+		var el = chatAddMsgWithImages("user", userText ? renderMarkdown(userText) : "", images);
 		clearPendingImages();
 		return { params: params, el: el };
 	}
 	return {
 		params: { text: text, _seq: seq },
-		el: chatAddMsg("user", renderMarkdown(text), true),
+		el: chatAddMsg("user", renderMarkdown(userText), true),
 	};
 }
 
@@ -778,13 +841,12 @@ function sendChat() {
 	warmAudioPlayback();
 
 	if (text.charAt(0) === "/" && !hasImages) {
-		var cmdName = text.substring(1).toLowerCase();
-		var matched = slashCommands.find((c) => c.name === cmdName);
-		if (matched) {
+		var slash = parseSlashCommand(text);
+		if (slash && shouldHandleSlashLocally(slash.name, slash.args)) {
 			S.chatInput.value = "";
 			chatAutoResize();
 			slashHideMenu();
-			handleSlashCommand(cmdName);
+			handleSlashCommand(slash.name, slash.args);
 			return;
 		}
 	}
@@ -802,8 +864,16 @@ function sendChat() {
 		S.chatInput.blur();
 	}
 
+	var outgoingText = text;
+	if (S.commandModeEnabled && text && !hasImages) {
+		var parsed = parseSlashCommand(text);
+		if (!(parsed && parsed.name === "sh")) {
+			outgoingText = `/sh ${text}`;
+		}
+	}
+
 	S.setChatSeq(S.chatSeq + 1);
-	var msg = buildChatMessage(text, S.chatSeq);
+	var msg = buildChatMessage(outgoingText, S.chatSeq, text);
 	var chatParams = msg.params;
 	var userEl = msg.el;
 
@@ -813,7 +883,7 @@ function sendChat() {
 		setSessionModel(S.activeSessionKey, selectedModel);
 	}
 	bumpSessionCount(S.activeSessionKey, 1);
-	seedSessionPreviewFromUserText(S.activeSessionKey, text);
+	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
 	setSessionReplying(S.activeSessionKey, true);
 	sendRpc("chat.send", chatParams).then((res) => {
 		if (res?.ok && res.payload?.runId) {
@@ -937,6 +1007,7 @@ var chatPageHTML =
 	'<div id="queuedMessages" class="queued-tray hidden"></div>' +
 	'<div id="tokenBar" class="token-bar"></div>' +
 	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end">' +
+	'<span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span>' +
 	'<textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" ' +
 	'class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea>' +
 	'<button id="micBtn" disabled title="Click to start recording" ' +
@@ -983,6 +1054,7 @@ registerPrefix(
 		S.setChatMsgBox(S.$("messages"));
 		S.setChatInput(S.$("chatInput"));
 		S.setChatSendBtn(S.$("sendBtn"));
+		updateCommandInputUI();
 
 		S.setModelCombo(S.$("modelCombo"));
 		S.setModelComboBtn(S.$("modelComboBtn"));
@@ -1064,6 +1136,11 @@ registerPrefix(
 		});
 		S.chatInput.addEventListener("keydown", (e) => {
 			if (slashHandleKeydown(e)) return;
+			if (e.key === "Escape" && S.commandModeEnabled && !S.chatInput.value.trim()) {
+				e.preventDefault();
+				setCommandMode(false);
+				return;
+			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				sendChat();

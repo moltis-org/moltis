@@ -66,6 +66,10 @@ export var sessionSwitchInProgress = false;
 export var lastHistoryIndex = -1;
 export var sessionContextWindow = 0;
 export var sessionToolsEnabled = true;
+export var sessionExecMode = "host";
+export var sessionExecPromptSymbol = "$";
+export var hostExecIsRoot = false;
+export var commandModeEnabled = false;
 
 // Provider/channel page refresh callbacks
 export var refreshProvidersPage = null;
@@ -242,6 +246,18 @@ export function setSessionContextWindow(v) {
 }
 export function setSessionToolsEnabled(v) {
 	sessionToolsEnabled = v;
+}
+export function setSessionExecMode(v) {
+	sessionExecMode = v;
+}
+export function setSessionExecPromptSymbol(v) {
+	sessionExecPromptSymbol = v;
+}
+export function setHostExecIsRoot(v) {
+	hostExecIsRoot = !!v;
+}
+export function setCommandModeEnabled(v) {
+	commandModeEnabled = !!v;
 }
 export function setRefreshProvidersPage(v) {
 	refreshProvidersPage = v;

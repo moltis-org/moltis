@@ -29,8 +29,7 @@ The prompt is built in `crates/agents/src/prompt.rs` by
 
 A single sentence that sets the assistant role:
 
-- With tools: *"You are a helpful assistant with access to tools for executing
-  shell commands."*
+- With tools: *"You are a helpful assistant. You can use tools when needed."*
 - Without tools: *"You are a helpful assistant. Answer questions clearly and
   concisely."*
 
@@ -172,7 +171,8 @@ tool calling:
 
 The final section contains:
 
-- Tool usage guidelines (when to use exec, browser, etc.)
+- Tool usage guidelines (conversation first, when to use exec/browser, `/sh`
+  explicit shell prefix)
 - A reminder not to parrot raw tool output
 - **Silent reply protocol**: when tool output speaks for itself, the LLM should
   return an empty response rather than acknowledging it

@@ -158,6 +158,7 @@ test.describe("Chat input and slash commands", () => {
 				timeout: 10_000,
 			})
 			.toBeGreaterThan(0);
+		await expect(slashMenu).toContainText("/sh");
 	});
 
 	test("slash menu filters as user types", async ({ page }) => {
@@ -222,6 +223,60 @@ test.describe("Chat input and slash commands", () => {
 		await expect(sendBtn).toBeVisible();
 	});
 
+	test("/sh toggles command mode UI", async ({ page }) => {
+		const chatInput = page.locator("#chatInput");
+		const prompt = page.locator("#chatCommandPrompt");
+		const tokenBar = page.locator("#tokenBar");
+
+		await chatInput.fill("/sh");
+		await chatInput.press("Enter");
+		await expect(prompt).toBeVisible();
+		await expect(chatInput).toHaveAttribute("placeholder", "Run shell command…");
+		await expect(tokenBar).toContainText("/sh mode");
+
+		await chatInput.fill("/sh off");
+		await chatInput.press("Enter");
+		await expect(prompt).toBeHidden();
+		await expect(chatInput).toHaveAttribute("placeholder", "Type a message...");
+		await expect(tokenBar).not.toContainText("/sh mode");
+	});
+
+	test("command mode prefixes outgoing user message with /sh", async ({ page }) => {
+		await page.evaluate(() => {
+			window.__chatSendPayloads = [];
+			if (window.__chatWsSpyInstalled) return;
+			var originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					var parsed = JSON.parse(data);
+					if (parsed?.method === "chat.send") {
+						window.__chatSendPayloads.push(parsed.params || {});
+					}
+				} catch {
+					// ignore non-JSON payloads
+				}
+				return originalSend.call(this, data);
+			};
+			window.__chatWsSpyInstalled = true;
+		});
+		const chatInput = page.locator("#chatInput");
+		await chatInput.fill("/sh");
+		await chatInput.press("Enter");
+		await chatInput.fill("echo hello");
+		await chatInput.press("Enter");
+		await expect
+			.poll(
+				async () =>
+					await page.evaluate(() => {
+						var payloads = window.__chatSendPayloads || [];
+						var last = payloads[payloads.length - 1];
+						return last?.text || "";
+					}),
+				{ timeout: 5_000 },
+			)
+			.toBe("/sh echo hello");
+	});
+
 	test("token bar stays visible at zero usage", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
@@ -235,12 +290,15 @@ test.describe("Chat input and slash commands", () => {
 			state.setSessionTokens({ input: 0, output: 0 });
 			state.setSessionContextWindow(0);
 			state.setSessionToolsEnabled(true);
+			state.setSessionExecMode("host");
+			state.setSessionExecPromptSymbol("$");
+			state.setCommandModeEnabled(false);
 			chatUi.updateTokenBar();
 		});
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toHaveText("0 in / 0 out · 0 tokens");
+		await expect(tokenBar).toHaveText("0 in / 0 out · 0 tokens · Execute: host ($)");
 		expect(pageErrors).toEqual([]);
 	});
 

@@ -56,6 +56,8 @@ pub enum PersistedMessage {
         /// Total output tokens produced during this assistant turn.
         #[serde(rename = "outputTokens", skip_serializing_if = "Option::is_none")]
         output_tokens: Option<u32>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
         /// Input tokens sent in the final LLM request for this turn.
         #[serde(rename = "requestInputTokens", skip_serializing_if = "Option::is_none")]
         request_input_tokens: Option<u32>,
@@ -218,6 +220,7 @@ impl PersistedMessage {
             provider: Some(provider.into()),
             input_tokens: Some(input_tokens),
             output_tokens: Some(output_tokens),
+            duration_ms: None,
             request_input_tokens: Some(input_tokens),
             request_output_tokens: Some(output_tokens),
             tool_calls: None,
@@ -389,6 +392,7 @@ mod tests {
             provider: Some("openai".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            duration_ms: Some(2_000),
             request_input_tokens: Some(100),
             request_output_tokens: Some(50),
             tool_calls: None,
@@ -405,6 +409,7 @@ mod tests {
         assert_eq!(json["provider"], "openai");
         assert_eq!(json["inputTokens"], 100);
         assert_eq!(json["outputTokens"], 50);
+        assert_eq!(json["durationMs"], 2_000);
         assert_eq!(json["requestInputTokens"], 100);
         assert_eq!(json["requestOutputTokens"], 50);
         assert!(json.get("audio").is_none());

@@ -71,6 +71,54 @@
   font-size: 0.8rem;
 }
 
+.msg.system.system-notice {
+  background: var(--surface2);
+  background: color-mix(in srgb, var(--surface2) 85%, transparent);
+  border: 1px solid var(--border);
+  border-color: color-mix(in srgb, var(--border-strong) 65%, transparent);
+  border-radius: 999px;
+  align-items: center;
+  gap: 6px;
+  max-width: min(88%, 640px);
+  padding: 5px 10px;
+  white-space: normal;
+  display: inline-flex;
+}
+
+.msg.system.system-notice strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.msg.system.system-notice.system-notice-sandbox::before {
+  content: "";
+  background: var(--muted);
+  border-radius: 999px;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+}
+
+.msg.system.system-notice.system-notice-sandbox.is-enabled {
+  background: var(--surface2);
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface2));
+  border-color: color-mix(in srgb, var(--ok) 28%, var(--border));
+}
+
+.msg.system.system-notice.system-notice-sandbox.is-enabled::before {
+  background: var(--ok);
+}
+
+.msg.system.system-notice.system-notice-sandbox.is-disabled {
+  background: var(--surface2);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface2));
+  border-color: color-mix(in srgb, var(--warn) 24%, var(--border));
+}
+
+.msg.system.system-notice.system-notice-sandbox.is-disabled::before {
+  background: var(--warn);
+}
+
 .msg.error {
   color: var(--error);
   background: 0 0;
@@ -433,11 +481,52 @@
 
 .token-bar:empty { display: none; }
 
+.chat-command-prompt {
+  min-width: 20px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.chat-command-prompt-hidden {
+  display: none;
+}
+
+.chat-input-row.command-mode {
+  border-top-color: var(--accent-subtle);
+}
+
+.chat-input-row.command-mode #chatInput {
+  font-family: var(--font-mono);
+}
+
 .msg-model-footer {
   color: var(--muted);
   text-align: right;
   margin-top: 4px;
   font-size: 0.68rem;
+}
+
+.msg-token-speed {
+  font-variant-numeric: tabular-nums;
+}
+
+.msg-token-speed-fast {
+  color: var(--ok);
+}
+
+.msg-token-speed-slow {
+  color: var(--error);
 }
 
 .reply-medium-badge {

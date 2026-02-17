@@ -9,7 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settings > Terminal now includes tmux window tabs for the managed
+  `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
+  windows from the UI.
+- New terminal window APIs: `GET /api/terminal/windows` and
+  `POST /api/terminal/windows` to list and create host tmux windows.
+- Host terminal websocket now supports `?window=<id|index>` targeting and
+  returns `activeWindowId` in the ready payload.
+
 ### Changed
+
+- Web chat now supports `/sh` command mode: entering `/sh` toggles a dedicated
+  command input state, command sends are automatically prefixed with `/sh`,
+  and the token bar shows effective execution route (`sandboxed` vs `host`)
+  plus prompt symbol (`#` for root, `$` for non-root).
+- Settings > Terminal now polls tmux windows and updates tabs automatically,
+  so windows created inside tmux (for example `Ctrl-b c`) appear in the web UI.
+- Host terminal tmux integration now uses a dedicated tmux socket and applies
+  a Moltis-friendly profile (status off, mouse off, stable window naming).
+- Settings > Terminal subtitle now omits the prompt symbol hint so it does not
+  show stale `$`/`#` information after privilege changes inside the shell.
 
 ### Deprecated
 
@@ -23,9 +42,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron tool job creation/update now accepts common shorthand schedule/payload
   shapes (including cron expression strings) and normalizes them before
   validation, reducing model-side schema mismatch failures.
+- Force-exec fallback now triggers only for explicit `/sh ...` input (including
+  `/sh@bot ...`), preventing casual chat messages like `hey` from being treated
+  as shell commands while still allowing normal model-driven exec tool use.
+- Tool-mode system prompt guidance is now conversation-first and documents the
+  `/sh` explicit shell prefix.
 - Chat auto-compaction now uses estimated next-request prompt tokens (current
   context pressure) instead of cumulative session token totals, and chat context
   UI now separates cumulative usage from current/estimated request context.
+- Settings > Terminal tab switching now uses in-band tmux window switching over
+  the active websocket, reducing redraw/cursor corruption when switching
+  between tmux windows (including fullscreen apps like `vim`).
+- Host terminal tmux attach now resets window sizing to auto (`resize-window -A`)
+  to prevent stale oversized window dimensions across reconnects.
+- Settings > Terminal tmux window polling now continues after tab switches, so
+  windows closed with `Ctrl-D` are removed from the tab strip automatically.
+- Settings > Terminal now recovers from stale `?window=` reconnect targets
+  after a tmux window is closed, attaching to the current window instead of
+  getting stuck in a reconnect loop.
+- Settings > Terminal host PTY output is now transported as raw bytes
+  (base64-encoded over websocket) instead of UTF-8-decoded text, fixing
+  rendering/control-sequence corruption in full-screen terminal apps like `vim`.
+- Settings > Terminal now force-syncs terminal size on connect/window switch so
+  newly created tmux windows attach at full viewport size instead of a smaller
+  default geometry.
+- Settings > Terminal now ignores OSC color/palette mutation sequences from
+  full-screen apps to avoid invisible-text redraw glitches when switching tmux
+  tabs (notably seen with `vim`).
+- Settings > Terminal now re-sends forced resize updates during a short
+  post-connect settle window, fixing initial page-reload cases where tmux
+  windows stayed at stale dimensions until a manual tab switch.
 
 ### Security
 

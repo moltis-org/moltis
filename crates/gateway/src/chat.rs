@@ -157,6 +157,7 @@ struct ChatFinalBroadcast {
     provider: String,
     input_tokens: u32,
     output_tokens: u32,
+    duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     request_input_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +194,7 @@ struct AssistantTurnOutput {
     text: String,
     input_tokens: u32,
     output_tokens: u32,
+    duration_ms: u64,
     request_input_tokens: u32,
     request_output_tokens: u32,
     audio_path: Option<String>,
@@ -708,6 +710,69 @@ fn infer_reply_medium(params: &Value, text: &str) -> ReplyMedium {
     ReplyMedium::Text
 }
 
+fn parse_explicit_shell_command(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let rest = trimmed.strip_prefix("/sh")?;
+    let first = rest.chars().next()?;
+    if !first.is_whitespace() {
+        return None;
+    }
+    let command = &rest[first.len_utf8()..];
+    if command.trim().is_empty() {
+        None
+    } else {
+        Some(command)
+    }
+}
+
+fn capped_tool_result_payload(result: &Value, max_len: usize) -> Value {
+    let mut capped = result.clone();
+    for field in &["stdout", "stderr"] {
+        if let Some(text) = capped.get(*field).and_then(Value::as_str)
+            && text.len() > max_len
+        {
+            let truncated = format!(
+                "{}\n\n... [truncated — {} bytes total]",
+                truncate_at_char_boundary(text, max_len),
+                text.len()
+            );
+            capped[*field] = Value::String(truncated);
+        }
+    }
+    capped
+}
+
+fn shell_reply_text_from_exec_result(result: &Value) -> String {
+    let stdout = result
+        .get("stdout")
+        .and_then(Value::as_str)
+        .map(str::trim_end)
+        .unwrap_or("");
+    if !stdout.is_empty() {
+        return stdout.to_string();
+    }
+
+    let stderr = result
+        .get("stderr")
+        .and_then(Value::as_str)
+        .map(str::trim_end)
+        .unwrap_or("");
+    if !stderr.is_empty() {
+        return stderr.to_string();
+    }
+
+    let exit_code = result.get("exit_code").and_then(Value::as_i64).or_else(|| {
+        result
+            .get("exit_code")
+            .and_then(Value::as_u64)
+            .and_then(|code| i64::try_from(code).ok())
+    });
+    match exit_code {
+        Some(code) if code != 0 => format!("Command failed (exit {code})."),
+        _ => String::new(),
+    }
+}
+
 fn is_safe_user_audio_filename(filename: &str) -> bool {
     !filename.is_empty()
         && filename.len() <= 255
@@ -794,6 +859,43 @@ async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) {
             },
             Err(_) => (None, Some("unknown".to_string())),
         }
+    }
+}
+
+async fn detect_host_root_user() -> Option<bool> {
+    #[cfg(not(unix))]
+    {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        if let Some(uid) = std::env::var("EUID")
+            .ok()
+            .or_else(|| std::env::var("UID").ok())
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+        {
+            return Some(uid == 0);
+        }
+        if let Ok(user) = std::env::var("USER") {
+            let trimmed = user.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed == "root");
+            }
+        }
+        let output = tokio::process::Command::new("id")
+            .arg("-u")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let uid_text = String::from_utf8_lossy(&output.stdout);
+        uid_text.trim().parse::<u32>().ok().map(|uid| uid == 0)
     }
 }
 
@@ -2195,6 +2297,318 @@ impl ChatService for LiveChatService {
             }
         }
 
+        let explicit_shell_command = match &message_content {
+            MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
+            MessageContent::Multimodal(_) => None,
+        };
+
+        if let Some(shell_command) = explicit_shell_command {
+            // Generate run_id early so we can link the user message to this run.
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let run_id_clone = run_id.clone();
+            let channel_meta = params.get("channel").cloned();
+            let user_audio = user_audio_path_from_params(&params, &session_key);
+            let user_msg = PersistedMessage::User {
+                content: message_content,
+                created_at: Some(now_ms()),
+                audio: user_audio,
+                channel: channel_meta,
+                seq: client_seq,
+                run_id: Some(run_id.clone()),
+            };
+
+            let history = self
+                .session_store
+                .read(&session_key)
+                .await
+                .unwrap_or_default();
+            let user_message_index = history.len();
+
+            // Ensure the session exists in metadata and counts are up to date.
+            let _ = self.session_metadata.upsert(&session_key, None).await;
+            self.session_metadata
+                .touch(&session_key, history.len() as u32)
+                .await;
+
+            // If this is a web UI message on a channel-bound session, attach the
+            // channel reply target so /sh output can be delivered back to the channel.
+            let is_web_message = conn_id.is_some()
+                && params.get("_session_key").is_none()
+                && params.get("channel").is_none();
+
+            if is_web_message
+                && let Some(entry) = self.session_metadata.get(&session_key).await
+                && let Some(ref binding_json) = entry.channel_binding
+                && let Ok(target) =
+                    serde_json::from_str::<moltis_channels::ChannelReplyTarget>(binding_json)
+            {
+                let is_active = self
+                    .session_metadata
+                    .get_active_session(
+                        target.channel_type.as_str(),
+                        &target.account_id,
+                        &target.chat_id,
+                    )
+                    .await
+                    .map(|k| k == session_key)
+                    .unwrap_or(true);
+
+                if is_active {
+                    match serde_json::to_value(&target) {
+                        Ok(target_val) => {
+                            params["_channel_reply_target"] = target_val;
+                        },
+                        Err(e) => {
+                            warn!(
+                                session = %session_key,
+                                error = %e,
+                                "failed to serialize channel reply target for /sh"
+                            );
+                        },
+                    }
+                }
+            }
+
+            let deferred_channel_target =
+                params
+                    .get("_channel_reply_target")
+                    .cloned()
+                    .and_then(|value| {
+                        match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                            Ok(target) => Some(target),
+                            Err(e) => {
+                                warn!(
+                                    session = %session_key,
+                                    error = %e,
+                                    "ignoring invalid _channel_reply_target for /sh"
+                                );
+                                None
+                            },
+                        }
+                    });
+
+            info!(
+                run_id = %run_id,
+                user_message = %text,
+                session = %session_key,
+                command = %shell_command,
+                client_seq = ?client_seq,
+                mode = "explicit_shell",
+                "chat.send"
+            );
+
+            // Try to acquire the per-session semaphore. If a run is already active,
+            // queue the message according to MessageQueueMode.
+            let session_sem = self.session_semaphore(&session_key).await;
+            let permit: OwnedSemaphorePermit = match session_sem.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
+                    info!(
+                        session = %session_key,
+                        mode = ?queue_mode,
+                        client_seq = ?client_seq,
+                        "queueing message (run active)"
+                    );
+                    let position = {
+                        let mut q = self.message_queue.write().await;
+                        let entry = q.entry(session_key.clone()).or_default();
+                        entry.push(QueuedMessage {
+                            params: params.clone(),
+                        });
+                        entry.len()
+                    };
+                    broadcast(
+                        &self.state,
+                        "chat",
+                        serde_json::json!({
+                            "sessionKey": session_key,
+                            "state": "queued",
+                            "mode": format!("{queue_mode:?}").to_lowercase(),
+                            "position": position,
+                        }),
+                        BroadcastOpts::default(),
+                    )
+                    .await;
+                    return Ok(serde_json::json!({
+                        "queued": true,
+                        "mode": format!("{queue_mode:?}").to_lowercase(),
+                    }));
+                },
+            };
+
+            // Persist user message now that it will execute immediately.
+            if let Err(e) = self
+                .session_store
+                .append(&session_key, &user_msg.to_value())
+                .await
+            {
+                warn!("failed to persist /sh user message: {e}");
+            }
+
+            // Set preview from first user message if not already set.
+            if let Some(entry) = self.session_metadata.get(&session_key).await
+                && entry.preview.is_none()
+            {
+                let preview_text = extract_preview_from_value(&user_msg.to_value());
+                if let Some(preview) = preview_text {
+                    self.session_metadata
+                        .set_preview(&session_key, Some(&preview))
+                        .await;
+                }
+            }
+
+            let state = Arc::clone(&self.state);
+            let active_runs = Arc::clone(&self.active_runs);
+            let active_runs_by_session = Arc::clone(&self.active_runs_by_session);
+            let active_thinking_text = Arc::clone(&self.active_thinking_text);
+            let active_reply_medium = Arc::clone(&self.active_reply_medium);
+            let session_store = Arc::clone(&self.session_store);
+            let session_metadata = Arc::clone(&self.session_metadata);
+            let tool_registry = Arc::clone(&self.tool_registry);
+            let session_key_clone = session_key.clone();
+            let message_queue = Arc::clone(&self.message_queue);
+            let state_for_drain = Arc::clone(&self.state);
+            let accept_language = params
+                .get("_accept_language")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let conn_id_for_tool = conn_id.clone();
+
+            let handle = tokio::spawn(async move {
+                let permit = permit; // hold permit until command run completes
+                if let Some(target) = deferred_channel_target {
+                    state.push_channel_reply(&session_key_clone, target).await;
+                }
+                active_reply_medium
+                    .write()
+                    .await
+                    .insert(session_key_clone.clone(), ReplyMedium::Text);
+
+                let assistant_output = run_explicit_shell_command(
+                    &state,
+                    &run_id_clone,
+                    &tool_registry,
+                    &session_store,
+                    &session_key_clone,
+                    &shell_command,
+                    user_message_index,
+                    accept_language,
+                    conn_id_for_tool,
+                    client_seq,
+                )
+                .await;
+
+                let assistant_msg = PersistedMessage::Assistant {
+                    content: assistant_output.text,
+                    created_at: Some(now_ms()),
+                    model: None,
+                    provider: None,
+                    input_tokens: Some(assistant_output.input_tokens),
+                    output_tokens: Some(assistant_output.output_tokens),
+                    duration_ms: Some(assistant_output.duration_ms),
+                    request_input_tokens: Some(assistant_output.request_input_tokens),
+                    request_output_tokens: Some(assistant_output.request_output_tokens),
+                    tool_calls: None,
+                    reasoning: assistant_output.reasoning,
+                    llm_api_response: assistant_output.llm_api_response,
+                    audio: assistant_output.audio_path,
+                    seq: client_seq,
+                    run_id: Some(run_id_clone.clone()),
+                };
+                if let Err(e) = session_store
+                    .append(&session_key_clone, &assistant_msg.to_value())
+                    .await
+                {
+                    warn!("failed to persist /sh assistant message: {e}");
+                }
+                if let Ok(count) = session_store.count(&session_key_clone).await {
+                    session_metadata.touch(&session_key_clone, count).await;
+                }
+
+                active_runs.write().await.remove(&run_id_clone);
+                let mut runs_by_session = active_runs_by_session.write().await;
+                if runs_by_session.get(&session_key_clone) == Some(&run_id_clone) {
+                    runs_by_session.remove(&session_key_clone);
+                }
+                drop(runs_by_session);
+                active_thinking_text
+                    .write()
+                    .await
+                    .remove(&session_key_clone);
+                active_reply_medium.write().await.remove(&session_key_clone);
+
+                drop(permit);
+
+                // Drain queued messages for this session.
+                let queued = message_queue
+                    .write()
+                    .await
+                    .remove(&session_key_clone)
+                    .unwrap_or_default();
+                if !queued.is_empty() {
+                    let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
+                    let chat = state_for_drain.chat().await;
+                    match queue_mode {
+                        MessageQueueMode::Followup => {
+                            let mut iter = queued.into_iter();
+                            let Some(first) = iter.next() else {
+                                return;
+                            };
+                            let rest: Vec<QueuedMessage> = iter.collect();
+                            if !rest.is_empty() {
+                                message_queue
+                                    .write()
+                                    .await
+                                    .entry(session_key_clone.clone())
+                                    .or_default()
+                                    .extend(rest);
+                            }
+                            info!(session = %session_key_clone, "replaying queued message (followup)");
+                            let mut replay_params = first.params;
+                            replay_params["_queued_replay"] = serde_json::json!(true);
+                            if let Err(e) = chat.send(replay_params).await {
+                                warn!(session = %session_key_clone, error = %e, "failed to replay queued message");
+                            }
+                        },
+                        MessageQueueMode::Collect => {
+                            let combined: Vec<&str> = queued
+                                .iter()
+                                .filter_map(|m| m.params.get("text").and_then(|v| v.as_str()))
+                                .collect();
+                            if !combined.is_empty() {
+                                info!(
+                                    session = %session_key_clone,
+                                    count = combined.len(),
+                                    "replaying collected messages"
+                                );
+                                let Some(last) = queued.last() else {
+                                    return;
+                                };
+                                let mut merged = last.params.clone();
+                                merged["text"] = serde_json::json!(combined.join("\n\n"));
+                                merged["_queued_replay"] = serde_json::json!(true);
+                                if let Err(e) = chat.send(merged).await {
+                                    warn!(session = %session_key_clone, error = %e, "failed to replay collected messages");
+                                }
+                            }
+                        },
+                    }
+                }
+            });
+
+            self.active_runs
+                .write()
+                .await
+                .insert(run_id.clone(), handle.abort_handle());
+            self.active_runs_by_session
+                .write()
+                .await
+                .insert(session_key.clone(), run_id.clone());
+
+            return Ok(serde_json::json!({ "runId": run_id }));
+        }
+
         // Resolve model: explicit param → session metadata → first registered.
         let session_model = if explicit_model.is_none() {
             self.session_metadata
@@ -2737,6 +3151,7 @@ impl ChatService for LiveChatService {
                     provider: Some(provider_name.clone()),
                     input_tokens: Some(assistant_output.input_tokens),
                     output_tokens: Some(assistant_output.output_tokens),
+                    duration_ms: Some(assistant_output.duration_ms),
                     request_input_tokens: Some(assistant_output.request_input_tokens),
                     request_output_tokens: Some(assistant_output.request_output_tokens),
                     tool_calls: None,
@@ -3011,6 +3426,7 @@ impl ChatService for LiveChatService {
                 provider: Some(provider_name.clone()),
                 input_tokens: Some(assistant_output.input_tokens),
                 output_tokens: Some(assistant_output.output_tokens),
+                duration_ms: Some(assistant_output.duration_ms),
                 request_input_tokens: Some(assistant_output.request_input_tokens),
                 request_output_tokens: Some(assistant_output.request_output_tokens),
                 tool_calls: None,
@@ -3038,6 +3454,9 @@ impl ChatService for LiveChatService {
                 "text": assistant_output.text,
                 "inputTokens": assistant_output.input_tokens,
                 "outputTokens": assistant_output.output_tokens,
+                "durationMs": assistant_output.duration_ms,
+                "requestInputTokens": assistant_output.request_input_tokens,
+                "requestOutputTokens": assistant_output.request_output_tokens,
             })),
             None => {
                 // Check the last broadcast for this run to get the actual error message.
@@ -3299,6 +3718,7 @@ impl ChatService for LiveChatService {
             provider: None,
             input_tokens: None,
             output_tokens: None,
+            duration_ms: None,
             request_input_tokens: None,
             request_output_tokens: None,
             tool_calls: None,
@@ -3536,6 +3956,30 @@ impl ChatService for LiveChatService {
                 "backend": null,
             })
         };
+        let sandbox_enabled = sandbox_info
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let host_is_root = detect_host_root_user().await;
+        // Sandbox containers currently run as root by default.
+        let exec_is_root = if sandbox_enabled {
+            Some(true)
+        } else {
+            host_is_root
+        };
+        let exec_prompt_symbol = exec_is_root.map(|is_root| {
+            if is_root {
+                "#"
+            } else {
+                "$"
+            }
+        });
+        let execution_info = serde_json::json!({
+            "mode": if sandbox_enabled { "sandbox" } else { "host" },
+            "hostIsRoot": host_is_root,
+            "isRoot": exec_is_root,
+            "promptSymbol": exec_prompt_symbol,
+        });
 
         // Discover enabled skills/plugins (only if provider supports tools)
         let skills_list: Vec<Value> = if supports_tools {
@@ -3578,6 +4022,7 @@ impl ChatService for LiveChatService {
             "mcpServers": mcp_servers,
             "mcpDisabled": mcp_disabled,
             "sandbox": sandbox_info,
+            "execution": execution_info,
             "supportsTools": supports_tools,
             "tokenUsage": {
                 "inputTokens": usage.session_input_tokens,
@@ -4027,6 +4472,189 @@ fn ordered_runner_event_callback() -> (
     (callback, rx)
 }
 
+async fn run_explicit_shell_command(
+    state: &Arc<GatewayState>,
+    run_id: &str,
+    tool_registry: &Arc<RwLock<ToolRegistry>>,
+    session_store: &Arc<SessionStore>,
+    session_key: &str,
+    command: &str,
+    user_message_index: usize,
+    accept_language: Option<String>,
+    conn_id: Option<String>,
+    client_seq: Option<u64>,
+) -> AssistantTurnOutput {
+    let started = Instant::now();
+    let tool_call_id = format!("sh_{}", uuid::Uuid::new_v4().simple());
+    let tool_args = serde_json::json!({ "command": command });
+
+    send_tool_status_to_channels(state, session_key, "exec", &tool_args).await;
+
+    broadcast(
+        state,
+        "chat",
+        serde_json::json!({
+            "runId": run_id,
+            "sessionKey": session_key,
+            "state": "tool_call_start",
+            "toolCallId": tool_call_id,
+            "toolName": "exec",
+            "arguments": tool_args,
+            "seq": client_seq,
+        }),
+        BroadcastOpts::default(),
+    )
+    .await;
+
+    let mut exec_params = serde_json::json!({
+        "command": command,
+        "_session_key": session_key,
+    });
+    if let Some(lang) = accept_language.as_deref() {
+        exec_params["_accept_language"] = serde_json::json!(lang);
+    }
+    if let Some(cid) = conn_id.as_deref() {
+        exec_params["_conn_id"] = serde_json::json!(cid);
+    }
+
+    let exec_tool = {
+        let registry = tool_registry.read().await;
+        registry.get_arc("exec")
+    };
+
+    let exec_result = match exec_tool {
+        Some(tool) => tool.execute(exec_params).await,
+        None => Err(anyhow::anyhow!("exec tool is not registered")),
+    };
+
+    let has_channel_targets = !state.peek_channel_replies(session_key).await.is_empty();
+    let mut final_text = String::new();
+
+    match exec_result {
+        Ok(result) => {
+            let capped = capped_tool_result_payload(&result, 10_000);
+            let tool_result_msg = PersistedMessage::tool_result(
+                tool_call_id.clone(),
+                "exec",
+                Some(serde_json::json!({ "command": command })),
+                true,
+                Some(capped.clone()),
+                None,
+            );
+            if let Err(e) = session_store
+                .append(session_key, &tool_result_msg.to_value())
+                .await
+            {
+                warn!("failed to persist direct /sh tool result: {e}");
+            }
+
+            broadcast(
+                state,
+                "chat",
+                serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": session_key,
+                    "state": "tool_call_end",
+                    "toolCallId": tool_call_id,
+                    "toolName": "exec",
+                    "success": true,
+                    "result": capped,
+                    "seq": client_seq,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+
+            if has_channel_targets {
+                final_text = shell_reply_text_from_exec_result(&result);
+                if final_text.is_empty() {
+                    final_text = "Command completed.".to_string();
+                }
+            }
+        },
+        Err(err) => {
+            let error_text = err.to_string();
+            let parsed_error = parse_chat_error(&error_text, None);
+            let tool_result_msg = PersistedMessage::tool_result(
+                tool_call_id.clone(),
+                "exec",
+                Some(serde_json::json!({ "command": command })),
+                false,
+                None,
+                Some(error_text.clone()),
+            );
+            if let Err(e) = session_store
+                .append(session_key, &tool_result_msg.to_value())
+                .await
+            {
+                warn!("failed to persist direct /sh tool error: {e}");
+            }
+
+            broadcast(
+                state,
+                "chat",
+                serde_json::json!({
+                    "runId": run_id,
+                    "sessionKey": session_key,
+                    "state": "tool_call_end",
+                    "toolCallId": tool_call_id,
+                    "toolName": "exec",
+                    "success": false,
+                    "error": parsed_error,
+                    "seq": client_seq,
+                }),
+                BroadcastOpts::default(),
+            )
+            .await;
+
+            if has_channel_targets {
+                final_text = error_text;
+            }
+        },
+    }
+
+    if !final_text.trim().is_empty() {
+        deliver_channel_replies(state, session_key, &final_text, ReplyMedium::Text).await;
+    }
+
+    let final_payload = ChatFinalBroadcast {
+        run_id: run_id.to_string(),
+        session_key: session_key.to_string(),
+        state: "final",
+        text: final_text.clone(),
+        model: String::new(),
+        provider: String::new(),
+        input_tokens: 0,
+        output_tokens: 0,
+        duration_ms: started.elapsed().as_millis() as u64,
+        request_input_tokens: Some(0),
+        request_output_tokens: Some(0),
+        message_index: user_message_index + 1,
+        reply_medium: ReplyMedium::Text,
+        iterations: Some(1),
+        tool_calls_made: Some(1),
+        audio: None,
+        audio_warning: None,
+        reasoning: None,
+        seq: client_seq,
+    };
+    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+    let payload = serde_json::to_value(&final_payload).unwrap();
+    broadcast(state, "chat", payload, BroadcastOpts::default()).await;
+
+    AssistantTurnOutput {
+        text: final_text,
+        input_tokens: 0,
+        output_tokens: 0,
+        duration_ms: started.elapsed().as_millis() as u64,
+        request_input_tokens: 0,
+        request_output_tokens: 0,
+        audio_path: None,
+        reasoning: None,
+        llm_api_response: None,
+    }
+}
+
 async fn run_with_tools(
     state: &Arc<GatewayState>,
     model_store: &Arc<RwLock<DisabledModelsStore>>,
@@ -4051,6 +4679,7 @@ async fn run_with_tools(
     client_seq: Option<u64>,
     active_thinking_text: Option<Arc<RwLock<HashMap<String, String>>>>,
 ) -> Option<AssistantTurnOutput> {
+    let run_started = Instant::now();
     let persona = load_prompt_persona();
 
     let native_tools = provider.supports_tools();
@@ -4645,6 +5274,7 @@ async fn run_with_tools(
                 provider: provider_name.to_string(),
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                duration_ms: run_started.elapsed().as_millis() as u64,
                 request_input_tokens: Some(request_usage.input_tokens),
                 request_output_tokens: Some(request_usage.output_tokens),
                 message_index: assistant_message_index,
@@ -4674,6 +5304,7 @@ async fn run_with_tools(
                 text: display_text,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                duration_ms: run_started.elapsed().as_millis() as u64,
                 request_input_tokens: request_usage.input_tokens,
                 request_output_tokens: request_usage.output_tokens,
                 audio_path,
@@ -4758,6 +5389,7 @@ async fn compact_session(
         provider: None,
         input_tokens: None,
         output_tokens: None,
+        duration_ms: None,
         request_input_tokens: None,
         request_output_tokens: None,
         tool_calls: None,
@@ -4867,6 +5499,7 @@ async fn run_streaming(
     session_store: Option<&Arc<SessionStore>>,
     client_seq: Option<u64>,
 ) -> Option<AssistantTurnOutput> {
+    let run_started = Instant::now();
     let persona = load_prompt_persona();
 
     let system_prompt = build_system_prompt_minimal_runtime(
@@ -5051,6 +5684,7 @@ async fn run_streaming(
                         provider: provider_name.to_string(),
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        duration_ms: run_started.elapsed().as_millis() as u64,
                         request_input_tokens: Some(usage.input_tokens),
                         request_output_tokens: Some(usage.output_tokens),
                         message_index: assistant_message_index,
@@ -5087,6 +5721,7 @@ async fn run_streaming(
                         text: accumulated,
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
+                        duration_ms: run_started.elapsed().as_millis() as u64,
                         request_input_tokens: usage.input_tokens,
                         request_output_tokens: usage.output_tokens,
                         audio_path,
@@ -6037,9 +6672,50 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl AgentTool for MockExecTool {
+        fn name(&self) -> &str {
+            "exec"
+        }
+
+        fn description(&self) -> &str {
+            "mock exec"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": { "type": "string" }
+                }
+            })
+        }
+
+        async fn execute(&self, params: Value) -> Result<Value> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(command) = params.get("command").and_then(Value::as_str) {
+                self.commands
+                    .lock()
+                    .expect("mock exec commands mutex poisoned")
+                    .push(command.to_string());
+            }
+            Ok(serde_json::json!({
+                "stdout": "ok\n",
+                "stderr": "",
+                "exit_code": 0
+            }))
+        }
+    }
+
     struct MockChannelOutbound {
         calls: Arc<AtomicUsize>,
         delay: Duration,
+    }
+
+    struct MockExecTool {
+        calls: Arc<AtomicUsize>,
+        commands: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
     #[test]
@@ -6096,6 +6772,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_explicit_shell_command_extracts_command_text() {
+        assert_eq!(
+            parse_explicit_shell_command("/sh uname -a"),
+            Some("uname -a")
+        );
+        assert_eq!(parse_explicit_shell_command("/sh\tls"), Some("ls"));
+    }
+
+    #[test]
+    fn parse_explicit_shell_command_rejects_non_command_inputs() {
+        assert!(parse_explicit_shell_command("/sh").is_none());
+        assert!(parse_explicit_shell_command("/shell ls").is_none());
+        assert!(parse_explicit_shell_command("uname -a").is_none());
+    }
+
+    #[test]
     fn is_safe_user_audio_filename_allows_sanitized_names() {
         assert!(is_safe_user_audio_filename("voice-123.webm"));
         assert!(is_safe_user_audio_filename("recording_1.ogg"));
@@ -6145,6 +6837,19 @@ mod tests {
         }
     }
 
+    async fn sqlite_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("sqlite memory pool");
+        moltis_projects::run_migrations(&pool)
+            .await
+            .expect("projects migrations");
+        SqliteSessionMetadata::init(&pool)
+            .await
+            .expect("session metadata migrations");
+        pool
+    }
+
     #[tokio::test]
     async fn deliver_channel_replies_waits_for_outbound_sends() {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -6185,6 +6890,76 @@ mod tests {
             "delivery should wait for outbound send completion"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_sh_bypasses_provider_and_executes_directly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        let state = GatewayState::new(
+            crate::auth::ResolvedAuth {
+                mode: crate::auth::AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            crate::services::GatewayServices::noop(),
+        );
+
+        let providers = Arc::new(RwLock::new(ProviderRegistry::empty()));
+        let disabled = Arc::new(RwLock::new(DisabledModelsStore::default()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(MockExecTool {
+            calls: Arc::clone(&calls),
+            commands: Arc::clone(&commands),
+        }));
+
+        let chat = LiveChatService::new(providers, disabled, state, Arc::clone(&store), metadata)
+            .with_tools(Arc::new(RwLock::new(registry)));
+
+        let send_result = chat
+            .send(serde_json::json!({ "text": "/sh df -h" }))
+            .await
+            .expect("chat.send should succeed for explicit /sh");
+        assert!(
+            send_result
+                .get("runId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+        );
+
+        let history = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let messages = store.read("main").await.unwrap_or_default();
+                if messages
+                    .iter()
+                    .any(|msg| msg.get("role").and_then(Value::as_str) == Some("tool_result"))
+                {
+                    return messages;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("tool result should be persisted");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let seen_commands = commands
+            .lock()
+            .expect("mock exec commands mutex poisoned")
+            .clone();
+        assert_eq!(seen_commands, vec!["df -h".to_string()]);
+        assert!(
+            history
+                .iter()
+                .any(|msg| msg.get("role").and_then(Value::as_str) == Some("assistant")),
+            "explicit /sh should persist an assistant turn for history coherence"
+        );
     }
 
     #[test]
