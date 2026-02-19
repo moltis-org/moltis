@@ -4179,6 +4179,14 @@ async fn handle_terminal_ws_connection(
                                     // Keep restart size aligned with latest client viewport.
                                     current_cols = next_cols;
                                     current_rows = next_rows;
+                                    // Force tmux to recalculate window dimensions after
+                                    // the PTY resize so the window matches the client
+                                    // viewport (tmux may not react to SIGWINCH alone).
+                                    if persistence_available {
+                                        host_terminal_tmux_reset_window_size(
+                                            current_window_target.as_deref(),
+                                        );
+                                    }
                                 }
                             }
                             Ok(HostTerminalWsClientMessage::SwitchWindow { window }) => {
