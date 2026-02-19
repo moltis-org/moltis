@@ -118,6 +118,20 @@ pub trait ChannelEventSink: Send + Sync {
     ) {
     }
 
+    /// Save voice audio bytes to the session's media directory.
+    ///
+    /// Returns the saved filename on success, or `None` if saving is not
+    /// available or fails. The gateway implementation resolves the session
+    /// key from the reply target and delegates to `SessionStore::save_media`.
+    async fn save_channel_voice(
+        &self,
+        _audio_data: &[u8],
+        _filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<String> {
+        None
+    }
+
     /// Transcribe voice audio to text using the configured STT provider.
     ///
     /// Returns the transcribed text, or an error if transcription fails.
@@ -174,6 +188,10 @@ pub struct ChannelMessageMeta {
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Filename of saved voice audio (set by `save_channel_voice`).
+    /// Internal plumbing — not broadcast over WebSocket.
+    #[serde(skip)]
+    pub audio_filename: Option<String>,
 }
 
 /// Inbound channel message media kind.

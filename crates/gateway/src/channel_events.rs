@@ -187,6 +187,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // starts executing this message (after semaphore acquire).
                 "_channel_reply_target": &reply_to,
             });
+            // Thread saved voice audio filename so chat.rs persists the audio path.
+            if let Some(ref audio_filename) = meta.audio_filename {
+                params["_audio_filename"] = serde_json::json!(audio_filename);
+            }
+
             // Forward the channel's default model to chat.send() if configured.
             // If no channel model is set, check if the session already has a model.
             // If neither exists, assign the first registered model so the session
@@ -406,6 +411,34 @@ impl ChannelEventSink for GatewayChannelEventSink {
             }
         } else {
             warn!("request_sender_approval: gateway not ready");
+        }
+    }
+
+    async fn save_channel_voice(
+        &self,
+        audio_data: &[u8],
+        filename: &str,
+        reply_to: &ChannelReplyTarget,
+    ) -> Option<String> {
+        let state = self.state.get()?;
+        let session_key = if let Some(ref sm) = state.services.session_metadata {
+            resolve_channel_session(reply_to, sm).await
+        } else {
+            default_channel_session_key(reply_to)
+        };
+        let store = state.services.session_store.as_ref()?;
+        match store.save_media(&session_key, filename, audio_data).await {
+            Ok(_) => {
+                debug!(
+                    session_key,
+                    filename, "saved channel voice audio to session media"
+                );
+                Some(filename.to_string())
+            },
+            Err(e) => {
+                warn!(session_key, filename, error = %e, "failed to save channel voice audio");
+                None
+            },
         }
     }
 

@@ -209,8 +209,14 @@ pub async fn handle_message_direct(
 
     debug!(account_id, "handler: access granted");
 
-    // Check for voice/audio messages and transcribe them
-    let (body, attachments) = if let Some(voice_file) = extract_voice_file(&msg) {
+    // Check for voice/audio messages and transcribe them.
+    // `voice_audio` carries the raw bytes + format so we can save them to the
+    // session media directory once we have a reply target.
+    let (body, attachments, voice_audio): (
+        String,
+        Vec<ChannelAttachment>,
+        Option<(Vec<u8>, String)>,
+    ) = if let Some(voice_file) = extract_voice_file(&msg) {
         // If STT is not configured, reply with guidance and do not dispatch to the LLM.
         if let Some(ref sink) = event_sink
             && !sink.voice_stt_available().await
@@ -240,6 +246,7 @@ pub async fn handle_message_direct(
                         size = audio_data.len(),
                         "downloaded voice file, transcribing"
                     );
+                    let saved_audio = Some((audio_data.clone(), voice_file.format.clone()));
                     match sink.transcribe_voice(&audio_data, &voice_file.format).await {
                         Ok(transcribed) => {
                             debug!(
@@ -254,7 +261,7 @@ pub async fn handle_message_direct(
                             } else {
                                 format!("{}\n\n[Voice message]: {}", caption, transcribed)
                             };
-                            (body, Vec::new())
+                            (body, Vec::new(), saved_audio)
                         },
                         Err(e) => {
                             warn!(account_id, error = %e, "voice transcription failed");
@@ -264,6 +271,7 @@ pub async fn handle_message_direct(
                                     "[Voice message - transcription unavailable]".to_string()
                                 }),
                                 Vec::new(),
+                                saved_audio,
                             )
                         },
                     }
@@ -274,6 +282,7 @@ pub async fn handle_message_direct(
                         text.clone()
                             .unwrap_or_else(|| "[Voice message - download failed]".to_string()),
                         Vec::new(),
+                        None,
                     )
                 },
             }
@@ -283,6 +292,7 @@ pub async fn handle_message_direct(
                 text.clone()
                     .unwrap_or_else(|| "[Voice message]".to_string()),
                 Vec::new(),
+                None,
             )
         }
     } else if let Some(photo_file) = extract_photo_file(&msg) {
@@ -326,7 +336,7 @@ pub async fn handle_message_direct(
                 };
                 // Use caption as text, or empty string if no caption
                 let caption = text.clone().unwrap_or_default();
-                (caption, vec![attachment])
+                (caption, vec![attachment], None)
             },
             Err(e) => {
                 warn!(account_id, error = %e, "failed to download photo");
@@ -334,6 +344,7 @@ pub async fn handle_message_direct(
                     text.clone()
                         .unwrap_or_else(|| "[Photo - download failed]".to_string()),
                     Vec::new(),
+                    None,
                 )
             },
         }
@@ -399,7 +410,11 @@ pub async fn handle_message_direct(
         }
 
         // Static location share — dispatch to LLM so it can acknowledge.
-        (format!("I'm sharing my location: {lat}, {lon}"), Vec::new())
+        (
+            format!("I'm sharing my location: {lat}, {lon}"),
+            Vec::new(),
+            None,
+        )
     } else {
         // Log unhandled media types so we know when users are sending attachments we don't process
         if let Some(media_type) = describe_media_kind(&msg) {
@@ -408,7 +423,7 @@ pub async fn handle_message_direct(
                 peer_id, media_type, "received unhandled attachment type"
             );
         }
-        (text.unwrap_or_default(), Vec::new())
+        (text.unwrap_or_default(), Vec::new(), None)
     };
 
     // Dispatch to the chat session (per-channel session key derived by the sink).
@@ -566,12 +581,22 @@ pub async fn handle_message_direct(
             }
         }
 
+        // Save voice audio to the session media directory (best-effort).
+        let audio_filename = if let Some((ref audio_data, ref format)) = voice_audio {
+            let filename = format!("voice-tg-{}.{format}", msg.id.0);
+            sink.save_channel_voice(audio_data, &filename, &reply_target)
+                .await
+        } else {
+            None
+        };
+
         let meta = ChannelMessageMeta {
             channel_type: ChannelType::Telegram,
             sender_name: sender_name.clone(),
             username: username.clone(),
             message_kind: message_kind(&msg),
             model: config.model.clone(),
+            audio_filename,
         };
 
         if attachments.is_empty() {

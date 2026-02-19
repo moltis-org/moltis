@@ -6044,7 +6044,7 @@ async fn api_session_media_handler(
             let content_type = match filename.rsplit('.').next() {
                 Some("png") => "image/png",
                 Some("jpg" | "jpeg") => "image/jpeg",
-                Some("ogg") => "audio/ogg",
+                Some("ogg" | "oga") => "audio/ogg",
                 Some("webm") => "audio/webm",
                 Some("mp3") => "audio/mpeg",
                 _ => "application/octet-stream",
