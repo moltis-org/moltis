@@ -27,6 +27,7 @@
 - [Browser Automation](browser-automation.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
+- [Scheduling (Cron Jobs)](scheduling.md)
 - [Skill Self-Extension](skill-tools.md)
 - [Mobile PWA](mobile-pwa.md)
 

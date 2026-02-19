@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Event-driven heartbeat wake system: cron jobs can now trigger immediate
+  heartbeat runs via a `wakeMode` field (`"now"` or `"nextHeartbeat"`).
+- System events queue: in-memory bounded buffer that collects events (exec
+  completions, cron triggers) and drains them into the heartbeat prompt so the
+  agent sees what happened while it was idle.
+- Exec completion callback: command executions automatically enqueue a summary
+  event and wake the heartbeat, giving the agent real-time awareness of
+  background task results.
+
 ### Changed
 
 ### Deprecated
