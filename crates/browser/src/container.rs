@@ -351,41 +351,45 @@ fn start_apple_container(
     low_memory_threshold_mb: u64,
     profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
-    if profile_dir.is_some() {
-        warn!(
-            "persistent browser profiles are not supported with Apple Container backend; \
-             profile will be ephemeral for this session"
-        );
-    }
-
     let container_name = new_browser_container_name(container_prefix);
 
-    // Apple Container VMs do not support host volume mounts, so profile persistence
-    // is not available — always pass None for the container profile path.
+    let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
     let launch_args = build_container_launch_args(
         viewport_width,
         viewport_height,
         low_memory_threshold_mb,
-        None,
+        container_profile_dir,
     );
 
-    // Apple Container uses different syntax for port mapping and env vars
+    let mut container_args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "-p".to_string(),
+        format!("{}:3000", host_port),
+        "-e".to_string(),
+        launch_args,
+        "-e".to_string(),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "-e".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+    ];
+
+    // Mount the profile directory if persistence is enabled
+    if let Some(host_path) = profile_dir {
+        container_args.push("-v".to_string());
+        container_args.push(format!(
+            "{}:{}",
+            host_path.display(),
+            CONTAINER_PROFILE_PATH
+        ));
+    }
+
+    container_args.push(image.to_string());
+
     let output = Command::new("container")
-        .args([
-            "run",
-            "-d",
-            "--name",
-            &container_name,
-            "-p",
-            &format!("{}:3000", host_port),
-            "-e",
-            &launch_args,
-            "-e",
-            "MAX_CONCURRENT_SESSIONS=1",
-            "-e",
-            "PREBOOT_CHROME=true",
-            image,
-        ])
+        .args(&container_args)
         .output()
         .context("failed to run container command")?;
 
