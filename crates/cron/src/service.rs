@@ -20,7 +20,9 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, cron as cron_metrics, gauge, histogram};
 
-use crate::{schedule::compute_next_run, store::CronStore, types::*};
+use crate::{
+    schedule::compute_next_run, store::CronStore, system_events::SystemEventsQueue, types::*,
+};
 
 /// Result of an agent turn, including optional token usage.
 #[derive(Debug, Clone)]
@@ -123,6 +125,7 @@ pub struct CronService {
     on_agent_turn: AgentTurnFn,
     on_notify: Option<NotifyFn>,
     rate_limiter: Mutex<RateLimiter>,
+    events_queue: Arc<SystemEventsQueue>,
 }
 
 /// Max time a job can be in "running" state before we consider it stuck (2 hours).
@@ -174,6 +177,28 @@ impl CronService {
         on_notify: Option<NotifyFn>,
         rate_limit_config: RateLimitConfig,
     ) -> Arc<Self> {
+        Self::with_events_queue(
+            store,
+            on_system_event,
+            on_agent_turn,
+            on_notify,
+            rate_limit_config,
+            SystemEventsQueue::new(),
+        )
+    }
+
+    /// Create a new cron service with a pre-created events queue.
+    ///
+    /// Use this when the queue must be shared with closures created before
+    /// the service (e.g. the `on_agent_turn` callback).
+    pub fn with_events_queue(
+        store: Arc<dyn CronStore>,
+        on_system_event: SystemEventFn,
+        on_agent_turn: AgentTurnFn,
+        on_notify: Option<NotifyFn>,
+        rate_limit_config: RateLimitConfig,
+        events_queue: Arc<SystemEventsQueue>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             jobs: RwLock::new(Vec::new()),
@@ -184,7 +209,31 @@ impl CronService {
             on_agent_turn,
             on_notify,
             rate_limiter: Mutex::new(RateLimiter::new(rate_limit_config)),
+            events_queue,
         })
+    }
+
+    /// Access the shared events queue for enqueueing system events.
+    pub fn events_queue(&self) -> &Arc<SystemEventsQueue> {
+        &self.events_queue
+    }
+
+    /// Wake the heartbeat by setting its next run to now.
+    ///
+    /// Multiple wake calls coalesce naturally: they all set `next_run_at_ms = now`
+    /// idempotently, and `running_at_ms` prevents the heartbeat from firing twice.
+    pub async fn wake(&self, reason: &str) {
+        let now = now_ms();
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.iter_mut().find(|j| j.id == "__heartbeat__")
+            && job.enabled
+            && job.state.running_at_ms.is_none()
+        {
+            debug!(reason, "waking heartbeat");
+            job.state.next_run_at_ms = Some(now);
+        }
+        drop(jobs);
+        self.wake_notify.notify_one();
     }
 
     /// Emit a notification if a callback is registered.
@@ -250,6 +299,7 @@ impl CronService {
             session_target: create.session_target,
             state: CronJobState::default(),
             sandbox: create.sandbox,
+            wake_mode: create.wake_mode,
             system: create.system,
             created_at_ms: now,
             updated_at_ms: now,
@@ -305,6 +355,9 @@ impl CronService {
         }
         if let Some(sandbox) = patch.sandbox {
             job.sandbox = sandbox;
+        }
+        if let Some(wake_mode) = patch.wake_mode {
+            job.wake_mode = wake_mode;
         }
 
         job.updated_at_ms = now;
@@ -596,6 +649,11 @@ impl CronService {
             }
         }
 
+        // Wake heartbeat immediately if this job requested it.
+        if job.wake_mode == CronWakeMode::Now && job.id != "__heartbeat__" {
+            self.wake("cron-event").await;
+        }
+
         info!(
             id = %job.id,
             status = ?status,
@@ -728,6 +786,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -764,6 +823,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await;
 
@@ -796,6 +856,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -837,6 +898,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -886,6 +948,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -922,6 +985,7 @@ mod tests {
                 enabled: false,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -956,6 +1020,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -1003,6 +1068,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -1051,6 +1117,7 @@ mod tests {
             enabled: true,
             system: false,
             sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
         };
 
         // First 3 jobs should succeed.
@@ -1099,6 +1166,7 @@ mod tests {
             enabled: true,
             system: true, // This is a system job
             sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
         };
 
         // System jobs should bypass rate limiting.
@@ -1141,6 +1209,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -1190,6 +1259,7 @@ mod tests {
                 enabled: true,
                 system: false,
                 sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
             })
             .await
             .unwrap();
@@ -1209,5 +1279,146 @@ mod tests {
             .expect("job should exist");
         assert_eq!(job_state.state.running_at_ms, Some(now + 1_000));
         assert!(job_state.state.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_wake_sets_next_run_at_now() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        // Create a heartbeat job with future next_run_at_ms.
+        svc.add(CronJobCreate {
+            id: Some("__heartbeat__".into()),
+            name: "__heartbeat__".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 999_999_999,
+                anchor_ms: None,
+            },
+            payload: CronPayload::AgentTurn {
+                message: "heartbeat".into(),
+                model: None,
+                timeout_secs: None,
+                deliver: false,
+                channel: None,
+                to: None,
+            },
+            session_target: SessionTarget::Named("heartbeat".into()),
+            delete_after_run: false,
+            enabled: true,
+            system: true,
+            sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
+        })
+        .await
+        .unwrap();
+
+        let before = svc.list().await;
+        let hb = before.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        let original_next = hb.state.next_run_at_ms.unwrap();
+
+        svc.wake("test").await;
+
+        let after = svc.list().await;
+        let hb = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        assert!(hb.state.next_run_at_ms.unwrap() <= original_next);
+    }
+
+    #[tokio::test]
+    async fn test_wake_noop_when_running() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        svc.add(CronJobCreate {
+            id: Some("__heartbeat__".into()),
+            name: "__heartbeat__".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 999_999_999,
+                anchor_ms: None,
+            },
+            payload: CronPayload::AgentTurn {
+                message: "heartbeat".into(),
+                model: None,
+                timeout_secs: None,
+                deliver: false,
+                channel: None,
+                to: None,
+            },
+            session_target: SessionTarget::Named("heartbeat".into()),
+            delete_after_run: false,
+            enabled: true,
+            system: true,
+            sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
+        })
+        .await
+        .unwrap();
+
+        // Simulate running state.
+        svc.update_job_state("__heartbeat__", |state| {
+            state.running_at_ms = Some(now_ms());
+        })
+        .await;
+
+        let before = svc.list().await;
+        let hb_before = before.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        let next_before = hb_before.state.next_run_at_ms;
+
+        svc.wake("test").await;
+
+        let after = svc.list().await;
+        let hb_after = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        assert_eq!(hb_after.state.next_run_at_ms, next_before);
+    }
+
+    #[tokio::test]
+    async fn test_wake_noop_when_disabled() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        svc.add(CronJobCreate {
+            id: Some("__heartbeat__".into()),
+            name: "__heartbeat__".into(),
+            schedule: CronSchedule::Every {
+                every_ms: 999_999_999,
+                anchor_ms: None,
+            },
+            payload: CronPayload::AgentTurn {
+                message: "heartbeat".into(),
+                model: None,
+                timeout_secs: None,
+                deliver: false,
+                channel: None,
+                to: None,
+            },
+            session_target: SessionTarget::Named("heartbeat".into()),
+            delete_after_run: false,
+            enabled: false,
+            system: true,
+            sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
+        })
+        .await
+        .unwrap();
+
+        let before = svc.list().await;
+        let hb = before.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        let next_before = hb.state.next_run_at_ms;
+
+        svc.wake("test").await;
+
+        let after = svc.list().await;
+        let hb = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+        assert_eq!(hb.state.next_run_at_ms, next_before);
+    }
+
+    #[tokio::test]
+    async fn test_events_queue_accessible() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+        assert!(svc.events_queue().is_empty().await);
+        svc.events_queue()
+            .enqueue("test".into(), "unit-test".into())
+            .await;
+        assert!(!svc.events_queue().is_empty().await);
     }
 }

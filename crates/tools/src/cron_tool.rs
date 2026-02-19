@@ -344,6 +344,31 @@ fn normalize_payload_value(payload: &mut Value, session_target_hint: Option<&str
     }
 }
 
+fn normalize_wake_mode(raw: &str) -> Option<&'static str> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "now" | "immediate" | "immediately" => Some("now"),
+        "nextheartbeat" | "next_heartbeat" | "next-heartbeat" | "next" | "default" => {
+            Some("nextHeartbeat")
+        },
+        _ => None,
+    }
+}
+
+fn normalize_wake_mode_field(obj: &mut Map<String, Value>) -> Result<()> {
+    take_alias(obj, "wakeMode", &["wake_mode"]);
+    if let Some(val) = obj.get_mut("wakeMode") {
+        let raw = val
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("wakeMode must be a string"))?;
+        let norm = normalize_wake_mode(raw).ok_or_else(|| {
+            anyhow::anyhow!("invalid wakeMode `{raw}` (expected `now` or `nextHeartbeat`)")
+        })?;
+        *val = Value::String(norm.to_string());
+    }
+    Ok(())
+}
+
 fn normalize_session_target_field(obj: &mut Map<String, Value>) {
     take_alias(obj, "sessionTarget", &["session_target", "target"]);
 }
@@ -492,6 +517,7 @@ fn normalize_job_value(job: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("job must be an object"))?;
     normalize_session_target_field(obj);
     normalize_sandbox_field(obj)?;
+    normalize_wake_mode_field(obj)?;
 
     let session_target_hint = obj
         .get("sessionTarget")
@@ -518,6 +544,7 @@ fn normalize_patch_value(patch: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("patch must be an object"))?;
     normalize_session_target_field(obj);
     normalize_sandbox_field(obj)?;
+    normalize_wake_mode_field(obj)?;
 
     let session_target_hint = obj
         .get("sessionTarget")
@@ -622,7 +649,8 @@ impl AgentTool for CronTool {
                             }
                         },
                         "deleteAfterRun": { "type": "boolean", "default": false },
-                        "enabled": { "type": "boolean", "default": true }
+                        "enabled": { "type": "boolean", "default": true },
+                        "wakeMode": { "type": "string", "enum": ["now", "nextHeartbeat"], "default": "nextHeartbeat", "description": "Whether to trigger an immediate heartbeat after this job fires" }
                     },
                     "required": ["name", "schedule", "payload"]
                 },
@@ -1066,5 +1094,82 @@ mod tests {
 
         let err = result.unwrap_err().to_string();
         assert!(err.contains("ambiguous fields"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_normalize_wake_mode_aliases() {
+        assert_eq!(normalize_wake_mode("now"), Some("now"));
+        assert_eq!(normalize_wake_mode("immediate"), Some("now"));
+        assert_eq!(normalize_wake_mode("immediately"), Some("now"));
+        assert_eq!(normalize_wake_mode("NOW"), Some("now"));
+        assert_eq!(normalize_wake_mode("nextHeartbeat"), Some("nextHeartbeat"));
+        assert_eq!(normalize_wake_mode("next_heartbeat"), Some("nextHeartbeat"));
+        assert_eq!(normalize_wake_mode("next-heartbeat"), Some("nextHeartbeat"));
+        assert_eq!(normalize_wake_mode("next"), Some("nextHeartbeat"));
+        assert_eq!(normalize_wake_mode("default"), Some("nextHeartbeat"));
+        assert_eq!(normalize_wake_mode("bogus"), None);
+    }
+
+    #[tokio::test]
+    async fn test_add_with_wake_mode() {
+        let tool = make_tool();
+        let result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "wake test",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "go" },
+                    "wakeMode": "now"
+                }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["wakeMode"], "now");
+    }
+
+    #[tokio::test]
+    async fn test_add_with_wake_mode_alias() {
+        let tool = make_tool();
+        let result = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "alias wake",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "go" },
+                    "wake_mode": "immediate"
+                }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["wakeMode"], "now");
+    }
+
+    #[tokio::test]
+    async fn test_update_wake_mode() {
+        let tool = make_tool();
+        let add = tool
+            .execute(json!({
+                "action": "add",
+                "job": {
+                    "name": "update wake",
+                    "schedule": { "kind": "every", "every_ms": 60000 },
+                    "payload": { "kind": "agentTurn", "message": "go" }
+                }
+            }))
+            .await
+            .unwrap();
+        let id = add["id"].as_str().unwrap();
+
+        let updated = tool
+            .execute(json!({
+                "action": "update",
+                "id": id,
+                "patch": { "wakeMode": "now" }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(updated["wakeMode"], "now");
     }
 }

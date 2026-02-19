@@ -10,6 +10,7 @@ pub mod store;
 pub mod store_file;
 pub mod store_memory;
 pub mod store_sqlite;
+pub mod system_events;
 pub mod types;
 
 /// Run database migrations for the cron crate.

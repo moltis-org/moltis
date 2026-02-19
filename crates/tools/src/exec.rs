@@ -18,6 +18,19 @@ use moltis_metrics::{
 
 use moltis_agents::tool_registry::AgentTool;
 
+/// Event describing a completed exec invocation, passed to the completion callback.
+#[derive(Debug, Clone)]
+pub struct ExecCompletionEvent {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout_preview: String,
+    pub stderr_preview: String,
+}
+
+/// Callback fired after every exec completion. Used to enqueue system events
+/// and wake the heartbeat.
+pub type ExecCompletionFn = Arc<dyn Fn(ExecCompletionEvent) + Send + Sync>;
+
 use crate::{
     approval::{ApprovalAction, ApprovalDecision, ApprovalManager},
     sandbox::{NoSandbox, Sandbox, SandboxId, SandboxRouter},
@@ -156,6 +169,7 @@ pub struct ExecTool {
     sandbox_id: Option<SandboxId>,
     sandbox_router: Option<Arc<SandboxRouter>>,
     env_provider: Option<Arc<dyn EnvVarProvider>>,
+    completion_callback: Option<ExecCompletionFn>,
 }
 
 impl Default for ExecTool {
@@ -170,6 +184,7 @@ impl Default for ExecTool {
             sandbox_id: None,
             sandbox_router: None,
             env_provider: None,
+            completion_callback: None,
         }
     }
 }
@@ -202,6 +217,12 @@ impl ExecTool {
     /// Attach an environment variable provider for sandbox injection.
     pub fn with_env_provider(mut self, provider: Arc<dyn EnvVarProvider>) -> Self {
         self.env_provider = Some(provider);
+        self
+    }
+
+    /// Attach a callback that fires after every exec completion.
+    pub fn with_completion_callback(mut self, cb: ExecCompletionFn) -> Self {
+        self.completion_callback = Some(cb);
         self
     }
 
@@ -501,6 +522,19 @@ impl AgentTool for ExecTool {
             stderr_len = result.stderr.len(),
             "exec tool completed"
         );
+
+        // Fire completion callback (used to enqueue heartbeat events).
+        if let Some(ref cb) = self.completion_callback {
+            let preview_len = 200;
+            let stdout_preview = result.stdout.chars().take(preview_len).collect();
+            let stderr_preview = result.stderr.chars().take(preview_len).collect();
+            cb(ExecCompletionEvent {
+                command: command.to_string(),
+                exit_code: result.exit_code,
+                stdout_preview,
+                stderr_preview,
+            });
+        }
 
         // Record metrics
         #[cfg(feature = "metrics")]
@@ -1268,5 +1302,39 @@ mod tests {
             msg.contains("working directory"),
             "error should mention 'working directory', got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_completion_callback_fires() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = Arc::clone(&called);
+        let cb: ExecCompletionFn = Arc::new(move |event| {
+            assert_eq!(event.command, "echo callback");
+            assert_eq!(event.exit_code, 0);
+            assert!(event.stdout_preview.contains("callback"));
+            called_clone.store(true, Ordering::SeqCst);
+        });
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut tool = ExecTool::default().with_completion_callback(cb);
+        tool.working_dir = Some(temp_dir.path().to_path_buf());
+        tool.execute(serde_json::json!({ "command": "echo callback" }))
+            .await
+            .unwrap();
+        assert!(called.load(Ordering::SeqCst), "callback should have fired");
+    }
+
+    #[tokio::test]
+    async fn test_no_callback_by_default() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tool = ExecTool {
+            working_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+        // Should work fine without a callback.
+        let result = tool
+            .execute(serde_json::json!({ "command": "echo default" }))
+            .await
+            .unwrap();
+        assert_eq!(result["exit_code"], 0);
     }
 }

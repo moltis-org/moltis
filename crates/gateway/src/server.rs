@@ -1657,10 +1657,15 @@ pub async fn start_gateway(
         });
     });
 
+    // Create the system events queue before the callbacks so it can be shared.
+    let events_queue = moltis_cron::system_events::SystemEventsQueue::new();
+
     // Agent turn: run an LLM turn in a session determined by the job's session_target.
     let agent_state = Arc::clone(&deferred_state);
+    let agent_events_queue = Arc::clone(&events_queue);
     let on_agent_turn: moltis_cron::service::AgentTurnFn = Arc::new(move |req| {
         let st = Arc::clone(&agent_state);
+        let eq = Arc::clone(&agent_events_queue);
         Box::pin(async move {
             let state = st
                 .get()
@@ -1673,7 +1678,9 @@ pub async fn start_gateway(
                 &req.session_target,
                 moltis_cron::types::SessionTarget::Named(name) if name == "heartbeat"
             );
-            if is_heartbeat_turn {
+            // Check for pending system events (used to bypass the empty-content guard).
+            let has_pending_events = is_heartbeat_turn && !eq.is_empty().await;
+            if is_heartbeat_turn && !has_pending_events {
                 let hb_cfg = state.inner.read().await.heartbeat_config.clone();
                 let has_prompt_override = hb_cfg
                     .prompt
@@ -1724,8 +1731,23 @@ pub async fn start_gateway(
                 }
             }
 
+            let prompt_text = if is_heartbeat_turn {
+                let events = eq.drain().await;
+                if events.is_empty() {
+                    req.message.clone()
+                } else {
+                    tracing::info!(
+                        event_count = events.len(),
+                        "enriching heartbeat prompt with system events"
+                    );
+                    moltis_cron::heartbeat::build_event_enriched_prompt(&events, &req.message)
+                }
+            } else {
+                req.message.clone()
+            };
+
             let mut params = serde_json::json!({
-                "text": req.message,
+                "text": prompt_text,
                 "_session_key": session_key,
             });
             if let Some(ref model) = req.model {
@@ -1791,12 +1813,13 @@ pub async fn start_gateway(
         window_ms: config.cron.rate_limit_window_secs * 1000,
     };
 
-    let cron_service = moltis_cron::service::CronService::with_config(
+    let cron_service = moltis_cron::service::CronService::with_events_queue(
         cron_store,
         on_system_event,
         on_agent_turn,
         Some(on_cron_notify),
         rate_limit_config,
+        events_queue,
     );
 
     // Wire cron into gateway services.
@@ -2681,10 +2704,22 @@ pub async fn start_gateway(
     {
         let broadcaster = Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         let env_provider: Arc<dyn EnvVarProvider> = credential_store.clone();
+        let eq = cron_service.events_queue().clone();
+        let cs = Arc::clone(&cron_service);
+        let exec_cb: moltis_tools::exec::ExecCompletionFn = Arc::new(move |event| {
+            let summary = format!("Command `{}` exited {}", event.command, event.exit_code);
+            let eq = Arc::clone(&eq);
+            let cs = Arc::clone(&cs);
+            tokio::spawn(async move {
+                eq.enqueue(summary, "exec-event".into()).await;
+                cs.wake("exec-event").await;
+            });
+        });
         let exec_tool = moltis_tools::exec::ExecTool::default()
             .with_approval(Arc::clone(&approval_manager), broadcaster)
             .with_sandbox_router(Arc::clone(&sandbox_router))
-            .with_env_provider(Arc::clone(&env_provider));
+            .with_env_provider(Arc::clone(&env_provider))
+            .with_completion_callback(exec_cb);
 
         let cron_tool = moltis_tools::cron_tool::CronTool::new(Arc::clone(&cron_service));
 
@@ -3636,6 +3671,7 @@ pub async fn start_gateway(
                         enabled: hb.sandbox_enabled,
                         image: hb.sandbox_image.clone(),
                     },
+                    wake_mode: moltis_cron::types::CronWakeMode::default(),
                 };
                 match cron_service.add(create).await {
                     Ok(job) => tracing::info!(id = %job.id, "heartbeat job created"),
