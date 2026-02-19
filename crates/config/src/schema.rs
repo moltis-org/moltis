@@ -1282,6 +1282,15 @@ pub struct BrowserConfig {
     /// are injected automatically. Set to 0 to disable. Default: 2048.
     #[serde(default = "default_low_memory_threshold_mb")]
     pub low_memory_threshold_mb: u64,
+    /// Whether to persist the Chrome user profile across sessions.
+    /// When enabled, cookies, auth state, and local storage survive browser restarts.
+    /// Profile is stored at `data_dir()/browser/profile/` unless `profile_dir` overrides it.
+    #[serde(default = "default_persist_profile")]
+    pub persist_profile: bool,
+    /// Custom path for the persistent Chrome profile directory.
+    /// When set, `persist_profile` is implicitly true.
+    /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
+    pub profile_dir: Option<String>,
 }
 
 fn default_sandbox_image() -> String {
@@ -1290,6 +1299,10 @@ fn default_sandbox_image() -> String {
 
 const fn default_low_memory_threshold_mb() -> u64 {
     2048
+}
+
+const fn default_persist_profile() -> bool {
+    true
 }
 
 impl Default for BrowserConfig {
@@ -1310,6 +1323,8 @@ impl Default for BrowserConfig {
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
             low_memory_threshold_mb: default_low_memory_threshold_mb(),
+            persist_profile: default_persist_profile(),
+            profile_dir: None,
         }
     }
 }

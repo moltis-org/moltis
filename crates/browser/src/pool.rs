@@ -342,6 +342,18 @@ impl BrowserPool {
             BrowserError::LaunchFailed(format!("failed to ensure browser image: {e}"))
         })?;
 
+        // Resolve and create profile directory on host if needed
+        let profile_dir = self.config.resolved_profile_dir();
+        if let Some(ref dir) = profile_dir
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            warn!(
+                path = %dir.display(),
+                error = %e,
+                "failed to create browser profile directory for container"
+            );
+        }
+
         // Start the container
         let container = BrowserContainer::start(
             &self.config.sandbox_image,
@@ -349,6 +361,7 @@ impl BrowserPool {
             self.config.viewport_width,
             self.config.viewport_height,
             self.config.low_memory_threshold_mb,
+            profile_dir.as_deref(),
         )
         .map_err(|e| {
             BrowserError::LaunchFailed(format!("failed to start browser container: {e}"))
@@ -502,6 +515,23 @@ impl BrowserPool {
 
         for arg in &self.config.chrome_args {
             builder = builder.arg(arg);
+        }
+
+        // Set persistent profile directory if configured
+        if let Some(ref profile_path) = self.config.resolved_profile_dir() {
+            if let Err(e) = std::fs::create_dir_all(profile_path) {
+                warn!(
+                    path = %profile_path.display(),
+                    error = %e,
+                    "failed to create browser profile directory, falling back to ephemeral"
+                );
+            } else {
+                info!(
+                    path = %profile_path.display(),
+                    "using persistent browser profile"
+                );
+                builder = builder.user_data_dir(profile_path);
+            }
         }
 
         // Additional security/sandbox args for headless

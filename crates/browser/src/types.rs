@@ -441,6 +441,10 @@ pub struct BrowserConfig {
     /// Total system RAM threshold (MB) below which memory-saving Chrome flags
     /// are injected automatically. Set to 0 to disable. Default: 2048.
     pub low_memory_threshold_mb: u64,
+    /// Whether to persist the Chrome user profile across sessions.
+    pub persist_profile: bool,
+    /// Custom path for the persistent Chrome profile directory.
+    pub profile_dir: Option<String>,
 }
 
 fn default_sandbox_image() -> String {
@@ -470,6 +474,25 @@ impl Default for BrowserConfig {
             container_prefix: default_container_prefix(),
             allowed_domains: Vec::new(),
             low_memory_threshold_mb: 2048,
+            persist_profile: true,
+            profile_dir: None,
+        }
+    }
+}
+
+impl BrowserConfig {
+    /// Resolve the effective Chrome profile directory, if profile persistence is enabled.
+    ///
+    /// Returns `Some(path)` when either `profile_dir` is set or `persist_profile` is true.
+    /// Returns `None` when profiles should be ephemeral.
+    #[must_use]
+    pub fn resolved_profile_dir(&self) -> Option<std::path::PathBuf> {
+        if let Some(ref dir) = self.profile_dir {
+            Some(std::path::PathBuf::from(dir))
+        } else if self.persist_profile {
+            Some(moltis_config::data_dir().join("browser").join("profile"))
+        } else {
+            None
         }
     }
 }
@@ -493,6 +516,8 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             container_prefix: default_container_prefix(),
             allowed_domains: cfg.allowed_domains.clone(),
             low_memory_threshold_mb: cfg.low_memory_threshold_mb,
+            persist_profile: cfg.persist_profile,
+            profile_dir: cfg.profile_dir.clone(),
         }
     }
 }
@@ -583,5 +608,45 @@ mod tests {
             Err(error) => panic!("failed to deserialize browser preference: {error}"),
         };
         assert_eq!(value, BrowserPreference::Brave);
+    }
+
+    #[test]
+    fn resolved_profile_dir_returns_path_by_default() {
+        // Default config has persist_profile = true
+        let config = BrowserConfig::default();
+        let dir = config.resolved_profile_dir();
+        assert!(dir.is_some());
+        let path = dir.unwrap_or_default();
+        assert!(path.ends_with("browser/profile"));
+    }
+
+    #[test]
+    fn resolved_profile_dir_returns_none_when_disabled() {
+        let config = BrowserConfig {
+            persist_profile: false,
+            ..BrowserConfig::default()
+        };
+        assert!(config.resolved_profile_dir().is_none());
+    }
+
+    #[test]
+    fn resolved_profile_dir_uses_custom_path() {
+        let config = BrowserConfig {
+            profile_dir: Some("/custom/path".to_string()),
+            ..BrowserConfig::default()
+        };
+        let dir = config.resolved_profile_dir();
+        assert_eq!(dir, Some(std::path::PathBuf::from("/custom/path")));
+    }
+
+    #[test]
+    fn resolved_profile_dir_custom_overrides_persist_flag() {
+        let config = BrowserConfig {
+            persist_profile: false,
+            profile_dir: Some("/override".to_string()),
+            ..BrowserConfig::default()
+        };
+        // profile_dir takes precedence, implicitly enabling persistence
+        assert!(config.resolved_profile_dir().is_some());
     }
 }

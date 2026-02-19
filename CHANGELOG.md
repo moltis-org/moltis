@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Persistent browser profiles: cookies, auth state, and local storage now persist
+  across sessions by default. Disable with `persist_profile = false` in
+  `[tools.browser]`, or set a custom path with `profile_dir`. (#162)
 - Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
   self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
   Docker socket mount guidance for sandboxed exec support.
