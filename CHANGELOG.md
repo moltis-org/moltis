@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.1] - 2026-02-19
+
+
+### Added
+
 - `lightweight` feature profile for memory-constrained devices (Raspberry Pi, etc.)
   with only essential features: `jemalloc`, `tls`, `web-ui`.
 - jemalloc allocator behind `jemalloc` feature flag for lower memory fragmentation.
@@ -20,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
   self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
   Docker socket mount guidance for sandboxed exec support.
+- Markdown and ANSI table rendering in chat messages.
+- Provider-aware `show_map` links for multi-provider map display.
+- Session history caching with visual switch loader for faster session
+  transitions.
 
 ### Changed
 
@@ -43,7 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runtime prompt host metadata now prefers user/browser timezone over server
   local fallback and includes an explicit `today=YYYY-MM-DD` field so models
   can reliably reason about the user's current date.
-
 - Skills installation now supports Claude marketplace repos that define skills
   directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
   (for example `anthropics/skills`), including loading `SKILL.md` entries under
@@ -51,6 +69,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web search no longer falls back to DuckDuckGo by default when search API keys
   are missing, avoiding repeated CAPTCHA failures; fallback is now opt-in via
   `tools.web.search.duckduckgo_fallback = true`.
+- Terminal: force tmux window resize on client viewport change to prevent
+  stale dimensions after reconnect.
+- Browser: profile persistence now works correctly on Apple Container
+  (macOS containerized sandbox).
+- Browser: centralized stale CDP connection detection prevents ghost browser
+  sessions from accumulating. (#172)
+- Gateway: deduplicate voice replies on Telegram channels to prevent echo
+  loops. (#173)
+- Cron job editor: fix modal default validation and form reset when switching
+  schedule type. (#181)
+- MCP: strip internal metadata from tool call arguments before forwarding to
+  MCP servers.
+- Web search: load runtime env keys and improve Brave search response
+  parsing robustness.
+- Prompt: clarify sandbox vs `data_dir` path semantics in system prompts.
+- Gateway: align `show_map` listing ratings to the right for consistent
+  layout.
 
 ### Security
 
