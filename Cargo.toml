@@ -102,6 +102,7 @@ llama-cpp-2  = "0.1"
 mockito      = "1.7"
 open         = "5.3"
 rand         = "0.9"
+regex        = "1"
 secrecy      = { features = ["serde"], version = "0.8" }
 sha2         = "0.10"
 sysinfo      = "0.34"

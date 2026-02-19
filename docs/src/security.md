@@ -48,6 +48,30 @@ approval_mode = "always"  # always require approval
 **Recommendation**: Keep `approval_mode = "smart"` (the default) for most use
 cases. Only use `"never"` in fully automated, sandboxed environments.
 
+### Built-in Dangerous Command Blocklist
+
+Even with `approval_mode = "never"` or `security_level = "full"`, Moltis
+maintains a safety floor: a hardcoded set of regex patterns for the most
+critical destructive commands (e.g. `rm -rf /`, `git reset --hard`,
+`DROP TABLE`, `mkfs`, `terraform destroy`). Matching commands always require
+approval regardless of configuration.
+
+Users can override specific patterns by adding matching entries to their
+`allowlist` in `moltis.toml`. The blocklist only applies to host execution;
+sandboxed commands are already isolated.
+
+### Destructive Command Guard (dcg)
+
+For broader coverage beyond the built-in blocklist, install the
+[Destructive Command Guard](https://github.com/Dicklesworthstone/destructive_command_guard)
+(dcg) as a hook. dcg adds 49+ pattern categories including heredoc/inline-script
+scanning, database, cloud, and infrastructure patterns.
+
+See [Hooks: Destructive Command Guard](hooks.md#recommended-destructive-command-guard-dcg)
+for setup instructions.
+
+dcg complements (does not replace) sandbox isolation and the approval system.
+
 ## Sandbox Isolation
 
 Commands execute inside isolated containers (Docker or Apple Container) by

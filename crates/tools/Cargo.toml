@@ -22,6 +22,7 @@ moltis-cron     = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
 moltis-sessions = { workspace = true }
 moltis-skills   = { workspace = true }
+regex           = { workspace = true }
 reqwest         = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
