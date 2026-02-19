@@ -4,11 +4,12 @@ name              = "moltis-agents"
 version.workspace = true
 
 [features]
-default                 = ["metrics", "provider-async-openai", "provider-genai"]
+default                 = ["metrics", "skills-install", "provider-async-openai", "provider-genai"]
 local-llm               = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
 local-llm-cuda          = ["llama-cpp-2/cuda", "local-llm"]
 local-llm-metal         = ["llama-cpp-2/metal", "local-llm"]
 metrics                 = ["dep:moltis-metrics"]
+skills-install          = ["moltis-skills/install"]
 provider-async-openai   = ["dep:async-openai"]
 provider-genai          = ["dep:genai"]
 provider-github-copilot = ["dep:moltis-oauth"]
@@ -23,7 +24,7 @@ futures         = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-sessions = { workspace = true }
-moltis-skills   = { workspace = true }
+moltis-skills   = { default-features = false, path = "../skills" }
 reqwest         = { workspace = true }
 secrecy         = { workspace = true }
 serde           = { workspace = true }
