@@ -5503,11 +5503,7 @@ async fn run_with_tools(
     let streamed_target_keys = if let Some(ref dispatcher) = channel_stream_dispatcher {
         let mut dispatcher = dispatcher.lock().await;
         dispatcher.finish().await;
-        if desired_reply_medium == ReplyMedium::Text {
-            dispatcher.completed_target_keys().await
-        } else {
-            HashSet::new()
-        }
+        dispatcher.completed_target_keys().await
     } else {
         HashSet::new()
     };
@@ -5945,11 +5941,7 @@ async fn run_streaming(
                     let streamed_target_keys =
                         if let Some(dispatcher) = channel_stream_dispatcher.as_mut() {
                             dispatcher.finish().await;
-                            if desired_reply_medium == ReplyMedium::Text {
-                                dispatcher.completed_target_keys().await
-                            } else {
-                                HashSet::new()
-                            }
+                            dispatcher.completed_target_keys().await
                         } else {
                             HashSet::new()
                         };
@@ -7566,6 +7558,52 @@ mod tests {
         assert!(dispatcher.completed_target_keys().await.is_empty());
         assert_eq!(completions.load(Ordering::SeqCst), 0);
         assert!(deltas.lock().await.is_empty());
+    }
+
+    /// Regression test for #173: voice reply medium must not suppress stream
+    /// dedup. When a dispatcher successfully streams to a target, the target
+    /// key must appear in the completed set regardless of `ReplyMedium`.
+    #[tokio::test]
+    async fn channel_stream_voice_dedup_excludes_streamed_targets() {
+        let deltas = Arc::new(Mutex::new(Vec::new()));
+        let reply_tos = Arc::new(Mutex::new(Vec::new()));
+        let completions = Arc::new(AtomicUsize::new(0));
+        let stream_outbound: Arc<dyn moltis_channels::plugin::ChannelStreamOutbound> =
+            Arc::new(MockChannelStreamOutbound {
+                deltas: Arc::clone(&deltas),
+                reply_tos: Arc::clone(&reply_tos),
+                completions: Arc::clone(&completions),
+                fail: false,
+                stream_enabled: true,
+            });
+
+        let services =
+            crate::services::GatewayServices::noop().with_channel_stream_outbound(stream_outbound);
+        let state = GatewayState::new(test_auth(), services);
+        let target = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telegram,
+            account_id: "acct".to_string(),
+            chat_id: "456".to_string(),
+            message_id: Some("77".to_string()),
+        };
+        let session_key = "telegram:acct:456";
+        state.push_channel_reply(session_key, target.clone()).await;
+
+        let mut dispatcher = ChannelStreamDispatcher::for_session(&state, session_key)
+            .await
+            .expect("stream dispatcher should be created");
+        dispatcher.send_delta("voice reply").await;
+        dispatcher.finish().await;
+
+        // The completed keys must be returned even when the caller intends a
+        // Voice reply — previously this returned an empty set for non-Text
+        // mediums, causing double delivery.
+        let completed = dispatcher.completed_target_keys().await;
+        assert!(
+            completed.contains(&ChannelReplyTargetKey::from(&target)),
+            "completed targets must be reported regardless of reply medium"
+        );
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
