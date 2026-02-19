@@ -1506,7 +1506,10 @@ mod tests {
         anyhow::Result,
         async_trait::async_trait,
         axum::{Json, Router, body::Bytes, extract::State, http::Uri, routing::post},
-        moltis_channels::{ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget},
+        moltis_channels::{
+            ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
+            gating::DmPolicy,
+        },
         secrecy::Secret,
         serde::{Deserialize, Serialize},
         serde_json::json,
@@ -1819,6 +1822,7 @@ mod tests {
                 account_id: account_id.to_string(),
                 config: TelegramAccountConfig {
                     token: Secret::new("test-token".to_string()),
+                    dm_policy: DmPolicy::Open,
                     ..Default::default()
                 },
                 outbound: Arc::clone(&outbound),

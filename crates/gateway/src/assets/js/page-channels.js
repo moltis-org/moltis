@@ -319,8 +319,8 @@ function AddChannelModal() {
 	        name="telegram_bot_token" />
       <label class="text-xs text-[var(--muted)]">DM Policy</label>
       <select data-field="dmPolicy" style=${selectStyle}>
-        <option value="open">Open (anyone)</option>
         <option value="allowlist">Allowlist only</option>
+        <option value="open">Open (anyone)</option>
         <option value="disabled">Disabled</option>
       </select>
       <label class="text-xs text-[var(--muted)]">Group Mention Mode</label>
@@ -406,9 +406,9 @@ function EditChannelModal() {
     <div class="channel-form">
       <div class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id}</div>
       <label class="text-xs text-[var(--muted)]">DM Policy</label>
-      <select data-field="dmPolicy" style=${selectStyle} value=${cfg.dm_policy || "open"}>
-        <option value="open">Open (anyone)</option>
+      <select data-field="dmPolicy" style=${selectStyle} value=${cfg.dm_policy || "allowlist"}>
         <option value="allowlist">Allowlist only</option>
+        <option value="open">Open (anyone)</option>
         <option value="disabled">Disabled</option>
       </select>
       <label class="text-xs text-[var(--muted)]">Group Mention Mode</label>

@@ -69,9 +69,9 @@ pub enum MentionMode {
 #[serde(rename_all = "lowercase")]
 pub enum DmPolicy {
     /// Anyone can DM the bot.
-    #[default]
     Open,
     /// Only users on the allowlist.
+    #[default]
     Allowlist,
     /// DMs disabled.
     Disabled,
