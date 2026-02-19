@@ -1,6 +1,10 @@
+#[cfg(feature = "provider-anthropic")]
 pub mod anthropic;
+#[cfg(feature = "provider-openai")]
 pub mod openai;
 pub mod openai_compat;
+#[cfg(feature = "provider-ollama")]
+pub mod ollama;
 
 #[cfg(feature = "provider-genai")]
 pub mod genai_provider;
@@ -187,15 +191,18 @@ fn merge_discovered_with_fallback_catalog(
         .collect()
 }
 
-fn normalize_ollama_api_base_url(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
-}
-
 /// Parse `Retry-After` header as milliseconds.
 ///
 /// `Retry-After` may be either delta-seconds or an HTTP date. We currently
 /// consume delta-seconds, which is what providers typically return for 429.
+#[cfg(any(
+    feature = "provider-openai",
+    feature = "provider-anthropic",
+    feature = "provider-openai-codex",
+    feature = "provider-github-copilot",
+    feature = "provider-kimi-code",
+    feature = "local-llm"
+))]
 pub(crate) fn retry_after_ms_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?;
     let text = value.to_str().ok()?.trim();
@@ -204,66 +211,19 @@ pub(crate) fn retry_after_ms_from_headers(headers: &reqwest::header::HeaderMap) 
 }
 
 /// Attach an explicit retry hint marker consumable by runner retry logic.
+#[cfg(any(
+    feature = "provider-openai",
+    feature = "provider-anthropic",
+    feature = "provider-openai-codex",
+    feature = "provider-github-copilot",
+    feature = "provider-kimi-code",
+    feature = "local-llm"
+))]
 pub(crate) fn with_retry_after_marker(base: String, retry_after_ms: Option<u64>) -> String {
     match retry_after_ms {
         Some(ms) => format!("{base} (retry_after_ms={ms})"),
         None => base,
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct OllamaTagEntry {
-    name: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct OllamaTagsPayload {
-    #[serde(default)]
-    models: Vec<OllamaTagEntry>,
-}
-
-async fn discover_ollama_models_from_api(base_url: String) -> anyhow::Result<Vec<DiscoveredModel>> {
-    let api_base = normalize_ollama_api_base_url(&base_url);
-    let endpoint = format!("{}/api/tags", api_base.trim_end_matches('/'));
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()?
-        .get(&endpoint)
-        .send()
-        .await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        anyhow::bail!("ollama model discovery failed HTTP {status}");
-    }
-
-    let payload: OllamaTagsPayload = response.json().await?;
-    let mut models: Vec<DiscoveredModel> = payload
-        .models
-        .into_iter()
-        .map(|entry| entry.name.trim().to_string())
-        .filter(|model| !model.is_empty())
-        .map(|model| DiscoveredModel::new(model.clone(), model))
-        .collect();
-    models.sort_by(|left, right| left.id.cmp(&right.id));
-    models.dedup_by(|left, right| left.id == right.id);
-    Ok(models)
-}
-
-fn discover_ollama_models(base_url: &str) -> anyhow::Result<Vec<DiscoveredModel>> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let base_url = base_url.to_string();
-    std::thread::spawn(move || {
-        let result = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(anyhow::Error::from)
-            .and_then(|rt| rt.block_on(discover_ollama_models_from_api(base_url)));
-        let _ = tx.send(result);
-    });
-
-    rx.recv()
-        .map_err(|err| anyhow::anyhow!("ollama model discovery worker failed: {err}"))?
 }
 
 struct RegistryModelProvider {
@@ -961,9 +921,14 @@ impl ProviderRegistry {
         let mut reg = Self::empty();
 
         // Built-in providers first: they support tool calling.
+        #[cfg(any(feature = "provider-openai", feature = "provider-anthropic"))]
         reg.register_builtin_providers(config, env_overrides);
-        reg.register_openai_compatible_providers(config, env_overrides);
-        reg.register_custom_providers(config);
+
+        #[cfg(feature = "provider-openai")]
+        {
+            reg.register_openai_compatible_providers(config, env_overrides);
+            reg.register_custom_providers(config);
+        }
 
         #[cfg(feature = "provider-async-openai")]
         {
@@ -1334,12 +1299,14 @@ impl ProviderRegistry {
         }
     }
 
+    #[cfg(any(feature = "provider-openai", feature = "provider-anthropic"))]
     fn register_builtin_providers(
         &mut self,
         config: &ProvidersConfig,
         env_overrides: &HashMap<String, String>,
     ) {
         // Anthropic — register all known Claude models when API key is available.
+        #[cfg(feature = "provider-anthropic")]
         if config.is_enabled("anthropic")
             && let Some(key) =
                 resolve_api_key(config, "anthropic", "ANTHROPIC_API_KEY", env_overrides)
@@ -1389,6 +1356,7 @@ impl ProviderRegistry {
         }
 
         // OpenAI — register all known OpenAI models when API key is available.
+        #[cfg(feature = "provider-openai")]
         if config.is_enabled("openai")
             && let Some(key) = resolve_api_key(config, "openai", "OPENAI_API_KEY", env_overrides)
         {
@@ -1434,6 +1402,7 @@ impl ProviderRegistry {
         }
     }
 
+    #[cfg(feature = "provider-openai")]
     fn register_openai_compatible_providers(
         &mut self,
         config: &ProvidersConfig,
@@ -1442,6 +1411,12 @@ impl ProviderRegistry {
         for def in OPENAI_COMPAT_PROVIDERS {
             if !config.is_enabled(def.config_name) {
                 continue;
+            }
+            if def.config_name == "ollama" {
+                #[cfg(not(feature = "provider-ollama"))]
+                {
+                    continue;
+                }
             }
 
             let key = resolve_api_key(config, def.config_name, def.env_key, env_overrides);
@@ -1491,19 +1466,26 @@ impl ProviderRegistry {
             let discovered =
                 if !skip_discovery && try_fetch && should_fetch_models(config, def.config_name) {
                     if def.config_name == "ollama" {
-                        match discover_ollama_models(&base_url) {
-                            Ok(models) => models,
-                            Err(err) => {
-                                tracing::warn!(
-                                    provider = def.config_name,
-                                    error = %err,
-                                    "failed to fetch live models for provider"
-                                );
-                                def.models
-                                    .iter()
-                                    .map(|(id, name)| DiscoveredModel::new(*id, *name))
-                                    .collect()
-                            },
+                        #[cfg(feature = "provider-ollama")]
+                        {
+                            match ollama::discover_ollama_models(&base_url) {
+                                Ok(models) => models,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        provider = def.config_name,
+                                        error = %err,
+                                        "failed to fetch live models for provider"
+                                    );
+                                    def.models
+                                        .iter()
+                                        .map(|(id, name)| DiscoveredModel::new(*id, *name))
+                                        .collect()
+                                },
+                            }
+                        }
+                        #[cfg(not(feature = "provider-ollama"))]
+                        {
+                            Vec::new()
                         }
                     } else {
                         match openai::live_models(&key, &base_url) {
@@ -1558,6 +1540,7 @@ impl ProviderRegistry {
 
     /// Register custom OpenAI-compatible providers (names starting with `custom-`).
     /// These are user-added endpoints that may support model discovery via `/v1/models`.
+    #[cfg(feature = "provider-openai")]
     fn register_custom_providers(&mut self, config: &ProvidersConfig) {
         for (name, entry) in &config.providers {
             if !name.starts_with("custom-") || !entry.enabled {
@@ -1756,7 +1739,7 @@ impl ProviderRegistry {
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-#[cfg(test)]
+#[cfg(all(test, feature = "provider-openai", feature = "provider-anthropic"))]
 mod tests {
     use super::*;
 
