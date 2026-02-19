@@ -13,7 +13,7 @@ pub struct AnthropicProvider {
     api_key: secrecy::Secret<String>,
     model: String,
     base_url: String,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
     /// Optional alias for metrics differentiation (e.g., "anthropic-work", "anthropic-2").
     alias: Option<String>,
 }
@@ -24,7 +24,7 @@ impl AnthropicProvider {
             api_key,
             model,
             base_url,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             alias: None,
         }
     }
@@ -40,7 +40,7 @@ impl AnthropicProvider {
             api_key,
             model,
             base_url,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             alias,
         }
     }

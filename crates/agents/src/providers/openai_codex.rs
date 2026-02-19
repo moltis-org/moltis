@@ -20,7 +20,7 @@ use crate::{
 pub struct OpenAiCodexProvider {
     model: String,
     base_url: String,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
     token_store: TokenStore,
 }
 
@@ -40,7 +40,7 @@ impl OpenAiCodexProvider {
         Self {
             model,
             base_url: "https://chatgpt.com/backend-api".to_string(),
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             token_store: TokenStore::new(),
         }
     }

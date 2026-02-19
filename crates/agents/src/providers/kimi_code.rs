@@ -41,7 +41,7 @@ enum AuthMode {
 
 pub struct KimiCodeProvider {
     model: String,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
     base_url: String,
     auth_mode: AuthMode,
 }
@@ -51,7 +51,7 @@ impl KimiCodeProvider {
     pub fn new(model: String) -> Self {
         Self {
             model,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             base_url: KIMI_API_BASE.into(),
             auth_mode: AuthMode::OAuthTokenStore {
                 token_store: TokenStore::new(),
@@ -63,7 +63,7 @@ impl KimiCodeProvider {
     pub fn new_with_api_key(api_key: Secret<String>, model: String, base_url: String) -> Self {
         Self {
             model,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             base_url,
             auth_mode: AuthMode::ApiKey { api_key },
         }
@@ -101,7 +101,7 @@ impl KimiCodeProvider {
                 if let Some(ref refresh_token) = tokens.refresh_token {
                     debug!("refreshing kimi-code token");
                     let new_tokens =
-                        refresh_access_token(&self.client, refresh_token.expose_secret()).await?;
+                        refresh_access_token(self.client, refresh_token.expose_secret()).await?;
                     token_store.save(PROVIDER_NAME, &new_tokens)?;
                     return Ok(new_tokens.access_token.expose_secret().clone());
                 }

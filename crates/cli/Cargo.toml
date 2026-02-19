@@ -36,6 +36,7 @@ path = "src/main.rs"
 anyhow             = { workspace = true }
 clap               = { workspace = true }
 dotenvy            = { workspace = true }
+tikv-jemallocator  = { workspace = true, optional = true }
 moltis-agents      = { workspace = true }
 moltis-browser     = { workspace = true }
 moltis-common      = { workspace = true }
@@ -65,11 +66,33 @@ which              = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-default            = ["push-notifications", "tailscale", "tls", "voice"]
+default = [
+  "file-watcher",
+  "jemalloc",
+  "local-llm",
+  "metrics",
+  "prometheus",
+  "push-notifications",
+  "qmd",
+  "tailscale",
+  "tls",
+  "voice",
+  "web-ui",
+]
+# Minimal build for memory-constrained devices (Raspberry Pi, etc.).
+# Build with: cargo build --release --no-default-features --features lightweight
+lightweight        = ["jemalloc", "tls", "web-ui"]
+file-watcher       = ["moltis-gateway/file-watcher"]
+jemalloc           = ["dep:tikv-jemallocator"]
+local-llm          = ["moltis-gateway/local-llm"]
+metrics            = ["moltis-gateway/metrics"]
+prometheus         = ["moltis-gateway/prometheus"]
 push-notifications = ["moltis-gateway/push-notifications"]
+qmd                = ["moltis-gateway/qmd"]
 tailscale          = ["moltis-gateway/tailscale"]
 tls                = ["moltis-gateway/tls"]
 voice              = ["moltis-gateway/voice"]
+web-ui             = ["moltis-gateway/web-ui"]
 
 [lints]
 workspace = true

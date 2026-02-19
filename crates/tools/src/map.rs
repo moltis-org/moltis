@@ -615,7 +615,6 @@ fn draw_marker(canvas: &mut RgbaImage, cx: i32, cy: i32, radius: i32, color: [u8
 
 /// LLM-callable tool that shows a map image with links to mapping services.
 pub struct ShowMapTool {
-    client: reqwest::Client,
     provider: MapProvider,
 }
 
@@ -625,10 +624,7 @@ impl ShowMapTool {
     }
 
     pub fn with_provider(provider: MapProvider) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            provider,
-        }
+        Self { provider }
     }
 }
 
@@ -778,8 +774,14 @@ impl AgentTool for ShowMapTool {
 
         // Compose the static map image from OSM tiles (in-process via image crate).
         // Falls back to ImageMagick CLI if the in-process approach fails.
-        let screenshot =
-            compose_static_map(&self.client, center_lat, center_lon, zoom, &markers).await;
+        let screenshot = compose_static_map(
+            crate::shared_http_client(),
+            center_lat,
+            center_lon,
+            zoom,
+            &markers,
+        )
+        .await;
         let screenshot = match screenshot {
             Some(s) => Some(s),
             None => {

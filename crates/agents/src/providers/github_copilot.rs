@@ -69,7 +69,7 @@ struct CopilotTokenResponse {
 
 pub struct GitHubCopilotProvider {
     model: String,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
     token_store: TokenStore,
 }
 
@@ -77,7 +77,7 @@ impl GitHubCopilotProvider {
     pub fn new(model: String) -> Self {
         Self {
             model,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
             token_store: TokenStore::new(),
         }
     }
@@ -141,7 +141,7 @@ impl GitHubCopilotProvider {
 
     /// Get a valid Copilot API token, exchanging the GitHub token if needed.
     async fn get_valid_copilot_token(&self) -> anyhow::Result<String> {
-        fetch_valid_copilot_token_with_fallback(&self.client, &self.token_store).await
+        fetch_valid_copilot_token_with_fallback(self.client, &self.token_store).await
     }
 }
 

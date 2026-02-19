@@ -1,3 +1,7 @@
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod auth_commands;
 mod browser_commands;
 mod config_commands;
@@ -303,7 +307,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Create the log buffer only for the gateway command so the web UI can
-    // display captured log entries.
+    // display captured log entries. Default capacity (1000) can be overridden
+    // via `server.log_buffer_size` in moltis.toml.
     let log_buffer = if matches!(cli.command, None | Some(Commands::Gateway)) {
         Some(LogBuffer::default())
     } else {

@@ -291,6 +291,7 @@ fn build_schema_map() -> KnownKeys {
                 ("port", Leaf),
                 ("http_request_logs", Leaf),
                 ("ws_request_logs", Leaf),
+                ("log_buffer_size", Leaf),
                 ("update_repository_url", Leaf),
             ])),
         ),
@@ -343,6 +344,7 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("enabled", Leaf),
                 ("prometheus_endpoint", Leaf),
+                ("history_points", Leaf),
                 ("labels", Map(Box::new(Leaf))),
             ])),
         ),

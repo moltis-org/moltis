@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `lightweight` feature profile for memory-constrained devices (Raspberry Pi, etc.)
+  with only essential features: `jemalloc`, `tls`, `web-ui`.
+- jemalloc allocator behind `jemalloc` feature flag for lower memory fragmentation.
+- Configurable `history_points` (metrics) and `log_buffer_size` (server) settings
+  to tune in-memory buffer sizes.
 - Persistent browser profiles: cookies, auth state, and local storage now persist
   across sessions by default. Disable with `persist_profile = false` in
   `[tools.browser]`, or set a custom path with `profile_dir`. (#162)
@@ -17,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Docker socket mount guidance for sandboxed exec support.
 
 ### Changed
+
+- MetricsHistory default reduced from 60,480 to 360 points (~170x less memory).
+- LogBuffer default reduced from 10,000 to 1,000 entries.
+- Shared `reqwest::Client` singleton in `moltis-agents` and `moltis-tools` replaces
+  per-call client creation, saving connection pools and TLS session caches.
+- WebSocket client channels changed from unbounded to bounded (512), adding
+  backpressure for slow consumers.
+- Release profile: `panic = "abort"` and `codegen-units = 1` for smaller binaries.
 
 ### Deprecated
 

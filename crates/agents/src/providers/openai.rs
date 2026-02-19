@@ -22,7 +22,7 @@ pub struct OpenAiProvider {
     model: String,
     base_url: String,
     provider_name: String,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
@@ -317,11 +317,10 @@ async fn fetch_models_from_api(
     api_key: secrecy::Secret<String>,
     base_url: String,
 ) -> anyhow::Result<Vec<super::DiscoveredModel>> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()?;
+    let client = crate::shared_http_client();
     let response = client
         .get(models_endpoint(&base_url))
+        .timeout(Duration::from_secs(8))
         .header(
             "Authorization",
             format!("Bearer {}", api_key.expose_secret()),
@@ -398,7 +397,7 @@ impl OpenAiProvider {
             model,
             base_url,
             provider_name: "openai".into(),
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
         }
     }
 
@@ -413,7 +412,7 @@ impl OpenAiProvider {
             model,
             base_url,
             provider_name,
-            client: reqwest::Client::new(),
+            client: crate::shared_http_client(),
         }
     }
 

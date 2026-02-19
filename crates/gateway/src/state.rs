@@ -48,12 +48,17 @@ impl MetricsHistory {
     pub fn iter(&self) -> impl Iterator<Item = &MetricsHistoryPoint> {
         self.points.iter()
     }
+
+    /// Return the configured maximum capacity.
+    pub fn capacity(&self) -> usize {
+        self.max_points
+    }
 }
 
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(60480) // 7 days at 10-second intervals
+        Self::new(360) // 1 hour at 10-second intervals
     }
 }
 
@@ -95,8 +100,8 @@ pub struct TtsRuntimeOverride {
 pub struct ConnectedClient {
     pub conn_id: String,
     pub connect_params: ConnectParams,
-    /// Channel for sending serialized frames to this client's write loop.
-    pub sender: mpsc::UnboundedSender<String>,
+    /// Bounded channel for sending serialized frames to this client's write loop.
+    pub sender: mpsc::Sender<String>,
     pub connected_at: Instant,
     pub last_activity: Instant,
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
@@ -130,8 +135,11 @@ impl ConnectedClient {
     }
 
     /// Send a serialized JSON frame to this client.
+    ///
+    /// Uses `try_send` to avoid blocking; drops the frame if the client's
+    /// outbound buffer is full (slow consumer protection).
     pub fn send(&self, frame: &str) -> bool {
-        self.sender.send(frame.to_string()).is_ok()
+        self.sender.try_send(frame.to_string()).is_ok()
     }
 
     /// Touch the activity timestamp.
@@ -695,8 +703,8 @@ mod tests {
         )
     }
 
-    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::UnboundedReceiver<String>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel(512);
         let client = ConnectedClient {
             conn_id: conn_id.to_string(),
             connect_params: ConnectParams {

@@ -638,10 +638,19 @@ pub struct ServerConfig {
     /// Enable WebSocket request/response logs (`ws:` entries).
     /// Useful for debugging RPC calls from the web UI.
     pub ws_request_logs: bool,
+    /// Maximum number of log entries kept in the in-memory ring buffer.
+    /// Older entries are persisted to disk and available via the web UI.
+    /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
+    #[serde(default = "default_log_buffer_size")]
+    pub log_buffer_size: usize,
     /// Optional GitHub repository URL used by the update checker.
     ///
     /// When unset, Moltis falls back to the package repository metadata.
     pub update_repository_url: Option<String>,
+}
+
+fn default_log_buffer_size() -> usize {
+    1000
 }
 
 impl Default for ServerConfig {
@@ -651,6 +660,7 @@ impl Default for ServerConfig {
             port: 0, // Will be replaced with a random port when config is created
             http_request_logs: false,
             ws_request_logs: false,
+            log_buffer_size: default_log_buffer_size(),
             update_repository_url: None,
         }
     }
@@ -883,9 +893,18 @@ pub struct MetricsConfig {
     /// Whether to expose the `/metrics` Prometheus endpoint.
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
+    /// Maximum number of in-memory history points for time-series charts.
+    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Historical data is persisted to SQLite regardless of this setting.
+    #[serde(default = "default_metrics_history_points")]
+    pub history_points: usize,
     /// Additional labels to add to all metrics.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+}
+
+fn default_metrics_history_points() -> usize {
+    360
 }
 
 impl Default for MetricsConfig {
@@ -893,6 +912,7 @@ impl Default for MetricsConfig {
         Self {
             enabled: true,
             prometheus_endpoint: true,
+            history_points: default_metrics_history_points(),
             labels: HashMap::new(),
         }
     }

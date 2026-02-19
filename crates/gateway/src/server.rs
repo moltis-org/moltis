@@ -2611,6 +2611,11 @@ pub async fn start_gateway(
         let mut inner = state.inner.write().await;
         inner.discovered_hooks = discovered_hooks_info;
         inner.disabled_hooks = persisted_disabled;
+        #[cfg(feature = "metrics")]
+        {
+            inner.metrics_history =
+                crate::state::MetricsHistory::new(config.metrics.history_points);
+        }
     }
 
     // Note: LLM provider registry is available through the ChatService,
@@ -3327,13 +3332,15 @@ pub async fn start_gateway(
         tokio::spawn(async move {
             // Load history from persistent store on startup.
             if let Some(ref store) = metrics_state.metrics_store {
-                // Load last 7 days of history (max points for charts).
-                let seven_days_ago = std::time::SystemTime::now()
+                let max_points = metrics_state.inner.read().await.metrics_history.capacity();
+                // Load enough history to fill the in-memory buffer.
+                let window_secs = max_points as u64 * 10; // 10-second intervals
+                let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_millis() as u64
-                    - (7 * 24 * 60 * 60 * 1000);
-                match store.load_history(seven_days_ago, 60480).await {
+                    .as_millis() as u64;
+                let since = now_ms.saturating_sub(window_secs * 1000);
+                match store.load_history(since, max_points).await {
                     Ok(points) => {
                         let mut inner = metrics_state.inner.write().await;
                         for point in points {

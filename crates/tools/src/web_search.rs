@@ -308,10 +308,11 @@ impl WebSearchTool {
             url.push_str(&format!("&freshness={freshness}"));
         }
 
-        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
+        let client = crate::shared_http_client();
 
         let mut req = client
             .get(&url)
+            .timeout(self.timeout)
             .header("Accept", "application/json")
             .header("X-Subscription-Token", api_key);
         if let Some(lang) = accept_language {
@@ -356,7 +357,7 @@ impl WebSearchTool {
             }));
         }
 
-        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
+        let client = crate::shared_http_client();
 
         let body = serde_json::json!({
             "model": model,
@@ -367,6 +368,7 @@ impl WebSearchTool {
 
         let resp = client
             .post(format!("{base_url}/chat/completions"))
+            .timeout(self.timeout)
             .header("Authorization", format!("Bearer {api_key}"))
             .json(&body)
             .send()
@@ -419,10 +421,11 @@ impl WebSearchTool {
             );
         }
 
-        let client = reqwest::Client::builder().timeout(self.timeout).build()?;
+        let client = crate::shared_http_client();
 
         let resp = client
             .post("https://html.duckduckgo.com/html/")
+            .timeout(self.timeout)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Referer", "https://html.duckduckgo.com/")
             .body(format!("q={}&b=", urlencoding::encode(query)))

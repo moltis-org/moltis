@@ -135,6 +135,8 @@ metrics-tracing-context     = "0.16"
 image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
 ipnet          = "2"
 pulldown-cmark = { default-features = false, version = "0.12" }
+# Allocator
+tikv-jemallocator = "0.6"
 # Filesystem / archiving
 chrono                = "0.4"
 chrono-tz             = { features = ["serde"], version = "0.10" }
@@ -160,7 +162,7 @@ moltis-channels   = { path = "crates/channels" }
 moltis-common     = { path = "crates/common" }
 moltis-config     = { path = "crates/config" }
 moltis-cron       = { path = "crates/cron" }
-moltis-gateway    = { path = "crates/gateway" }
+moltis-gateway    = { default-features = false, path = "crates/gateway" }
 moltis-mcp        = { path = "crates/mcp" }
 moltis-media      = { path = "crates/media" }
 moltis-memory     = { path = "crates/memory" }
@@ -179,5 +181,7 @@ moltis-tools      = { path = "crates/tools" }
 moltis-voice      = { path = "crates/voice" }
 
 [profile.release]
-lto   = "thin"
-strip = true
+lto            = "thin"
+strip          = true
+panic          = "abort"
+codegen-units  = 1
