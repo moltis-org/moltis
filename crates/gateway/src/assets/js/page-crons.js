@@ -1,6 +1,6 @@
 // ── Crons page (Preact + HTM + Signals) ──────────────────────
 
-import { signal } from "@preact/signals";
+import { signal, useSignal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
@@ -565,16 +565,33 @@ function schedDefault(kind, job) {
 function CronModal() {
 	var isEdit = !!editingJob.value;
 	var job = editingJob.value;
-	var saving = signal(false);
-	var schedKind = signal(isEdit ? job.schedule.kind : "cron");
-	var errorField = signal(null);
-	var jobModel = signal(isEdit && job.payload.kind === "agentTurn" ? job.payload.model || "" : "");
-	var jobSandboxImage = signal(isEdit ? job.sandbox?.image || "" : "");
+	var saving = useSignal(false);
+	var schedKind = useSignal(isEdit ? job.schedule.kind : "cron");
+	var errorField = useSignal(null);
+	var jobModel = useSignal(isEdit && job.payload.kind === "agentTurn" ? job.payload.model || "" : "");
+	var jobSandboxImage = useSignal(isEdit ? job.sandbox?.image || "" : "");
+	var jobName = useSignal(isEdit ? job.name : "");
+	var payloadKind = useSignal(isEdit ? job.payload.kind : "systemEvent");
+	var sessionTarget = useSignal(isEdit ? job.sessionTarget || "main" : "main");
+	var messageText = useSignal(isEdit ? job.payload.text || job.payload.message || "" : "");
+	var executionTarget = useSignal(isEdit && job.sandbox?.enabled === false ? "host" : "sandbox");
+	var deleteAfterRun = useSignal(isEdit ? job.deleteAfterRun : false);
+	var jobEnabled = useSignal(isEdit ? job.enabled : true);
+
+	function onPayloadKindChange(e) {
+		payloadKind.value = e.target.value;
+		sessionTarget.value = e.target.value === "systemEvent" ? "main" : "isolated";
+	}
+
+	function onSessionTargetChange(e) {
+		sessionTarget.value = e.target.value;
+		payloadKind.value = e.target.value === "main" ? "systemEvent" : "agentTurn";
+	}
 
 	function onSave(e) {
 		e.preventDefault();
 		var form = e.target.closest(".provider-key-form");
-		var name = form.querySelector("[data-field=name]").value.trim();
+		var name = jobName.value.trim();
 		if (!name) {
 			errorField.value = "name";
 			return;
@@ -584,12 +601,12 @@ function CronModal() {
 			errorField.value = parsed.error;
 			return;
 		}
-		var msgText = form.querySelector("[data-field=message]").value.trim();
+		var msgText = messageText.value.trim();
 		if (!msgText) {
 			errorField.value = "message";
 			return;
 		}
-		var selectedPayloadKind = form.querySelector("[data-field=payloadKind]").value;
+		var selectedPayloadKind = payloadKind.value;
 		var payload =
 			selectedPayloadKind === "systemEvent"
 				? { kind: "systemEvent", text: msgText }
@@ -597,14 +614,14 @@ function CronModal() {
 		if (selectedPayloadKind === "agentTurn" && jobModel.value) {
 			payload.model = jobModel.value;
 		}
-		var sandboxEnabled = form.querySelector("[data-field=executionTarget]").value === "sandbox";
+		var sandboxEnabled = executionTarget.value === "sandbox";
 		var fields = {
 			name: name,
 			schedule: parsed.schedule,
 			payload: payload,
-			sessionTarget: form.querySelector("[data-field=target]").value,
-			deleteAfterRun: form.querySelector("[data-field=deleteAfter]").checked,
-			enabled: form.querySelector("[data-field=enabled]").checked,
+			sessionTarget: sessionTarget.value,
+			deleteAfterRun: deleteAfterRun.value,
+			enabled: jobEnabled.value,
 			sandbox: {
 				enabled: sandboxEnabled,
 				image: sandboxEnabled ? jobSandboxImage.value || null : null,
@@ -649,7 +666,10 @@ function CronModal() {
     <div class="provider-key-form">
       <label class="text-xs text-[var(--muted)]">Name</label>
       <input data-field="name" class="provider-key-input ${errorField.value === "name" ? "field-error" : ""}"
-        placeholder="Job name" value=${isEdit ? job.name : ""} />
+        placeholder="Job name" value=${jobName.value}
+        onInput=${(e) => {
+					jobName.value = e.target.value;
+				}} />
 
       <label class="text-xs text-[var(--muted)]">Schedule Type</label>
       <select data-field="schedKind" class="provider-key-input" value=${schedKind.value}
@@ -665,14 +685,18 @@ function CronModal() {
 
       <label class="text-xs text-[var(--muted)]">Payload Type</label>
       <select data-field="payloadKind" class="provider-key-input"
-        value=${isEdit ? job.payload.kind : "systemEvent"}>
+        value=${payloadKind.value}
+        onChange=${onPayloadKindChange}>
         <option value="systemEvent">System Event</option>
         <option value="agentTurn">Agent Turn</option>
       </select>
 
       <label class="text-xs text-[var(--muted)]">Message</label>
       <textarea data-field="message" class="provider-key-input textarea-sm ${errorField.value === "message" ? "field-error" : ""}"
-        placeholder="Message text">${isEdit ? job.payload.text || job.payload.message || "" : ""}</textarea>
+        placeholder="Message text" value=${messageText.value}
+        onInput=${(e) => {
+					messageText.value = e.target.value;
+				}}></textarea>
 
       <label class="text-xs text-[var(--muted)]">Model (Agent Turn)</label>
       <${ModelSelect}
@@ -687,14 +711,18 @@ function CronModal() {
 
       <label class="text-xs text-[var(--muted)]">Session Target</label>
       <select data-field="target" class="provider-key-input"
-        value=${isEdit ? job.sessionTarget || "isolated" : "isolated"}>
+        value=${sessionTarget.value}
+        onChange=${onSessionTargetChange}>
         <option value="isolated">Isolated</option>
         <option value="main">Main</option>
       </select>
 
       <label class="text-xs text-[var(--muted)]">Execution Target</label>
       <select data-field="executionTarget" class="provider-key-input"
-        value=${isEdit && job.sandbox?.enabled === false ? "host" : "sandbox"}>
+        value=${executionTarget.value}
+        onChange=${(e) => {
+					executionTarget.value = e.target.value;
+				}}>
         <option value="sandbox">Sandbox</option>
         <option value="host">Host</option>
       </select>
@@ -714,11 +742,17 @@ function CronModal() {
       </div>
 
       <label class="text-xs text-[var(--muted)] flex items-center gap-2">
-        <input data-field="deleteAfter" type="checkbox" checked=${isEdit ? job.deleteAfterRun : false} />
+        <input data-field="deleteAfter" type="checkbox" checked=${deleteAfterRun.value}
+          onChange=${(e) => {
+						deleteAfterRun.value = e.target.checked;
+					}} />
         Delete after run
       </label>
       <label class="text-xs text-[var(--muted)] flex items-center gap-2">
-        <input data-field="enabled" type="checkbox" checked=${isEdit ? job.enabled : true} />
+        <input data-field="enabled" type="checkbox" checked=${jobEnabled.value}
+          onChange=${(e) => {
+						jobEnabled.value = e.target.checked;
+					}} />
         Enabled
       </label>
 
