@@ -567,6 +567,12 @@ const ZAI_MODELS: &[(&str, &str)] = &[
     ("glm-4-32b-0414-128k", "GLM-4 32B 128K"),
 ];
 
+/// Known DeepSeek models.
+const DEEPSEEK_MODELS: &[(&str, &str)] = &[
+    ("deepseek-chat", "DeepSeek Chat"),
+    ("deepseek-reasoner", "DeepSeek Reasoner"),
+];
+
 /// Known Moonshot models.
 const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
 
@@ -640,6 +646,14 @@ const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "VENICE_BASE_URL",
         default_base_url: "https://api.venice.ai/api/v1",
         models: &[],
+        supports_model_discovery: true,
+    },
+    OpenAiCompatDef {
+        config_name: "deepseek",
+        env_key: "DEEPSEEK_API_KEY",
+        env_base_url_key: "DEEPSEEK_BASE_URL",
+        default_base_url: "https://api.deepseek.com",
+        models: DEEPSEEK_MODELS,
         supports_model_discovery: true,
     },
     OpenAiCompatDef {
@@ -1029,12 +1043,6 @@ impl ProviderRegistry {
                 "Llama 3.1 8B (genai/groq)",
             ),
             ("XAI_API_KEY", "xai", "grok-3-mini", "Grok 3 Mini (genai)"),
-            (
-                "DEEPSEEK_API_KEY",
-                "deepseek",
-                "deepseek-chat",
-                "DeepSeek Chat (genai)",
-            ),
         ];
 
         for &(env_key, provider_name, default_model_id, display_name) in genai_models {
@@ -2270,6 +2278,31 @@ mod tests {
 
         let reg = ProviderRegistry::from_env_with_config(&config);
         assert!(reg.list_models().iter().any(|m| m.provider == "moonshot"));
+    }
+
+    #[test]
+    fn deepseek_registers_with_api_key() {
+        let mut config = ProvidersConfig::default();
+        config
+            .providers
+            .insert("deepseek".into(), moltis_config::schema::ProviderEntry {
+                api_key: Some(secrecy::Secret::new("sk-test-deepseek".into())),
+                ..Default::default()
+            });
+
+        let reg = ProviderRegistry::from_env_with_config(&config);
+        let ds_models: Vec<_> = reg
+            .list_models()
+            .iter()
+            .filter(|m| m.provider == "deepseek")
+            .collect();
+        assert!(!ds_models.is_empty());
+        // DeepSeek should be registered via OpenAiProvider (tool-capable),
+        // not GenaiProvider.
+        let provider = reg
+            .get(&format!("deepseek::{}", ds_models[0].id.split("::").last().unwrap_or_default()))
+            .expect("deepseek model should be in registry");
+        assert!(provider.supports_tools(), "deepseek models must support tool calling");
     }
 
     #[test]
