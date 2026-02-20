@@ -248,6 +248,18 @@ pub async fn handle_message_direct(
                     );
                     let saved_audio = Some((audio_data.clone(), voice_file.format.clone()));
                     match sink.transcribe_voice(&audio_data, &voice_file.format).await {
+                        Ok(transcribed) if transcribed.trim().is_empty() => {
+                            warn!(
+                                account_id,
+                                audio_size = audio_data.len(),
+                                "voice transcription returned empty text"
+                            );
+                            (
+                                "[Voice message - could not transcribe]".to_string(),
+                                Vec::new(),
+                                saved_audio,
+                            )
+                        },
                         Ok(transcribed) => {
                             debug!(
                                 account_id,
@@ -429,6 +441,15 @@ pub async fn handle_message_direct(
     // Dispatch to the chat session (per-channel session key derived by the sink).
     // The reply target tells the gateway where to send the LLM response back.
     let has_content = !body.is_empty() || !attachments.is_empty();
+    if !has_content {
+        warn!(
+            account_id,
+            chat_id = msg.chat.id.0,
+            message_id = msg.id.0,
+            kind = ?inbound_kind,
+            "telegram message produced empty body, skipping dispatch"
+        );
+    }
     if let Some(ref sink) = event_sink
         && has_content
     {
@@ -1457,10 +1478,10 @@ async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<
     // Get file info from Telegram
     let file = bot.get_file(file_id).await?;
 
-    // Build the download URL
-    // Telegram file URL format: https://api.telegram.org/file/bot<token>/<file_path>
+    // Build the download URL from the bot's API base (respects custom/self-hosted endpoints).
     let token = bot.token();
-    let url = format!("https://api.telegram.org/file/bot{}/{}", token, file.path);
+    let base = bot.api_url();
+    let url = format!("{base}file/bot{token}/{}", file.path);
 
     // Download using reqwest
     let response = reqwest::get(&url).await?;
@@ -1553,6 +1574,7 @@ mod tests {
     enum TelegramApiMethod {
         SendMessage,
         SendChatAction,
+        GetFile,
         Other(String),
     }
 
@@ -1560,8 +1582,9 @@ mod tests {
         fn from_path(path: &str) -> Self {
             let method = path.rsplit('/').next().unwrap_or_default();
             match method {
-                "SendMessage" => Self::SendMessage,
-                "SendChatAction" => Self::SendChatAction,
+                "SendMessage" | "sendMessage" => Self::SendMessage,
+                "SendChatAction" | "sendChatAction" => Self::SendChatAction,
+                "GetFile" | "getFile" => Self::GetFile,
                 _ => Self::Other(method.to_string()),
             }
         }
@@ -1601,7 +1624,15 @@ mod tests {
     #[serde(untagged)]
     enum TelegramApiResult {
         Message(TelegramMessageResult),
+        File(TelegramFileResult),
         Bool(bool),
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TelegramFileResult {
+        file_id: String,
+        file_unique_id: String,
+        file_path: String,
     }
 
     #[derive(Debug, Serialize)]
@@ -1645,7 +1676,9 @@ mod tests {
                     Err(_) => CapturedTelegramRequest::Other { method, raw_body },
                 }
             },
-            TelegramApiMethod::Other(_) => CapturedTelegramRequest::Other { method, raw_body },
+            TelegramApiMethod::GetFile | TelegramApiMethod::Other(_) => {
+                CapturedTelegramRequest::Other { method, raw_body }
+            },
         };
 
         state.requests.lock().expect("lock requests").push(captured);
@@ -1663,6 +1696,14 @@ mod tests {
                     text: "ok".to_string(),
                 }),
             }),
+            TelegramApiMethod::GetFile => Json(TelegramApiResponse {
+                ok: true,
+                result: TelegramApiResult::File(TelegramFileResult {
+                    file_id: "test-file-id".to_string(),
+                    file_unique_id: "test-unique-id".to_string(),
+                    file_path: "voice/test-voice.ogg".to_string(),
+                }),
+            }),
             TelegramApiMethod::SendChatAction | TelegramApiMethod::Other(_) => {
                 Json(TelegramApiResponse {
                     ok: true,
@@ -1675,6 +1716,19 @@ mod tests {
     #[derive(Default)]
     struct MockSink {
         dispatch_calls: std::sync::atomic::AtomicUsize,
+        dispatched_texts: Mutex<Vec<String>>,
+        stt_available: bool,
+        transcription_result: Mutex<Option<Result<String>>>,
+    }
+
+    impl MockSink {
+        fn with_stt(transcription: Result<String>) -> Self {
+            Self {
+                stt_available: true,
+                transcription_result: Mutex::new(Some(transcription)),
+                ..Default::default()
+            }
+        }
     }
 
     #[async_trait]
@@ -1683,12 +1737,16 @@ mod tests {
 
         async fn dispatch_to_chat(
             &self,
-            _text: &str,
+            text: &str,
             _reply_to: ChannelReplyTarget,
             _meta: ChannelMessageMeta,
         ) {
             self.dispatch_calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.dispatched_texts
+                .lock()
+                .expect("lock")
+                .push(text.to_string());
         }
 
         async fn dispatch_command(
@@ -1708,13 +1766,19 @@ mod tests {
         }
 
         async fn transcribe_voice(&self, _audio_data: &[u8], _format: &str) -> Result<String> {
-            Err(anyhow::anyhow!(
-                "transcribe should not be called when STT unavailable"
-            ))
+            self.transcription_result
+                .lock()
+                .expect("lock")
+                .take()
+                .unwrap_or_else(|| {
+                    Err(anyhow::anyhow!(
+                        "transcribe should not be called when STT unavailable"
+                    ))
+                })
         }
 
         async fn voice_stt_available(&self) -> bool {
-            false
+            self.stt_available
         }
     }
 
@@ -1932,6 +1996,126 @@ mod tests {
             0,
             "voice message should not be dispatched to chat when STT is unavailable"
         );
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server join");
+    }
+
+    /// Regression test: when STT is available but transcription returns an empty
+    /// string (e.g. noisy environment), the voice message must still be
+    /// dispatched to chat and the audio saved, rather than silently dropped.
+    #[tokio::test]
+    async fn voice_empty_transcription_still_dispatches_to_chat() {
+        use axum::{http::Method, routing::any};
+
+        async fn combined_handler(
+            method: Method,
+            State(state): State<MockTelegramApi>,
+            uri: Uri,
+            body: Bytes,
+        ) -> axum::response::Response {
+            use axum::response::IntoResponse;
+            if method == Method::GET {
+                // File download endpoint — return dummy audio bytes.
+                return Bytes::from_static(b"fake-ogg-audio-data").into_response();
+            }
+            // Delegate POST to the normal mock Telegram API handler.
+            let resp = telegram_api_handler(State(state), uri, body).await;
+            resp.into_response()
+        }
+
+        let recorded_requests = Arc::new(Mutex::new(Vec::<CapturedTelegramRequest>::new()));
+        let mock_api = MockTelegramApi {
+            requests: Arc::clone(&recorded_requests),
+        };
+        let app = Router::new()
+            .route("/{*path}", any(combined_handler))
+            .with_state(mock_api);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("serve mock telegram api");
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+        let bot = Bot::new("test-token").set_api_url(api_url);
+
+        let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let outbound = Arc::new(TelegramOutbound {
+            accounts: Arc::clone(&accounts),
+        });
+        // STT available, transcription returns empty string.
+        let sink = Arc::new(MockSink::with_stt(Ok(String::new())));
+        let account_id = "test-account";
+
+        {
+            let mut map = accounts.write().expect("accounts write lock");
+            map.insert(account_id.to_string(), AccountState {
+                bot: bot.clone(),
+                bot_username: Some("test_bot".into()),
+                account_id: account_id.to_string(),
+                config: TelegramAccountConfig {
+                    token: Secret::new("test-token".to_string()),
+                    dm_policy: DmPolicy::Open,
+                    ..Default::default()
+                },
+                outbound: Arc::clone(&outbound),
+                cancel: CancellationToken::new(),
+                message_log: None,
+                event_sink: Some(Arc::clone(&sink) as Arc<dyn ChannelEventSink>),
+                otp: Mutex::new(OtpState::new(300)),
+            });
+        }
+
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "voice": {
+                "file_id": "voice-file-id",
+                "file_unique_id": "voice-unique-id",
+                "duration": 1,
+                "mime_type": "audio/ogg",
+                "file_size": 123
+            }
+        }))
+        .expect("deserialize voice message");
+
+        handle_message_direct(msg, &bot, account_id, &accounts)
+            .await
+            .expect("handle message");
+
+        assert_eq!(
+            sink.dispatch_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "voice message with empty transcription must still be dispatched to chat"
+        );
+
+        {
+            let texts = sink.dispatched_texts.lock().expect("lock");
+            assert!(
+                texts[0].contains("could not transcribe"),
+                "dispatched text should indicate transcription was empty, got: {}",
+                texts[0]
+            );
+        }
 
         let _ = shutdown_tx.send(());
         server.await.expect("server join");
