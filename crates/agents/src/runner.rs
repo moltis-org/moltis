@@ -799,6 +799,7 @@ pub async fn run_agent_loop_with_context(
     let mut server_retries_remaining: u8 = 1;
     let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
+    let mut last_answer_text = String::new();
 
     loop {
         iterations += 1;
@@ -993,7 +994,10 @@ pub async fn run_agent_loop_with_context(
 
         // If no tool calls, return the text response.
         if response.tool_calls.is_empty() {
-            let text = response.text.unwrap_or_default();
+            let text = response
+                .text
+                .filter(|t| !t.is_empty())
+                .unwrap_or(std::mem::take(&mut last_answer_text));
 
             info!(
                 iterations,
@@ -1015,10 +1019,14 @@ pub async fn run_agent_loop_with_context(
         }
 
         // Append assistant message with tool calls.
+        // Save any answer text for fallback — when the final iteration returns
+        // empty, this becomes the result. Don't emit as ThinkingText because
+        // it may be the actual answer (e.g. a table produced before a cleanup
+        // tool call like `browser close`).
         if let Some(ref text) = response.text
-            && let Some(cb) = on_event
+            && !text.is_empty()
         {
-            cb(RunnerEvent::ThinkingText(text.clone()));
+            last_answer_text.clone_from(text);
         }
         messages.push(ChatMessage::assistant_with_tools(
             response.text.clone(),
@@ -1280,6 +1288,10 @@ pub async fn run_agent_loop_streaming(
     let mut rate_limit_retries_remaining: u8 = RATE_LIMIT_MAX_RETRIES;
     let mut rate_limit_backoff_ms: Option<u64> = None;
     let mut raw_llm_responses: Vec<serde_json::Value> = Vec::new();
+    // Track answer text from iterations that also contained tool calls.
+    // When the final iteration is empty (e.g. model stop after browser close),
+    // this is used as the final response text instead of returning silent.
+    let mut last_answer_text = String::new();
 
     loop {
         iterations += 1;
@@ -1595,13 +1607,20 @@ pub async fn run_agent_loop_streaming(
 
         // If no tool calls, return the text response.
         if tool_calls.is_empty() {
+            // When the final iteration produced no text but a previous iteration
+            // streamed answer text alongside tool calls, use that as the response.
+            let final_text = if accumulated_text.is_empty() && !last_answer_text.is_empty() {
+                std::mem::take(&mut last_answer_text)
+            } else {
+                accumulated_text
+            };
             info!(
                 iterations,
                 tool_calls = total_tool_calls,
                 "streaming agent loop complete — returning text"
             );
             return Ok(AgentRunResult {
-                text: accumulated_text,
+                text: final_text,
                 iterations,
                 tool_calls_made: total_tool_calls,
                 usage: Usage {
@@ -1619,19 +1638,28 @@ pub async fn run_agent_loop_streaming(
         }
 
         // Append assistant message with tool calls.
-        let planning_text = if accumulated_reasoning.is_empty() {
-            accumulated_text.clone()
+        //
+        // When the model emits explicit reasoning (extended thinking), use
+        // that as the planning text and emit it as ThinkingText for the UI.
+        // When there is only regular text alongside tool calls (no separate
+        // reasoning), preserve it on the message for history but do NOT emit
+        // it as ThinkingText — it was already streamed as TextDelta and is
+        // likely the actual answer (e.g. a search result table produced
+        // before a `browser close` cleanup call).
+        let (text_for_msg, is_actual_reasoning) = if !accumulated_reasoning.is_empty() {
+            (Some(accumulated_reasoning), true)
+        } else if !accumulated_text.is_empty() {
+            last_answer_text.clone_from(&accumulated_text);
+            (Some(accumulated_text), false)
         } else {
-            accumulated_reasoning
+            (None, false)
         };
-        let text_for_msg = if planning_text.is_empty() {
-            None
-        } else {
-            if let Some(cb) = on_event {
-                cb(RunnerEvent::ThinkingText(planning_text.clone()));
-            }
-            Some(planning_text)
-        };
+        if let Some(ref text) = text_for_msg
+            && is_actual_reasoning
+            && let Some(cb) = on_event
+        {
+            cb(RunnerEvent::ThinkingText(text.clone()));
+        }
         messages.push(ChatMessage::assistant_with_tools(
             text_for_msg,
             tool_calls.clone(),
