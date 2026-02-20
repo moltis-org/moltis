@@ -36,7 +36,6 @@ path = "src/main.rs"
 anyhow             = { workspace = true }
 clap               = { workspace = true }
 dotenvy            = { workspace = true }
-tikv-jemallocator  = { workspace = true, optional = true }
 moltis-agents      = { workspace = true }
 moltis-browser     = { workspace = true }
 moltis-common      = { workspace = true }
@@ -62,6 +61,9 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 which              = { workspace = true }
 
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+tikv-jemallocator = { optional = true, workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
@@ -81,9 +83,9 @@ default = [
 ]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
-lightweight        = ["jemalloc", "tls", "web-ui"]
 file-watcher       = ["moltis-gateway/file-watcher"]
 jemalloc           = ["dep:tikv-jemallocator"]
+lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
 metrics            = ["moltis-gateway/metrics"]
 prometheus         = ["moltis-gateway/prometheus"]

@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Skip jemalloc on Windows (platform-specific dependency gate)
+
 ### Security
 
 ## [0.9.4] - 2026-02-20
