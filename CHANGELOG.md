@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accessing `http://` on the HTTPS port now returns a 301 redirect to `https://` instead of a garbled TLS handshake page
+- SQLite metrics store now uses WAL journal mode and `synchronous=NORMAL` to fix slow INSERT times (1-3s) on Docker/WSL2
+
 ### Security
 
 ## [0.9.5] - 2026-02-20

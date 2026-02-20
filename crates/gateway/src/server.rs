@@ -3692,7 +3692,7 @@ pub async fn start_gateway(
 
     #[cfg(feature = "tls")]
     if tls_active {
-        // Spawn HTTP redirect server on secondary port.
+        // Spawn HTTP redirect server on secondary port (serves CA cert download).
         if let Some(ref ca) = ca_cert_path {
             let http_port = config.tls.http_redirect_port.unwrap_or(port + 1);
             let bind_clone = bind.to_string();
@@ -3707,11 +3707,11 @@ pub async fn start_gateway(
             });
         }
 
-        // Run HTTPS server.
+        // Run HTTPS server with automatic HTTP-to-HTTPS redirect on the same port.
+        // Plain HTTP requests to this port get a 301 redirect instead of a TLS error.
         let tls_cfg = rustls_config.expect("rustls config must be set when TLS is active");
-        let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_cfg));
-        axum_server::bind_rustls(addr, rustls_cfg)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        let tcp_listener = tokio::net::TcpListener::bind(addr).await?;
+        crate::tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
             .await?;
         return Ok(());
     }

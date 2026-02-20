@@ -12,6 +12,9 @@ async-trait        = { workspace = true }
 axum               = { workspace = true }
 axum-extra         = { features = ["cookie"], workspace = true }
 axum-server        = { optional = true, workspace = true }
+hyper              = { optional = true, workspace = true }
+hyper-util         = { optional = true, workspace = true }
+tower              = { optional = true, workspace = true }
 base64             = { workspace = true }
 bytes              = { workspace = true }
 chrono             = { features = ["serde"], optional = true, workspace = true }
@@ -105,11 +108,14 @@ qmd = ["dep:moltis-qmd"]
 tailscale = []
 tls = [
   "dep:axum-server",
+  "dep:hyper",
+  "dep:hyper-util",
   "dep:rcgen",
   "dep:rustls",
   "dep:rustls-pemfile",
   "dep:time",
   "dep:tokio-rustls",
+  "dep:tower",
 ]
 voice = ["dep:moltis-voice"]
 web-ui = ["dep:askama", "dep:chrono", "dep:include_dir", "dep:portable-pty", "dep:which"]

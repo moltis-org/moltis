@@ -124,6 +124,9 @@ webauthn-rs-proto = "0.5"
 dashmap     = "6"
 hostname    = "0.4"
 http        = "1"
+hyper       = { features = ["http1", "http2", "server"], version = "1" }
+hyper-util  = { features = ["tokio", "server-auto", "http1", "http2", "service"], version = "0.1" }
+tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
 urlencoding = "2"

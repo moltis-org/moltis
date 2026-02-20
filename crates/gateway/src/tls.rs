@@ -19,7 +19,11 @@ use {
     rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, SanType},
     rustls::ServerConfig,
     time::OffsetDateTime,
-    tracing::info,
+    tokio::{
+        io::AsyncWriteExt,
+        net::{TcpListener, TcpStream},
+    },
+    tracing::{debug, info},
 };
 
 /// The hostname used for loopback URLs instead of raw `127.0.0.1`.
@@ -255,7 +259,7 @@ pub async fn start_http_redirect_server(
         .with_state(state);
 
     let addr: SocketAddr = format!("{bind}:{http_port}").parse()?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(addr).await?;
     let display_host = if localhost_mode {
         "localhost"
     } else {
@@ -302,12 +306,165 @@ async fn redirect_to_https(
     axum::response::Redirect::temporary(&target)
 }
 
+// ── TLS server with HTTP redirect ───────────────────────────────────────────
+
+/// Serve an axum app over TLS on a single port, with automatic HTTP-to-HTTPS
+/// redirect for plain HTTP requests.
+///
+/// When a client connects with plain HTTP instead of TLS, a 301 redirect is
+/// sent pointing to the HTTPS URL. This prevents the "broken page" that users
+/// see when accidentally navigating to `http://host:port/` instead of `https://`.
+pub async fn serve_tls_with_http_redirect(
+    listener: TcpListener,
+    tls_config: Arc<ServerConfig>,
+    app: Router,
+    port: u16,
+    bind_host: &str,
+) -> Result<()> {
+    let acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
+    let localhost_mode = is_localhost_name(bind_host);
+    let bind_host = bind_host.to_string();
+
+    // Create the make_service so ConnectInfo<SocketAddr> works in handlers.
+    let mut make_service = app.into_make_service_with_connect_info::<SocketAddr>();
+
+    loop {
+        let (stream, addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                if is_accept_error(&e) {
+                    continue;
+                }
+                tracing::error!("accept error: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            },
+        };
+
+        // Peek at the first byte to distinguish TLS from plain HTTP.
+        // TLS ClientHello always starts with 0x16 (ContentType::Handshake).
+        let mut peek_buf = [0u8; 1];
+        match stream.peek(&mut peek_buf).await {
+            Ok(1) if peek_buf[0] == 0x16 => {
+                // TLS — hand off to a per-connection task.
+                let acceptor = acceptor.clone();
+                let service = <_ as tower::Service<SocketAddr>>::call(&mut make_service, addr)
+                    .await
+                    .unwrap_or_else(|e| match e {});
+                tokio::spawn(async move {
+                    let Ok(tls_stream) = acceptor.accept(stream).await.inspect_err(|e| {
+                        debug!("TLS handshake failed from {addr}: {e}");
+                    }) else {
+                        return;
+                    };
+                    let io = hyper_util::rt::TokioIo::new(tls_stream);
+                    let hyper_service = hyper_util::service::TowerToHyperService::new(service);
+                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection_with_upgrades(io, hyper_service)
+                    .await
+                    {
+                        debug!("connection error from {addr}: {e}");
+                    }
+                });
+            },
+            Ok(_) => {
+                // Plain HTTP — send redirect in a background task.
+                let redirect_host = bind_host.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        send_http_redirect(stream, port, &redirect_host, localhost_mode).await
+                    {
+                        debug!("HTTP redirect to {addr} failed: {e}");
+                    }
+                });
+            },
+            Err(e) => {
+                debug!("peek failed from {addr}: {e}");
+            },
+        }
+    }
+}
+
+fn is_accept_error(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+    )
+}
+
+/// Read a plain HTTP request from a TCP stream and send a 301 redirect to HTTPS.
+async fn send_http_redirect(
+    mut stream: TcpStream,
+    https_port: u16,
+    bind_host: &str,
+    localhost_mode: bool,
+) -> Result<()> {
+    // Read enough to parse the request line and Host header.
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.peek(&mut buf))
+        .await
+        .context("timeout reading HTTP request")?
+        .context("reading HTTP request")?;
+
+    let raw = String::from_utf8_lossy(&buf[..n]);
+
+    // Parse request path from first line: "GET /path HTTP/1.x"
+    let path = raw
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("/");
+
+    // Parse Host header, stripping port if present.
+    let host = if localhost_mode {
+        "localhost".to_string()
+    } else {
+        raw.lines()
+            .find_map(|line| {
+                if line.get(..5)?.eq_ignore_ascii_case("host:") {
+                    let value = line[5..].trim();
+                    // Use Authority parser to correctly handle IPv6, ports, etc.
+                    if let Ok(authority) = value.parse::<axum::http::uri::Authority>() {
+                        Some(authority.host().to_string())
+                    } else {
+                        Some(value.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| bind_host.to_string())
+    };
+
+    let location = format!("https://{}:{}{}", format_url_host(&host), https_port, path);
+    let body =
+        format!("<html><body>Redirecting to <a href=\"{location}\">{location}</a></body></html>");
+    let response = format!(
+        "HTTP/1.1 301 Moved Permanently\r\n\
+         Location: {location}\r\n\
+         Content-Type: text/html\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        body.len()
+    );
+
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, axum::response::IntoResponse};
+    use {super::*, axum::response::IntoResponse, tokio::io::AsyncReadExt as _};
 
     #[test]
     fn test_generate_all_produces_valid_pems() {
@@ -422,5 +579,79 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .unwrap();
         assert_eq!(location, "https://gateway.example.com:3443/foo");
+    }
+
+    #[tokio::test]
+    async fn send_http_redirect_sends_301_with_correct_location() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            send_http_redirect(stream, 13131, "0.0.0.0", false)
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        // Send a minimal HTTP request.
+        AsyncWriteExt::write_all(
+            &mut client,
+            b"GET /setup?token=abc HTTP/1.1\r\nHost: 192.168.1.50:13131\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        let n = client.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        assert!(response.starts_with("HTTP/1.1 301"));
+        assert!(response.contains("Location: https://192.168.1.50:13131/setup?token=abc"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_redirect_uses_localhost_in_localhost_mode() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            send_http_redirect(stream, 13131, "127.0.0.1", true)
+                .await
+                .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        AsyncWriteExt::write_all(
+            &mut client,
+            b"GET / HTTP/1.1\r\nHost: 192.168.1.50:13131\r\n\r\n",
+        )
+        .await
+        .unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        let n = client.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        assert!(response.contains("Location: https://localhost:13131/"));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn is_accept_error_matches_connection_errors() {
+        assert!(is_accept_error(&std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "reset"
+        )));
+        assert!(is_accept_error(&std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            "aborted"
+        )));
+        assert!(!is_accept_error(&std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "in use"
+        )));
     }
 }
