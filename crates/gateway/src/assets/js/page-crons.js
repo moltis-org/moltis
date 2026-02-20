@@ -578,20 +578,59 @@ function CronModal() {
 	var isEdit = !!editingJob.value;
 	var job = editingJob.value;
 	var saving = useSignal(false);
-	var schedKind = useSignal(isEdit ? job.schedule.kind : "cron");
+	var schedKind = useSignal("cron");
 	var errorField = useSignal(null);
-	var jobModel = useSignal(isEdit && job.payload.kind === "agentTurn" ? job.payload.model || "" : "");
-	var jobSandboxImage = useSignal(isEdit ? job.sandbox?.image || "" : "");
-	var jobName = useSignal(isEdit ? job.name : "");
-	var payloadKind = useSignal(isEdit ? job.payload.kind : "systemEvent");
-	var sessionTarget = useSignal(isEdit ? job.sessionTarget || "main" : "main");
-	var messageText = useSignal(isEdit ? job.payload.text || job.payload.message || "" : "");
-	var executionTarget = useSignal(isEdit && job.sandbox?.enabled === false ? "host" : "sandbox");
-	var deleteAfterRun = useSignal(isEdit ? job.deleteAfterRun : false);
-	var jobEnabled = useSignal(isEdit ? job.enabled : true);
-	var deliverToChannel = useSignal(isEdit ? job.payload?.deliver === true : false);
-	var deliverChannel = useSignal(isEdit ? job.payload?.channel || "" : "");
-	var deliverTo = useSignal(isEdit ? job.payload?.to || "" : "");
+	var jobModel = useSignal("");
+	var jobSandboxImage = useSignal("");
+	var jobName = useSignal("");
+	var payloadKind = useSignal("systemEvent");
+	var sessionTarget = useSignal("main");
+	var messageText = useSignal("");
+	var executionTarget = useSignal("sandbox");
+	var deleteAfterRun = useSignal(false);
+	var jobEnabled = useSignal(true);
+	var deliverToChannel = useSignal(false);
+	var deliverChannel = useSignal("");
+	var deliverTo = useSignal("");
+
+	// Sync signal values when the edited job changes (useSignal only
+	// uses the initial value on first mount, so we must update manually).
+	useEffect(() => {
+		if (editingJob.value) {
+			var j = editingJob.value;
+			saving.value = false;
+			errorField.value = null;
+			schedKind.value = j.schedule.kind;
+			jobModel.value = j.payload.kind === "agentTurn" ? j.payload.model || "" : "";
+			jobSandboxImage.value = j.sandbox?.image || "";
+			jobName.value = j.name;
+			payloadKind.value = j.payload.kind;
+			sessionTarget.value = j.sessionTarget || "main";
+			messageText.value = j.payload.text || j.payload.message || "";
+			executionTarget.value = j.sandbox?.enabled === false ? "host" : "sandbox";
+			deleteAfterRun.value = j.deleteAfterRun;
+			jobEnabled.value = j.enabled;
+			deliverToChannel.value = j.payload?.deliver === true;
+			deliverChannel.value = j.payload?.channel || "";
+			deliverTo.value = j.payload?.to || "";
+		} else {
+			saving.value = false;
+			errorField.value = null;
+			schedKind.value = "cron";
+			jobModel.value = "";
+			jobSandboxImage.value = "";
+			jobName.value = "";
+			payloadKind.value = "systemEvent";
+			sessionTarget.value = "main";
+			messageText.value = "";
+			executionTarget.value = "sandbox";
+			deleteAfterRun.value = false;
+			jobEnabled.value = true;
+			deliverToChannel.value = false;
+			deliverChannel.value = "";
+			deliverTo.value = "";
+		}
+	}, [editingJob.value]);
 
 	function onPayloadKindChange(e) {
 		payloadKind.value = e.target.value;
