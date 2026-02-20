@@ -3,16 +3,171 @@
 /// Telegram supports: `<b>`, `<i>`, `<code>`, `<pre>`, `<a href="">`,
 /// `<s>` (strikethrough), `<u>` (underline).
 ///
-/// We handle the most common Markdown constructs:
-/// - `**bold**` / `__bold__` → `<b>`
-/// - `*italic*` / `_italic_` → `<i>`
-/// - `` `code` `` → `<code>`
-/// - ``` ```lang\nblock``` ``` → `<pre><code class="language-lang">`
-/// - `~~strike~~` → `<s>`
-/// - `[text](url)` → `<a href="url">`
-///
-/// HTML special chars in the input are escaped first.
+/// Handles inline formatting (bold, italic, code, links, strikethrough)
+/// and block-level markdown tables (rendered as aligned `<pre>` blocks
+/// since Telegram does not support `<table>` HTML).
 pub fn markdown_to_telegram_html(md: &str) -> String {
+    let segments = split_table_segments(md);
+    // Fast path: single text segment (no tables).
+    if segments.len() == 1
+        && let Segment::Text(text) = &segments[0]
+    {
+        return render_inline_markdown(text);
+    }
+    let mut out = String::with_capacity(md.len());
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match seg {
+            Segment::Text(text) => out.push_str(&render_inline_markdown(text)),
+            Segment::Table(lines) => out.push_str(&render_table_pre(lines)),
+        }
+    }
+    out
+}
+
+// ── Table detection & rendering ──────────────────────────────────────────
+
+enum Segment {
+    Text(String),
+    Table(Vec<String>),
+}
+
+/// Split markdown into alternating text and table segments.
+fn split_table_segments(md: &str) -> Vec<Segment> {
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut text_lines: Vec<&str> = Vec::new();
+    let mut table_lines: Vec<&str> = Vec::new();
+
+    for line in md.split('\n') {
+        if is_table_line(line.trim()) {
+            table_lines.push(line);
+        } else {
+            if !table_lines.is_empty() {
+                flush_table_block(&mut segments, &mut text_lines, &mut table_lines);
+            }
+            text_lines.push(line);
+        }
+    }
+
+    if !table_lines.is_empty() {
+        flush_table_block(&mut segments, &mut text_lines, &mut table_lines);
+    }
+    if !text_lines.is_empty() {
+        segments.push(Segment::Text(text_lines.join("\n")));
+    }
+
+    if segments.is_empty() {
+        segments.push(Segment::Text(String::new()));
+    }
+
+    segments
+}
+
+fn flush_table_block<'a>(
+    segments: &mut Vec<Segment>,
+    text_lines: &mut Vec<&'a str>,
+    table_lines: &mut Vec<&'a str>,
+) {
+    if table_lines.len() >= 2 && is_separator_row(table_lines[1]) {
+        if !text_lines.is_empty() {
+            segments.push(Segment::Text(text_lines.join("\n")));
+            text_lines.clear();
+        }
+        segments.push(Segment::Table(
+            table_lines.iter().map(|s| (*s).to_owned()).collect(),
+        ));
+    } else {
+        text_lines.extend(table_lines.iter());
+    }
+    table_lines.clear();
+}
+
+fn is_table_line(trimmed: &str) -> bool {
+    trimmed.len() > 1 && trimmed.starts_with('|')
+}
+
+fn is_separator_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    !inner.is_empty()
+        && inner.split('|').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        })
+}
+
+fn parse_table_cells(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner
+        .split('|')
+        .map(|cell| cell.trim().to_owned())
+        .collect()
+}
+
+fn render_table_pre(lines: &[String]) -> String {
+    // Parse rows, skipping the separator (index 1).
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 1)
+        .map(|(_, line)| parse_table_cells(line))
+        .collect();
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut widths = vec![0usize; col_count];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+
+    // Build plain-text table, then HTML-escape the whole block.
+    let mut plain = String::new();
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row_idx > 0 {
+            plain.push('\n');
+        }
+        for (col_idx, cell) in row.iter().enumerate() {
+            if col_idx > 0 {
+                plain.push_str(" | ");
+            }
+            plain.push_str(cell);
+            let w = widths.get(col_idx).copied().unwrap_or(0);
+            for _ in 0..w.saturating_sub(cell.chars().count()) {
+                plain.push(' ');
+            }
+        }
+        // Separator after header row.
+        if row_idx == 0 && rows.len() > 1 {
+            plain.push('\n');
+            for (col_idx, &w) in widths.iter().enumerate() {
+                if col_idx > 0 {
+                    plain.push_str("-+-");
+                }
+                for _ in 0..w {
+                    plain.push('-');
+                }
+            }
+        }
+    }
+
+    format!("<pre>{}</pre>", escape_html(&plain))
+}
+
+// ── Inline markdown rendering ────────────────────────────────────────────
+
+/// Render inline markdown constructs (bold, italic, code, links, etc.)
+/// to Telegram-compatible HTML. HTML special chars are escaped first.
+fn render_inline_markdown(md: &str) -> String {
     let escaped = escape_html(md);
     let mut chars = escaped.chars().peekable();
     let mut out = String::with_capacity(md.len());
@@ -406,6 +561,72 @@ mod tests {
             markdown_to_telegram_html("[click](https://example.com)"),
             "<a href=\"https://example.com\">click</a>"
         );
+    }
+
+    #[test]
+    fn table_renders_as_pre_block() {
+        let input = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.starts_with("<pre>"),
+            "should start with <pre>: {output}"
+        );
+        assert!(
+            output.ends_with("</pre>"),
+            "should end with </pre>: {output}"
+        );
+        assert!(output.contains("Alice"));
+        assert!(output.contains("Bob"));
+        // Original markdown separator row (|---|) should not appear.
+        assert!(
+            !output.contains("|---"),
+            "markdown separator should be removed: {output}"
+        );
+    }
+
+    #[test]
+    fn table_columns_are_aligned() {
+        let input = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
+        let output = markdown_to_telegram_html(input);
+        // "Name" (4) padded to width 5 (same as "Alice").
+        assert!(output.contains("Name "), "Name should be padded: {output}");
+    }
+
+    #[test]
+    fn table_between_text_preserves_context() {
+        let input = "Before\n| A | B |\n|---|---|\n| 1 | 2 |\nAfter";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Before"), "{output}");
+        assert!(output.contains("<pre>"), "{output}");
+        assert!(output.contains("</pre>"), "{output}");
+        assert!(output.contains("After"), "{output}");
+    }
+
+    #[test]
+    fn invalid_table_no_separator_passes_through() {
+        let input = "| not | a table |\n| just | pipes |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            !output.contains("<pre>"),
+            "no <pre> without separator: {output}"
+        );
+    }
+
+    #[test]
+    fn table_escapes_html_in_cells() {
+        let input = "| A | B |\n|---|---|\n| <b> | 1&2 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("&lt;b&gt;"), "should escape <b>: {output}");
+        assert!(output.contains("1&amp;2"), "should escape &: {output}");
+    }
+
+    #[test]
+    fn table_single_column() {
+        let input = "| Item |\n|------|\n| One |\n| Two |";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.starts_with("<pre>"), "{output}");
+        assert!(output.contains("One"));
+        assert!(output.contains("Two"));
     }
 
     #[test]
