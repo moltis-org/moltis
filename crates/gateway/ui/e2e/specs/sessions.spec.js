@@ -388,7 +388,7 @@ test.describe("Session management", () => {
 		await expect(page.locator(".theme-toggle")).toBeVisible();
 		await expect(page.locator('.theme-btn[data-theme-val="light"]')).toBeVisible();
 		await expect(page.locator('.theme-btn[data-theme-val="dark"]')).toBeVisible();
-		await expect(page.locator("script[nonce]")).toHaveCount(2);
+		await expect(page.locator("script[nonce]")).toHaveCount(0);
 		await expect(page.locator(".share-time")).toHaveCount(0);
 		const imageViewer = page.locator('[data-image-viewer="true"]');
 		await expect(imageViewer).toHaveCount(1);
