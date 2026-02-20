@@ -344,7 +344,7 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	// Always bump the badge so the total message count stays accurate,
 	// even when the user is not on the chat page (e.g. Telegram messages).
 	bumpSessionCount(eventSession, 1);
-	var cachedAudio = p.channel && p.channel.audio_filename
+	var cachedAudio = p.channel?.audio_filename
 		? `media/${eventSession.replaceAll(":", "_")}/${p.channel.audio_filename}`
 		: undefined;
 	cacheSessionHistoryMessage(
@@ -373,7 +373,7 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	updateSessionHistoryIndex(eventSession, p.messageIndex);
 	var cleanText = stripChannelPrefix(p.text || "");
 	var sessionKey = p.sessionKey || S.activeSessionKey;
-	var audioFilename = p.channel && p.channel.audio_filename;
+	var audioFilename = p.channel?.audio_filename;
 	var el;
 	if (audioFilename) {
 		el = chatAddMsg("user", "", true);
