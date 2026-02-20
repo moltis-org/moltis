@@ -48,6 +48,8 @@ pub mod server;
 pub mod services;
 pub mod session;
 pub mod session_types;
+#[cfg(feature = "web-ui")]
+pub mod share_render;
 pub mod share_store;
 pub mod state;
 #[cfg(feature = "tailscale")]
