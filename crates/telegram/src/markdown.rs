@@ -85,18 +85,46 @@ fn flush_table_block<'a>(
 }
 
 fn is_table_line(trimmed: &str) -> bool {
-    trimmed.len() > 1 && trimmed.starts_with('|')
+    if trimmed.len() <= 1 {
+        return false;
+    }
+    // Standard markdown table line: starts with |
+    if trimmed.starts_with('|') {
+        return true;
+    }
+    // Non-standard table line: at least 2 pipe-separated columns.
+    // Require >= 2 pipes to avoid false positives like "use the | operator".
+    if trimmed.chars().filter(|&c| c == '|').count() >= 2 {
+        return true;
+    }
+    // Separator row with + intersections: ---+---+---
+    is_plus_separator_row(trimmed)
+}
+
+/// Detect separator rows using `+` as intersection character (e.g. `---+---+---`).
+fn is_plus_separator_row(trimmed: &str) -> bool {
+    trimmed.contains('+')
+        && trimmed.split('+').all(|cell| {
+            let c = cell.trim();
+            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+        })
 }
 
 fn is_separator_row(line: &str) -> bool {
     let trimmed = line.trim();
+    // Standard: |---|---|
     let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
-    !inner.is_empty()
+    let is_pipe_sep = !inner.is_empty()
         && inner.split('|').all(|cell| {
             let c = cell.trim();
             !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
-        })
+        });
+    if is_pipe_sep {
+        return true;
+    }
+    // Plus-separator: ---+---+---
+    is_plus_separator_row(trimmed)
 }
 
 fn parse_table_cells(line: &str) -> Vec<String> {
@@ -627,6 +655,41 @@ mod tests {
         assert!(output.starts_with("<pre>"), "{output}");
         assert!(output.contains("One"));
         assert!(output.contains("Two"));
+    }
+
+    #[test]
+    fn table_without_leading_pipes() {
+        let input = "Name | Age | City\n-----+-----+------\nAlice | 30 | NYC\nBob | 25 | LA";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.contains("<pre>"),
+            "should render as <pre> block: {output}"
+        );
+        assert!(output.contains("Alice"), "{output}");
+        assert!(output.contains("Bob"), "{output}");
+        // Original markdown separator (-----+-----) should be replaced by the
+        // rendered one (------+-...).  Both use '+', so just verify alignment.
+        assert!(output.contains("Name "), "Name should be padded: {output}");
+    }
+
+    #[test]
+    fn table_without_leading_pipes_preserves_context() {
+        let input = "Here are the results:\nName | Score | Grade\n-----+-------+------\nAlice | 95 | A\nBob | 80 | B\nDone!";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Here are the results:"), "{output}");
+        assert!(output.contains("<pre>"), "{output}");
+        assert!(output.contains("Done!"), "{output}");
+    }
+
+    #[test]
+    fn single_pipe_not_detected_as_table() {
+        // A single pipe in prose should NOT be treated as a table.
+        let input = "Use the | operator for bitwise OR";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            !output.contains("<pre>"),
+            "single pipe should not become a table: {output}"
+        );
     }
 
     #[test]

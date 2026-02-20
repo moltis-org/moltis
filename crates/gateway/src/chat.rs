@@ -4916,7 +4916,7 @@ async fn run_explicit_shell_command(
         duration_ms: started.elapsed().as_millis() as u64,
         request_input_tokens: Some(0),
         request_output_tokens: Some(0),
-        message_index: user_message_index + 1,
+        message_index: user_message_index + 2, // +1 for user msg, +1 for tool result
         reply_medium: ReplyMedium::Text,
         iterations: Some(1),
         tool_calls_made: Some(1),
@@ -5529,7 +5529,9 @@ async fn run_with_tools(
                 silent = is_silent,
                 "agent run complete"
             );
-            let assistant_message_index = user_message_index + 1;
+            // Tool results are persisted between the user message and the
+            // assistant message, so the assistant index must account for them.
+            let assistant_message_index = user_message_index + 1 + tool_calls_made;
 
             // Generate & persist TTS audio for voice-medium web UI replies.
             let mut audio_warning: Option<String> = None;
