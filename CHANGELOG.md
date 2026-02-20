@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cron jobs can now deliver agent turn output to Telegram channels via the `deliver`, `channel`, and `to` payload fields
+
 ### Changed
 
 ### Deprecated

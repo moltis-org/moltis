@@ -705,8 +705,26 @@ fn validate_job_spec(job: &CronJob) -> Result<()> {
         (SessionTarget::Isolated | SessionTarget::Named(_), CronPayload::SystemEvent { .. }) => {
             bail!("sessionTarget=isolated/named requires payload kind=agentTurn");
         },
-        _ => Ok(()),
+        _ => {},
     }
+    if let CronPayload::AgentTurn {
+        deliver: true,
+        channel,
+        to,
+        ..
+    } = &job.payload
+    {
+        match (channel.as_deref(), to.as_deref()) {
+            (None | Some(""), _) => {
+                bail!("deliver=true requires a non-empty 'channel' (account_id)");
+            },
+            (_, None | Some("")) => {
+                bail!("deliver=true requires a non-empty 'to' (chat_id)");
+            },
+            _ => {},
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -1420,5 +1438,144 @@ mod tests {
             .enqueue("test".into(), "unit-test".into())
             .await;
         assert!(!svc.events_queue().is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_deliver_requires_channel_and_to() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        // deliver=true but no channel/to → error
+        let err = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "bad".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: true,
+                    channel: None,
+                    to: None,
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
+            })
+            .await;
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("deliver=true requires")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deliver_with_both_fields_succeeds() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        let result = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "good".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: true,
+                    channel: Some("telegram_bot".into()),
+                    to: Some("123456".into()),
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
+            })
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_deliver_false_allows_missing_channel() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        let result = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "ok".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: false,
+                    channel: None,
+                    to: None,
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
+            })
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_deliver_empty_string_channel_fails() {
+        let store = Arc::new(InMemoryStore::new());
+        let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+        let err = svc
+            .add(CronJobCreate {
+                id: None,
+                name: "empty".into(),
+                schedule: CronSchedule::Every {
+                    every_ms: 60_000,
+                    anchor_ms: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    message: "hi".into(),
+                    model: None,
+                    timeout_secs: None,
+                    deliver: true,
+                    channel: Some(String::new()),
+                    to: Some("123".into()),
+                },
+                session_target: SessionTarget::Isolated,
+                delete_after_run: false,
+                enabled: true,
+                system: false,
+                sandbox: CronSandboxConfig::default(),
+                wake_mode: CronWakeMode::default(),
+            })
+            .await;
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("deliver=true requires")
+        );
     }
 }

@@ -113,6 +113,59 @@ test.describe("Cron jobs page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("delivery toggle visible only for agentTurn", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Default: systemEvent — no delivery toggle
+		await expect(page.getByText("Deliver output to channel")).not.toBeVisible();
+
+		// Switch to agentTurn — delivery toggle should appear
+		await page.locator('[data-field="payloadKind"]').selectOption("agentTurn");
+		await expect(page.getByText("Deliver output to channel")).toBeVisible();
+
+		// Switch back to systemEvent — delivery toggle should hide
+		await page.locator('[data-field="payloadKind"]').selectOption("systemEvent");
+		await expect(page.getByText("Deliver output to channel")).not.toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("delivery toggle shows and hides channel fields", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+		await page.locator('[data-field="payloadKind"]').selectOption("agentTurn");
+
+		// Channel fields not visible before checking toggle
+		await expect(page.getByText("Channel Account", { exact: true })).not.toBeVisible();
+		await expect(page.getByText("Chat ID (recipient)", { exact: true })).not.toBeVisible();
+
+		// Check the delivery toggle
+		const toggle = page.getByText("Deliver output to channel");
+		await toggle.scrollIntoViewIfNeeded();
+		await toggle.click();
+
+		// Channel fields should appear (scroll to make visible)
+		const chatIdLabel = page.getByText("Chat ID (recipient)", { exact: true });
+		await chatIdLabel.scrollIntoViewIfNeeded();
+		await expect(page.getByText("Channel Account", { exact: true })).toBeVisible();
+		await expect(chatIdLabel).toBeVisible();
+
+		// Uncheck the toggle
+		await toggle.scrollIntoViewIfNeeded();
+		await toggle.click();
+
+		// Channel fields should disappear
+		await expect(page.getByText("Channel Account", { exact: true })).not.toBeVisible();
+		await expect(page.getByText("Chat ID (recipient)", { exact: true })).not.toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/crons");

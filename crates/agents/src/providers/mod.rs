@@ -2300,9 +2300,15 @@ mod tests {
         // DeepSeek should be registered via OpenAiProvider (tool-capable),
         // not GenaiProvider.
         let provider = reg
-            .get(&format!("deepseek::{}", ds_models[0].id.split("::").last().unwrap_or_default()))
+            .get(&format!(
+                "deepseek::{}",
+                ds_models[0].id.split("::").last().unwrap_or_default()
+            ))
             .expect("deepseek model should be in registry");
-        assert!(provider.supports_tools(), "deepseek models must support tool calling");
+        assert!(
+            provider.supports_tools(),
+            "deepseek models must support tool calling"
+        );
     }
 
     #[test]

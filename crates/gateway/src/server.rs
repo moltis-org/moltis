@@ -1744,6 +1744,19 @@ pub async fn start_gateway(
                 req.message.clone()
             };
 
+            // When the output will be delivered to a channel, prepend a
+            // formatting hint so the LLM produces channel-friendly content.
+            let prompt_text = if req.deliver && !is_heartbeat_turn {
+                format!(
+                    "Your response will be delivered to a Telegram channel. \
+                     Keep it concise and use plain text or basic Telegram HTML \
+                     formatting (<b>, <i>, <code>). Stay under 4000 characters.\n\n\
+                     {prompt_text}"
+                )
+            } else {
+                prompt_text
+            };
+
             let mut params = serde_json::json!({
                 "text": prompt_text,
                 "_session_key": session_key,
@@ -1767,6 +1780,32 @@ pub async fn start_gateway(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+
+            // Deliver output to a channel if requested.
+            if req.deliver
+                && !is_heartbeat_turn
+                && !text.is_empty()
+                && let (Some(channel_account), Some(chat_id)) = (&req.channel, &req.to)
+            {
+                if let Some(outbound) = state.services.channel_outbound_arc() {
+                    if let Err(e) = outbound
+                        .send_text(channel_account, chat_id, &text, None)
+                        .await
+                    {
+                        tracing::warn!(
+                            channel = %channel_account,
+                            to = %chat_id,
+                            error = %e,
+                            "cron job channel delivery failed"
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        "cron job delivery requested but no channel outbound configured"
+                    );
+                }
+            }
+
             Ok(moltis_cron::service::AgentTurnResult {
                 output: text,
                 input_tokens,
