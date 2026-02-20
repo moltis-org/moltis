@@ -344,12 +344,16 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	// Always bump the badge so the total message count stays accurate,
 	// even when the user is not on the chat page (e.g. Telegram messages).
 	bumpSessionCount(eventSession, 1);
+	var cachedAudio = p.channel && p.channel.audio_filename
+		? `media/${eventSession.replaceAll(":", "_")}/${p.channel.audio_filename}`
+		: undefined;
 	cacheSessionHistoryMessage(
 		eventSession,
 		{
 			role: "user",
 			content: p.text || "",
 			channel: p.channel || null,
+			audio: cachedAudio,
 			created_at: Date.now(),
 		},
 		p.messageIndex,
@@ -368,7 +372,26 @@ function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
 	if (p.messageIndex !== undefined && p.messageIndex <= chanLastIdx) return;
 	updateSessionHistoryIndex(eventSession, p.messageIndex);
 	var cleanText = stripChannelPrefix(p.text || "");
-	var el = chatAddMsg("user", renderMarkdown(cleanText), true);
+	var sessionKey = p.sessionKey || S.activeSessionKey;
+	var audioFilename = p.channel && p.channel.audio_filename;
+	var el;
+	if (audioFilename) {
+		el = chatAddMsg("user", "", true);
+		if (el) {
+			var audioSrc = `/api/sessions/${encodeURIComponent(sessionKey)}/media/${encodeURIComponent(audioFilename)}`;
+			renderAudioPlayer(el, audioSrc);
+			if (cleanText) {
+				var textWrap = document.createElement("div");
+				textWrap.className = "mt-2";
+				// Safe: renderMarkdown calls esc() first — all user input is
+				// HTML-escaped before formatting tags are applied.
+				textWrap.innerHTML = renderMarkdown(cleanText); // eslint-disable-line no-unsanitized/property
+				el.appendChild(textWrap);
+			}
+		}
+	} else {
+		el = chatAddMsg("user", renderMarkdown(cleanText), true);
+	}
 	if (el && p.channel) {
 		appendChannelFooter(el, p.channel);
 	}

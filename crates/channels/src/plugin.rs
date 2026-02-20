@@ -189,8 +189,7 @@ pub struct ChannelMessageMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Filename of saved voice audio (set by `save_channel_voice`).
-    /// Internal plumbing — not broadcast over WebSocket.
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_filename: Option<String>,
 }
 
