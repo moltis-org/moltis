@@ -49,9 +49,7 @@ function loadSandboxImages() {
 function loadChannelAccounts() {
 	fetchChannelStatus().then((res) => {
 		if (res?.ok) {
-			channelAccounts.value = (res.payload?.channels || []).filter(
-				(c) => c.status === "connected",
-			);
+			channelAccounts.value = (res.payload?.channels || []).filter((c) => c.status === "connected");
 		}
 	});
 }
@@ -428,10 +426,7 @@ function StatusBar() {
 function CronJobRow(props) {
 	var job = props.job;
 	var modelLabel = job.payload?.kind === "agentTurn" ? job.payload.model || "default" : "\u2014";
-	var deliveryLabel =
-		job.payload?.deliver && job.payload?.channel
-			? `\u2192 ${job.payload.channel}`
-			: null;
+	var deliveryLabel = job.payload?.deliver && job.payload?.channel ? `\u2192 ${job.payload.channel}` : null;
 	var executionLabel =
 		job.sandbox?.enabled === false
 			? "host"
@@ -634,12 +629,8 @@ function CronModal() {
 						kind: "agentTurn",
 						message: msgText,
 						deliver: deliverToChannel.value,
-						...(deliverToChannel.value && deliverChannel.value
-							? { channel: deliverChannel.value }
-							: {}),
-						...(deliverToChannel.value && deliverTo.value.trim()
-							? { to: deliverTo.value.trim() }
-							: {}),
+						...(deliverToChannel.value && deliverChannel.value ? { channel: deliverChannel.value } : {}),
+						...(deliverToChannel.value && deliverTo.value.trim() ? { to: deliverTo.value.trim() } : {}),
 					};
 		if (selectedPayloadKind === "agentTurn" && jobModel.value) {
 			payload.model = jobModel.value;
@@ -739,7 +730,9 @@ function CronModal() {
       />
       <p class="text-xs text-[var(--muted)] mt-1">Only used for Agent Turn jobs.</p>
 
-      ${payloadKind.value === "agentTurn" && html`
+      ${
+				payloadKind.value === "agentTurn" &&
+				html`
         <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
           <label class="text-xs text-[var(--muted)] flex items-center gap-2">
             <input type="checkbox" checked=${deliverToChannel.value}
@@ -748,7 +741,9 @@ function CronModal() {
 							}} />
             Deliver output to channel
           </label>
-          ${deliverToChannel.value && html`
+          ${
+						deliverToChannel.value &&
+						html`
             <div class="mt-3">
               <label class="block text-xs text-[var(--muted)] mb-1">Channel Account</label>
               <${ComboSelect}
@@ -773,9 +768,11 @@ function CronModal() {
 								}} />
               <p class="text-xs text-[var(--muted)] mt-1">The Telegram chat ID where output will be sent.</p>
             </div>
-          `}
+          `
+					}
         </div>
-      `}
+      `
+			}
 
       <label class="text-xs text-[var(--muted)]">Session Target</label>
       <select data-field="target" class="provider-key-input"
