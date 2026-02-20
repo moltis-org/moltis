@@ -6455,7 +6455,7 @@ async fn deliver_channel_replies_to_targets(
                             // Send logbook as a follow-up if present.
                             if !logbook_html.is_empty()
                                 && let Err(e) = outbound
-                                    .send_text(
+                                    .send_html(
                                         &target.account_id,
                                         &target.chat_id,
                                         &logbook_html,
@@ -6487,7 +6487,7 @@ async fn deliver_channel_replies_to_targets(
                             // Send logbook as a follow-up if present.
                             if !logbook_html.is_empty()
                                 && let Err(e) = outbound
-                                    .send_text(
+                                    .send_html(
                                         &target.account_id,
                                         &target.chat_id,
                                         &logbook_html,

@@ -409,6 +409,26 @@ impl ChannelOutbound for TelegramOutbound {
         Ok(())
     }
 
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        let bot = self.get_bot(account_id)?;
+        let chat_id = ChatId(to.parse::<i64>()?);
+        let rp = self.reply_params(account_id, reply_to);
+
+        // Send raw HTML chunks without markdown conversion.
+        let chunks = markdown::chunk_message(html, TELEGRAM_MAX_MESSAGE_LEN);
+        for chunk in &chunks {
+            self.send_chunk_with_fallback(&bot, account_id, to, chat_id, chunk, rp.as_ref(), false)
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
         let bot = self.get_bot(account_id)?;
         let chat_id = ChatId(to.parse::<i64>()?);
