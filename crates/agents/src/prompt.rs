@@ -63,7 +63,10 @@ pub struct PromptRuntimeContext {
 /// misses.
 pub const VOICE_REPLY_SUFFIX: &str = "\n\n\
 ## Voice Reply Mode\n\n\
-The user will hear your response as spoken audio. Write for speech, not for reading:\n\
+The user is speaking to you via voice messages. Their messages are transcribed from \
+speech-to-text, so treat this as a spoken conversation. You will hear their words as \
+text, and your response will be converted to spoken audio for them.\n\n\
+Write for speech, not for reading:\n\
 - Use natural, conversational sentences. No bullet lists, numbered lists, or headings.\n\
 - NEVER include raw URLs. Instead describe the resource by name \
 (e.g. \"the Rust documentation website\" instead of \"https://doc.rust-lang.org\").\n\

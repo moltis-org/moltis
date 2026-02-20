@@ -44,24 +44,20 @@ function upsertVoiceWarning(messageEl, warningText) {
 	warningEl.textContent = warningText;
 }
 
-function ensureVoicePlayerSlot(messageEl, footerEl) {
+function ensureVoicePlayerSlot(messageEl) {
 	if (!messageEl) return null;
 	var slot = messageEl.querySelector(".msg-voice-player-slot");
 	if (slot) return slot;
 	slot = document.createElement("div");
 	slot.className = "msg-voice-player-slot";
-	if (footerEl && footerEl.parentNode === messageEl) {
-		messageEl.insertBefore(slot, footerEl);
-	} else {
-		messageEl.appendChild(slot);
-	}
+	messageEl.insertBefore(slot, messageEl.firstChild);
 	return slot;
 }
 
-function renderPersistedAudio(messageEl, footerEl, sessionKey, audioPath, autoplay) {
+function renderPersistedAudio(messageEl, sessionKey, audioPath, autoplay) {
 	var src = buildSessionMediaUrl(sessionKey, audioPath);
 	if (!src) return false;
-	var slot = ensureVoicePlayerSlot(messageEl, footerEl);
+	var slot = ensureVoicePlayerSlot(messageEl);
 	if (!slot) return false;
 	slot.textContent = "";
 	renderAudioPlayer(slot, src, autoplay === true);
@@ -124,7 +120,7 @@ export async function attachMessageVoiceControl(options) {
 			return;
 		}
 
-		if (!renderPersistedAudio(messageEl, footerEl, sessionKey, result.payload.audio, autoplayOnGenerate)) {
+		if (!renderPersistedAudio(messageEl, sessionKey, result.payload.audio, autoplayOnGenerate)) {
 			actionBtn.disabled = false;
 			actionBtn.textContent = "Retry voice";
 			upsertVoiceWarning(messageEl, "Voice audio generated but could not be rendered.");
