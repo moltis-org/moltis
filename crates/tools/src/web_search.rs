@@ -118,6 +118,11 @@ impl WebSearchTool {
                     .map(|s| s.expose_secret().clone())
                     .or_else(|| env_value_with_overrides(env_overrides, "BRAVE_API_KEY"))
                     .unwrap_or_default();
+                // Don't register when no API key and no fallback — the tool
+                // would always fail, confusing the LLM.
+                if api_key.is_empty() && !config.duckduckgo_fallback {
+                    return None;
+                }
                 Some(Self::new(
                     SearchProvider::Brave,
                     Secret::new(api_key),
@@ -136,6 +141,9 @@ impl WebSearchTool {
                     .or_else(|| env_value_with_overrides(env_overrides, "PERPLEXITY_API_KEY"))
                     .or_else(|| env_value_with_overrides(env_overrides, "OPENROUTER_API_KEY"))
                     .unwrap_or_default();
+                if api_key.is_empty() && !config.duckduckgo_fallback {
+                    return None;
+                }
                 let base_url_override = config
                     .perplexity
                     .base_url
@@ -974,10 +982,12 @@ mod tests {
     }
 
     #[test]
-    fn test_from_config_disables_ddg_fallback_by_default() {
+    fn test_from_config_none_without_key_or_fallback() {
         let cfg = WebSearchConfig::default();
-        let tool = WebSearchTool::from_config(&cfg).expect("web search should be enabled");
-        assert!(!tool.fallback_enabled);
+        assert!(
+            WebSearchTool::from_config(&cfg).is_none(),
+            "tool should not register without an API key and no DDG fallback"
+        );
     }
 
     #[test]
