@@ -137,6 +137,11 @@ fn parse_table_cells(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// Maximum rendered table width (in characters) before switching from a
+/// horizontal `<pre>` layout to a vertical card layout.  Telegram mobile
+/// typically shows ~36 monospace characters per line inside `<pre>` blocks.
+const MAX_TABLE_PRE_WIDTH: usize = 42;
+
 fn render_table_pre(lines: &[String]) -> String {
     // Parse rows, skipping the separator (index 1).
     let rows: Vec<Vec<String>> = lines
@@ -156,6 +161,13 @@ fn render_table_pre(lines: &[String]) -> String {
         for (i, cell) in row.iter().enumerate() {
             widths[i] = widths[i].max(cell.chars().count());
         }
+    }
+
+    // Total width including " | " separators between columns.
+    let total_width: usize = widths.iter().sum::<usize>() + col_count.saturating_sub(1) * 3;
+
+    if total_width > MAX_TABLE_PRE_WIDTH {
+        return render_table_vertical(&rows);
     }
 
     // Build plain-text table, then HTML-escape the whole block.
@@ -189,6 +201,36 @@ fn render_table_pre(lines: &[String]) -> String {
     }
 
     format!("<pre>{}</pre>", escape_html(&plain))
+}
+
+/// Render a wide table in vertical card format for mobile-friendly display.
+///
+/// Each data row becomes a card: the first column value is the bold title,
+/// remaining columns are listed as `Header: value` pairs.
+fn render_table_vertical(rows: &[Vec<String>]) -> String {
+    if rows.len() < 2 {
+        return String::new();
+    }
+    let headers = &rows[0];
+    let mut out = String::new();
+    for (row_idx, row) in rows.iter().skip(1).enumerate() {
+        if row_idx > 0 {
+            out.push('\n');
+        }
+        // First column as bold title.
+        let title = row.first().map(String::as_str).unwrap_or("");
+        out.push_str(&format!("<b>{}</b>\n", escape_html(title)));
+        // Remaining columns as header: value pairs.
+        for (col_idx, cell) in row.iter().enumerate().skip(1) {
+            let header = headers.get(col_idx).map(String::as_str).unwrap_or("?");
+            out.push_str(&format!("{}: {}\n", escape_html(header), escape_html(cell)));
+        }
+    }
+    // Trim trailing newline.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 // ── Inline markdown rendering ────────────────────────────────────────────
@@ -679,6 +721,68 @@ mod tests {
         assert!(output.contains("Here are the results:"), "{output}");
         assert!(output.contains("<pre>"), "{output}");
         assert!(output.contains("Done!"), "{output}");
+    }
+
+    #[test]
+    fn wide_table_uses_vertical_card_format() {
+        let input = "Restaurant | Cuisine | Rating | Street | Open Until\n\
+                      -----------+---------+--------+--------+-----------\n\
+                      Jay's Grill | Grill | 4.8 | Market St | 11 PM\n\
+                      Jasmin's | Diner | 4.8 | Bush St | 9 PM";
+        let output = markdown_to_telegram_html(input);
+        // Should NOT use <pre> because the table is too wide.
+        assert!(
+            !output.contains("<pre>"),
+            "wide table should use vertical format, not <pre>: {output}"
+        );
+        // Each row becomes a card: first column is bold title.
+        assert!(
+            output.contains("<b>Jay's Grill</b>"),
+            "should have bold restaurant name: {output}"
+        );
+        // Header columns appear as labels.
+        assert!(
+            output.contains("Cuisine:"),
+            "should show Cuisine label: {output}"
+        );
+        assert!(
+            output.contains("Rating:"),
+            "should show Rating label: {output}"
+        );
+        assert!(
+            output.contains("Street:"),
+            "should show Street label: {output}"
+        );
+    }
+
+    #[test]
+    fn wide_table_vertical_preserves_context() {
+        let input = "Here are the results:\n\
+                      Name | Category | Score | Location | Notes\n\
+                      -----+----------+-------+----------+------\n\
+                      Alice | Engineering | 95 | San Francisco | Excellent\n\
+                      Bob | Marketing | 80 | New York | Good\n\
+                      Done!";
+        let output = markdown_to_telegram_html(input);
+        assert!(output.contains("Here are the results:"), "{output}");
+        assert!(output.contains("<b>Alice</b>"), "{output}");
+        assert!(output.contains("Done!"), "{output}");
+        // Should use vertical format (table is too wide for <pre>).
+        assert!(
+            !output.contains("<pre>"),
+            "should use vertical format: {output}"
+        );
+    }
+
+    #[test]
+    fn narrow_table_still_uses_pre() {
+        // 2-column narrow table should still use <pre> format.
+        let input = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let output = markdown_to_telegram_html(input);
+        assert!(
+            output.contains("<pre>"),
+            "narrow table should use <pre>: {output}"
+        );
     }
 
     #[test]

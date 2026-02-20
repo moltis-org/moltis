@@ -6452,6 +6452,23 @@ async fn deliver_channel_replies_to_targets(
                                     "failed to send channel voice reply: {e}"
                                 );
                             }
+                            // Send logbook as a follow-up if present.
+                            if !logbook_html.is_empty()
+                                && let Err(e) = outbound
+                                    .send_text(
+                                        &target.account_id,
+                                        &target.chat_id,
+                                        &logbook_html,
+                                        None,
+                                    )
+                                    .await
+                            {
+                                warn!(
+                                    account_id = target.account_id,
+                                    chat_id = target.chat_id,
+                                    "failed to send logbook follow-up: {e}"
+                                );
+                            }
                         } else if transcript.len()
                             <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT
                         {
