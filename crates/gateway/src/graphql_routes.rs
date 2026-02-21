@@ -44,6 +44,7 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
                 "hostname": self.state.hostname,
                 "version": self.state.version,
                 "connections": self.state.inner.read().await.clients.len(),
+                "uptimeMs": self.state.uptime_ms(),
             })),
             "system-presence" => {
                 let inner = self.state.inner.read().await;

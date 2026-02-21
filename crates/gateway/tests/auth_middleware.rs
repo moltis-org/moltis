@@ -307,6 +307,32 @@ async fn graphql_runtime_toggle_applies_immediately() {
     assert_eq!(resp.status(), 200);
 }
 
+/// GraphQL status query always returns an `uptimeMs` value.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_status_includes_uptime_ms() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/graphql"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({ "query": "{ status { uptimeMs } }" }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let uptime_ms = body["data"]["status"]["uptimeMs"]
+        .as_u64()
+        .expect("uptimeMs should be present");
+    assert!(uptime_ms < 60_000);
+}
+
 /// GraphQL subscriptions upgrade on `/graphql` with GraphQL WS subprotocols.
 #[cfg(all(feature = "web-ui", feature = "graphql"))]
 #[tokio::test]

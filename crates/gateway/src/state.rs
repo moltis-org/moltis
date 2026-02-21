@@ -394,6 +394,8 @@ pub struct GatewayState {
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
+    /// Monotonic process start timestamp used for uptime calculations.
+    pub started_at: Instant,
     /// Metrics handle for Prometheus export (None if metrics disabled).
     #[cfg(feature = "metrics")]
     pub metrics_handle: Option<MetricsHandle>,
@@ -470,6 +472,7 @@ impl GatewayState {
             ws_request_logs,
             deploy_platform,
             port,
+            started_at: Instant::now(),
             #[cfg(feature = "graphql")]
             graphql_enabled: AtomicBool::new(true),
             #[cfg(feature = "metrics")]
@@ -485,6 +488,11 @@ impl GatewayState {
             },
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
+    }
+
+    /// Process uptime in milliseconds since this gateway state was created.
+    pub fn uptime_ms(&self) -> u64 {
+        self.started_at.elapsed().as_millis() as u64
     }
 
     /// Set a late-bound chat service (for circular init).

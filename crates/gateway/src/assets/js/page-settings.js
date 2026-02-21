@@ -1378,14 +1378,12 @@ function GraphqlSection() {
 		sendRpc("graphql.config.set", { enabled: nextEnabled })
 			.then((res) => {
 				setSaving(false);
-				if (res?.ok) {
-					setEnabled(res.payload?.enabled !== false);
-					if (res.payload?.persisted === false) {
-						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
+					if (res?.ok) {
+						setEnabled(res.payload?.enabled !== false);
+						if (res.payload?.persisted === false) {
+							setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
+						}
 					} else {
-						setMsg(nextEnabled ? "GraphQL server enabled." : "GraphQL server disabled.");
-					}
-				} else {
 					setEnabled(!nextEnabled);
 					setErr(res?.error?.message || "Failed to update GraphQL setting");
 				}
@@ -1401,16 +1399,11 @@ function GraphqlSection() {
 
 	if (loadingConfig) {
 		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 class="text-lg font-medium text-[var(--text-strong)]">GraphQL</h2>
 			<div class="text-xs text-[var(--muted)]">Loading...</div>
 		</div>`;
 	}
 
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-		<h2 class="text-lg font-medium text-[var(--text-strong)]">GraphQL</h2>
-		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
-			Enable or disable the GraphQL server immediately for security and resource control.
-		</p>
 		<div style="max-width:900px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);">
 			<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
 				<div>
@@ -1456,12 +1449,7 @@ function GraphqlSection() {
 						allow="clipboard-write"
 					/>
 				</div>`
-				: html`<div style="max-width:900px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);">
-					<div class="text-sm text-[var(--text-strong)]">GraphQL server is disabled.</div>
-					<div class="text-xs text-[var(--muted)]" style="margin-top:4px;">
-						Re-enable it above to use GraphiQL and GraphQL API endpoints.
-					</div>
-				</div>`
+				: null
 		}
 	</div>`;
 }

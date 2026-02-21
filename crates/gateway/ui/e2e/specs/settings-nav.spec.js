@@ -232,7 +232,6 @@ test.describe("Settings navigation", () => {
 
 		await graphQlNavItem.click();
 		await expect(page).toHaveURL(/\/settings\/graphql$/);
-		await expect(page.getByRole("heading", { name: "GraphQL", exact: true })).toBeVisible();
 
 		const toggleSwitch = page.locator("#graphqlToggleSwitch");
 		const toggle = page.locator("#graphqlEnabledToggle");
@@ -248,7 +247,7 @@ test.describe("Settings navigation", () => {
 
 		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 503 : 200);
 		if (initial) {
-			await expect(page.getByText("GraphQL server is disabled.", { exact: true })).toBeVisible();
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toHaveCount(0);
 		} else {
 			await expect(page.getByText(httpEndpoint, { exact: true })).toBeVisible();
 			await expect(page.getByText(wsEndpoint, { exact: true })).toBeVisible();

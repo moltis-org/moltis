@@ -396,6 +396,7 @@ impl MethodRegistry {
                         "version": ctx.state.version,
                         "hostname": ctx.state.hostname,
                         "connections": inner.clients.len(),
+                        "uptimeMs": ctx.state.uptime_ms(),
                         "nodes": nodes.count(),
                         "hasMobileNode": nodes.has_mobile_node(),
                     }))
