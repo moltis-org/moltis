@@ -507,6 +507,28 @@ impl From<serde_json::Value> for GenericEvent {
     }
 }
 
+/// System heartbeat tick event with timestamp and memory stats.
+#[derive(Debug, SimpleObject, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TickEvent {
+    /// Unix timestamp in milliseconds.
+    pub ts: u64,
+    /// Memory usage statistics.
+    pub mem: MemoryStats,
+}
+
+/// Memory usage breakdown.
+#[derive(Debug, SimpleObject, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryStats {
+    /// Process RSS in bytes.
+    pub process: u64,
+    /// System available memory in bytes.
+    pub available: u64,
+    /// System total memory in bytes.
+    pub total: u64,
+}
+
 // Allow `Json` to be used as a SimpleObject field (it implements OutputType via Scalar).
 // serde `Deserialize` impl for Json so it can be deserialized from service responses.
 impl<'de> Deserialize<'de> for Json {

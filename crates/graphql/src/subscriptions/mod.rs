@@ -10,7 +10,10 @@ use {
     tokio_stream::Stream,
 };
 
-use crate::{context::GqlContext, types::GenericEvent};
+use crate::{
+    context::GqlContext,
+    types::{GenericEvent, TickEvent},
+};
 
 /// Root subscription type.
 #[derive(Default)]
@@ -65,8 +68,18 @@ impl SubscriptionRoot {
     }
 
     /// System tick events (periodic heartbeat with stats).
-    async fn tick(&self, ctx: &Context<'_>) -> Result<impl Stream<Item = GenericEvent>> {
-        event_stream(ctx, "tick").await
+    async fn tick(&self, ctx: &Context<'_>) -> Result<impl Stream<Item = TickEvent>> {
+        let c = ctx.data::<Arc<GqlContext>>()?;
+        let mut rx = c.subscribe();
+        Ok(async_stream::stream! {
+            while let Ok((name, payload)) = rx.recv().await {
+                if name == "tick"
+                    && let Ok(evt) = serde_json::from_value::<TickEvent>(payload)
+                {
+                    yield evt;
+                }
+            }
+        })
     }
 
     /// Log entry events.
