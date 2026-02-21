@@ -36,6 +36,14 @@ disabled = false                  # true = disable auth entirely (DANGEROUS if e
                                   # When disabled, anyone with network access can use moltis
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GRAPHQL
+# ══════════════════════════════════════════════════════════════════════════════
+
+[graphql]
+enabled = true                    # Enable GraphQL endpoints (/graphql, /graphql/ws)
+                                  # Can be toggled at runtime in Settings > GraphQL
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TLS / HTTPS
 # ══════════════════════════════════════════════════════════════════════════════
 

@@ -20,6 +20,16 @@ async function spoofSafari(page) {
 	});
 }
 
+function graphqlHttpStatus(page) {
+	return page.evaluate(async () => {
+		const response = await fetch("/graphql", {
+			method: "GET",
+			redirect: "manual",
+		});
+		return response.status;
+	});
+}
+
 test.describe("Settings navigation", () => {
 	test("/settings redirects to /settings/identity", async ({ page }) => {
 		await navigateAndWait(page, "/settings");
@@ -211,6 +221,41 @@ test.describe("Settings navigation", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("graphql toggle applies immediately", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+		await waitForWsConnected(page);
+
+		const graphQlNavItem = page.locator(".settings-nav-item", { hasText: "GraphQL" });
+		const hasGraphql = (await graphQlNavItem.count()) > 0;
+		test.skip(!hasGraphql, "GraphQL feature not enabled in this build");
+
+		await graphQlNavItem.click();
+		await expect(page).toHaveURL(/\/settings\/graphql$/);
+		await expect(page.getByRole("heading", { name: "GraphQL", exact: true })).toBeVisible();
+
+		const toggleSwitch = page.locator("#graphqlToggleSwitch");
+		const toggle = page.locator("#graphqlEnabledToggle");
+		await expect(toggleSwitch).toBeVisible();
+		const initial = await toggle.isChecked();
+
+		await toggleSwitch.click();
+		await expect.poll(() => toggle.isChecked()).toBe(!initial);
+
+		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 503 : 200);
+		if (initial) {
+			await expect(page.getByText("GraphQL server is disabled.", { exact: true })).toBeVisible();
+		} else {
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toBeVisible();
+		}
+
+		await toggleSwitch.click();
+		await expect.poll(() => toggle.isChecked()).toBe(initial);
+		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 200 : 503);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("sidebar groups and order match product layout", async ({ page }) => {
 		await navigateAndWait(page, "/settings/identity");
 
@@ -235,12 +280,7 @@ test.describe("Settings navigation", () => {
 			"MCP",
 			"Skills",
 		];
-		const expectedSystem = [
-			"Terminal",
-			"Sandboxes",
-			"Monitoring",
-			"Logs",
-		];
+		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
 		if (navItems.includes("Voice")) expected.push("Voice");
 		expected.push(...expectedSystem);

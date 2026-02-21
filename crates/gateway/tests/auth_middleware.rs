@@ -237,6 +237,74 @@ async fn public_routes_accessible_without_auth() {
     assert_eq!(resp.status(), 200);
 }
 
+/// GraphQL route is not public and requires authentication.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_requires_auth_when_enabled() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_redirection());
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/login")
+    );
+}
+
+/// Runtime GraphQL toggle takes effect immediately without restart.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_runtime_toggle_applies_immediately() {
+    let (addr, store, state) = start_auth_server_with_state().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let auth_header = format!("moltis_session={token}");
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    state.set_graphql_enabled(false);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "graphql server is disabled");
+
+    state.set_graphql_enabled(true);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
 /// Invalid session cookie returns 401.
 #[cfg(feature = "web-ui")]
 #[tokio::test]

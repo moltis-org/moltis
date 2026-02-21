@@ -2795,6 +2795,8 @@ pub async fn start_gateway(
 
     // Store heartbeat config on state for gon data and RPC methods.
     state.inner.write().await.heartbeat_config = config.heartbeat.clone();
+    #[cfg(feature = "graphql")]
+    state.set_graphql_enabled(config.graphql.enabled);
 
     // Wire live chat service (needs state reference, so done after state creation).
     {

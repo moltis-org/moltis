@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -383,6 +383,9 @@ pub struct GatewayState {
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
     pub ws_request_logs: bool,
+    /// Runtime GraphQL availability toggle.
+    #[cfg(feature = "graphql")]
+    pub graphql_enabled: AtomicBool,
     /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
     #[cfg(feature = "graphql")]
     pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
@@ -467,6 +470,8 @@ impl GatewayState {
             ws_request_logs,
             deploy_platform,
             port,
+            #[cfg(feature = "graphql")]
+            graphql_enabled: AtomicBool::new(true),
             #[cfg(feature = "metrics")]
             metrics_handle,
             #[cfg(feature = "metrics")]
@@ -517,6 +522,16 @@ impl GatewayState {
 
     pub fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn is_graphql_enabled(&self) -> bool {
+        self.graphql_enabled.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn set_graphql_enabled(&self, enabled: bool) {
+        self.graphql_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Register a new client connection.

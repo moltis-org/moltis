@@ -13,6 +13,13 @@ GraphQL is compile-time feature gated:
 If Moltis is built without this feature, `/graphql` and `/graphql/ws` are not
 registered.
 
+When built with the feature, GraphQL is runtime-toggleable:
+
+- Config: `[graphql] enabled = true|false`
+- UI: `Settings > GraphQL` toggle
+
+Changes apply immediately, without restart.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -36,6 +43,9 @@ It is not on the public path allowlist.
 
 When auth is required and the request is unauthenticated, GraphQL returns `401`
 (`{"error":"not authenticated"}` or `{"error":"setup required"}`).
+
+When GraphQL is runtime-disabled, `/graphql` and `/graphql/ws` return `503`
+(`{"error":"graphql server is disabled"}`).
 
 Supported auth methods:
 
@@ -156,5 +166,6 @@ mutation {
 
 ## GraphiQL in the Web UI
 
-When GraphQL is enabled, the Settings page includes a **GraphQL** tab that
-embeds GraphiQL at `/graphql`.
+When the binary includes GraphQL, the Settings page includes a **GraphQL** tab.
+At the top of that page you can enable/disable GraphQL immediately; when
+enabled it embeds GraphiQL at `/graphql`.

@@ -1334,13 +1334,126 @@ function bufToB64(buf) {
 // ── Configuration section ─────────────────────────────────────
 
 function GraphqlSection() {
-	return html`<div class="flex-1 flex flex-col min-w-0 overflow-hidden">
-		<iframe
-			src="/graphql"
-			class="flex-1 w-full border-0"
-			title="GraphiQL Playground"
-			allow="clipboard-write"
-		/>
+	var [loadingConfig, setLoadingConfig] = useState(true);
+	var [enabled, setEnabled] = useState(true);
+	var [saving, setSaving] = useState(false);
+	var [msg, setMsg] = useState(null);
+	var [err, setErr] = useState(null);
+
+	function loadGraphqlConfig() {
+		setLoadingConfig(true);
+		sendRpc("graphql.config.get", {})
+			.then((res) => {
+				if (res?.ok) {
+					setEnabled(res.payload?.enabled !== false);
+					setErr(null);
+				} else {
+					setErr(res?.error?.message || "Failed to load GraphQL config");
+				}
+				setLoadingConfig(false);
+				rerender();
+			})
+			.catch((error) => {
+				setErr(error?.message || "Failed to load GraphQL config");
+				setLoadingConfig(false);
+				rerender();
+			});
+	}
+
+	useEffect(() => {
+		loadGraphqlConfig();
+	}, []);
+
+	function onToggle(nextEnabled) {
+		setSaving(true);
+		setMsg(null);
+		setErr(null);
+		setEnabled(nextEnabled);
+		rerender();
+
+		sendRpc("graphql.config.set", { enabled: nextEnabled })
+			.then((res) => {
+				setSaving(false);
+				if (res?.ok) {
+					setEnabled(res.payload?.enabled !== false);
+					if (res.payload?.persisted === false) {
+						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
+					} else {
+						setMsg(
+							nextEnabled
+								? "GraphQL server enabled. Endpoints are live now."
+								: "GraphQL server disabled. Endpoints are blocked now.",
+						);
+					}
+				} else {
+					setEnabled(!nextEnabled);
+					setErr(res?.error?.message || "Failed to update GraphQL setting");
+				}
+				rerender();
+			})
+			.catch((error) => {
+				setSaving(false);
+				setEnabled(!nextEnabled);
+				setErr(error?.message || "Failed to update GraphQL setting");
+				rerender();
+			});
+	}
+
+	if (loadingConfig) {
+		return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">GraphQL</h2>
+			<div class="text-xs text-[var(--muted)]">Loading...</div>
+		</div>`;
+	}
+
+	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+		<h2 class="text-lg font-medium text-[var(--text-strong)]">GraphQL</h2>
+		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
+			Enable or disable the GraphQL HTTP and WebSocket endpoints immediately for security and resource control.
+		</p>
+		<div style="max-width:900px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);">
+			<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+				<div>
+					<div class="text-sm font-medium text-[var(--text-strong)]">GraphQL server</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
+						${enabled ? "Enabled" : "Disabled"} (${
+							enabled ? "/graphql and /graphql/ws accept requests" : "/graphql and /graphql/ws return 503"
+						})
+					</div>
+				</div>
+				<label id="graphqlToggleSwitch" class="toggle-switch">
+					<input
+						id="graphqlEnabledToggle"
+						type="checkbox"
+						checked=${enabled}
+						disabled=${saving}
+						onChange=${(e) => onToggle(e.target.checked)}
+					/>
+					<span class="toggle-slider"></span>
+				</label>
+			</div>
+			${saving ? html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">Applying...</div>` : null}
+			${msg ? html`<div class="text-xs text-[var(--ok)]" style="margin-top:8px;">${msg}</div>` : null}
+			${err ? html`<div class="text-xs text-[var(--error)]" style="margin-top:8px;">${err}</div>` : null}
+		</div>
+
+		${
+			enabled
+				? html`<div class="flex-1 min-h-0 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]">
+					<iframe
+						src="/graphql"
+						class="h-full w-full border-0"
+						title="GraphiQL Playground"
+						allow="clipboard-write"
+					/>
+				</div>`
+				: html`<div style="max-width:900px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg);">
+					<div class="text-sm text-[var(--text-strong)]">GraphQL server is disabled.</div>
+					<div class="text-xs text-[var(--muted)]" style="margin-top:4px;">
+						Re-enable it above to use GraphiQL and GraphQL API endpoints.
+					</div>
+				</div>`
+		}
 	</div>`;
 }
 

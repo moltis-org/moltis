@@ -9,7 +9,9 @@ use std::sync::Arc;
 use {
     async_graphql::http::GraphiQLSource,
     axum::{
+        Json,
         extract::{State, WebSocketUpgrade},
+        http::StatusCode,
         response::{Html, IntoResponse},
     },
     serde_json::Value,
@@ -363,22 +365,40 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
 }
 
 /// Serve the GraphiQL interactive playground.
-pub async fn graphiql_handler() -> Html<String> {
+pub async fn graphiql_handler(State(state): State<AppState>) -> impl IntoResponse {
+    if !state.gateway.is_graphql_enabled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "graphql server is disabled" })),
+        )
+            .into_response();
+    }
+
     Html(
         GraphiQLSource::build()
             .endpoint("/graphql")
             .subscription_endpoint("/graphql/ws")
             .finish(),
     )
+    .into_response()
 }
 
 /// Handle GraphQL queries and mutations.
 pub async fn graphql_handler(
     State(state): State<AppState>,
     req: async_graphql_axum::GraphQLRequest,
-) -> async_graphql_axum::GraphQLResponse {
+) -> impl IntoResponse {
+    if !state.gateway.is_graphql_enabled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "graphql server is disabled" })),
+        )
+            .into_response();
+    }
+
     let schema = build_schema(&state);
-    schema.execute(req.into_inner()).await.into()
+    async_graphql_axum::GraphQLResponse::from(schema.execute(req.into_inner()).await)
+        .into_response()
 }
 
 /// Handle GraphQL subscriptions via WebSocket.
@@ -387,6 +407,14 @@ pub async fn graphql_ws_handler(
     protocol: async_graphql_axum::GraphQLProtocol,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    if !state.gateway.is_graphql_enabled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "graphql server is disabled" })),
+        )
+            .into_response();
+    }
+
     let schema = build_schema(&state);
     let protocol_clone = protocol;
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
