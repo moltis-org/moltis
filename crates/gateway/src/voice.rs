@@ -197,6 +197,18 @@ impl LiveTtsService {
             (TtsProviderId::Coqui, true), // Always available if server running
         ]
     }
+
+    /// Resolve the active provider: explicit config value, or first configured.
+    fn resolve_provider(config_provider: &str) -> Option<TtsProviderId> {
+        if !config_provider.is_empty() {
+            return TtsProviderId::parse(config_provider);
+        }
+        // Auto-select: first configured provider
+        Self::list_providers()
+            .into_iter()
+            .find(|(_, configured)| *configured)
+            .map(|(id, _)| id)
+    }
 }
 
 #[cfg(feature = "voice")]
@@ -206,10 +218,11 @@ impl TtsService for LiveTtsService {
         let config = Self::load_config();
         let providers = Self::list_providers();
         let any_configured = providers.iter().any(|(_, configured)| *configured);
+        let resolved = Self::resolve_provider(&config.provider);
 
         Ok(json!({
             "enabled": config.enabled && any_configured,
-            "provider": config.provider,
+            "provider": resolved.map(|p| p.to_string()).unwrap_or_default(),
             "auto": format!("{:?}", config.auto).to_lowercase(),
             "maxTextLength": config.max_text_length,
             "configured": any_configured,
@@ -234,13 +247,12 @@ impl TtsService for LiveTtsService {
     async fn enable(&self, params: Value) -> ServiceResult {
         let config = Self::load_config();
 
-        let provider_str = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&config.provider);
-
-        let provider_id = TtsProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
+        let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
+            Some(s) => TtsProviderId::parse(s)
+                .ok_or_else(|| format!("unknown TTS provider '{s}'"))?,
+            None => Self::resolve_provider(&config.provider)
+                .ok_or_else(|| "no TTS provider configured".to_string())?,
+        };
 
         if Self::create_provider(provider_id).is_none() {
             return Err(format!("provider '{}' not configured", provider_id));
@@ -293,13 +305,12 @@ impl TtsService for LiveTtsService {
             ));
         }
 
-        let provider_str = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&config.provider);
-
-        let provider_id = TtsProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
+        let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
+            Some(s) => TtsProviderId::parse(s)
+                .ok_or_else(|| format!("unknown TTS provider '{s}'"))?,
+            None => Self::resolve_provider(&config.provider)
+                .ok_or_else(|| "no TTS provider configured".to_string())?,
+        };
 
         info!(
             provider = %provider_id,
@@ -643,6 +654,20 @@ impl LiveSttService {
             ),
         ]
     }
+
+    /// Resolve the active provider: explicit config value, or first configured.
+    fn resolve_provider(
+        config_provider: Option<moltis_config::VoiceSttProvider>,
+    ) -> Option<SttProviderId> {
+        if let Some(p) = config_provider {
+            return SttProviderId::parse(p.as_str());
+        }
+        // Auto-select: first configured provider
+        Self::list_providers()
+            .into_iter()
+            .find(|(_, configured)| *configured)
+            .map(|(id, _)| id)
+    }
 }
 
 #[cfg(feature = "voice")]
@@ -652,10 +677,11 @@ impl SttService for LiveSttService {
         let cfg = moltis_config::discover_and_load();
         let providers = Self::list_providers();
         let any_configured = providers.iter().any(|(_, configured)| *configured);
+        let resolved = Self::resolve_provider(cfg.voice.stt.provider);
 
         Ok(json!({
             "enabled": any_configured,
-            "provider": cfg.voice.stt.provider,
+            "provider": resolved.map(|p| p.to_string()).unwrap_or_default(),
             "configured": any_configured,
         }))
     }
@@ -709,10 +735,13 @@ impl SttService for LiveSttService {
         prompt: Option<&str>,
     ) -> ServiceResult {
         let cfg = moltis_config::discover_and_load();
-        let provider_str = provider.unwrap_or(cfg.voice.stt.provider.as_str());
 
-        let provider_id = SttProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
+        let provider_id = match provider {
+            Some(s) => SttProviderId::parse(s)
+                .ok_or_else(|| format!("unknown STT provider '{s}'"))?,
+            None => Self::resolve_provider(cfg.voice.stt.provider)
+                .ok_or_else(|| "no STT provider configured".to_string())?,
+        };
 
         let stt_provider: Box<dyn SttProvider + Send + Sync> =
             Self::create_provider(provider_id)
@@ -754,7 +783,7 @@ impl SttService for LiveSttService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.stt.provider = provider_id.into_voice_stt_provider();
+            cfg.voice.stt.provider = Some(provider_id.into_voice_stt_provider());
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 

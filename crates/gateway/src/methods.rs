@@ -4008,7 +4008,7 @@ impl MethodRegistry {
                                     // Auto-enable both TTS and STT with ElevenLabs
                                     cfg.voice.tts.provider = "elevenlabs".to_string();
                                     cfg.voice.tts.enabled = true;
-                                    cfg.voice.stt.provider = VoiceSttProvider::ElevenLabs;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::ElevenLabs);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 "openai" | "openai-tts" => {
@@ -4026,26 +4026,26 @@ impl MethodRegistry {
                                     // Auto-enable both TTS and STT with Google
                                     cfg.voice.tts.provider = "google".to_string();
                                     cfg.voice.tts.enabled = true;
-                                    cfg.voice.stt.provider = VoiceSttProvider::Google;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Google);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 // STT providers
                                 "whisper" => {
                                     cfg.voice.stt.whisper.api_key =
                                         Some(Secret::new(api_key.to_string()));
-                                    cfg.voice.stt.provider = VoiceSttProvider::Whisper;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Whisper);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 "groq" => {
                                     cfg.voice.stt.groq.api_key =
                                         Some(Secret::new(api_key.to_string()));
-                                    cfg.voice.stt.provider = VoiceSttProvider::Groq;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Groq);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 "deepgram" => {
                                     cfg.voice.stt.deepgram.api_key =
                                         Some(Secret::new(api_key.to_string()));
-                                    cfg.voice.stt.provider = VoiceSttProvider::Deepgram;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Deepgram);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 "google" => {
@@ -4055,7 +4055,7 @@ impl MethodRegistry {
                                     cfg.voice.tts.google.api_key =
                                         Some(Secret::new(api_key.to_string()));
                                     // Auto-enable both STT and TTS with Google
-                                    cfg.voice.stt.provider = VoiceSttProvider::Google;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Google);
                                     cfg.voice.stt.enabled = true;
                                     cfg.voice.tts.provider = "google".to_string();
                                     cfg.voice.tts.enabled = true;
@@ -4063,7 +4063,7 @@ impl MethodRegistry {
                                 "mistral" => {
                                     cfg.voice.stt.mistral.api_key =
                                         Some(Secret::new(api_key.to_string()));
-                                    cfg.voice.stt.provider = VoiceSttProvider::Mistral;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::Mistral);
                                     cfg.voice.stt.enabled = true;
                                 },
                                 "elevenlabs-stt" => {
@@ -4073,7 +4073,7 @@ impl MethodRegistry {
                                     cfg.voice.tts.elevenlabs.api_key =
                                         Some(Secret::new(api_key.to_string()));
                                     // Auto-enable both STT and TTS with ElevenLabs
-                                    cfg.voice.stt.provider = VoiceSttProvider::ElevenLabs;
+                                    cfg.voice.stt.provider = Some(VoiceSttProvider::ElevenLabs);
                                     cfg.voice.stt.enabled = true;
                                     cfg.voice.tts.provider = "elevenlabs".to_string();
                                     cfg.voice.tts.enabled = true;
@@ -5014,7 +5014,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             config.voice.stt.whisper.api_key.is_some()
                 || env_openai_key.is_some()
                 || llm_openai_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::Whisper && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::Whisper) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.whisper.api_key.is_some(),
                 env_openai_key.is_some(),
@@ -5031,7 +5031,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             config.voice.stt.groq.api_key.is_some()
                 || env_groq_key.is_some()
                 || llm_groq_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::Groq && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::Groq) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.groq.api_key.is_some(),
                 env_groq_key.is_some(),
@@ -5046,7 +5046,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "cloud",
             config.voice.stt.deepgram.api_key.is_some() || env_deepgram_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::Deepgram && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::Deepgram) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.deepgram.api_key.is_some(),
                 env_deepgram_key.is_some(),
@@ -5061,7 +5061,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "cloud",
             config.voice.stt.google.api_key.is_some() || env_google_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::Google && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::Google) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.google.api_key.is_some(),
                 env_google_key.is_some(),
@@ -5076,7 +5076,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "cloud",
             config.voice.stt.mistral.api_key.is_some() || env_mistral_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::Mistral && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::Mistral) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.mistral.api_key.is_some(),
                 env_mistral_key.is_some(),
@@ -5093,7 +5093,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             config.voice.stt.elevenlabs.api_key.is_some()
                 || config.voice.tts.elevenlabs.api_key.is_some()
                 || env_elevenlabs_key.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::ElevenLabs && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::ElevenLabs) && config.voice.stt.enabled,
             key_source(
                 config.voice.stt.elevenlabs.api_key.is_some()
                     || config.voice.tts.elevenlabs.api_key.is_some(),
@@ -5109,7 +5109,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "local",
             voxtral_server_running,
-            config.voice.stt.provider == VoiceSttProvider::VoxtralLocal && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::VoxtralLocal) && config.voice.stt.enabled,
             None,
             None,
             if !voxtral_server_running {
@@ -5124,7 +5124,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "local",
             whisper_cli_available.is_some() && config.voice.stt.whisper_cli.model_path.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::WhisperCli && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::WhisperCli) && config.voice.stt.enabled,
             None,
             whisper_cli_available.clone(),
             if whisper_cli_available.is_none() {
@@ -5145,7 +5145,7 @@ async fn detect_voice_providers(config: &moltis_config::MoltisConfig) -> serde_j
             "stt",
             "local",
             sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
-            config.voice.stt.provider == VoiceSttProvider::SherpaOnnx && config.voice.stt.enabled,
+            config.voice.stt.provider == Some(VoiceSttProvider::SherpaOnnx) && config.voice.stt.enabled,
             None,
             sherpa_onnx_available.clone(),
             if sherpa_onnx_available.is_none() {
@@ -5606,11 +5606,11 @@ fn toggle_voice_provider(
                 let stt_provider = VoiceSttProvider::parse(provider);
                 if enabled {
                     if let Some(provider_id) = stt_provider {
-                        cfg.voice.stt.provider = provider_id;
+                        cfg.voice.stt.provider = Some(provider_id);
                         cfg.voice.stt.enabled = true;
                     }
                 } else if stt_provider
-                    .is_some_and(|provider_id| cfg.voice.stt.provider == provider_id)
+                    .is_some_and(|provider_id| cfg.voice.stt.provider == Some(provider_id))
                 {
                     cfg.voice.stt.enabled = false;
                 }
