@@ -823,7 +823,7 @@ mod tests {
     async fn test_brave_missing_api_key_returns_hint() {
         let tool = brave_tool();
         let result = tool
-            .execute(serde_json::json!({"query": "test"}))
+            .search_brave("test", 5, &serde_json::json!({}), None, "")
             .await
             .unwrap();
         assert!(result["error"].as_str().unwrap().contains("not configured"));
@@ -834,7 +834,7 @@ mod tests {
     async fn test_perplexity_missing_api_key_returns_hint() {
         let tool = perplexity_tool();
         let result = tool
-            .execute(serde_json::json!({"query": "test"}))
+            .search_perplexity("test", "", "https://api.perplexity.ai", "sonar-pro")
             .await
             .unwrap();
         assert!(result["error"].as_str().unwrap().contains("not configured"));
