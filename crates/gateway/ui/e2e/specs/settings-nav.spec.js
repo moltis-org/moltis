@@ -238,6 +238,10 @@ test.describe("Settings navigation", () => {
 		const toggle = page.locator("#graphqlEnabledToggle");
 		await expect(toggleSwitch).toBeVisible();
 		const initial = await toggle.isChecked();
+		const settingsUrl = new URL(page.url());
+		const httpEndpoint = `${settingsUrl.origin}/graphql`;
+		const wsScheme = settingsUrl.protocol === "https:" ? "wss:" : "ws:";
+		const wsEndpoint = `${wsScheme}//${settingsUrl.host}/graphql/ws`;
 
 		await toggleSwitch.click();
 		await expect.poll(() => toggle.isChecked()).toBe(!initial);
@@ -246,12 +250,19 @@ test.describe("Settings navigation", () => {
 		if (initial) {
 			await expect(page.getByText("GraphQL server is disabled.", { exact: true })).toBeVisible();
 		} else {
+			await expect(page.getByText(httpEndpoint, { exact: true })).toBeVisible();
+			await expect(page.getByText(wsEndpoint, { exact: true })).toBeVisible();
 			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toBeVisible();
 		}
 
 		await toggleSwitch.click();
 		await expect.poll(() => toggle.isChecked()).toBe(initial);
 		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 200 : 503);
+		if (initial) {
+			await expect(page.getByText(httpEndpoint, { exact: true })).toBeVisible();
+			await expect(page.getByText(wsEndpoint, { exact: true })).toBeVisible();
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toBeVisible();
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

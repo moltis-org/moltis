@@ -1339,6 +1339,10 @@ function GraphqlSection() {
 	var [saving, setSaving] = useState(false);
 	var [msg, setMsg] = useState(null);
 	var [err, setErr] = useState(null);
+	var origin = window.location.origin;
+	var wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	var httpEndpoint = `${origin}/graphql`;
+	var wsEndpoint = `${wsProtocol}//${window.location.host}/graphql/ws`;
 
 	function loadGraphqlConfig() {
 		setLoadingConfig(true);
@@ -1381,7 +1385,7 @@ function GraphqlSection() {
 					} else {
 						setMsg(
 							nextEnabled
-								? "GraphQL server enabled. Endpoints are live now."
+								? `GraphQL server enabled. Use ${httpEndpoint} (HTTP) and ${wsEndpoint} (WebSocket).`
 								: "GraphQL server disabled. Endpoints are blocked now.",
 						);
 					}
@@ -1420,6 +1424,20 @@ function GraphqlSection() {
 							enabled ? "/graphql and /graphql/ws accept requests" : "/graphql and /graphql/ws return 503"
 						})
 					</div>
+					${
+						enabled
+							? html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">
+									<div>
+										HTTP endpoint:
+										<code>${httpEndpoint}</code>
+									</div>
+									<div style="margin-top:2px;">
+										WebSocket endpoint:
+										<code>${wsEndpoint}</code>
+									</div>
+								</div>`
+							: null
+					}
 				</div>
 				<label id="graphqlToggleSwitch" class="toggle-switch">
 					<input
