@@ -66,3 +66,55 @@ fn json_to_gql_value(v: &serde_json::Value) -> Value {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use {super::*, async_graphql::Name};
+
+    #[test]
+    fn json_scalar_round_trips_structures() {
+        let input = Value::Object(
+            [
+                (Name::new("a"), Value::Number(1.into())),
+                (Name::new("b"), Value::Boolean(true)),
+                (
+                    Name::new("c"),
+                    Value::List(vec![Value::String("x".into()), Value::Null]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        let parsed = Json::parse(input).expect("parse");
+        let out = parsed.to_value();
+        let json = gql_value_to_json(out).expect("to json");
+        assert_eq!(json["a"], 1);
+        assert_eq!(json["b"], true);
+        assert_eq!(json["c"][0], "x");
+    }
+
+    #[test]
+    fn json_scalar_rejects_unsupported_values() {
+        let unsupported = Value::Enum(Name::new("SOMETHING"));
+        let err = Json::parse(unsupported).expect_err("expected parse error");
+        assert!(format!("{err:?}").contains("unsupported value type"));
+    }
+
+    #[test]
+    fn json_scalar_handles_null_numbers_and_arrays() {
+        let parsed = Json::parse(Value::List(vec![
+            Value::Null,
+            Value::Number(42.into()),
+            Value::Number(async_graphql::Number::from_f64(1.5).expect("valid float")),
+        ]))
+        .expect("parse");
+        let out = parsed.to_value();
+        let json = gql_value_to_json(out).expect("to json");
+        assert!(json.is_array());
+        assert_eq!(json[0], serde_json::Value::Null);
+        assert_eq!(json[1], 42);
+    }
+}
