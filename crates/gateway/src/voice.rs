@@ -50,6 +50,23 @@ impl IntoVoiceSttProvider for SttProviderId {
     }
 }
 
+/// Resolve an OpenAI API key with fallback: voice-specific config → `OPENAI_API_KEY`
+/// env var → LLM provider config (`providers.openai.api_key`).
+#[cfg(feature = "voice")]
+fn resolve_openai_key(
+    voice_key: Option<&Secret<String>>,
+    cfg: &moltis_config::MoltisConfig,
+) -> Option<Secret<String>> {
+    voice_key
+        .cloned()
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok().map(Secret::new))
+        .or_else(|| {
+            cfg.providers
+                .get("openai")
+                .and_then(|p| p.api_key.clone())
+        })
+}
+
 // ── TTS Service ─────────────────────────────────────────────────────────────
 
 /// Live TTS service that delegates to voice providers.
@@ -98,7 +115,7 @@ impl LiveTtsService {
                 similarity_boost: None,
             },
             openai: moltis_voice::OpenAiTtsConfig {
-                api_key: cfg.voice.tts.openai.api_key.clone(),
+                api_key: resolve_openai_key(cfg.voice.tts.openai.api_key.as_ref(), &cfg),
                 voice: cfg.voice.tts.openai.voice.clone(),
                 model: cfg.voice.tts.openai.model.clone(),
                 speed: None,
@@ -509,9 +526,12 @@ impl LiveSttService {
     fn create_provider(provider_id: SttProviderId) -> Option<Box<dyn SttProvider + Send + Sync>> {
         let cfg = moltis_config::discover_and_load();
         match provider_id {
-            SttProviderId::Whisper => cfg.voice.stt.whisper.api_key.as_ref().map(|key| {
-                Box::new(WhisperStt::new(Some(key.clone()))) as Box<dyn SttProvider + Send + Sync>
-            }),
+            SttProviderId::Whisper => {
+                let key = resolve_openai_key(cfg.voice.stt.whisper.api_key.as_ref(), &cfg);
+                key.map(|k| {
+                    Box::new(WhisperStt::new(Some(k))) as Box<dyn SttProvider + Send + Sync>
+                })
+            },
             SttProviderId::Groq => cfg.voice.stt.groq.api_key.as_ref().map(|key| {
                 Box::new(GroqStt::with_options(
                     Some(key.clone()),
