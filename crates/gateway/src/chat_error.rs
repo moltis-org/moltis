@@ -46,6 +46,21 @@ fn try_parse_known_error(raw: &str) -> Value {
             );
         }
 
+        // Billing / quota exhaustion (not transient rate limiting).
+        if is_insufficient_quota_error(err_obj, raw) {
+            let detail = err_obj.get("message").and_then(|v| v.as_str()).unwrap_or(
+                "Your account quota is exhausted. Add funds or switch providers and try again.",
+            );
+            return build_error(
+                "billing_exhausted",
+                "\u{26A0}\u{FE0F}",
+                "Insufficient quota",
+                detail,
+                None,
+                None,
+            );
+        }
+
         // Rate limit
         if matches_type_or_message(err_obj, "rate_limit_exceeded", "rate limit")
             || matches_type_or_message(err_obj, "rate_limit_exceeded", "quota exceeded")
@@ -88,6 +103,17 @@ fn try_parse_known_error(raw: &str) -> Value {
     }
 
     // Check for HTTP status codes in the raw message.
+    if is_insufficient_quota_error(&Value::Null, raw) {
+        return build_error(
+            "billing_exhausted",
+            "\u{26A0}\u{FE0F}",
+            "Insufficient quota",
+            raw,
+            None,
+            None,
+        );
+    }
+
     if let Some(code) = http_status {
         match code {
             401 | 403 => {
@@ -191,6 +217,36 @@ fn matches_type_or_message(obj: &Value, type_str: &str, message_substr: &str) ->
         return true;
     }
     false
+}
+
+fn is_insufficient_quota_error(obj: &Value, raw: &str) -> bool {
+    if obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.eq_ignore_ascii_case("insufficient_quota"))
+    {
+        return true;
+    }
+    if obj
+        .get("code")
+        .and_then(|v| v.as_str())
+        .is_some_and(|c| c.eq_ignore_ascii_case("insufficient_quota"))
+    {
+        return true;
+    }
+    if obj
+        .get("message")
+        .and_then(|v| v.as_str())
+        .is_some_and(|m| {
+            let lower = m.to_ascii_lowercase();
+            lower.contains("insufficient_quota")
+                || (lower.contains("current quota") && lower.contains("billing"))
+        })
+    {
+        return true;
+    }
+
+    raw.to_ascii_lowercase().contains("insufficient_quota")
 }
 
 fn extract_resets_at(obj: &Value) -> Option<u64> {
@@ -380,6 +436,22 @@ mod tests {
         let raw = r#"provider error: {"error":{"message":"quota exceeded"}}"#;
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "rate_limit_exceeded");
+    }
+
+    #[test]
+    fn test_insufficient_quota_json_maps_to_billing_exhausted() {
+        let raw = r#"provider error: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}"#;
+        let result = parse_chat_error(raw, None);
+        assert_eq!(result["type"], "billing_exhausted");
+        assert_eq!(result["title"], "Insufficient quota");
+        assert!(result["detail"].as_str().unwrap().contains("current quota"));
+    }
+
+    #[test]
+    fn test_insufficient_quota_plain_text_maps_to_billing_exhausted() {
+        let raw = "HTTP 429 insufficient_quota";
+        let result = parse_chat_error(raw, None);
+        assert_eq!(result["type"], "billing_exhausted");
     }
 
     #[test]
