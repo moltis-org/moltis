@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Hook handler: translates Moltis BeforeToolCall payload to dcg format.
-# Requires: dcg (cargo install dcg)
+# When dcg is not installed the hook is a no-op (all commands pass through).
 
 set -euo pipefail
+
+# Gracefully skip when dcg is not installed.
+if ! command -v dcg >/dev/null 2>&1; then
+    cat >/dev/null   # drain stdin
+    exit 0
+fi
 
 INPUT=$(cat)
 

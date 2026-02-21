@@ -9,13 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+
 ### Changed
+
+- Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
 
 ### Security
 
