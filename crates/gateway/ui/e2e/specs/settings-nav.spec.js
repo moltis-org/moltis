@@ -241,7 +241,7 @@ test.describe("Settings navigation", () => {
 		const settingsUrl = new URL(page.url());
 		const httpEndpoint = `${settingsUrl.origin}/graphql`;
 		const wsScheme = settingsUrl.protocol === "https:" ? "wss:" : "ws:";
-		const wsEndpoint = `${wsScheme}//${settingsUrl.host}/graphql/ws`;
+		const wsEndpoint = `${wsScheme}//${settingsUrl.host}/graphql`;
 
 		await toggleSwitch.click();
 		await expect.poll(() => toggle.isChecked()).toBe(!initial);

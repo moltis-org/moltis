@@ -10,8 +10,7 @@ GraphQL is compile-time feature gated:
 - Gateway feature: `graphql`
 - CLI feature: `graphql` (enabled in default feature set)
 
-If Moltis is built without this feature, `/graphql` and `/graphql/ws` are not
-registered.
+If Moltis is built without this feature, `/graphql` is not registered.
 
 When built with the feature, GraphQL is runtime-toggleable:
 
@@ -24,9 +23,8 @@ Changes apply immediately, without restart.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/graphql` | GraphiQL playground |
+| `GET` | `/graphql` | GraphiQL playground and WebSocket subscriptions |
 | `POST` | `/graphql` | Queries and mutations |
-| `GET` | `/graphql/ws` | Subscriptions over WebSocket |
 
 WebSocket subprotocols accepted:
 
@@ -44,7 +42,7 @@ It is not on the public path allowlist.
 When auth is required and the request is unauthenticated, GraphQL returns `401`
 (`{"error":"not authenticated"}` or `{"error":"setup required"}`).
 
-When GraphQL is runtime-disabled, `/graphql` and `/graphql/ws` return `503`
+When GraphQL is runtime-disabled, `/graphql` returns `503`
 (`{"error":"graphql server is disabled"}`).
 
 Supported auth methods:
@@ -144,7 +142,7 @@ mutation {
 
 ### Subscription (`graphql-transport-ws`)
 
-1. Connect to `ws://localhost:13131/graphql/ws` with subprotocol
+1. Connect to `ws://localhost:13131/graphql` with subprotocol
    `graphql-transport-ws`.
 2. Send:
 

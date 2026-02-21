@@ -6,6 +6,8 @@ use std::{net::SocketAddr, sync::Arc};
 use secrecy::ExposeSecret;
 
 use tokio::net::TcpListener;
+#[cfg(all(feature = "graphql", feature = "web-ui"))]
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use moltis_gateway::{
     auth::{self, CredentialStore},
@@ -303,6 +305,49 @@ async fn graphql_runtime_toggle_applies_immediately() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+/// GraphQL subscriptions upgrade on `/graphql` with GraphQL WS subprotocols.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_supported_on_graphql_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let (_socket, response) = connect_async(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    assert_eq!(
+        response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .and_then(|value| value.to_str().ok()),
+        Some("graphql-transport-ws")
+    );
+}
+
+/// Legacy `/graphql/ws` endpoint is not supported, subscriptions must use `/graphql`.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_not_supported_on_legacy_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql/ws")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let result = connect_async(request).await;
+    assert!(result.is_err());
 }
 
 /// Invalid session cookie returns 401.

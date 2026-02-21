@@ -1342,7 +1342,7 @@ function GraphqlSection() {
 	var origin = window.location.origin;
 	var wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 	var httpEndpoint = `${origin}/graphql`;
-	var wsEndpoint = `${wsProtocol}//${window.location.host}/graphql/ws`;
+	var wsEndpoint = `${wsProtocol}//${window.location.host}/graphql`;
 
 	function loadGraphqlConfig() {
 		setLoadingConfig(true);
@@ -1383,11 +1383,7 @@ function GraphqlSection() {
 					if (res.payload?.persisted === false) {
 						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
 					} else {
-						setMsg(
-							nextEnabled
-								? `GraphQL server enabled. Use ${httpEndpoint} (HTTP) and ${wsEndpoint} (WebSocket).`
-								: "GraphQL server disabled. Endpoints are blocked now.",
-						);
+						setMsg(nextEnabled ? "GraphQL server enabled." : "GraphQL server disabled.");
 					}
 				} else {
 					setEnabled(!nextEnabled);
@@ -1413,17 +1409,12 @@ function GraphqlSection() {
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">GraphQL</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed max-w-form" style="margin:0;">
-			Enable or disable the GraphQL HTTP and WebSocket endpoints immediately for security and resource control.
+			Enable or disable the GraphQL server immediately for security and resource control.
 		</p>
 		<div style="max-width:900px;padding:12px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);">
 			<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
 				<div>
 					<div class="text-sm font-medium text-[var(--text-strong)]">GraphQL server</div>
-					<div class="text-xs text-[var(--muted)]" style="margin-top:2px;">
-						${enabled ? "Enabled" : "Disabled"} (${
-							enabled ? "/graphql and /graphql/ws accept requests" : "/graphql and /graphql/ws return 503"
-						})
-					</div>
 					${
 						enabled
 							? html`<div class="text-xs text-[var(--muted)]" style="margin-top:8px;">

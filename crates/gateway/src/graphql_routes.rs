@@ -2,7 +2,7 @@
 //!
 //! These handlers bridge `AppState` to the `moltis-graphql` schema, providing
 //! GraphiQL on GET `/graphql`, query/mutation execution on POST `/graphql`,
-//! and WebSocket subscriptions on GET `/graphql/ws`.
+//! and WebSocket subscriptions on GET `/graphql`.
 
 use std::sync::Arc;
 
@@ -10,9 +10,9 @@ use {
     async_graphql::http::GraphiQLSource,
     axum::{
         Json,
-        extract::{State, WebSocketUpgrade},
-        http::StatusCode,
-        response::{Html, IntoResponse},
+        extract::{FromRequestParts, Request, State, WebSocketUpgrade},
+        http::{HeaderMap, HeaderName, StatusCode, header},
+        response::{Html, IntoResponse, Response},
     },
     serde_json::Value,
 };
@@ -364,23 +364,33 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
     }
 }
 
-/// Serve the GraphiQL interactive playground.
-pub async fn graphiql_handler(State(state): State<AppState>) -> impl IntoResponse {
+/// Handle GET `/graphql`:
+///
+/// - Standard HTTP GET: returns GraphiQL.
+/// - WebSocket upgrade GET: upgrades to GraphQL subscriptions.
+pub async fn graphql_get_handler(State(state): State<AppState>, req: Request) -> impl IntoResponse {
     if !state.gateway.is_graphql_enabled() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "graphql server is disabled" })),
-        )
-            .into_response();
+        return graphql_disabled_response();
     }
 
-    Html(
-        GraphiQLSource::build()
-            .endpoint("/graphql")
-            .subscription_endpoint("/graphql/ws")
-            .finish(),
-    )
-    .into_response()
+    let (mut parts, _body) = req.into_parts();
+
+    if is_websocket_upgrade_request(&parts.headers) {
+        let protocol =
+            match async_graphql_axum::GraphQLProtocol::from_request_parts(&mut parts, &()).await {
+                Ok(protocol) => protocol,
+                Err(status) => return status.into_response(),
+            };
+
+        let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+            Ok(ws) => ws,
+            Err(rejection) => return rejection.into_response(),
+        };
+
+        return graphql_ws_response(&state, protocol, ws);
+    }
+
+    graphiql_response()
 }
 
 /// Handle GraphQL queries and mutations.
@@ -389,11 +399,7 @@ pub async fn graphql_handler(
     req: async_graphql_axum::GraphQLRequest,
 ) -> impl IntoResponse {
     if !state.gateway.is_graphql_enabled() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "graphql server is disabled" })),
-        )
-            .into_response();
+        return graphql_disabled_response();
     }
 
     let schema = build_schema(&state);
@@ -401,29 +407,58 @@ pub async fn graphql_handler(
         .into_response()
 }
 
-/// Handle GraphQL subscriptions via WebSocket.
-pub async fn graphql_ws_handler(
-    State(state): State<AppState>,
+fn graphql_ws_response(
+    state: &AppState,
     protocol: async_graphql_axum::GraphQLProtocol,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    if !state.gateway.is_graphql_enabled() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "graphql server is disabled" })),
-        )
-            .into_response();
-    }
-
-    let schema = build_schema(&state);
-    let protocol_clone = protocol;
+) -> Response {
+    let schema = build_schema(state);
+    let selected_protocol = protocol;
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| {
-            let resp = async_graphql_axum::GraphQLWebSocket::new(socket, schema, protocol_clone);
+            let resp = async_graphql_axum::GraphQLWebSocket::new(socket, schema, selected_protocol);
             async move {
                 resp.serve().await;
             }
         })
+        .into_response()
+}
+
+fn graphiql_response() -> Response {
+    Html(
+        GraphiQLSource::build()
+            .endpoint("/graphql")
+            .subscription_endpoint("/graphql")
+            .finish(),
+    )
+    .into_response()
+}
+
+fn graphql_disabled_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "error": "graphql server is disabled" })),
+    )
+        .into_response()
+}
+
+fn is_websocket_upgrade_request(headers: &HeaderMap) -> bool {
+    header_contains_token(headers, header::CONNECTION, "upgrade")
+        || header_contains_token(headers, header::UPGRADE, "websocket")
+        || headers.contains_key(header::SEC_WEBSOCKET_KEY)
+        || headers.contains_key(header::SEC_WEBSOCKET_PROTOCOL)
+}
+
+fn header_contains_token(headers: &HeaderMap, name: HeaderName, expected: &str) -> bool {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case(expected))
+        })
+        .unwrap_or(false)
 }
 
 fn build_schema(state: &AppState) -> moltis_graphql::MoltisSchema {

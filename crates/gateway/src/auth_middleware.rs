@@ -264,6 +264,5 @@ mod tests {
     #[test]
     fn graphql_paths_are_not_public() {
         assert!(!is_public_path("/graphql"));
-        assert!(!is_public_path("/graphql/ws"));
     }
 }

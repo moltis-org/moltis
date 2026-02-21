@@ -40,7 +40,7 @@ disabled = false                  # true = disable auth entirely (DANGEROUS if e
 # ══════════════════════════════════════════════════════════════════════════════
 
 [graphql]
-enabled = true                    # Enable GraphQL endpoints (/graphql, /graphql/ws)
+enabled = true                    # Enable GraphQL endpoint (/graphql for HTTP + WebSocket)
                                   # Can be toggled at runtime in Settings > GraphQL
 
 # ══════════════════════════════════════════════════════════════════════════════

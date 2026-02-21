@@ -864,28 +864,19 @@ pub fn build_gateway_app(
 
     // GraphQL routes (behind auth_gate when web-ui is enabled).
     #[cfg(all(feature = "graphql", feature = "web-ui"))]
-    let router = router
-        .route(
-            "/graphql",
-            get(crate::graphql_routes::graphiql_handler)
-                .post(crate::graphql_routes::graphql_handler),
-        )
-        .route(
-            "/graphql/ws",
-            get(crate::graphql_routes::graphql_ws_handler),
-        );
+    let router = router.route(
+        "/graphql",
+        get(crate::graphql_routes::graphql_get_handler)
+            .post(crate::graphql_routes::graphql_handler),
+    );
 
     // In non-web-ui builds there is no global auth_gate, so guard GraphQL explicitly.
     #[cfg(all(feature = "graphql", not(feature = "web-ui")))]
     let router = router
         .route(
             "/graphql",
-            get(crate::graphql_routes::graphiql_handler)
+            get(crate::graphql_routes::graphql_get_handler)
                 .post(crate::graphql_routes::graphql_handler),
-        )
-        .route(
-            "/graphql/ws",
-            get(crate::graphql_routes::graphql_ws_handler),
         )
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
@@ -969,28 +960,19 @@ pub fn build_gateway_app(
 
     // GraphQL routes (behind auth_gate when web-ui is enabled).
     #[cfg(all(feature = "graphql", feature = "web-ui"))]
-    let router = router
-        .route(
-            "/graphql",
-            get(crate::graphql_routes::graphiql_handler)
-                .post(crate::graphql_routes::graphql_handler),
-        )
-        .route(
-            "/graphql/ws",
-            get(crate::graphql_routes::graphql_ws_handler),
-        );
+    let router = router.route(
+        "/graphql",
+        get(crate::graphql_routes::graphql_get_handler)
+            .post(crate::graphql_routes::graphql_handler),
+    );
 
     // In non-web-ui builds there is no global auth_gate, so guard GraphQL explicitly.
     #[cfg(all(feature = "graphql", not(feature = "web-ui")))]
     let router = router
         .route(
             "/graphql",
-            get(crate::graphql_routes::graphiql_handler)
+            get(crate::graphql_routes::graphql_get_handler)
                 .post(crate::graphql_routes::graphql_handler),
-        )
-        .route(
-            "/graphql/ws",
-            get(crate::graphql_routes::graphql_ws_handler),
         )
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
