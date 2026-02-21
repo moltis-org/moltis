@@ -220,7 +220,7 @@ test.describe("Settings navigation", () => {
 		await expect(page.locator(".settings-group-label").nth(3)).toHaveText("Systems");
 
 		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
-		const expectedWithVoice = [
+		const expectedPrefix = [
 			"Identity",
 			"Environment",
 			"Memory",
@@ -234,15 +234,19 @@ test.describe("Settings navigation", () => {
 			"LLMs",
 			"MCP",
 			"Skills",
-			"Voice",
+		];
+		const expectedSystem = [
 			"Terminal",
 			"Sandboxes",
 			"Monitoring",
 			"Logs",
-			"Configuration",
 		];
-		const expectedWithoutVoice = expectedWithVoice.filter((item) => item !== "Voice");
-		expect(navItems).toEqual(navItems.includes("Voice") ? expectedWithVoice : expectedWithoutVoice);
+		const expected = [...expectedPrefix];
+		if (navItems.includes("Voice")) expected.push("Voice");
+		expected.push(...expectedSystem);
+		if (navItems.includes("GraphQL")) expected.push("GraphQL");
+		expected.push("Configuration");
+		expect(navItems).toEqual(expected);
 
 		const llmsNavItem = page.locator(".settings-nav-item", { hasText: "LLMs" });
 		await expect(llmsNavItem.locator(".icon-layers")).toHaveCount(1);
@@ -257,5 +261,10 @@ test.describe("Settings navigation", () => {
 		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
 		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);
 		await expect(configNavItem.locator(".icon-document")).toHaveCount(0);
+
+		if (navItems.includes("GraphQL")) {
+			const graphQlNavItem = page.locator(".settings-nav-item", { hasText: "GraphQL" });
+			await expect(graphQlNavItem.locator(".icon-graphql")).toHaveCount(1);
+		}
 	});
 });
