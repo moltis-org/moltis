@@ -484,14 +484,14 @@ fallback_models = []              # Ordered list of fallback models
 [voice.tts]
 enabled = true                    # Enable text-to-speech
 provider = "openai"               # Active TTS provider (shares key with LLM provider)
-providers = []                    # UI allowlist (empty = show all TTS providers)
+providers = ["openai", "elevenlabs"] # UI allowlist (empty = show all TTS providers)
 # All available TTS providers:
 #   "openai", "elevenlabs", "google", "piper", "coqui"
 
 [voice.stt]
 enabled = true                    # Enable speech-to-text
 provider = "whisper"              # Active STT provider (OpenAI Whisper, shares key with LLM provider)
-providers = []                    # UI allowlist (empty = show all STT providers)
+providers = ["whisper", "mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
 # All available STT providers:
 #   "whisper", "groq", "deepgram", "google", "mistral",
 #   "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs-stt"
