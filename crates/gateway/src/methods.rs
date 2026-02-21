@@ -5672,7 +5672,7 @@ pub(crate) fn load_disabled_hooks() -> std::collections::HashSet<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, secrecy::Secret};
 
     fn scopes(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()
@@ -5967,5 +5967,42 @@ mod tests {
     fn model_probe_params_omit_provider_when_blank() {
         let params = model_probe_params(Some("   "));
         assert!(params.get("provider").is_none());
+    }
+
+    #[tokio::test]
+    async fn detect_voice_providers_marks_selected_stt_provider_when_some() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.stt.enabled = true;
+        config.voice.stt.provider = Some(VoiceSttProvider::Whisper);
+        config.voice.stt.whisper.api_key = Some(Secret::new("test-whisper-key".to_string()));
+
+        let detected = detect_voice_providers(&config).await;
+        let Some(stt) = detected["stt"].as_array() else {
+            panic!("stt list missing");
+        };
+        let Some(whisper) = stt.iter().find(|provider| provider["id"] == "whisper") else {
+            panic!("whisper provider missing");
+        };
+
+        assert_eq!(whisper["enabled"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn detect_voice_providers_does_not_mark_stt_provider_when_none() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.stt.enabled = true;
+        config.voice.stt.provider = None;
+        config.voice.stt.whisper.api_key = Some(Secret::new("test-whisper-key".to_string()));
+
+        let detected = detect_voice_providers(&config).await;
+        let Some(stt) = detected["stt"].as_array() else {
+            panic!("stt list missing");
+        };
+        let enabled_count = stt
+            .iter()
+            .filter(|provider| provider["enabled"].as_bool() == Some(true))
+            .count();
+
+        assert_eq!(enabled_count, 0);
     }
 }

@@ -620,6 +620,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_tts_provider_parse_accepts_ui_aliases() {
+        assert_eq!(
+            TtsProviderId::parse("openai-tts"),
+            Some(TtsProviderId::OpenAi)
+        );
+        assert_eq!(
+            TtsProviderId::parse("google-tts"),
+            Some(TtsProviderId::Google)
+        );
+    }
+
+    #[test]
     fn test_default_tts_config() {
         let config = TtsConfig::default();
         assert!(!config.enabled);

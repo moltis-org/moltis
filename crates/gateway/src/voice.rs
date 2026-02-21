@@ -830,7 +830,62 @@ impl SttService for NoopSttService {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "voice"))]
 mod tests {
-    use {super::*, serde_json::json};
+    use {super::*, secrecy::ExposeSecret, serde_json::json};
+
+    #[test]
+    fn test_resolve_openai_key_prefers_voice_key_over_llm_provider_key() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                api_key: Some(Secret::new("llm-openai-key".to_string())),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        let resolved = resolve_openai_key(Some(&Secret::new("voice-openai-key".to_string())), &cfg)
+            .map(|value| value.expose_secret().to_string());
+        assert_eq!(resolved.as_deref(), Some("voice-openai-key"));
+    }
+
+    #[test]
+    fn test_resolve_openai_key_uses_llm_provider_key_when_voice_key_missing() {
+        if std::env::var("OPENAI_API_KEY").is_ok() {
+            return;
+        }
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                api_key: Some(Secret::new("llm-openai-key".to_string())),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        let resolved =
+            resolve_openai_key(None, &cfg).map(|value| value.expose_secret().to_string());
+        assert_eq!(resolved.as_deref(), Some("llm-openai-key"));
+    }
+
+    #[test]
+    fn test_live_tts_resolve_provider_handles_explicit_and_auto_selection() {
+        assert_eq!(
+            LiveTtsService::resolve_provider("openai"),
+            Some(TtsProviderId::OpenAi)
+        );
+        assert_eq!(LiveTtsService::resolve_provider("unknown"), None);
+        assert!(LiveTtsService::resolve_provider("").is_some());
+    }
+
+    #[test]
+    fn test_live_stt_resolve_provider_handles_explicit_and_auto_selection() {
+        assert_eq!(
+            LiveSttService::resolve_provider(Some(moltis_config::VoiceSttProvider::Whisper)),
+            Some(SttProviderId::Whisper)
+        );
+        assert!(LiveSttService::resolve_provider(None).is_some());
+    }
 
     #[tokio::test]
     async fn test_live_tts_service_status() {
