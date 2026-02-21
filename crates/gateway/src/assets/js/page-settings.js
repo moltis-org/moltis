@@ -188,6 +188,11 @@ var sections = [
 		page: true,
 	},
 	{
+		id: "graphql",
+		label: "GraphQL",
+		icon: html`<span class="icon icon-graphql"></span>`,
+	},
+	{
 		id: "config",
 		label: "Configuration",
 		icon: html`<span class="icon icon-code"></span>`,
@@ -195,12 +200,12 @@ var sections = [
 ];
 
 function getVisibleSections() {
-	return sections;
+	return sections.filter((s) => !s.id || s.id !== "graphql" || gon.get("graphql_enabled"));
 }
 
 /** Return only items with an id (no group headings). */
 function getSectionItems() {
-	return sections.filter((s) => s.id);
+	return getVisibleSections().filter((s) => s.id);
 }
 
 function SettingsSidebar() {
@@ -1327,6 +1332,17 @@ function bufToB64(buf) {
 }
 
 // ── Configuration section ─────────────────────────────────────
+
+function GraphqlSection() {
+	return html`<div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+		<iframe
+			src="/graphql"
+			class="flex-1 w-full border-0"
+			title="GraphiQL Playground"
+			allow="clipboard-write"
+		/>
+	</div>`;
+}
 
 function ConfigSection() {
 	var [toml, setToml] = useState("");
@@ -3342,6 +3358,7 @@ function SettingsPage() {
 								: null
 						}
 						${section === "notifications" ? html`<${NotificationsSection} />` : null}
+						${section === "graphql" ? html`<${GraphqlSection} />` : null}
 						${section === "config" ? html`<${ConfigSection} />` : null}
 					</div>`
 				: null

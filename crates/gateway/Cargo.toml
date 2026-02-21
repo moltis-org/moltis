@@ -8,6 +8,8 @@ version.workspace    = true
 anyhow             = { workspace = true }
 argon2             = { workspace = true }
 askama             = { optional = true, workspace = true }
+async-graphql      = { optional = true, workspace = true }
+async-graphql-axum = { optional = true, workspace = true }
 async-trait        = { workspace = true }
 axum               = { workspace = true }
 axum-extra         = { features = ["cookie"], workspace = true }
@@ -81,11 +83,13 @@ webauthn-rs-proto  = { workspace = true }
 openssl     = { workspace = true }
 url         = { workspace = true }
 urlencoding = { workspace = true }
-which       = { optional = true, workspace = true }
+which          = { optional = true, workspace = true }
+moltis-graphql = { optional = true, workspace = true }
 
 [features]
 default = [
   "file-watcher",
+  "graphql",
   "local-llm",
   "metrics",
   "prometheus",
@@ -96,6 +100,7 @@ default = [
   "voice",
   "web-ui",
 ]
+graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = ["moltis-agents/local-llm"]

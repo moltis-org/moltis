@@ -383,6 +383,9 @@ pub struct GatewayState {
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
     pub ws_request_logs: bool,
+    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
+    #[cfg(feature = "graphql")]
+    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
@@ -470,6 +473,11 @@ impl GatewayState {
             metrics_store,
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
+            #[cfg(feature = "graphql")]
+            graphql_broadcast: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
     }

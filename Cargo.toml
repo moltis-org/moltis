@@ -27,6 +27,7 @@ members = [
   "crates/telegram",
   "crates/tools",
   "crates/voice",
+  "crates/graphql",
 ]
 resolver = "2"
 
@@ -97,7 +98,10 @@ bytes        = "1"
 encoding_rs  = "0.8"
 fd-lock      = "4"
 genai        = "0.5"
-gix          = "0.78"
+# GraphQL
+async-graphql      = "7"
+async-graphql-axum = "7"
+gix                = "0.78"
 llama-cpp-2  = "0.1"
 mockito      = "1.7"
 open         = "5.3"
@@ -167,6 +171,7 @@ moltis-common     = { path = "crates/common" }
 moltis-config     = { path = "crates/config" }
 moltis-cron       = { path = "crates/cron" }
 moltis-gateway    = { default-features = false, path = "crates/gateway" }
+moltis-graphql    = { path = "crates/graphql" }
 moltis-mcp        = { path = "crates/mcp" }
 moltis-media      = { path = "crates/media" }
 moltis-memory     = { path = "crates/memory" }

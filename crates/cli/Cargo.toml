@@ -70,6 +70,7 @@ tempfile = { workspace = true }
 [features]
 default = [
   "file-watcher",
+  "graphql",
   "jemalloc",
   "local-llm",
   "metrics",
@@ -84,6 +85,7 @@ default = [
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 file-watcher       = ["moltis-gateway/file-watcher"]
+graphql            = ["moltis-gateway/graphql"]
 jemalloc           = ["dep:tikv-jemallocator"]
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]

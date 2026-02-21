@@ -766,7 +766,7 @@ where
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("deny"),
+            HeaderValue::from_static("sameorigin"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("referrer-policy"),
@@ -864,6 +864,19 @@ pub fn build_gateway_app(
         push_service,
     };
 
+    // GraphQL routes (behind auth_gate, inside the web-ui feature block).
+    #[cfg(feature = "graphql")]
+    let router = router
+        .route(
+            "/graphql",
+            get(crate::graphql_routes::graphiql_handler)
+                .post(crate::graphql_routes::graphql_handler),
+        )
+        .route(
+            "/graphql/ws",
+            get(crate::graphql_routes::graphql_ws_handler),
+        );
+
     #[cfg(feature = "web-ui")]
     let router = {
         let api = build_api_routes();
@@ -938,6 +951,19 @@ pub fn build_gateway_app(
         methods,
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
     };
+
+    // GraphQL routes (behind auth_gate, inside the web-ui feature block).
+    #[cfg(feature = "graphql")]
+    let router = router
+        .route(
+            "/graphql",
+            get(crate::graphql_routes::graphiql_handler)
+                .post(crate::graphql_routes::graphql_handler),
+        )
+        .route(
+            "/graphql/ws",
+            get(crate::graphql_routes::graphql_ws_handler),
+        );
 
     #[cfg(feature = "web-ui")]
     let router = {
@@ -4651,6 +4677,7 @@ struct SpaRoutes {
     skills: &'static str,
     crons: &'static str,
     monitoring: &'static str,
+    graphql: &'static str,
 }
 
 #[cfg(feature = "web-ui")]
@@ -4667,6 +4694,7 @@ static SPA_ROUTES: SpaRoutes = SpaRoutes {
     skills: "/skills",
     crons: "/settings/crons",
     monitoring: "/monitoring",
+    graphql: "/settings/graphql",
 };
 
 /// Server-side data injected into every page as `window.__MOLTIS__`
@@ -4686,6 +4714,7 @@ struct GonData {
     heartbeat_config: moltis_config::schema::HeartbeatConfig,
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
     voice_enabled: bool,
+    graphql_enabled: bool,
     /// Non-main git branch name, if running from a git checkout on a
     /// non-default branch. `None` when on `main`/`master` or outside a repo.
     git_branch: Option<String>,
@@ -4858,6 +4887,7 @@ async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_config,
         heartbeat_runs,
         voice_enabled: cfg!(feature = "voice"),
+        graphql_enabled: cfg!(feature = "graphql"),
         git_branch: detect_git_branch(),
         mem: collect_mem_snapshot(),
         deploy_platform: gw.deploy_platform.clone(),
