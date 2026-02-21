@@ -34,6 +34,7 @@ var slashCommands = [
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
 	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
+	{ name: "autolabel", description: "Auto-generate a title from conversation" },
 ];
 var slashMenuEl = null;
 var slashMenuIdx = 0;
@@ -775,6 +776,19 @@ function handleSlashCommand(cmdName, cmdArgs) {
 				switchSession(S.activeSessionKey);
 			} else {
 				chatAddMsg("error", res?.error?.message || "Compact failed");
+			}
+		});
+		return;
+	}
+	if (cmdName === "autolabel") {
+		chatAddMsg("system", "Generating title\u2026");
+		sendRpc("chat.autolabel", {}).then((res) => {
+			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+			if (res?.ok && res.payload?.label) {
+				chatAddMsg("system", `Title: ${res.payload.label}`, true);
+				fetchSessions();
+			} else {
+				chatAddMsg("error", res?.error?.message || "Autolabel failed");
 			}
 		});
 		return;

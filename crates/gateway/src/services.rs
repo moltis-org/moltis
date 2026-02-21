@@ -448,6 +448,9 @@ pub trait ChatService: Send + Sync {
     async fn inject(&self, params: Value) -> ServiceResult;
     async fn clear(&self, params: Value) -> ServiceResult;
     async fn compact(&self, params: Value) -> ServiceResult;
+    async fn autolabel(&self, _params: Value) -> ServiceResult {
+        Err("autolabel not available".into())
+    }
     async fn context(&self, params: Value) -> ServiceResult;
     /// Build the complete system prompt and return it for inspection.
     async fn raw_prompt(&self, params: Value) -> ServiceResult;

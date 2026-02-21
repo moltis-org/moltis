@@ -3933,6 +3933,75 @@ impl ChatService for LiveChatService {
         Ok(serde_json::json!(compacted))
     }
 
+    async fn autolabel(&self, params: Value) -> ServiceResult {
+        let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
+            sk.to_string()
+        } else {
+            let conn_id = params
+                .get("_conn_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            self.session_key_for(conn_id.as_deref()).await
+        };
+
+        let history = self
+            .session_store
+            .read(&session_key)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if history.is_empty() {
+            return Err("no messages to generate a title from".into());
+        }
+
+        // Take only the last 20 messages to keep the prompt short.
+        let recent: Vec<Value> = if history.len() > 20 {
+            history[history.len() - 20..].to_vec()
+        } else {
+            history
+        };
+
+        let provider = self.resolve_provider(&session_key, &recent).await?;
+
+        let mut messages = vec![ChatMessage::system(
+            "Generate a short, descriptive title (5 words max, no quotes, no trailing punctuation) for the following conversation.",
+        )];
+        messages.extend(values_to_chat_messages(&recent));
+        messages.push(ChatMessage::user("Generate the title now."));
+
+        info!(session = %session_key, msgs = recent.len(), "chat.autolabel: generating");
+
+        let mut stream = provider.stream(messages);
+        let mut label = String::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Delta(delta) => label.push_str(&delta),
+                StreamEvent::Done(_) => break,
+                StreamEvent::Error(e) => {
+                    return Err(format!("autolabel generation failed: {e}"))
+                },
+                StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallArgumentsDelta { .. }
+                | StreamEvent::ToolCallComplete { .. }
+                | StreamEvent::ProviderRaw(_)
+                | StreamEvent::ReasoningDelta(_) => {},
+            }
+        }
+
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Err("autolabel produced empty title".into());
+        }
+
+        let _ = self
+            .session_metadata
+            .upsert(&session_key, Some(label.clone()))
+            .await;
+
+        info!(session = %session_key, label = %label, "chat.autolabel: done");
+        Ok(serde_json::json!({ "label": label, "sessionKey": session_key }))
+    }
+
     async fn context(&self, params: Value) -> ServiceResult {
         let session_key = if let Some(sk) = params.get("_session_key").and_then(|v| v.as_str()) {
             sk.to_string()

@@ -123,6 +123,7 @@ const WRITE_METHODS: &[&str] = &[
     "chat.cancel_queued",
     "chat.clear",
     "chat.compact",
+    "chat.autolabel",
     "browser.request",
     "logs.ack",
     "models.detect_supported",
@@ -2131,6 +2132,22 @@ impl MethodRegistry {
                         .chat()
                         .await
                         .compact(params)
+                        .await
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                })
+            }),
+        );
+
+        self.register(
+            "chat.autolabel",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let mut params = ctx.params.clone();
+                    params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                    ctx.state
+                        .chat()
+                        .await
+                        .autolabel(params)
                         .await
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
                 })

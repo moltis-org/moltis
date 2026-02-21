@@ -917,6 +917,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 chat.compact(params).await.map_err(|e| anyhow!("{e}"))?;
                 Ok("Session compacted.".to_string())
             },
+            "autolabel" => {
+                let params = serde_json::json!({ "_session_key": &session_key });
+                let res = chat.autolabel(params).await.map_err(|e| anyhow!("{e}"))?;
+                let label = res.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+                Ok(format!("Title: {label}"))
+            },
             "context" => {
                 let params = serde_json::json!({ "_session_key": &session_key });
                 let res = chat.context(params).await.map_err(|e| anyhow!("{e}"))?;

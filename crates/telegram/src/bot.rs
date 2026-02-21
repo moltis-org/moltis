@@ -54,6 +54,7 @@ pub async fn start_polling(
         BotCommand::new("sh", "Enable shell command mode"),
         BotCommand::new("clear", "Clear session history"),
         BotCommand::new("compact", "Compact session (summarize)"),
+        BotCommand::new("autolabel", "Auto-generate session title"),
         BotCommand::new("context", "Show session context info"),
         BotCommand::new("help", "Show available commands"),
     ];
