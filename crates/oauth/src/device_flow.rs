@@ -108,6 +108,8 @@ pub async fn poll_for_token_with_headers(
             return Ok(OAuthTokens {
                 access_token: Secret::new(token),
                 refresh_token: body.refresh_token.map(Secret::new),
+                id_token: None,
+                account_id: None,
                 expires_at,
             });
         }

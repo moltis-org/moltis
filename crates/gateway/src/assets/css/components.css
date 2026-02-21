@@ -102,6 +102,11 @@
   color: var(--ok);
 }
 
+.provider-item-badge.needs-key {
+  background: var(--surface2);
+  color: var(--muted);
+}
+
 .provider-item-badge.warning {
   background: var(--warning-bg, rgba(234, 179, 8, 0.15));
   color: var(--warning, #eab308);

@@ -34,6 +34,15 @@ pub struct OAuthTokens {
         skip_serializing_if = "Option::is_none"
     )]
     pub refresh_token: Option<Secret<String>>,
+    #[serde(
+        default,
+        serialize_with = "serialize_option_secret",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub id_token: Option<Secret<String>>,
+    /// Provider-specific account identifier (for example ChatGPT account/org id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Unix timestamp when the access token expires.
     pub expires_at: Option<u64>,
 }
@@ -45,6 +54,11 @@ impl std::fmt::Debug for OAuthTokens {
             .field(
                 "refresh_token",
                 &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("id_token", &self.id_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "account_id",
+                &self.account_id.as_ref().map(|_| "[REDACTED]"),
             )
             .field("expires_at", &self.expires_at)
             .finish()

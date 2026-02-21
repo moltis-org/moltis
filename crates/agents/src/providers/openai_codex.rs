@@ -45,7 +45,7 @@ impl OpenAiCodexProvider {
         }
     }
 
-    async fn get_valid_token(&self) -> anyhow::Result<String> {
+    async fn get_valid_tokens(&self) -> anyhow::Result<moltis_oauth::OAuthTokens> {
         let tokens = self
             .token_store
             .load("openai-codex")
@@ -70,9 +70,17 @@ impl OpenAiCodexProvider {
                         .ok_or_else(|| anyhow::anyhow!("missing oauth config for openai-codex"))?;
                     let flow = OAuthFlow::new(oauth_config);
                     let refresh = refresh_token.expose_secret().clone();
-                    let new_tokens = flow.refresh(&refresh).await?;
+                    let mut new_tokens = flow.refresh(&refresh).await?;
+                    // OpenAI refresh responses may omit id/account identifiers.
+                    // Preserve previous values so ChatGPT-Account-Id stays stable.
+                    if new_tokens.id_token.is_none() {
+                        new_tokens.id_token = tokens.id_token.clone();
+                    }
+                    if new_tokens.account_id.is_none() {
+                        new_tokens.account_id = tokens.account_id.clone();
+                    }
                     self.token_store.save("openai-codex", &new_tokens)?;
-                    return Ok(new_tokens.access_token.expose_secret().clone());
+                    return Ok(new_tokens);
                 }
                 return Err(anyhow::anyhow!(
                     "openai-codex token expired and no refresh token available"
@@ -80,13 +88,39 @@ impl OpenAiCodexProvider {
             }
         }
 
-        Ok(tokens.access_token.expose_secret().clone())
+        Ok(tokens)
     }
 
-    fn extract_account_id(jwt: &str) -> anyhow::Result<String> {
+    fn extract_account_id_from_claims(claims: &serde_json::Value) -> Option<String> {
+        claims
+            .get("chatgpt_account_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                claims
+                    .get("https://api.openai.com/auth")
+                    .and_then(|v| v.get("chatgpt_account_id"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                claims
+                    .get("organizations")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("id"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+            })
+    }
+
+    fn extract_account_id(jwt: &str) -> Option<String> {
         let parts: Vec<&str> = jwt.split('.').collect();
         if parts.len() < 2 {
-            anyhow::bail!("invalid JWT format");
+            return None;
         }
         let payload = URL_SAFE_NO_PAD.decode(parts[1]).or_else(|_| {
             // Try with padding
@@ -96,12 +130,29 @@ impl OpenAiCodexProvider {
                 _ => parts[1].to_string(),
             };
             base64::engine::general_purpose::STANDARD.decode(&padded)
-        })?;
-        let claims: serde_json::Value = serde_json::from_slice(&payload)?;
-        let account_id = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing chatgpt_account_id in JWT claims"))?;
-        Ok(account_id.to_string())
+        });
+        let payload = payload.ok()?;
+        let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+        Self::extract_account_id_from_claims(&claims)
+    }
+
+    fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
+        if let Some(account_id) = tokens
+            .account_id
+            .as_ref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            return Ok(account_id.clone());
+        }
+        if let Some(id_token) = tokens.id_token.as_ref()
+            && let Some(account_id) = Self::extract_account_id(id_token.expose_secret())
+        {
+            return Ok(account_id);
+        }
+        if let Some(account_id) = Self::extract_account_id(tokens.access_token.expose_secret()) {
+            return Ok(account_id);
+        }
+        anyhow::bail!("missing chatgpt account id in OAuth tokens")
     }
 
     fn convert_messages(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
@@ -262,6 +313,14 @@ fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
     let json: serde_json::Value = serde_json::from_str(data).ok()?;
     let tokens = json.get("tokens")?;
     let access_token = tokens.get("access_token")?.as_str()?.to_string();
+    let id_token = tokens
+        .get("id_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let refresh_token = tokens
         .get("refresh_token")
         .and_then(|v| v.as_str())
@@ -269,6 +328,8 @@ fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
     Some(moltis_oauth::OAuthTokens {
         access_token: Secret::new(access_token),
         refresh_token: refresh_token.map(Secret::new),
+        id_token: id_token.map(Secret::new),
+        account_id,
         expires_at: None,
     })
 }
@@ -476,7 +537,7 @@ fn load_access_token_and_account_id() -> anyhow::Result<(String, String)> {
         })?;
 
     let access_token = tokens.access_token.expose_secret().clone();
-    let account_id = OpenAiCodexProvider::extract_account_id(&access_token)?;
+    let account_id = OpenAiCodexProvider::resolve_account_id(&tokens)?;
     Ok((access_token, account_id))
 }
 
@@ -533,8 +594,9 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
-        let token = self.get_valid_token().await?;
-        let account_id = Self::extract_account_id(&token)?;
+        let tokens = self.get_valid_tokens().await?;
+        let token = tokens.access_token.expose_secret().clone();
+        let account_id = Self::resolve_account_id(&tokens)?;
 
         // Extract system message as instructions; pass the rest as input
         let instructions = messages
@@ -699,7 +761,7 @@ impl LlmProvider for OpenAiCodexProvider {
             "stream_with_tools entry (before async_stream)"
         );
         Box::pin(async_stream::stream! {
-            let token = match self.get_valid_token().await {
+            let tokens = match self.get_valid_tokens().await {
                 Ok(t) => t,
                 Err(e) => {
                     yield StreamEvent::Error(e.to_string());
@@ -707,13 +769,14 @@ impl LlmProvider for OpenAiCodexProvider {
                 }
             };
 
-            let account_id = match Self::extract_account_id(&token) {
+            let account_id = match Self::resolve_account_id(&tokens) {
                 Ok(id) => id,
                 Err(e) => {
                     yield StreamEvent::Error(e.to_string());
                     return;
                 }
             };
+            let token = tokens.access_token.expose_secret().clone();
 
             let instructions = messages
                 .iter()
@@ -905,6 +968,11 @@ mod tests {
                 .map(|s| s.expose_secret().as_str()),
             Some("test_refresh_token")
         );
+        assert_eq!(
+            tokens.id_token.as_ref().map(|s| s.expose_secret().as_str()),
+            Some("some-id-token")
+        );
+        assert_eq!(tokens.account_id.as_deref(), Some("some-account-id"));
         assert_eq!(tokens.expires_at, None);
     }
 
@@ -918,6 +986,34 @@ mod tests {
         let tokens = parse_codex_cli_tokens(json).unwrap();
         assert_eq!(tokens.access_token.expose_secret(), "tok123");
         assert!(tokens.refresh_token.is_none());
+        assert!(tokens.id_token.is_none());
+        assert!(tokens.account_id.is_none());
+    }
+
+    #[test]
+    fn extract_account_id_supports_root_nested_and_org_claims() {
+        let root = r#"{"chatgpt_account_id":"root-id"}"#;
+        let nested = r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"nested-id"}}"#;
+        let org = r#"{"organizations":[{"id":"org-id"}]}"#;
+
+        assert_eq!(
+            OpenAiCodexProvider::extract_account_id_from_claims(
+                &serde_json::from_str(root).unwrap()
+            ),
+            Some("root-id".to_string())
+        );
+        assert_eq!(
+            OpenAiCodexProvider::extract_account_id_from_claims(
+                &serde_json::from_str(nested).unwrap()
+            ),
+            Some("nested-id".to_string())
+        );
+        assert_eq!(
+            OpenAiCodexProvider::extract_account_id_from_claims(
+                &serde_json::from_str(org).unwrap()
+            ),
+            Some("org-id".to_string())
+        );
     }
 
     #[test]

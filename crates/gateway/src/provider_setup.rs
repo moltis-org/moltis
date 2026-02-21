@@ -939,6 +939,14 @@ fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
     if access_token.trim().is_empty() {
         return None;
     }
+    let id_token = tokens
+        .get("id_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let refresh_token = tokens
         .get("refresh_token")
         .and_then(|v| v.as_str())
@@ -946,6 +954,8 @@ fn parse_codex_cli_tokens(data: &str) -> Option<moltis_oauth::OAuthTokens> {
     Some(moltis_oauth::OAuthTokens {
         access_token: Secret::new(access_token),
         refresh_token: refresh_token.map(Secret::new),
+        id_token: id_token.map(Secret::new),
+        account_id,
         expires_at: None,
     })
 }
@@ -1330,9 +1340,18 @@ impl LiveProviderSetupService {
         active_config: &ProvidersConfig,
     ) -> bool {
         // Disabled providers (by offered allowlist or explicit enabled=false)
-        // should not show as configured even if credentials are auto-detected.
+        // should not show as configured, except subscription-backed OAuth
+        // providers with valid local tokens.
         if !active_config.is_enabled(provider.name) {
-            return false;
+            let subscription_with_tokens =
+                matches!(provider.name, "openai-codex" | "github-copilot")
+                    && active_config
+                        .get(provider.name)
+                        .is_none_or(|entry| entry.enabled)
+                    && self.has_oauth_tokens(provider.name);
+            if !subscription_with_tokens {
+                return false;
+            }
         }
 
         // Check if the provider has an API key set via env
@@ -1517,6 +1536,10 @@ fn has_oauth_tokens_for_provider(
 ) -> bool {
     primary_store.load(provider_name).is_some()
         || home_store.is_some_and(|store| store.load(provider_name).is_some())
+        || (provider_name == "openai-codex"
+            && codex_cli_auth_path()
+                .as_deref()
+                .is_some_and(codex_cli_auth_has_access_token))
 }
 
 /// Build provider-specific extra headers for device-flow OAuth calls.
@@ -3276,6 +3299,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn available_includes_subscription_provider_with_oauth_token_outside_offered() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let token_store = TokenStore::with_path(dir.path().join("oauth_tokens.json"));
+        token_store
+            .save("openai-codex", &OAuthTokens {
+                access_token: Secret::new("token".to_string()),
+                refresh_token: None,
+                id_token: None,
+                account_id: None,
+                expires_at: None,
+            })
+            .expect("save oauth token");
+
+        let key_store = KeyStore::with_path(dir.path().join("provider_keys.json"));
+        let config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+
+        let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+            &ProvidersConfig::default(),
+        )));
+        let svc = LiveProviderSetupService {
+            registry,
+            config: Arc::new(Mutex::new(config)),
+            state: Arc::new(OnceCell::new()),
+            token_store,
+            key_store,
+            pending_oauth: Arc::new(RwLock::new(HashMap::new())),
+            deploy_platform: None,
+            priority_models: None,
+            registry_rebuild_seq: Arc::new(AtomicU64::new(0)),
+            env_overrides: HashMap::new(),
+        };
+
+        let result = svc.available().await.unwrap();
+        let arr = result
+            .as_array()
+            .expect("providers.available should return array");
+        let codex = arr
+            .iter()
+            .find(|v| v.get("name").and_then(|n| n.as_str()) == Some("openai-codex"))
+            .expect("openai-codex should be present when oauth token exists");
+        assert_eq!(
+            codex.get("configured").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
     async fn available_includes_configured_custom_provider_outside_offered() {
         let dir = tempfile::tempdir().expect("temp dir");
         let key_store = KeyStore::with_path(dir.path().join("provider_keys.json"));
@@ -3481,6 +3554,8 @@ mod tests {
         home.save("github-copilot", &OAuthTokens {
             access_token: Secret::new("home-token".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: None,
         })
         .expect("save home token");

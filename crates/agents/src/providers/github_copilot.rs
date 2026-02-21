@@ -238,6 +238,8 @@ async fn fetch_valid_copilot_token(
     let _ = token_store.save("github-copilot-api", &OAuthTokens {
         access_token: Secret::new(copilot_resp.token.clone()),
         refresh_token: None,
+        id_token: None,
+        account_id: None,
         expires_at: Some(copilot_resp.expires_at),
     });
 
