@@ -288,6 +288,13 @@ fn normalize_provider_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn subscription_provider_rank(provider_name: &str) -> usize {
+    match normalize_provider_key(provider_name).as_str() {
+        "openai-codex" | "github-copilot" => 0,
+        _ => 1,
+    }
+}
+
 #[allow(dead_code)]
 fn is_allowlist_exempt_provider(provider_name: &str) -> bool {
     matches!(
@@ -1381,7 +1388,13 @@ impl LiveModelService {
     ) -> Vec<&'a moltis_agents::providers::ModelInfo> {
         let mut ordered: Vec<(usize, &'a moltis_agents::providers::ModelInfo)> =
             models.enumerate().collect();
-        ordered.sort_by_key(|(idx, model)| (Self::priority_rank(order, model), *idx));
+        ordered.sort_by_key(|(idx, model)| {
+            (
+                Self::priority_rank(order, model),
+                subscription_provider_rank(&model.provider),
+                *idx,
+            )
+        });
         ordered.into_iter().map(|(_, model)| model).collect()
     }
 
@@ -8494,6 +8507,55 @@ mod tests {
         assert_eq!(ordered[0].id, m1.id);
         assert_eq!(ordered[1].id, m2.id);
         assert_eq!(ordered[2].id, m3.id);
+    }
+
+    #[test]
+    fn models_without_priority_prefer_subscription_providers() {
+        let m1 = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2".into(),
+            created_at: None,
+        };
+        let m2 = moltis_agents::providers::ModelInfo {
+            id: "openai-codex::gpt-5.2".into(),
+            provider: "openai-codex".into(),
+            display_name: "GPT-5.2".into(),
+            created_at: None,
+        };
+        let m3 = moltis_agents::providers::ModelInfo {
+            id: "anthropic::claude-sonnet-4-5-20250929".into(),
+            provider: "anthropic".into(),
+            display_name: "Claude Sonnet 4.5".into(),
+            created_at: None,
+        };
+
+        let order = LiveModelService::build_priority_order(&[]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m1, &m2, &m3].into_iter());
+        assert_eq!(ordered[0].id, m2.id);
+        assert_eq!(ordered[1].id, m1.id);
+        assert_eq!(ordered[2].id, m3.id);
+    }
+
+    #[test]
+    fn explicit_priority_still_overrides_subscription_preference() {
+        let m1 = moltis_agents::providers::ModelInfo {
+            id: "openai::gpt-5.2".into(),
+            provider: "openai".into(),
+            display_name: "GPT-5.2".into(),
+            created_at: None,
+        };
+        let m2 = moltis_agents::providers::ModelInfo {
+            id: "openai-codex::gpt-5.2".into(),
+            provider: "openai-codex".into(),
+            display_name: "GPT-5.2".into(),
+            created_at: None,
+        };
+
+        let order = LiveModelService::build_priority_order(&["openai::gpt-5.2".into()]);
+        let ordered = LiveModelService::prioritize_models(&order, vec![&m2, &m1].into_iter());
+        assert_eq!(ordered[0].id, m1.id);
+        assert_eq!(ordered[1].id, m2.id);
     }
 
     #[test]

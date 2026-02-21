@@ -708,6 +708,8 @@ mod tests {
         let expired = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now - 100),
         };
         assert!(McpOAuthProvider::is_token_expired(&expired));
@@ -716,6 +718,8 @@ mod tests {
         let near_expiry = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 30),
         };
         assert!(McpOAuthProvider::is_token_expired(&near_expiry));
@@ -724,6 +728,8 @@ mod tests {
         let valid = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 3600),
         };
         assert!(!McpOAuthProvider::is_token_expired(&valid));
@@ -732,6 +738,8 @@ mod tests {
         let no_expiry = OAuthTokens {
             access_token: Secret::new("test".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: None,
         };
         assert!(!McpOAuthProvider::is_token_expired(&no_expiry));
@@ -755,6 +763,8 @@ mod tests {
         let tokens = OAuthTokens {
             access_token: Secret::new("cached-token".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(now + 3600),
         };
         token_store.save("mcp:test-server", &tokens).unwrap();
@@ -800,6 +810,8 @@ mod tests {
         let tokens = OAuthTokens {
             access_token: Secret::new("expired-token".to_string()),
             refresh_token: None,
+            id_token: None,
+            account_id: None,
             expires_at: Some(0), // long expired
         };
         token_store.save("mcp:test-server", &tokens).unwrap();

@@ -1,4 +1,12 @@
-use {anyhow::Result, secrecy::Secret, url::Url};
+use {
+    anyhow::Result,
+    base64::{
+        Engine,
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    },
+    secrecy::Secret,
+    url::Url,
+};
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::{counter, oauth as oauth_metrics};
@@ -152,6 +160,8 @@ fn parse_token_response(resp: &serde_json::Value) -> Result<OAuthTokens> {
         .to_string();
 
     let refresh_token = resp["refresh_token"].as_str().map(|s| s.to_string());
+    let id_token = resp["id_token"].as_str().map(|s| s.to_string());
+    let account_id = extract_account_id_from_tokens(&access_token, id_token.as_deref());
 
     let expires_at = resp["expires_in"].as_u64().and_then(|secs| {
         std::time::SystemTime::now()
@@ -163,6 +173,59 @@ fn parse_token_response(resp: &serde_json::Value) -> Result<OAuthTokens> {
     Ok(OAuthTokens {
         access_token: Secret::new(access_token),
         refresh_token: refresh_token.map(Secret::new),
+        id_token: id_token.map(Secret::new),
+        account_id,
         expires_at,
     })
+}
+
+fn extract_account_id_from_tokens(access_token: &str, id_token: Option<&str>) -> Option<String> {
+    id_token
+        .and_then(extract_account_id_from_jwt)
+        .or_else(|| extract_account_id_from_jwt(access_token))
+}
+
+fn extract_account_id_from_jwt(token: &str) -> Option<String> {
+    let claims = parse_jwt_claims(token)?;
+    extract_account_id_from_claims(&claims)
+}
+
+fn parse_jwt_claims(token: &str) -> Option<serde_json::Value> {
+    let payload_b64 = token.split('.').nth(1)?;
+    let payload = URL_SAFE_NO_PAD.decode(payload_b64).or_else(|_| {
+        let padded = match payload_b64.len() % 4 {
+            2 => format!("{payload_b64}=="),
+            3 => format!("{payload_b64}="),
+            _ => payload_b64.to_string(),
+        };
+        STANDARD.decode(padded)
+    });
+    let payload = payload.ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
+fn extract_account_id_from_claims(claims: &serde_json::Value) -> Option<String> {
+    claims
+        .get("chatgpt_account_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            claims
+                .get("https://api.openai.com/auth")
+                .and_then(|v| v.get("chatgpt_account_id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            claims
+                .get("organizations")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+        })
 }

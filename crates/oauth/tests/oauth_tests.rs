@@ -148,6 +148,8 @@ fn token_store_roundtrip() {
     let tokens = moltis_oauth::OAuthTokens {
         access_token: Secret::new("test-access".into()),
         refresh_token: Some(Secret::new("test-refresh".into())),
+        id_token: None,
+        account_id: None,
         expires_at: Some(9999999999),
     };
 
