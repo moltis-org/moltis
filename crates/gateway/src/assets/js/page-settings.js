@@ -1378,12 +1378,12 @@ function GraphqlSection() {
 		sendRpc("graphql.config.set", { enabled: nextEnabled })
 			.then((res) => {
 				setSaving(false);
-					if (res?.ok) {
-						setEnabled(res.payload?.enabled !== false);
-						if (res.payload?.persisted === false) {
-							setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
-						}
-					} else {
+				if (res?.ok) {
+					setEnabled(res.payload?.enabled !== false);
+					if (res.payload?.persisted === false) {
+						setMsg("GraphQL updated for this runtime, but failed to persist to config. It may revert on restart.");
+					}
+				} else {
 					setEnabled(!nextEnabled);
 					setErr(res?.error?.message || "Failed to update GraphQL setting");
 				}
