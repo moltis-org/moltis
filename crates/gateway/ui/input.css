@@ -805,6 +805,10 @@
     background: var(--accent-subtle);
     color: var(--ok);
   }
+  .provider-item-badge.needs-key {
+    background: var(--surface2);
+    color: var(--muted);
+  }
   .provider-key-form {
     display: flex;
     flex-direction: column;

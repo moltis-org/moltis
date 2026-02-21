@@ -77,6 +77,20 @@ async function moveToLlmStep(page) {
 	return true;
 }
 
+async function moveToVoiceStep(page) {
+	const reachedLlm = await moveToLlmStep(page);
+	if (!reachedLlm) return false;
+
+	const voiceHeading = page.getByRole("heading", { name: "Voice (optional)", exact: true });
+	if (await isVisible(voiceHeading)) return true;
+
+	const skipped = await clickFirstVisibleButton(page, { name: "Skip for now", exact: true });
+	if (!skipped) return false;
+
+	await expect.poll(() => isVisible(voiceHeading), { timeout: 10_000 }).toBeTruthy();
+	return true;
+}
+
 async function moveToIdentityStep(page) {
 	await waitForOnboardingStepLoaded(page);
 
@@ -169,9 +183,7 @@ test.describe("Onboarding wizard", () => {
 
 		const startedTime = page.locator(".onboarding-card time[data-epoch-ms]").first();
 		await expect(startedTime).toBeVisible();
-		await expect
-			.poll(async () => ((await startedTime.textContent()) || "").trim(), { timeout: 10_000 })
-			.not.toBe("");
+		await expect.poll(async () => ((await startedTime.textContent()) || "").trim(), { timeout: 10_000 }).not.toBe("");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -379,6 +391,46 @@ test.describe("Onboarding wizard", () => {
 			test.skip(true, "all API-key providers are pre-configured; cannot test key source hint");
 			return;
 		}
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("voice needs-key badge uses dedicated pill styling class", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/onboarding");
+		await page.waitForLoadState("networkidle");
+
+		await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toMatch(/^\/(?:onboarding|chats\/.+)$/);
+		if (/^\/chats\//.test(new URL(page.url()).pathname)) {
+			expect(pageErrors).toEqual([]);
+			return;
+		}
+
+		const reachedVoice = await moveToVoiceStep(page);
+		if (!reachedVoice) {
+			test.skip(true, "voice step not reachable in this onboarding run");
+			return;
+		}
+
+		const needsKeyBadges = page.locator(".provider-item-badge.needs-key", { hasText: "needs key" });
+		const badgeCount = await needsKeyBadges.count();
+		if (badgeCount === 0) {
+			test.skip(true, "all voice providers already configured");
+			return;
+		}
+
+		const firstBadge = needsKeyBadges.first();
+		await expect(firstBadge).toBeVisible();
+		const styles = await firstBadge.evaluate((el) => {
+			const computed = window.getComputedStyle(el);
+			return {
+				background: computed.backgroundColor,
+				radius: Number.parseFloat(computed.borderTopLeftRadius || "0"),
+			};
+		});
+		expect(styles.background).not.toBe("transparent");
+		expect(styles.background).not.toBe("rgba(0, 0, 0, 0)");
+		expect(styles.radius).toBeGreaterThan(8);
+
 		expect(pageErrors).toEqual([]);
 	});
 });

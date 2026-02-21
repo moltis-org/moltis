@@ -2243,6 +2243,7 @@ pub async fn start_gateway(
     seed_default_workspace_markdown_files();
     seed_example_skill();
     seed_example_hook();
+    seed_dcg_guard_hook();
     let persisted_disabled = crate::methods::load_disabled_hooks();
     let (hook_registry, discovered_hooks_info) =
         discover_and_build_hooks(&persisted_disabled, Some(&session_store)).await;
@@ -7195,6 +7196,34 @@ fn seed_example_hook() {
     }
 }
 
+/// Seed the `dcg-guard` hook into `~/.moltis/hooks/dcg-guard/` on first run.
+///
+/// Writes both `HOOK.md` and `handler.sh`. The handler gracefully no-ops when
+/// `dcg` is not installed, so the hook is always eligible.
+fn seed_dcg_guard_hook() {
+    let hook_dir = moltis_config::data_dir().join("hooks/dcg-guard");
+    let hook_md = hook_dir.join("HOOK.md");
+    if hook_md.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&hook_dir) {
+        tracing::debug!("could not create dcg-guard hook dir: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(&hook_md, DCG_GUARD_HOOK_MD) {
+        tracing::debug!("could not write dcg-guard HOOK.md: {e}");
+    }
+    let handler = hook_dir.join("handler.sh");
+    if let Err(e) = std::fs::write(&handler, DCG_GUARD_HANDLER_SH) {
+        tracing::debug!("could not write dcg-guard handler.sh: {e}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&handler, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
 /// Seed built-in personal skills into `~/.moltis/skills/`.
 ///
 /// These are safe defaults shipped with the binary. Existing user content
@@ -7322,6 +7351,74 @@ os = ["darwin", "linux"]    # skip on other OSes
 bins = ["jq"]               # required binaries in PATH
 env = ["MY_API_KEY"]        # required environment variables
 ```
+"#;
+
+/// Content for the seeded dcg-guard hook manifest.
+const DCG_GUARD_HOOK_MD: &str = r#"+++
+name = "dcg-guard"
+description = "Blocks destructive commands using Destructive Command Guard (dcg)"
+emoji = "🛡️"
+events = ["BeforeToolCall"]
+command = "./handler.sh"
+timeout = 5
++++
+
+# Destructive Command Guard (dcg)
+
+Uses the external [dcg](https://github.com/Dicklesworthstone/destructive_command_guard)
+tool to scan shell commands before execution. dcg ships 49+ pattern categories
+covering filesystem, git, database, cloud, and infrastructure commands.
+
+This hook is **seeded by default** into `~/.moltis/hooks/dcg-guard/` on first
+run. When `dcg` is not installed the hook is a no-op (all commands pass through).
+
+## Install dcg
+
+```bash
+cargo install dcg
+```
+
+Once installed, the hook will automatically start guarding destructive commands
+on the next Moltis restart.
+"#;
+
+/// Content for the seeded dcg-guard handler script.
+const DCG_GUARD_HANDLER_SH: &str = r#"#!/usr/bin/env bash
+# Hook handler: translates Moltis BeforeToolCall payload to dcg format.
+# When dcg is not installed the hook is a no-op (all commands pass through).
+
+set -euo pipefail
+
+# Gracefully skip when dcg is not installed.
+if ! command -v dcg >/dev/null 2>&1; then
+    cat >/dev/null   # drain stdin
+    exit 0
+fi
+
+INPUT=$(cat)
+
+# Only inspect exec tool calls.
+TOOL_NAME=$(printf '%s' "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+if [ "$TOOL_NAME" != "exec" ]; then
+    exit 0
+fi
+
+# Extract the command string from the arguments object.
+COMMAND=$(printf '%s' "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4)
+if [ -z "$COMMAND" ]; then
+    exit 0
+fi
+
+# Build the payload dcg expects and pipe it in.
+DCG_INPUT=$(printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$COMMAND")
+DCG_RESULT=$(printf '%s' "$DCG_INPUT" | dcg 2>&1) || {
+    # dcg returned non-zero — command is destructive.
+    echo "$DCG_RESULT" >&2
+    exit 1
+}
+
+# dcg returned 0 — command is safe.
+exit 0
 "#;
 
 /// Content for the starter example personal skill.

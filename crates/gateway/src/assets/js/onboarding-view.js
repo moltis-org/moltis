@@ -1540,7 +1540,7 @@ function OnboardingVoiceRow({
 			<div class="flex-1 min-w-0 flex flex-col gap-0.5">
 				<div class="flex items-center gap-2 flex-wrap">
 					<span class="text-sm font-medium text-[var(--text-strong)]">${provider.name}</span>
-					${provider.available ? html`<span class="provider-item-badge configured">configured</span>` : html`<span class="provider-item-badge">needs key</span>`}
+						${provider.available ? html`<span class="provider-item-badge configured">configured</span>` : html`<span class="provider-item-badge needs-key">needs key</span>`}
 					${keySourceLabel ? html`<span class="text-xs text-[var(--muted)]">${keySourceLabel}</span>` : null}
 				</div>
 				${provider.description ? html`<span class="text-xs text-[var(--muted)]">${provider.description}${!isConfiguring && provider.keyUrl ? html`${" \u2014 "}get your key at <a href=${provider.keyUrl} target="_blank" class="text-[var(--accent)] underline">${provider.keyUrlLabel || provider.keyUrl}</a>` : null}</span>` : null}

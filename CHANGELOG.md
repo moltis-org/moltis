@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
+
 ### Changed
 
 - Voice now auto-selects the first configured TTS/STT provider when no explicit
   provider is set.
 - Default voice template/settings now favor OpenAI TTS and Whisper STT in
   onboarding-ready configs.
+- Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
 
 ### Deprecated
 
@@ -29,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chat welcome card is now hidden as soon as the thinking indicator appears.
 - Onboarding summary loading state now keeps modal sizing stable with a
   centered spinner.
-
+- Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
 ### Security
 
 ## [0.9.10] - 2026-02-21
