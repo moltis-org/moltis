@@ -8,8 +8,43 @@ use crate::{
     context::GqlContext,
     error::{gql_err, parse_err},
     scalars::Json,
-    types::StatusInfo,
+    types::{
+        AgentIdentity, BoolResult, ChannelInfo, CronJob, CronRunRecord, CronStatus, HealthInfo,
+        HookInfo, McpServer, McpTool, MemoryStatus, ModelInfo, Project, ProviderInfo, SessionEntry,
+        SkillInfo, SkillRepo, StatusInfo, SttStatus, TtsStatus, UsageStatus,
+    },
 };
+
+// ── Helper macros ───────────────────────────────────────────────────────────
+
+macro_rules! rpc_typed {
+    ($method:expr, $ctx:expr) => {{
+        let c = $ctx.data::<Arc<GqlContext>>()?;
+        let r = c.rpc($method, serde_json::json!({})).await.map_err(gql_err)?;
+        serde_json::from_value(r).map_err(parse_err)
+    }};
+    ($method:expr, $ctx:expr, $params:expr) => {{
+        let c = $ctx.data::<Arc<GqlContext>>()?;
+        let r = c.rpc($method, $params).await.map_err(gql_err)?;
+        serde_json::from_value(r).map_err(parse_err)
+    }};
+}
+
+/// Only for truly dynamic/untyped data (user config values, chat context payloads).
+macro_rules! rpc_json {
+    ($method:expr, $ctx:expr) => {{
+        let c = $ctx.data::<Arc<GqlContext>>()?;
+        let r = c.rpc($method, serde_json::json!({})).await.map_err(gql_err)?;
+        Ok(Json(r))
+    }};
+    ($method:expr, $ctx:expr, $params:expr) => {{
+        let c = $ctx.data::<Arc<GqlContext>>()?;
+        let r = c.rpc($method, $params).await.map_err(gql_err)?;
+        Ok(Json(r))
+    }};
+}
+
+// ── Root ────────────────────────────────────────────────────────────────────
 
 /// Root query type composing all namespace queries.
 #[derive(Default)]
@@ -18,23 +53,13 @@ pub struct QueryRoot;
 #[Object]
 impl QueryRoot {
     /// Gateway health check.
-    async fn health(&self, ctx: &Context<'_>) -> Result<Json> {
-        let c = ctx.data::<Arc<GqlContext>>()?;
-        let r = c
-            .rpc("health", serde_json::json!({}))
-            .await
-            .map_err(gql_err)?;
-        Ok(Json(r))
+    async fn health(&self, ctx: &Context<'_>) -> Result<HealthInfo> {
+        rpc_typed!("health", ctx)
     }
 
     /// Gateway status with hostname, version, connections, uptime.
     async fn status(&self, ctx: &Context<'_>) -> Result<StatusInfo> {
-        let c = ctx.data::<Arc<GqlContext>>()?;
-        let r = c
-            .rpc("status", serde_json::json!({}))
-            .await
-            .map_err(gql_err)?;
-        serde_json::from_value(r).map_err(parse_err)
+        rpc_typed!("status", ctx)
     }
 
     /// System queries (presence, heartbeat).
@@ -158,20 +183,7 @@ impl QueryRoot {
     }
 }
 
-// ── Namespace query types ───────────────────────────────────────────────────
-
-macro_rules! rpc_query {
-    ($method:expr, $ctx:expr) => {{
-        let c = $ctx.data::<Arc<GqlContext>>()?;
-        let r = c.rpc($method, serde_json::json!({})).await.map_err(gql_err)?;
-        Ok(Json(r))
-    }};
-    ($method:expr, $ctx:expr, $params:expr) => {{
-        let c = $ctx.data::<Arc<GqlContext>>()?;
-        let r = c.rpc($method, $params).await.map_err(gql_err)?;
-        Ok(Json(r))
-    }};
-}
+// ── System ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct SystemQuery;
@@ -180,14 +192,17 @@ pub struct SystemQuery;
 impl SystemQuery {
     /// Detailed client and node presence information.
     async fn presence(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("system-presence", ctx)
+        // Presence payload varies by client/node structure — keep dynamic.
+        rpc_json!("system-presence", ctx)
     }
 
     /// Last activity duration for the current client.
-    async fn last_heartbeat(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("last-heartbeat", ctx)
+    async fn last_heartbeat(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("last-heartbeat", ctx)
     }
 }
+
+// ── Node ────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct NodeQuery;
@@ -196,12 +211,14 @@ pub struct NodeQuery;
 impl NodeQuery {
     /// List all connected nodes.
     async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("node.list", ctx)
+        // NodeSession not Serialize; gateway manually builds JSON.
+        rpc_json!("node.list", ctx)
     }
 
     /// Get detailed info for a specific node.
     async fn describe(&self, ctx: &Context<'_>, node_id: String) -> Result<Json> {
-        rpc_query!(
+        // NodeSession not Serialize; gateway manually builds JSON.
+        rpc_json!(
             "node.describe",
             ctx,
             serde_json::json!({ "nodeId": node_id })
@@ -210,9 +227,12 @@ impl NodeQuery {
 
     /// List pending pairing requests.
     async fn pair_requests(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("node.pair.list", ctx)
+        // Pairing request shape varies by transport.
+        rpc_json!("node.pair.list", ctx)
     }
 }
+
+// ── Chat ────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ChatQuery;
@@ -221,7 +241,8 @@ pub struct ChatQuery;
 impl ChatQuery {
     /// Get chat history for a session.
     async fn history(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
-        rpc_query!(
+        // Messages contain deeply nested tool calls, images, etc.
+        rpc_json!(
             "chat.history",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
@@ -230,7 +251,8 @@ impl ChatQuery {
 
     /// Get chat context data.
     async fn context(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
-        rpc_query!(
+        // Dynamic context shape (system prompt, tools, etc.).
+        rpc_json!(
             "chat.context",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
@@ -239,7 +261,8 @@ impl ChatQuery {
 
     /// Get rendered system prompt.
     async fn raw_prompt(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
-        rpc_query!(
+        // Rendered prompt string or structured prompt sections.
+        rpc_json!(
             "chat.raw_prompt",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
@@ -248,7 +271,8 @@ impl ChatQuery {
 
     /// Get full context with rendering (OpenAI messages format).
     async fn full_context(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
-        rpc_query!(
+        // OpenAI messages format — deeply nested, dynamic.
+        rpc_json!(
             "chat.full_context",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
@@ -256,24 +280,26 @@ impl ChatQuery {
     }
 }
 
+// ── Sessions ────────────────────────────────────────────────────────────────
+
 #[derive(Default)]
 pub struct SessionQuery;
 
 #[Object]
 impl SessionQuery {
     /// List all sessions.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("sessions.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<SessionEntry>> {
+        rpc_typed!("sessions.list", ctx)
     }
 
     /// Preview a session without switching.
-    async fn preview(&self, ctx: &Context<'_>, key: String) -> Result<Json> {
-        rpc_query!("sessions.preview", ctx, serde_json::json!({ "key": key }))
+    async fn preview(&self, ctx: &Context<'_>, key: String) -> Result<SessionEntry> {
+        rpc_typed!("sessions.preview", ctx, serde_json::json!({ "key": key }))
     }
 
     /// Search sessions by query.
-    async fn search(&self, ctx: &Context<'_>, query: String) -> Result<Json> {
-        rpc_query!(
+    async fn search(&self, ctx: &Context<'_>, query: String) -> Result<Vec<SessionEntry>> {
+        rpc_typed!(
             "sessions.search",
             ctx,
             serde_json::json!({ "query": query })
@@ -281,18 +307,20 @@ impl SessionQuery {
     }
 
     /// Resolve or auto-create a session.
-    async fn resolve(&self, ctx: &Context<'_>, key: String) -> Result<Json> {
-        rpc_query!("sessions.resolve", ctx, serde_json::json!({ "key": key }))
+    async fn resolve(&self, ctx: &Context<'_>, key: String) -> Result<SessionEntry> {
+        rpc_typed!("sessions.resolve", ctx, serde_json::json!({ "key": key }))
     }
 
     /// Get session branches.
     async fn branches(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Json> {
-        rpc_query!("sessions.branches", ctx, serde_json::json!({ "key": key }))
+        // Branch tree structure is recursive/variable.
+        rpc_json!("sessions.branches", ctx, serde_json::json!({ "key": key }))
     }
 
     /// List shared session links.
     async fn shares(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Json> {
-        rpc_query!(
+        // Share link structure includes tokens and URLs.
+        rpc_json!(
             "sessions.share.list",
             ctx,
             serde_json::json!({ "key": key })
@@ -300,42 +328,51 @@ impl SessionQuery {
     }
 }
 
+// ── Channels ────────────────────────────────────────────────────────────────
+
 #[derive(Default)]
 pub struct ChannelQuery;
 
 #[Object]
 impl ChannelQuery {
     /// Get channel status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("channels.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("channels.status", ctx)
     }
 
     /// List all channels.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("channels.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<ChannelInfo>> {
+        rpc_typed!("channels.list", ctx)
     }
 
     /// List pending channel senders.
     async fn senders(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("channels.senders.list", ctx, serde_json::json!({}))
+        // Sender approval info includes OTP/allowlist state.
+        rpc_json!("channels.senders.list", ctx, serde_json::json!({}))
     }
 }
+
+// ── Config ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ConfigQuery;
 
 #[Object]
 impl ConfigQuery {
-    /// Get config value at a path.
+    /// Get config value at a path. Returns dynamic user-defined config data.
     async fn get(&self, ctx: &Context<'_>, path: Option<String>) -> Result<Json> {
-        rpc_query!("config.get", ctx, serde_json::json!({ "path": path }))
+        // User config values are arbitrary types.
+        rpc_json!("config.get", ctx, serde_json::json!({ "path": path }))
     }
 
-    /// Get config schema definition.
+    /// Get config schema definition. Returns dynamic JSON schema.
     async fn schema(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("config.schema", ctx)
+        // JSON schema definition is inherently dynamic.
+        rpc_json!("config.schema", ctx)
     }
 }
+
+// ── Cron ────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct CronQuery;
@@ -343,20 +380,22 @@ pub struct CronQuery;
 #[Object]
 impl CronQuery {
     /// List all cron jobs.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("cron.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<CronJob>> {
+        rpc_typed!("cron.list", ctx)
     }
 
     /// Get cron status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("cron.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<CronStatus> {
+        rpc_typed!("cron.status", ctx)
     }
 
     /// Get run history for a cron job.
-    async fn runs(&self, ctx: &Context<'_>, job_id: String) -> Result<Json> {
-        rpc_query!("cron.runs", ctx, serde_json::json!({ "jobId": job_id }))
+    async fn runs(&self, ctx: &Context<'_>, job_id: String) -> Result<Vec<CronRunRecord>> {
+        rpc_typed!("cron.runs", ctx, serde_json::json!({ "jobId": job_id }))
     }
 }
+
+// ── Heartbeat ───────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct HeartbeatQuery;
@@ -365,14 +404,17 @@ pub struct HeartbeatQuery;
 impl HeartbeatQuery {
     /// Get heartbeat configuration and status.
     async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("heartbeat.status", ctx)
+        // Heartbeat config shape includes cron-like schedule fields.
+        rpc_json!("heartbeat.status", ctx)
     }
 
     /// Get heartbeat run history.
-    async fn runs(&self, ctx: &Context<'_>, limit: Option<u64>) -> Result<Json> {
-        rpc_query!("heartbeat.runs", ctx, serde_json::json!({ "limit": limit }))
+    async fn runs(&self, ctx: &Context<'_>, limit: Option<u64>) -> Result<Vec<CronRunRecord>> {
+        rpc_typed!("heartbeat.runs", ctx, serde_json::json!({ "limit": limit }))
     }
 }
+
+// ── Logs ────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct LogsQuery;
@@ -381,19 +423,24 @@ pub struct LogsQuery;
 impl LogsQuery {
     /// Stream log tail.
     async fn tail(&self, ctx: &Context<'_>, lines: Option<u64>) -> Result<Json> {
-        rpc_query!("logs.tail", ctx, serde_json::json!({ "lines": lines }))
+        // Log entries contain dynamic tracing fields.
+        rpc_json!("logs.tail", ctx, serde_json::json!({ "lines": lines }))
     }
 
     /// List logs.
     async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("logs.list", ctx)
+        // Log entries contain dynamic tracing fields.
+        rpc_json!("logs.list", ctx)
     }
 
     /// Get log status.
     async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("logs.status", ctx)
+        // Contains unseen_warns, unseen_errors, enabled_levels map.
+        rpc_json!("logs.status", ctx)
     }
 }
+
+// ── TTS ─────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct TtsQuery;
@@ -401,20 +448,23 @@ pub struct TtsQuery;
 #[Object]
 impl TtsQuery {
     /// Get TTS status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("tts.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<TtsStatus> {
+        rpc_typed!("tts.status", ctx)
     }
 
     /// Get available TTS providers.
-    async fn providers(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("tts.providers", ctx)
+    async fn providers(&self, ctx: &Context<'_>) -> Result<Vec<ProviderInfo>> {
+        rpc_typed!("tts.providers", ctx)
     }
 
     /// Generate a TTS test phrase.
     async fn generate_phrase(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("tts.generate_phrase", ctx)
+        // Returns a plain string.
+        rpc_json!("tts.generate_phrase", ctx)
     }
 }
+
+// ── STT ─────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct SttQuery;
@@ -422,15 +472,17 @@ pub struct SttQuery;
 #[Object]
 impl SttQuery {
     /// Get STT status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("stt.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<SttStatus> {
+        rpc_typed!("stt.status", ctx)
     }
 
     /// Get available STT providers.
-    async fn providers(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("stt.providers", ctx)
+    async fn providers(&self, ctx: &Context<'_>) -> Result<Vec<ProviderInfo>> {
+        rpc_typed!("stt.providers", ctx)
     }
 }
+
+// ── Voice ───────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct VoiceQuery;
@@ -439,24 +491,29 @@ pub struct VoiceQuery;
 impl VoiceQuery {
     /// Get voice configuration.
     async fn config(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("voice.config.get", ctx)
+        // Voice config is a complex nested structure with provider-specific fields.
+        rpc_json!("voice.config.get", ctx)
     }
 
     /// Get all voice providers with availability detection.
-    async fn providers(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("voice.providers.all", ctx)
+    async fn providers(&self, ctx: &Context<'_>) -> Result<Vec<ProviderInfo>> {
+        rpc_typed!("voice.providers.all", ctx)
     }
 
     /// Fetch ElevenLabs voice catalog.
     async fn elevenlabs_catalog(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("voice.elevenlabs.catalog", ctx)
+        // ElevenLabs voice catalog is a complex external structure.
+        rpc_json!("voice.elevenlabs.catalog", ctx)
     }
 
     /// Check Voxtral local setup requirements.
     async fn voxtral_requirements(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("voice.config.voxtral_requirements", ctx)
+        // Contains platform-specific requirement checks.
+        rpc_json!("voice.config.voxtral_requirements", ctx)
     }
 }
+
+// ── Skills ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct SkillsQuery;
@@ -464,28 +521,29 @@ pub struct SkillsQuery;
 #[Object]
 impl SkillsQuery {
     /// List installed skills.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<SkillInfo>> {
+        rpc_typed!("skills.list", ctx)
     }
 
     /// Get skills system status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("skills.status", ctx)
     }
 
     /// Get skills binaries.
     async fn bins(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.bins", ctx)
+        // Binary dependency info varies by platform.
+        rpc_json!("skills.bins", ctx)
     }
 
     /// List skill repositories.
-    async fn repos(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.repos.list", ctx)
+    async fn repos(&self, ctx: &Context<'_>) -> Result<Vec<SkillRepo>> {
+        rpc_typed!("skills.repos.list", ctx)
     }
 
     /// Get skill details.
-    async fn detail(&self, ctx: &Context<'_>, name: String) -> Result<Json> {
-        rpc_query!(
+    async fn detail(&self, ctx: &Context<'_>, name: String) -> Result<SkillInfo> {
+        rpc_typed!(
             "skills.skill.detail",
             ctx,
             serde_json::json!({ "name": name })
@@ -494,14 +552,18 @@ impl SkillsQuery {
 
     /// Get security status.
     async fn security_status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.security.status", ctx)
+        // Security scan results with variable issue shapes.
+        rpc_json!("skills.security.status", ctx)
     }
 
     /// Run security scan.
     async fn security_scan(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("skills.security.scan", ctx)
+        // Security scan results with variable issue shapes.
+        rpc_json!("skills.security.scan", ctx)
     }
 }
+
+// ── Models ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ModelQuery;
@@ -509,15 +571,17 @@ pub struct ModelQuery;
 #[Object]
 impl ModelQuery {
     /// List enabled models.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("models.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<ModelInfo>> {
+        rpc_typed!("models.list", ctx)
     }
 
     /// List all available models.
-    async fn list_all(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("models.list_all", ctx)
+    async fn list_all(&self, ctx: &Context<'_>) -> Result<Vec<ModelInfo>> {
+        rpc_typed!("models.list_all", ctx)
     }
 }
+
+// ── Providers ───────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ProviderQuery;
@@ -525,13 +589,13 @@ pub struct ProviderQuery;
 #[Object]
 impl ProviderQuery {
     /// List available provider integrations.
-    async fn available(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("providers.available", ctx)
+    async fn available(&self, ctx: &Context<'_>) -> Result<Vec<ProviderInfo>> {
+        rpc_typed!("providers.available", ctx)
     }
 
     /// Get OAuth status.
-    async fn oauth_status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("providers.oauth.status", ctx)
+    async fn oauth_status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("providers.oauth.status", ctx)
     }
 
     /// Local LLM queries.
@@ -547,22 +611,24 @@ pub struct LocalLlmQuery;
 impl LocalLlmQuery {
     /// Get system information for local LLM.
     async fn system_info(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("providers.local.system_info", ctx)
+        // System info includes platform-specific GPU/RAM details.
+        rpc_json!("providers.local.system_info", ctx)
     }
 
     /// List available local models.
-    async fn models(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("providers.local.models", ctx)
+    async fn models(&self, ctx: &Context<'_>) -> Result<Vec<ModelInfo>> {
+        rpc_typed!("providers.local.models", ctx)
     }
 
     /// Get local LLM status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("providers.local.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("providers.local.status", ctx)
     }
 
     /// Search HuggingFace models.
     async fn search_hf(&self, ctx: &Context<'_>, query: String) -> Result<Json> {
-        rpc_query!(
+        // HuggingFace search results have external API shape.
+        rpc_json!(
             "providers.local.search_hf",
             ctx,
             serde_json::json!({ "query": query })
@@ -570,26 +636,30 @@ impl LocalLlmQuery {
     }
 }
 
+// ── MCP ─────────────────────────────────────────────────────────────────────
+
 #[derive(Default)]
 pub struct McpQuery;
 
 #[Object]
 impl McpQuery {
     /// List MCP servers.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("mcp.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<McpServer>> {
+        rpc_typed!("mcp.list", ctx)
     }
 
     /// Get MCP system status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("mcp.status", ctx, serde_json::json!({}))
+    async fn status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("mcp.status", ctx, serde_json::json!({}))
     }
 
     /// Get MCP server tools.
-    async fn tools(&self, ctx: &Context<'_>, name: Option<String>) -> Result<Json> {
-        rpc_query!("mcp.tools", ctx, serde_json::json!({ "name": name }))
+    async fn tools(&self, ctx: &Context<'_>, name: Option<String>) -> Result<Vec<McpTool>> {
+        rpc_typed!("mcp.tools", ctx, serde_json::json!({ "name": name }))
     }
 }
+
+// ── Usage ───────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct UsageQuery;
@@ -597,15 +667,18 @@ pub struct UsageQuery;
 #[Object]
 impl UsageQuery {
     /// Get usage statistics.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("usage.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<UsageStatus> {
+        rpc_typed!("usage.status", ctx)
     }
 
     /// Calculate cost for a usage period.
     async fn cost(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("usage.cost", ctx, serde_json::json!({}))
+        // Cost breakdown varies by billing model.
+        rpc_json!("usage.cost", ctx, serde_json::json!({}))
     }
 }
+
+// ── Exec Approvals ──────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ExecApprovalQuery;
@@ -614,14 +687,18 @@ pub struct ExecApprovalQuery;
 impl ExecApprovalQuery {
     /// Get execution approval settings.
     async fn get(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("exec.approvals.get", ctx)
+        // Approval config includes policy rules and patterns.
+        rpc_json!("exec.approvals.get", ctx)
     }
 
     /// Get node-specific approval settings.
     async fn node_config(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("exec.approvals.node.get", ctx)
+        // Per-node approval config with variable rule shapes.
+        rpc_json!("exec.approvals.node.get", ctx)
     }
 }
+
+// ── Projects ────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct ProjectQuery;
@@ -629,23 +706,25 @@ pub struct ProjectQuery;
 #[Object]
 impl ProjectQuery {
     /// List all projects.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("projects.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<Project>> {
+        rpc_typed!("projects.list", ctx)
     }
 
     /// Get a project by ID.
-    async fn get(&self, ctx: &Context<'_>, id: String) -> Result<Json> {
-        rpc_query!("projects.get", ctx, serde_json::json!({ "id": id }))
+    async fn get(&self, ctx: &Context<'_>, id: String) -> Result<Project> {
+        rpc_typed!("projects.get", ctx, serde_json::json!({ "id": id }))
     }
 
     /// Get project context.
     async fn context(&self, ctx: &Context<'_>, id: String) -> Result<Json> {
-        rpc_query!("projects.context", ctx, serde_json::json!({ "id": id }))
+        // Project context includes dynamic file tree and environment.
+        rpc_json!("projects.context", ctx, serde_json::json!({ "id": id }))
     }
 
     /// Path completion for projects.
     async fn complete_path(&self, ctx: &Context<'_>, prefix: String) -> Result<Json> {
-        rpc_query!(
+        // Returns completion suggestions as variable-length array.
+        rpc_json!(
             "projects.complete_path",
             ctx,
             serde_json::json!({ "prefix": prefix })
@@ -653,26 +732,31 @@ impl ProjectQuery {
     }
 }
 
+// ── Memory ──────────────────────────────────────────────────────────────────
+
 #[derive(Default)]
 pub struct MemoryQuery;
 
 #[Object]
 impl MemoryQuery {
     /// Get memory system status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("memory.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<MemoryStatus> {
+        rpc_typed!("memory.status", ctx)
     }
 
     /// Get memory configuration.
     async fn config(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("memory.config.get", ctx)
+        // Memory config includes backend-specific settings.
+        rpc_json!("memory.config.get", ctx)
     }
 
     /// Get QMD status.
-    async fn qmd_status(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("memory.qmd.status", ctx)
+    async fn qmd_status(&self, ctx: &Context<'_>) -> Result<BoolResult> {
+        rpc_typed!("memory.qmd.status", ctx)
     }
 }
+
+// ── Hooks ───────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct HooksQuery;
@@ -680,10 +764,12 @@ pub struct HooksQuery;
 #[Object]
 impl HooksQuery {
     /// List discovered hooks with stats.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("hooks.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<HookInfo>> {
+        rpc_typed!("hooks.list", ctx)
     }
 }
+
+// ── Agents ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct AgentQuery;
@@ -692,14 +778,17 @@ pub struct AgentQuery;
 impl AgentQuery {
     /// List available agents.
     async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("agents.list", ctx)
+        // Agent list includes dynamic config/capabilities per agent.
+        rpc_json!("agents.list", ctx)
     }
 
     /// Get agent identity.
-    async fn identity(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("agent.identity.get", ctx)
+    async fn identity(&self, ctx: &Context<'_>) -> Result<AgentIdentity> {
+        rpc_typed!("agent.identity.get", ctx)
     }
 }
+
+// ── Voicewake ───────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct VoicewakeQuery;
@@ -708,9 +797,12 @@ pub struct VoicewakeQuery;
 impl VoicewakeQuery {
     /// Get wake word configuration.
     async fn get(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("voicewake.get", ctx)
+        // Wake word config includes platform-specific engine settings.
+        rpc_json!("voicewake.get", ctx)
     }
 }
+
+// ── Device ──────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct DeviceQuery;
@@ -719,6 +811,7 @@ pub struct DeviceQuery;
 impl DeviceQuery {
     /// List paired devices.
     async fn pair_requests(&self, ctx: &Context<'_>) -> Result<Json> {
-        rpc_query!("device.pair.list", ctx)
+        // Device pairing info varies by transport type.
+        rpc_json!("device.pair.list", ctx)
     }
 }

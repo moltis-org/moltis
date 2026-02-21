@@ -136,7 +136,9 @@ async fn health_query_returns_data() {
     caller.set_response("health", json!({"ok": true, "connections": 3}));
     let (schema, _) = build_test_schema(caller.clone());
 
-    let res = schema.execute(Request::new("{ health }")).await;
+    let res = schema
+        .execute(Request::new("{ health { ok connections } }"))
+        .await;
 
     assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     let data = res.data.into_json().expect("json");
@@ -174,12 +176,15 @@ async fn cron_list_query() {
     );
     let (schema, _) = build_test_schema(caller.clone());
 
-    let res = schema.execute(Request::new("{ cron { list } }")).await;
+    let res = schema
+        .execute(Request::new("{ cron { list { id name enabled } } }"))
+        .await;
 
     assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     let data = res.data.into_json().expect("json");
     let list = &data["cron"]["list"];
     assert!(list.is_array());
+    assert_eq!(list[0]["name"], "test-job");
 }
 
 #[tokio::test]
@@ -191,11 +196,14 @@ async fn sessions_list_query() {
     );
     let (schema, _) = build_test_schema(caller.clone());
 
-    let res = schema.execute(Request::new("{ sessions { list } }")).await;
+    let res = schema
+        .execute(Request::new("{ sessions { list { key label } } }"))
+        .await;
 
     assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     let data = res.data.into_json().expect("json");
     assert!(data["sessions"]["list"].is_array());
+    assert_eq!(data["sessions"]["list"][0]["key"], "sess1");
 }
 
 // ── Mutation resolvers ──────────────────────────────────────────────────────
@@ -208,7 +216,7 @@ async fn config_set_mutation() {
 
     let res = schema
         .execute(Request::new(
-            r#"mutation { config { set(path: "theme", value: "dark") } }"#,
+            r#"mutation { config { set(path: "theme", value: "dark") { ok } } }"#,
         ))
         .await;
 
@@ -227,7 +235,7 @@ async fn chat_send_mutation() {
 
     let res = schema
         .execute(Request::new(
-            r#"mutation { chat { send(message: "Hello") } }"#,
+            r#"mutation { chat { send(message: "Hello") { ok } } }"#,
         ))
         .await;
 
@@ -240,12 +248,12 @@ async fn chat_send_mutation() {
 #[tokio::test]
 async fn cron_add_mutation() {
     let caller = Arc::new(MockCaller::new());
-    caller.set_response("cron.add", json!({"id": "new-job"}));
+    caller.set_response("cron.add", json!({"ok": true}));
     let (schema, _) = build_test_schema(caller.clone());
 
     let res = schema
         .execute(Request::new(
-            r#"mutation { cron { add(input: { name: "backup" }) } }"#,
+            r#"mutation { cron { add(input: { name: "backup" }) { ok } } }"#,
         ))
         .await;
 
@@ -263,7 +271,9 @@ async fn service_error_becomes_graphql_error() {
     // Don't set any response — the mock will return Err("no mock response for health")
     let (schema, _) = build_test_schema(caller);
 
-    let res = schema.execute(Request::new("{ health }")).await;
+    let res = schema
+        .execute(Request::new("{ health { ok } }"))
+        .await;
 
     assert!(!res.errors.is_empty(), "expected an error");
     assert!(
@@ -283,12 +293,15 @@ async fn nested_query_namespaces() {
     let (schema, _) = build_test_schema(caller.clone());
 
     let res = schema
-        .execute(Request::new("{ tts { status } mcp { list } }"))
+        .execute(Request::new(
+            "{ tts { status { enabled provider } } mcp { list { name enabled } } }",
+        ))
         .await;
 
     assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     let data = res.data.into_json().expect("json");
     assert!(data["tts"]["status"].is_object());
+    assert_eq!(data["tts"]["status"]["provider"], "openai");
     assert!(data["mcp"]["list"].is_array());
 }
 
@@ -339,7 +352,7 @@ async fn multiple_root_queries() {
     let (schema, _) = build_test_schema(caller.clone());
 
     let res = schema
-        .execute(Request::new("{ health status { hostname } }"))
+        .execute(Request::new("{ health { ok } status { hostname } }"))
         .await;
 
     assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
