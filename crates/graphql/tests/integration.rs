@@ -206,6 +206,58 @@ async fn sessions_list_query() {
     assert_eq!(data["sessions"]["list"][0]["key"], "sess1");
 }
 
+#[tokio::test]
+async fn system_presence_query_returns_typed_shape() {
+    let caller = Arc::new(MockCaller::new());
+    caller.set_response(
+        "system-presence",
+        json!({
+            "clients": [{"connId": "c1", "role": "operator", "connectedAt": 42}],
+            "nodes": [{"nodeId": "n1", "displayName": "Node One"}]
+        }),
+    );
+    let (schema, _) = build_test_schema(caller);
+
+    let res = schema
+        .execute(Request::new(
+            r#"{ system { presence { clients { connId role connectedAt } nodes { nodeId displayName } } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let data = res.data.into_json().expect("json");
+    assert_eq!(data["system"]["presence"]["clients"][0]["connId"], "c1");
+    assert_eq!(
+        data["system"]["presence"]["nodes"][0]["displayName"],
+        "Node One"
+    );
+}
+
+#[tokio::test]
+async fn logs_status_query_returns_typed_shape() {
+    let caller = Arc::new(MockCaller::new());
+    caller.set_response(
+        "logs.status",
+        json!({
+            "unseen_warns": 2,
+            "unseen_errors": 1,
+            "enabled_levels": {"debug": true, "trace": false}
+        }),
+    );
+    let (schema, _) = build_test_schema(caller);
+
+    let res = schema
+        .execute(Request::new(
+            r#"{ logs { status { unseenWarns unseenErrors enabledLevels { debug trace } } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let data = res.data.into_json().expect("json");
+    assert_eq!(data["logs"]["status"]["unseenWarns"], 2);
+    assert_eq!(data["logs"]["status"]["enabledLevels"]["debug"], true);
+}
+
 // ── Mutation resolvers ──────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -246,6 +298,32 @@ async fn chat_send_mutation() {
 }
 
 #[tokio::test]
+async fn providers_oauth_start_mutation_returns_typed_shape() {
+    let caller = Arc::new(MockCaller::new());
+    caller.set_response(
+        "providers.oauth.start",
+        json!({
+            "authUrl": "https://auth.example/start",
+            "deviceFlow": false
+        }),
+    );
+    let (schema, _) = build_test_schema(caller);
+
+    let res = schema
+        .execute(Request::new(
+            r#"mutation { providers { oauthStart(provider: "openai") { authUrl deviceFlow } } }"#,
+        ))
+        .await;
+
+    assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    let data = res.data.into_json().expect("json");
+    assert_eq!(
+        data["providers"]["oauthStart"]["authUrl"],
+        "https://auth.example/start"
+    );
+}
+
+#[tokio::test]
 async fn cron_add_mutation() {
     let caller = Arc::new(MockCaller::new());
     caller.set_response("cron.add", json!({"ok": true}));
@@ -271,9 +349,7 @@ async fn service_error_becomes_graphql_error() {
     // Don't set any response — the mock will return Err("no mock response for health")
     let (schema, _) = build_test_schema(caller);
 
-    let res = schema
-        .execute(Request::new("{ health { ok } }"))
-        .await;
+    let res = schema.execute(Request::new("{ health { ok } }")).await;
 
     assert!(!res.errors.is_empty(), "expected an error");
     assert!(

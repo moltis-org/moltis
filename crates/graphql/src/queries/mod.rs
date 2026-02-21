@@ -9,9 +9,12 @@ use crate::{
     error::{gql_err, parse_err},
     scalars::Json,
     types::{
-        AgentIdentity, BoolResult, ChannelInfo, CronJob, CronRunRecord, CronStatus, HealthInfo,
-        HookInfo, McpServer, McpTool, MemoryStatus, ModelInfo, Project, ProviderInfo, SessionEntry,
-        SkillInfo, SkillRepo, StatusInfo, SttStatus, TtsStatus, UsageStatus,
+        AgentIdentity, BoolResult, ChannelInfo, ChannelSendersResult, ChatRawPrompt, CronJob,
+        CronRunRecord, CronStatus, ExecApprovalConfig, ExecNodeConfig, HealthInfo, HeartbeatStatus,
+        HookInfo, LocalSystemInfo, LogListResult, LogStatus, LogTailResult, McpServer, McpTool,
+        MemoryStatus, ModelInfo, NodeInfo, Project, ProjectContext, ProviderInfo, SessionBranch,
+        SessionEntry, SessionShareResult, SkillInfo, SkillRepo, StatusInfo, SttStatus,
+        SystemPresence, TtsStatus, UsageCost, UsageStatus, VoicewakeConfig,
     },
 };
 
@@ -191,9 +194,8 @@ pub struct SystemQuery;
 #[Object]
 impl SystemQuery {
     /// Detailed client and node presence information.
-    async fn presence(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Presence payload varies by client/node structure — keep dynamic.
-        rpc_json!("system-presence", ctx)
+    async fn presence(&self, ctx: &Context<'_>) -> Result<SystemPresence> {
+        rpc_typed!("system-presence", ctx)
     }
 
     /// Last activity duration for the current client.
@@ -210,9 +212,8 @@ pub struct NodeQuery;
 #[Object]
 impl NodeQuery {
     /// List all connected nodes.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        // NodeSession not Serialize; gateway manually builds JSON.
-        rpc_json!("node.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<Vec<NodeInfo>> {
+        rpc_typed!("node.list", ctx)
     }
 
     /// Get detailed info for a specific node.
@@ -260,9 +261,12 @@ impl ChatQuery {
     }
 
     /// Get rendered system prompt.
-    async fn raw_prompt(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<Json> {
-        // Rendered prompt string or structured prompt sections.
-        rpc_json!(
+    async fn raw_prompt(
+        &self,
+        ctx: &Context<'_>,
+        session_key: Option<String>,
+    ) -> Result<ChatRawPrompt> {
+        rpc_typed!(
             "chat.raw_prompt",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
@@ -312,15 +316,17 @@ impl SessionQuery {
     }
 
     /// Get session branches.
-    async fn branches(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Json> {
-        // Branch tree structure is recursive/variable.
-        rpc_json!("sessions.branches", ctx, serde_json::json!({ "key": key }))
+    async fn branches(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Vec<SessionBranch>> {
+        rpc_typed!("sessions.branches", ctx, serde_json::json!({ "key": key }))
     }
 
     /// List shared session links.
-    async fn shares(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Json> {
-        // Share link structure includes tokens and URLs.
-        rpc_json!(
+    async fn shares(
+        &self,
+        ctx: &Context<'_>,
+        key: Option<String>,
+    ) -> Result<Vec<SessionShareResult>> {
+        rpc_typed!(
             "sessions.share.list",
             ctx,
             serde_json::json!({ "key": key })
@@ -346,9 +352,8 @@ impl ChannelQuery {
     }
 
     /// List pending channel senders.
-    async fn senders(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Sender approval info includes OTP/allowlist state.
-        rpc_json!("channels.senders.list", ctx, serde_json::json!({}))
+    async fn senders(&self, ctx: &Context<'_>) -> Result<ChannelSendersResult> {
+        rpc_typed!("channels.senders.list", ctx, serde_json::json!({}))
     }
 }
 
@@ -403,9 +408,8 @@ pub struct HeartbeatQuery;
 #[Object]
 impl HeartbeatQuery {
     /// Get heartbeat configuration and status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Heartbeat config shape includes cron-like schedule fields.
-        rpc_json!("heartbeat.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<HeartbeatStatus> {
+        rpc_typed!("heartbeat.status", ctx)
     }
 
     /// Get heartbeat run history.
@@ -422,21 +426,18 @@ pub struct LogsQuery;
 #[Object]
 impl LogsQuery {
     /// Stream log tail.
-    async fn tail(&self, ctx: &Context<'_>, lines: Option<u64>) -> Result<Json> {
-        // Log entries contain dynamic tracing fields.
-        rpc_json!("logs.tail", ctx, serde_json::json!({ "lines": lines }))
+    async fn tail(&self, ctx: &Context<'_>, lines: Option<u64>) -> Result<LogTailResult> {
+        rpc_typed!("logs.tail", ctx, serde_json::json!({ "limit": lines }))
     }
 
     /// List logs.
-    async fn list(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Log entries contain dynamic tracing fields.
-        rpc_json!("logs.list", ctx)
+    async fn list(&self, ctx: &Context<'_>) -> Result<LogListResult> {
+        rpc_typed!("logs.list", ctx)
     }
 
     /// Get log status.
-    async fn status(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Contains unseen_warns, unseen_errors, enabled_levels map.
-        rpc_json!("logs.status", ctx)
+    async fn status(&self, ctx: &Context<'_>) -> Result<LogStatus> {
+        rpc_typed!("logs.status", ctx)
     }
 }
 
@@ -458,9 +459,8 @@ impl TtsQuery {
     }
 
     /// Generate a TTS test phrase.
-    async fn generate_phrase(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Returns a plain string.
-        rpc_json!("tts.generate_phrase", ctx)
+    async fn generate_phrase(&self, ctx: &Context<'_>) -> Result<String> {
+        rpc_typed!("tts.generate_phrase", ctx)
     }
 }
 
@@ -610,9 +610,8 @@ pub struct LocalLlmQuery;
 #[Object]
 impl LocalLlmQuery {
     /// Get system information for local LLM.
-    async fn system_info(&self, ctx: &Context<'_>) -> Result<Json> {
-        // System info includes platform-specific GPU/RAM details.
-        rpc_json!("providers.local.system_info", ctx)
+    async fn system_info(&self, ctx: &Context<'_>) -> Result<LocalSystemInfo> {
+        rpc_typed!("providers.local.system_info", ctx)
     }
 
     /// List available local models.
@@ -672,9 +671,8 @@ impl UsageQuery {
     }
 
     /// Calculate cost for a usage period.
-    async fn cost(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Cost breakdown varies by billing model.
-        rpc_json!("usage.cost", ctx, serde_json::json!({}))
+    async fn cost(&self, ctx: &Context<'_>) -> Result<UsageCost> {
+        rpc_typed!("usage.cost", ctx, serde_json::json!({}))
     }
 }
 
@@ -686,15 +684,13 @@ pub struct ExecApprovalQuery;
 #[Object]
 impl ExecApprovalQuery {
     /// Get execution approval settings.
-    async fn get(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Approval config includes policy rules and patterns.
-        rpc_json!("exec.approvals.get", ctx)
+    async fn get(&self, ctx: &Context<'_>) -> Result<ExecApprovalConfig> {
+        rpc_typed!("exec.approvals.get", ctx)
     }
 
     /// Get node-specific approval settings.
-    async fn node_config(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Per-node approval config with variable rule shapes.
-        rpc_json!("exec.approvals.node.get", ctx)
+    async fn node_config(&self, ctx: &Context<'_>) -> Result<ExecNodeConfig> {
+        rpc_typed!("exec.approvals.node.get", ctx)
     }
 }
 
@@ -716,18 +712,16 @@ impl ProjectQuery {
     }
 
     /// Get project context.
-    async fn context(&self, ctx: &Context<'_>, id: String) -> Result<Json> {
-        // Project context includes dynamic file tree and environment.
-        rpc_json!("projects.context", ctx, serde_json::json!({ "id": id }))
+    async fn context(&self, ctx: &Context<'_>, id: String) -> Result<ProjectContext> {
+        rpc_typed!("projects.context", ctx, serde_json::json!({ "id": id }))
     }
 
     /// Path completion for projects.
-    async fn complete_path(&self, ctx: &Context<'_>, prefix: String) -> Result<Json> {
-        // Returns completion suggestions as variable-length array.
-        rpc_json!(
+    async fn complete_path(&self, ctx: &Context<'_>, prefix: String) -> Result<Vec<String>> {
+        rpc_typed!(
             "projects.complete_path",
             ctx,
-            serde_json::json!({ "prefix": prefix })
+            serde_json::json!({ "partial": prefix })
         )
     }
 }
@@ -796,9 +790,8 @@ pub struct VoicewakeQuery;
 #[Object]
 impl VoicewakeQuery {
     /// Get wake word configuration.
-    async fn get(&self, ctx: &Context<'_>) -> Result<Json> {
-        // Wake word config includes platform-specific engine settings.
-        rpc_json!("voicewake.get", ctx)
+    async fn get(&self, ctx: &Context<'_>) -> Result<VoicewakeConfig> {
+        rpc_typed!("voicewake.get", ctx)
     }
 }
 

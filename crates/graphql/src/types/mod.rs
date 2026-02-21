@@ -45,6 +45,43 @@ pub struct StatusInfo {
     pub uptime_ms: Option<u64>,
 }
 
+// ── System Presence ─────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemPresence {
+    #[serde(default)]
+    pub clients: Vec<ClientInfo>,
+    #[serde(default)]
+    pub nodes: Vec<NodeInfo>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientInfo {
+    #[serde(default)]
+    pub conn_id: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub connected_at: Option<u64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeInfo {
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub conn_id: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
 // ── Sessions ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -119,6 +156,46 @@ pub struct SessionShareInput {
     pub expires_hours: Option<u64>,
 }
 
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBranch {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub fork_point: Option<u64>,
+    #[serde(default)]
+    pub message_count: Option<u64>,
+    #[serde(default)]
+    pub created_at: Option<u64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionShareResult {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub session_key: Option<String>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub views: Option<u64>,
+    #[serde(default)]
+    pub created_at: Option<u64>,
+    #[serde(default)]
+    pub revoked_at: Option<u64>,
+    #[serde(default)]
+    pub snapshot_message_count: Option<u64>,
+    #[serde(default)]
+    pub access_key: Option<String>,
+    #[serde(default)]
+    pub notice: Option<String>,
+}
+
 // ── Chat ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, InputObject)]
@@ -136,6 +213,19 @@ pub struct ChatInjectInput {
     pub content: String,
     #[graphql(default)]
     pub session_key: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRawPrompt {
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub char_count: Option<u64>,
+    #[serde(default, alias = "native_tools")]
+    pub native_tools: Option<bool>,
+    #[serde(default)]
+    pub tool_count: Option<u64>,
 }
 
 // ── Cron ────────────────────────────────────────────────────────────────────
@@ -204,6 +294,51 @@ pub struct CronRunRecord {
     pub output_tokens: Option<u64>,
 }
 
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatStatus {
+    #[serde(default)]
+    pub config: Option<HeartbeatConfig>,
+    #[serde(default)]
+    pub job: Option<CronJob>,
+    #[serde(default)]
+    pub prompt_source: Option<String>,
+    #[serde(default)]
+    pub heartbeat_file_exists: Option<bool>,
+    #[serde(default)]
+    pub has_prompt: Option<bool>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+pub struct HeartbeatConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub every: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub ack_max_chars: Option<u64>,
+    #[serde(default)]
+    pub active_hours: Option<HeartbeatActiveHours>,
+    #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
+    #[serde(default)]
+    pub sandbox_image: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+pub struct HeartbeatActiveHours {
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+}
+
 // ── Projects ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -255,6 +390,24 @@ pub struct ProjectInput {
     pub sandbox_image: Option<String>,
 }
 
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectContext {
+    #[serde(default)]
+    pub project: Option<Project>,
+    #[serde(default, alias = "context_files")]
+    pub context_files: Option<Vec<ContextFile>>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextFile {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
 // ── Channels ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -268,6 +421,41 @@ pub struct ChannelInfo {
     pub status: Option<String>,
     #[serde(default)]
     pub account_id: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelSender {
+    #[serde(default, alias = "peerId")]
+    pub peer_id: Option<String>,
+    #[serde(default, alias = "senderName")]
+    pub sender_name: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default, alias = "messageCount")]
+    pub message_count: Option<u64>,
+    #[serde(default, alias = "lastSeen")]
+    pub last_seen: Option<u64>,
+    #[serde(default)]
+    pub allowed: Option<bool>,
+    #[serde(default, alias = "otpPending")]
+    pub otp_pending: Option<ChannelOtpPending>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelOtpPending {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default, alias = "expiresAt")]
+    pub expires_at: Option<u64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelSendersResult {
+    #[serde(default)]
+    pub senders: Vec<ChannelSender>,
 }
 
 // ── Providers & Models ──────────────────────────────────────────────────────
@@ -308,6 +496,84 @@ pub struct ModelInfo {
     pub context_window: Option<u64>,
     #[serde(default)]
     pub max_output_tokens: Option<u64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSystemInfo {
+    #[serde(default)]
+    pub total_ram_gb: Option<f64>,
+    #[serde(default)]
+    pub available_ram_gb: Option<f64>,
+    #[serde(default)]
+    pub has_metal: Option<bool>,
+    #[serde(default)]
+    pub has_cuda: Option<bool>,
+    #[serde(default)]
+    pub has_gpu: Option<bool>,
+    #[serde(default)]
+    pub is_apple_silicon: Option<bool>,
+    #[serde(default)]
+    pub memory_tier: Option<String>,
+    #[serde(default)]
+    pub recommended_backend: Option<String>,
+    #[serde(default)]
+    pub available_backends: Option<Vec<LocalBackendInfo>>,
+    #[serde(default)]
+    pub backend_note: Option<String>,
+    #[serde(default)]
+    pub mlx_available: Option<bool>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalBackendInfo {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub available: Option<bool>,
+    #[serde(default)]
+    pub install_commands: Option<Vec<String>>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderOAuthStartResult {
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    #[serde(default)]
+    pub device_flow: Option<bool>,
+    #[serde(default)]
+    pub already_authenticated: Option<bool>,
+    #[serde(default)]
+    pub user_code: Option<String>,
+    #[serde(default)]
+    pub verification_uri: Option<String>,
+    #[serde(default)]
+    pub verification_uri_complete: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpOAuthStartResult {
+    #[serde(default)]
+    pub ok: Option<bool>,
+    #[serde(default)]
+    pub oauth_pending: Option<bool>,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTestResult {
+    pub ok: bool,
+    #[serde(default)]
+    pub model_id: Option<String>,
 }
 
 // ── Skills ──────────────────────────────────────────────────────────────────
@@ -405,6 +671,46 @@ pub struct SttStatus {
     pub provider: Option<String>,
 }
 
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionResult {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub duration_seconds: Option<f64>,
+    #[serde(default)]
+    pub words: Option<Vec<TranscriptionWord>>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+pub struct TranscriptionWord {
+    #[serde(default)]
+    pub word: Option<String>,
+    #[serde(default)]
+    pub start: Option<f64>,
+    #[serde(default)]
+    pub end: Option<f64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsConvertResult {
+    #[serde(default)]
+    pub audio: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
 // ── Usage ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -416,6 +722,66 @@ pub struct UsageStatus {
     pub total_output_tokens: Option<u64>,
     #[serde(default)]
     pub session_count: Option<u64>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageCost {
+    #[serde(default)]
+    pub cost: Option<f64>,
+}
+
+// ── Logs ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    #[serde(default, alias = "timestamp")]
+    pub ts: Option<u64>,
+    #[serde(default)]
+    pub level: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub fields: Option<Json>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogTailResult {
+    #[serde(default)]
+    pub entries: Vec<LogEntry>,
+    #[serde(default)]
+    pub subscribed: Option<bool>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogListResult {
+    #[serde(default)]
+    pub entries: Vec<LogEntry>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogStatus {
+    #[serde(default, alias = "unseen_warns")]
+    pub unseen_warns: Option<u64>,
+    #[serde(default, alias = "unseen_errors")]
+    pub unseen_errors: Option<u64>,
+    #[serde(default, alias = "enabled_levels")]
+    pub enabled_levels: Option<LogEnabledLevels>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEnabledLevels {
+    #[serde(default)]
+    pub debug: Option<bool>,
+    #[serde(default)]
+    pub trace: Option<bool>,
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────────────
@@ -447,6 +813,24 @@ pub struct HookInfo {
     pub call_count: Option<u64>,
     #[serde(default)]
     pub failure_count: Option<u64>,
+}
+
+// ── Exec Approvals ──────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecApprovalConfig {
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub security_level: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecNodeConfig {
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 // ── Agents ──────────────────────────────────────────────────────────────────
@@ -489,6 +873,15 @@ pub struct MemoryStatus {
     pub chunk_count: Option<u64>,
     #[serde(default)]
     pub backend: Option<String>,
+}
+
+// ── Voicewake ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoicewakeConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 // ── Subscription event types ────────────────────────────────────────────────

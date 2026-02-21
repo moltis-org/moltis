@@ -8,7 +8,10 @@ use crate::{
     context::GqlContext,
     error::{gql_err, parse_err},
     scalars::Json,
-    types::BoolResult,
+    types::{
+        BoolResult, McpOAuthStartResult, ModelTestResult, ProviderOAuthStartResult,
+        SessionShareResult, TranscriptionResult, TtsConvertResult,
+    },
 };
 
 /// Root mutation type composing all namespace mutations.
@@ -392,9 +395,8 @@ impl SessionMutation {
     }
 
     /// Create a shareable session link.
-    async fn share_create(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
-        // Returns share URL/token data.
-        rpc_json!("sessions.share.create", ctx, input.0)
+    async fn share_create(&self, ctx: &Context<'_>, input: Json) -> Result<SessionShareResult> {
+        rpc_ok!("sessions.share.create", ctx, input.0)
     }
 
     /// Revoke a shared session link.
@@ -522,9 +524,8 @@ impl TtsMutation {
         rpc_ok!("tts.disable", ctx)
     }
 
-    async fn convert(&self, ctx: &Context<'_>, audio: String) -> Result<Json> {
-        // Returns audio data (base64 encoded).
-        rpc_json!("tts.convert", ctx, serde_json::json!({ "audio": audio }))
+    async fn convert(&self, ctx: &Context<'_>, audio: String) -> Result<TtsConvertResult> {
+        rpc_ok!("tts.convert", ctx, serde_json::json!({ "audio": audio }))
     }
 
     async fn set_provider(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
@@ -543,9 +544,8 @@ pub struct SttMutation;
 
 #[Object]
 impl SttMutation {
-    async fn transcribe(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
-        // Returns transcription text and metadata.
-        rpc_json!("stt.transcribe", ctx, input.0)
+    async fn transcribe(&self, ctx: &Context<'_>, input: Json) -> Result<TranscriptionResult> {
+        rpc_ok!("stt.transcribe", ctx, input.0)
     }
 
     async fn set_provider(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
@@ -700,9 +700,8 @@ impl ModelMutation {
         rpc_ok!("models.detect_supported", ctx)
     }
 
-    async fn test(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
-        // Returns model test results with timing/token data.
-        rpc_json!("models.test", ctx, input.0)
+    async fn test(&self, ctx: &Context<'_>, input: Json) -> Result<ModelTestResult> {
+        rpc_ok!("models.test", ctx, input.0)
     }
 }
 
@@ -741,9 +740,12 @@ impl ProviderMutation {
         rpc_ok!("providers.add_custom", ctx, input.0)
     }
 
-    async fn oauth_start(&self, ctx: &Context<'_>, provider: String) -> Result<Json> {
-        // Returns OAuth URL for browser redirect.
-        rpc_json!(
+    async fn oauth_start(
+        &self,
+        ctx: &Context<'_>,
+        provider: String,
+    ) -> Result<ProviderOAuthStartResult> {
+        rpc_ok!(
             "providers.oauth.start",
             ctx,
             serde_json::json!({ "provider": provider })
@@ -813,9 +815,8 @@ impl McpMutation {
         rpc_ok!("mcp.update", ctx, input.0)
     }
 
-    async fn oauth_start(&self, ctx: &Context<'_>, name: String) -> Result<Json> {
-        // Returns OAuth URL for browser redirect.
-        rpc_json!("mcp.oauth.start", ctx, serde_json::json!({ "name": name }))
+    async fn oauth_start(&self, ctx: &Context<'_>, name: String) -> Result<McpOAuthStartResult> {
+        rpc_ok!("mcp.oauth.start", ctx, serde_json::json!({ "name": name }))
     }
 
     async fn oauth_complete(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
