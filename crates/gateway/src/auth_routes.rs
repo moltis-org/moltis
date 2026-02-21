@@ -156,7 +156,13 @@ async fn setup_handler(
     let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
     if password.is_empty() && is_local {
         // Local connection with no password: skip setup without setting one.
-        state.credential_store.clear_auth_disabled();
+        if let Err(e) = state.credential_store.clear_auth_disabled().await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to clear auth-disabled state: {e}"),
+            )
+                .into_response();
+        }
     } else {
         if password.len() < 8 {
             return (
