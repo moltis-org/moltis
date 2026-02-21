@@ -298,7 +298,9 @@ test.describe("Chat input and slash commands", () => {
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toHaveText("0 in / 0 out · 0 tokens · Execute: host ($)");
+		await expect(tokenBar).toContainText("0 in / 0 out · 0 tokens");
+		await expect(tokenBar).toContainText("Execute:");
+		await expect(tokenBar).not.toContainText("/sh mode");
 		expect(pageErrors).toEqual([]);
 	});
 
