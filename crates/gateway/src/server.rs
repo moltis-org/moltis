@@ -29,6 +29,7 @@ use {
     axum::{
         Router,
         extract::{ConnectInfo, State, WebSocketUpgrade},
+        http::StatusCode,
         response::{IntoResponse, Json},
         routing::get,
     },
@@ -45,10 +46,7 @@ use {
 };
 
 #[cfg(feature = "web-ui")]
-use axum::{
-    extract::{Path, Query},
-    http::StatusCode,
-};
+use axum::extract::{Path, Query};
 #[cfg(feature = "web-ui")]
 use axum_extra::extract::{
     CookieJar,
@@ -864,8 +862,8 @@ pub fn build_gateway_app(
         push_service,
     };
 
-    // GraphQL routes (behind auth_gate, inside the web-ui feature block).
-    #[cfg(feature = "graphql")]
+    // GraphQL routes (behind auth_gate when web-ui is enabled).
+    #[cfg(all(feature = "graphql", feature = "web-ui"))]
     let router = router
         .route(
             "/graphql",
@@ -876,6 +874,23 @@ pub fn build_gateway_app(
             "/graphql/ws",
             get(crate::graphql_routes::graphql_ws_handler),
         );
+
+    // In non-web-ui builds there is no global auth_gate, so guard GraphQL explicitly.
+    #[cfg(all(feature = "graphql", not(feature = "web-ui")))]
+    let router = router
+        .route(
+            "/graphql",
+            get(crate::graphql_routes::graphiql_handler)
+                .post(crate::graphql_routes::graphql_handler),
+        )
+        .route(
+            "/graphql/ws",
+            get(crate::graphql_routes::graphql_ws_handler),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            graphql_auth_gate,
+        ));
 
     #[cfg(feature = "web-ui")]
     let router = {
@@ -952,8 +967,8 @@ pub fn build_gateway_app(
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
     };
 
-    // GraphQL routes (behind auth_gate, inside the web-ui feature block).
-    #[cfg(feature = "graphql")]
+    // GraphQL routes (behind auth_gate when web-ui is enabled).
+    #[cfg(all(feature = "graphql", feature = "web-ui"))]
     let router = router
         .route(
             "/graphql",
@@ -964,6 +979,23 @@ pub fn build_gateway_app(
             "/graphql/ws",
             get(crate::graphql_routes::graphql_ws_handler),
         );
+
+    // In non-web-ui builds there is no global auth_gate, so guard GraphQL explicitly.
+    #[cfg(all(feature = "graphql", not(feature = "web-ui")))]
+    let router = router
+        .route(
+            "/graphql",
+            get(crate::graphql_routes::graphiql_handler)
+                .post(crate::graphql_routes::graphql_handler),
+        )
+        .route(
+            "/graphql/ws",
+            get(crate::graphql_routes::graphql_ws_handler),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            graphql_auth_gate,
+        ));
 
     #[cfg(feature = "web-ui")]
     let router = {
@@ -4549,6 +4581,36 @@ pub(crate) fn is_local_connection(
 
     // TCP source must be loopback.
     remote_addr.ip().is_loopback()
+}
+
+#[cfg(all(feature = "graphql", not(feature = "web-ui")))]
+async fn graphql_auth_gate(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    mut request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let Some(ref store) = state.gateway.credential_store else {
+        return next.run(request).await;
+    };
+
+    let is_local = is_local_connection(request.headers(), addr, state.gateway.behind_proxy);
+    match crate::auth_middleware::check_auth(store, request.headers(), is_local).await {
+        crate::auth_middleware::AuthResult::Allowed(identity) => {
+            request.extensions_mut().insert(identity);
+            next.run(request).await
+        },
+        crate::auth_middleware::AuthResult::SetupRequired => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "setup required"})),
+        )
+            .into_response(),
+        crate::auth_middleware::AuthResult::Unauthorized => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "not authenticated"})),
+        )
+            .into_response(),
+    }
 }
 
 async fn websocket_header_authenticated(
