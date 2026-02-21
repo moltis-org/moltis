@@ -11,11 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Voice now auto-selects the first configured TTS/STT provider when no explicit
+  provider is set.
+- Default voice template/settings now favor OpenAI TTS and Whisper STT in
+  onboarding-ready configs.
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
+  voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
+- Voice provider parsing now accepts `openai-tts` and `google-tts` aliases
+  sent by the web UI.
+- Chat welcome card is now hidden as soon as the thinking indicator appears.
+- Onboarding summary loading state now keeps modal sizing stable with a
+  centered spinner.
 
 ### Security
 
