@@ -60,11 +60,7 @@ fn resolve_openai_key(
     voice_key
         .cloned()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok().map(Secret::new))
-        .or_else(|| {
-            cfg.providers
-                .get("openai")
-                .and_then(|p| p.api_key.clone())
-        })
+        .or_else(|| cfg.providers.get("openai").and_then(|p| p.api_key.clone()))
 }
 
 // ── TTS Service ─────────────────────────────────────────────────────────────
@@ -248,8 +244,9 @@ impl TtsService for LiveTtsService {
         let config = Self::load_config();
 
         let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
-            Some(s) => TtsProviderId::parse(s)
-                .ok_or_else(|| format!("unknown TTS provider '{s}'"))?,
+            Some(s) => {
+                TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'"))?
+            },
             None => Self::resolve_provider(&config.provider)
                 .ok_or_else(|| "no TTS provider configured".to_string())?,
         };
@@ -306,8 +303,9 @@ impl TtsService for LiveTtsService {
         }
 
         let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
-            Some(s) => TtsProviderId::parse(s)
-                .ok_or_else(|| format!("unknown TTS provider '{s}'"))?,
+            Some(s) => {
+                TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'"))?
+            },
             None => Self::resolve_provider(&config.provider)
                 .ok_or_else(|| "no TTS provider configured".to_string())?,
         };
@@ -737,8 +735,9 @@ impl SttService for LiveSttService {
         let cfg = moltis_config::discover_and_load();
 
         let provider_id = match provider {
-            Some(s) => SttProviderId::parse(s)
-                .ok_or_else(|| format!("unknown STT provider '{s}'"))?,
+            Some(s) => {
+                SttProviderId::parse(s).ok_or_else(|| format!("unknown STT provider '{s}'"))?
+            },
             None => Self::resolve_provider(cfg.voice.stt.provider)
                 .ok_or_else(|| "no STT provider configured".to_string())?,
         };
