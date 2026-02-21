@@ -223,7 +223,7 @@ pub struct VoiceConfig {
 pub struct VoiceTtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
-    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
+    /// Default provider: "openai", "elevenlabs", "google", "piper", "coqui".
     pub provider: String,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
@@ -242,8 +242,8 @@ pub struct VoiceTtsConfig {
 impl Default for VoiceTtsConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: "elevenlabs".into(),
+            enabled: true,
+            provider: "openai".into(),
             providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
@@ -386,7 +386,7 @@ pub struct VoiceSttConfig {
 impl Default for VoiceSttConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             provider: VoiceSttProvider::Whisper,
             providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
