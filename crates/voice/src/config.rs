@@ -41,8 +41,8 @@ impl TtsProviderId {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "elevenlabs" => Some(Self::ElevenLabs),
-            "openai" => Some(Self::OpenAi),
-            "google" => Some(Self::Google),
+            "openai" | "openai-tts" => Some(Self::OpenAi),
+            "google" | "google-tts" => Some(Self::Google),
             "piper" => Some(Self::Piper),
             "coqui" => Some(Self::Coqui),
             _ => None,
