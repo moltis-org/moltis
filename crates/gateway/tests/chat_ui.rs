@@ -13,7 +13,7 @@ use moltis_gateway::{
     auth,
     chat::{DisabledModelsStore, LiveChatService, LiveModelService},
     methods::MethodRegistry,
-    server::build_gateway_app,
+    server::{build_gateway_base, finalize_gateway_app},
     services::GatewayServices,
     state::GatewayState,
 };
@@ -27,9 +27,12 @@ async fn start_test_server() -> SocketAddr {
     let state = GatewayState::new(resolved_auth, services);
     let methods = Arc::new(MethodRegistry::new());
     #[cfg(feature = "push-notifications")]
-    let app = build_gateway_app(state, methods, None, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
     #[cfg(not(feature = "push-notifications"))]
-    let app = build_gateway_app(state, methods, false, None);
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

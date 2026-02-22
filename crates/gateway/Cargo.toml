@@ -126,6 +126,7 @@ voice = ["dep:moltis-voice"]
 web-ui = ["dep:askama", "dep:chrono", "dep:include_dir", "dep:portable-pty", "dep:which"]
 
 [dev-dependencies]
+moltis-web        = { workspace = true }
 reqwest           = { workspace = true }
 sqlx              = { workspace = true }
 tempfile          = { workspace = true }

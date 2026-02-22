@@ -4559,6 +4559,7 @@ dependencies = [
  "moltis-sessions",
  "moltis-skills",
  "moltis-tools",
+ "moltis-web",
  "open",
  "reqwest 0.12.28",
  "secrecy 0.8.0",
@@ -4781,6 +4782,7 @@ dependencies = [
  "moltis-telegram",
  "moltis-tools",
  "moltis-voice",
+ "moltis-web",
  "openssl",
  "p256",
  "password-hash",
@@ -5143,6 +5145,34 @@ dependencies = [
  "urlencoding",
  "which 7.0.3",
  "wiremock",
+]
+
+[[package]]
+name = "moltis-web"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "askama",
+ "axum",
+ "axum-extra",
+ "base64 0.22.1",
+ "futures",
+ "gix",
+ "include_dir",
+ "moltis-config",
+ "moltis-cron",
+ "moltis-gateway",
+ "moltis-skills",
+ "moltis-tools",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "which 8.0.0",
 ]
 
 [[package]]

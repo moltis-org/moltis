@@ -22,7 +22,7 @@ use crate::share_store::{ShareSnapshot, ShareVisibility, SharedMessageRole};
 ///
 /// `share_image_url` is the absolute or origin-relative URL to the OG image
 /// SVG for this share (e.g. `/share/{id}/og-image.svg`).
-pub(crate) fn render_share_html(
+pub fn render_share_html(
     snapshot: &ShareSnapshot,
     identity: &moltis_config::ResolvedIdentity,
     share_id: &str,
@@ -66,7 +66,7 @@ pub(crate) fn render_share_html(
 }
 
 /// Render the OG social-image SVG for a share.
-pub(crate) fn render_share_og_svg(
+pub fn render_share_og_svg(
     snapshot: &ShareSnapshot,
     identity: &moltis_config::ResolvedIdentity,
 ) -> String {
@@ -385,8 +385,9 @@ pub(crate) fn map_share_message_views(
 
 static SHARE_SOCIAL_BRAND_ICON_DATA_URL: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| {
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(include_bytes!("assets/icons/favicon-compact-512.png"));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(include_bytes!(
+            "../../web/src/assets/icons/favicon-compact-512.png"
+        ));
         format!("data:image/png;base64,{encoded}")
     });
 

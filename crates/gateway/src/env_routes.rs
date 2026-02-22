@@ -14,7 +14,7 @@ use crate::auth::EnvVarEntry;
 
 /// Successful mutation response (`{"ok": true}`).
 #[derive(Serialize)]
-pub(crate) struct OkResponse {
+pub struct OkResponse {
     ok: bool,
 }
 
@@ -31,7 +31,7 @@ impl IntoResponse for OkResponse {
 }
 
 /// JSON error with an HTTP status code.
-pub(crate) struct ApiError {
+pub struct ApiError {
     status: StatusCode,
     message: String,
 }
@@ -77,7 +77,7 @@ impl IntoResponse for ApiError {
 
 /// Env var listing response (`{"env_vars": [...]}`).
 #[derive(Serialize)]
-pub(crate) struct EnvListResponse {
+pub struct EnvListResponse {
     env_vars: Vec<EnvVarEntry>,
 }
 
@@ -90,7 +90,7 @@ impl IntoResponse for EnvListResponse {
 // ── Route handlers ───────────────────────────────────────────────────────────
 
 /// List all environment variables (names only, no values).
-pub(crate) async fn env_list(
+pub async fn env_list(
     State(state): State<crate::server::AppState>,
 ) -> Result<EnvListResponse, ApiError> {
     let store = state
@@ -104,7 +104,7 @@ pub(crate) async fn env_list(
 }
 
 /// Set (upsert) an environment variable.
-pub(crate) async fn env_set(
+pub async fn env_set(
     State(state): State<crate::server::AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<OkResponse, ApiError> {
@@ -145,7 +145,7 @@ pub(crate) async fn env_set(
 }
 
 /// Delete an environment variable by id.
-pub(crate) async fn env_delete(
+pub async fn env_delete(
     State(state): State<crate::server::AppState>,
     Path(id): Path<i64>,
 ) -> Result<OkResponse, ApiError> {

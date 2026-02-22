@@ -372,6 +372,12 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(not(feature = "tailscale"))]
             let tailscale_opts: Option<()> = None;
             let _ = &tailscale_opts; // suppress unused warning when feature disabled
+            #[cfg(feature = "web-ui")]
+            let extra_routes: Option<moltis_gateway::server::RouteEnhancer> =
+                Some(moltis_web::web_routes);
+            #[cfg(not(feature = "web-ui"))]
+            let extra_routes: Option<moltis_gateway::server::RouteEnhancer> = None;
+
             moltis_gateway::server::start_gateway(
                 &bind,
                 port,
@@ -381,6 +387,7 @@ async fn main() -> anyhow::Result<()> {
                 cli.data_dir,
                 #[cfg(feature = "tailscale")]
                 tailscale_opts,
+                extra_routes,
             )
             .await
         },

@@ -25,7 +25,7 @@ One binary — sandboxed, secure, yours.
 
 **Full-featured** — Voice, memory, scheduling, Telegram, browser automation, MCP servers — all built-in. No plugin marketplace to get supply-chain attacked through.
 
-**Auditable** — The agent loop + provider model fits in ~5K lines. The full workspace is ~150K lines across modular crates you can audit independently, with 2,300+ tests and zero `unsafe` code\*.
+**Auditable** — The agent loop + provider model fits in ~5K lines. The core (excluding the optional web UI) is ~121K lines across modular crates you can audit independently, with 2,300+ tests and zero `unsafe` code\*.
 
 ## Installation
 
@@ -49,7 +49,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 |---|---|---|---|---|---|
 | Language | TypeScript | Go | TypeScript | Rust | **Rust** |
 | Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** (`runner.rs` + `model.rs`) |
-| Full codebase | — | — | — | 1,000+ tests | **~150K LoC** (2,300+ tests) |
+| Full codebase | — | — | — | 1,000+ tests | **~124K LoC** (2,300+ tests) |
 | Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
@@ -70,20 +70,21 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 | Crate | LoC | Role |
 |-------|-----|------|
-| `moltis` (cli) | 3.0K | Entry point, CLI commands |
-| `moltis-agents` | 24.8K | LLM providers, agent loop, streaming |
-| `moltis-gateway` | 50.9K | HTTP/WS server, web UI, auth |
-| `moltis-tools` | 15.9K | Tool execution, sandbox |
-| `moltis-config` | 6.1K | Configuration, validation |
-| `moltis-sessions` | 3.2K | Session persistence |
-| `moltis-plugins` | 1.8K | Hook dispatch, plugin formats |
-| `moltis-common` | 1.0K | Shared utilities |
+| `moltis` (cli) | 2.4K | Entry point, CLI commands |
+| `moltis-agents` | 20.1K | LLM providers, agent loop, streaming |
+| `moltis-gateway` | 42.3K | HTTP/WS server, RPC, auth |
+| `moltis-tools` | 13.4K | Tool execution, sandbox |
+| `moltis-config` | 5.1K | Configuration, validation |
+| `moltis-sessions` | 2.7K | Session persistence |
+| `moltis-plugins` | 1.4K | Hook dispatch, plugin formats |
+| `moltis-common` | 0.8K | Shared utilities |
 
 **Optional** (feature-gated or additive):
 
 | Category | Crates | Combined LoC |
 |----------|--------|-------------|
-| Voice | `moltis-voice` | 6.0K |
+| Web UI | `moltis-web` | 3.0K |
+| Voice | `moltis-voice` | 4.7K |
 | Memory | `moltis-memory`, `moltis-qmd` | 5.8K |
 | Channels | `moltis-telegram`, `moltis-channels` | 6.4K |
 | Browser | `moltis-browser` | 4.8K |

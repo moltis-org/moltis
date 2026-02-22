@@ -64,7 +64,7 @@ cargo run / cargo run --release
 
 ## Web UI Assets
 
-Assets in `crates/gateway/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
+Assets in `crates/web/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
 release mode embeds via `include_dir!` with versioned URLs.
 
 - Run `biome check --write` after editing JS files.
@@ -74,7 +74,7 @@ release mode embeds via `include_dir!` with versioned URLs.
 - Match button heights/text sizes when elements sit together.
 - **Rebuild Tailwind** after adding new classes:
   ```bash
-  cd crates/gateway/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
+  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
   ```
 
 ### Selection Cards
@@ -128,11 +128,11 @@ cargo test -- --nocapture            # With stdout
 
 ### E2E Tests (Web UI)
 
-**Every web UI change needs E2E tests.** Tests in `crates/gateway/ui/e2e/specs/` using Playwright.
+**Every web UI change needs E2E tests.** Tests in `crates/web/ui/e2e/specs/` using Playwright.
 Helpers in `e2e/helpers.js`.
 
 ```bash
-cd crates/gateway/ui
+cd crates/web/ui
 npx playwright test                              # All
 npx playwright test e2e/specs/chat-input.spec.js # Specific
 ```

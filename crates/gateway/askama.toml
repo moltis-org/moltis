@@ -1,2 +1,2 @@
 [general]
-dirs = ["src/assets"]
+dirs = ["../web/src/templates"]

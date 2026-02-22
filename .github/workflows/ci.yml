@@ -81,7 +81,7 @@ jobs:
       - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
         with:
           version: "2.3.13"
-      - run: biome ci crates/gateway/src/assets/js/
+      - run: biome ci crates/web/src/assets/js/
 
   fmt:
     name: Format
@@ -235,15 +235,15 @@ jobs:
           package-manager-cache: false
 
       - name: Install npm dependencies
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npm ci
 
       - name: Install Playwright browsers
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         env:
           CI: "true"
         run: npx playwright test
@@ -254,8 +254,8 @@ jobs:
         with:
           name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            crates/gateway/ui/playwright-report/
-            crates/gateway/ui/test-results/
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
           if-no-files-found: ignore
           retention-days: 14
 

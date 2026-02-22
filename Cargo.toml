@@ -27,6 +27,7 @@ members = [
   "crates/telegram",
   "crates/tools",
   "crates/voice",
+  "crates/web",
   "crates/graphql",
 ]
 resolver = "2"
@@ -188,6 +189,7 @@ moltis-skills     = { path = "crates/skills" }
 moltis-telegram   = { path = "crates/telegram" }
 moltis-tools      = { path = "crates/tools" }
 moltis-voice      = { path = "crates/voice" }
+moltis-web        = { default-features = false, path = "crates/web" }
 
 [profile.release]
 lto            = "thin"

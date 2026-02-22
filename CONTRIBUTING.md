@@ -93,7 +93,7 @@ See also:
 ## Testing Expectations
 
 - Rust changes should include unit/integration coverage.
-- Web UI changes should include Playwright coverage in `crates/gateway/ui/e2e/specs/`.
+- Web UI changes should include Playwright coverage in `crates/web/ui/e2e/specs/`.
 - Prefer real behavior tests over heavy mocking.
 - Keep tests deterministic and avoid timing-based flakiness.
 

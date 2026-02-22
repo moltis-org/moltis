@@ -17,7 +17,7 @@ just ui-e2e-install
 just ui-e2e
 ```
 
-Directly from `crates/gateway/ui`:
+Directly from `crates/web/ui`:
 
 ```bash
 npm install
@@ -87,7 +87,7 @@ The test suite is split into five Playwright projects:
 
 ```bash
 # Run a single spec file
-cd crates/gateway/ui && npx playwright test e2e/specs/sessions.spec.js
+cd crates/web/ui && npx playwright test e2e/specs/sessions.spec.js
 
 # Run a specific project
 npx playwright test --project=auth
