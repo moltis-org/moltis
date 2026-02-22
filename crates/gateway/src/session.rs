@@ -768,7 +768,6 @@ pub struct LiveSessionService {
     hook_registry: Option<Arc<HookRegistry>>,
     state_store: Option<Arc<SessionStateStore>>,
     browser_service: Option<Arc<dyn crate::services::BrowserService>>,
-    onboarding: Option<Arc<dyn crate::services::OnboardingService>>,
 }
 
 impl LiveSessionService {
@@ -783,7 +782,6 @@ impl LiveSessionService {
             hook_registry: None,
             state_store: None,
             browser_service: None,
-            onboarding: None,
         }
     }
 
@@ -823,68 +821,6 @@ impl LiveSessionService {
     ) -> Self {
         self.browser_service = Some(browser);
         self
-    }
-
-    pub fn with_onboarding(
-        mut self,
-        onboarding: Arc<dyn crate::services::OnboardingService>,
-    ) -> Self {
-        self.onboarding = Some(onboarding);
-        self
-    }
-
-    /// Resolve the current identity from the onboarding service.
-    async fn resolve_identity(&self) -> moltis_config::ResolvedIdentity {
-        match self.onboarding.as_ref() {
-            Some(o) => o
-                .identity_get()
-                .await
-                .ok()
-                .and_then(|v| serde_json::from_value(v).ok())
-                .unwrap_or_default(),
-            None => moltis_config::ResolvedIdentity::default(),
-        }
-    }
-
-    /// Pre-render share HTML and OG SVG to disk for fast static serving.
-    /// Failures are logged but never propagated — share creation still succeeds.
-    #[cfg(feature = "web-ui")]
-    fn write_share_static_files(
-        share_id: &str,
-        snapshot: &ShareSnapshot,
-        visibility: ShareVisibility,
-        identity: &moltis_config::ResolvedIdentity,
-    ) {
-        let shares_dir = moltis_config::data_dir().join("shares");
-        if let Err(e) = std::fs::create_dir_all(&shares_dir) {
-            warn!(error = %e, "failed to create shares directory");
-            return;
-        }
-
-        // The OG image URL is written as a relative path since we don't know
-        // the request origin at share-creation time.
-        let og_image_url = format!("/share/{share_id}/og-image.svg");
-
-        if let Ok(html) = crate::share_render::render_share_html(
-            snapshot,
-            identity,
-            share_id,
-            visibility,
-            0, // static file starts at 0 views — handler skips increment
-            &og_image_url,
-        ) && let Err(e) =
-            std::fs::write(shares_dir.join(format!("{share_id}.html")), html.as_bytes())
-        {
-            warn!(share_id, error = %e, "failed to write static share HTML");
-        }
-
-        let svg = crate::share_render::render_share_og_svg(snapshot, identity);
-        if let Err(e) = std::fs::write(
-            shares_dir.join(format!("{share_id}-og.svg")),
-            svg.as_bytes(),
-        ) {
-            warn!(share_id, error = %e, "failed to write static share OG SVG");
-        }
     }
 }
 
@@ -1305,13 +1241,6 @@ impl SessionService for LiveSessionService {
             Err(e) => {
                 warn!(session_key = key, error = %e, "failed to update session message count");
             },
-        }
-
-        // Pre-render static files for public shares (non-fatal on failure).
-        #[cfg(feature = "web-ui")]
-        if visibility == ShareVisibility::Public {
-            let identity = self.resolve_identity().await;
-            Self::write_share_static_files(&created.share.id, &snapshot, visibility, &identity);
         }
 
         Ok(serde_json::json!({

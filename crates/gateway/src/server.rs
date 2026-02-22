@@ -2146,8 +2146,7 @@ pub async fn start_gateway(
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
-                .with_browser_service(Arc::clone(&services.browser))
-                .with_onboarding(Arc::clone(&services.onboarding));
+                .with_browser_service(Arc::clone(&services.browser));
         if let Some(ref hooks) = hook_registry {
             session_svc = session_svc.with_hooks(Arc::clone(hooks));
         }

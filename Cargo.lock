@@ -4801,7 +4801,6 @@ name = "moltis-gateway"
 version = "0.9.10"
 dependencies = [
  "anyhow",
- "askama",
  "async-graphql",
  "async-graphql-axum",
  "async-trait",
@@ -5282,12 +5281,14 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.22.1",
+ "chrono",
  "futures",
  "gix",
  "include_dir",
  "moltis-config",
  "moltis-cron",
  "moltis-gateway",
+ "moltis-media",
  "moltis-skills",
  "moltis-tools",
  "portable-pty",

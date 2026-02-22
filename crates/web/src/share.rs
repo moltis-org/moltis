@@ -146,7 +146,7 @@ pub async fn share_page_handler(
         .unwrap_or_default();
     let share_image_url = share_social_image_url(&headers, state.gateway.tls_active, &share.id);
 
-    let body = match moltis_gateway::share_render::render_share_html(
+    let body = match crate::share_render::render_share_html(
         &snapshot,
         &identity,
         &share_id,
@@ -262,7 +262,7 @@ pub async fn share_social_image_handler(
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let svg = moltis_gateway::share_render::render_share_og_svg(&snapshot, &identity);
+    let svg = crate::share_render::render_share_og_svg(&snapshot, &identity);
     serve_static_share_svg(svg)
 }
 

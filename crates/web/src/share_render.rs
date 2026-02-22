@@ -1,9 +1,5 @@
 //! Share page rendering: template structs and helper functions for generating
 //! the static HTML share page and the OG social-image SVG.
-//!
-//! All items are `pub(crate)` so they can be called from both the HTTP handlers
-//! in `server.rs` (dynamic fallback) and from `session.rs` (eager static-file
-//! generation at share-creation time).
 
 use {
     askama::Template,
@@ -11,7 +7,7 @@ use {
     chrono::{Local, TimeZone, Utc},
 };
 
-use crate::share_store::{ShareSnapshot, ShareVisibility, SharedMessageRole};
+use moltis_gateway::share_store::{ShareSnapshot, ShareVisibility, SharedMessageRole};
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -385,9 +381,8 @@ pub(crate) fn map_share_message_views(
 
 static SHARE_SOCIAL_BRAND_ICON_DATA_URL: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| {
-        let encoded = base64::engine::general_purpose::STANDARD.encode(include_bytes!(
-            "../../web/src/assets/icons/favicon-compact-512.png"
-        ));
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(include_bytes!("assets/icons/favicon-compact-512.png"));
         format!("data:image/png;base64,{encoded}")
     });
 
@@ -569,7 +564,7 @@ fn build_share_social_image_svg(
 mod tests {
     use {
         super::*,
-        crate::share_store::{SharedMessage, SharedMessageRole},
+        moltis_gateway::share_store::{SharedMessage, SharedMessageRole},
     };
 
     fn default_identity() -> moltis_config::ResolvedIdentity {
@@ -801,7 +796,7 @@ mod tests {
 
     #[test]
     fn map_share_message_views_includes_tool_result_media_and_links() {
-        use crate::share_store::{SharedImageAsset, SharedImageSet, SharedMapLinks};
+        use moltis_gateway::share_store::{SharedImageAsset, SharedImageSet, SharedMapLinks};
 
         let identity = default_identity();
         let snapshot = ShareSnapshot {

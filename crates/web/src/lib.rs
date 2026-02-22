@@ -10,6 +10,7 @@ pub mod assets;
 pub mod gon;
 pub mod oauth;
 pub mod share;
+pub mod share_render;
 pub mod spa;
 pub mod templates;
 pub mod terminal;

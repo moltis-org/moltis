@@ -10,12 +10,14 @@ askama         = { workspace = true }
 axum           = { workspace = true }
 axum-extra     = { features = ["cookie"], workspace = true }
 base64         = { workspace = true }
+chrono         = { features = ["serde"], workspace = true }
 futures        = { workspace = true }
 gix            = { workspace = true }
 include_dir    = { workspace = true }
 moltis-config  = { workspace = true }
 moltis-cron    = { workspace = true }
 moltis-gateway = { workspace = true }
+moltis-media   = { workspace = true }
 moltis-skills  = { workspace = true }
 moltis-tools   = { workspace = true }
 portable-pty   = { workspace = true }

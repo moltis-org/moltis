@@ -6,7 +6,6 @@ version.workspace    = true
 
 [dependencies]
 anyhow                = { workspace = true }
-askama                = { optional = true, workspace = true }
 async-graphql         = { optional = true, workspace = true }
 async-graphql-axum    = { optional = true, workspace = true }
 async-trait           = { workspace = true }
@@ -125,14 +124,7 @@ tls = [
   "dep:tower",
 ]
 voice = ["dep:moltis-voice"]
-web-ui = [
-  "dep:askama",
-  "dep:chrono",
-  "dep:include_dir",
-  "dep:portable-pty",
-  "dep:which",
-  "moltis-chat/web-ui",
-]
+web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 
 [dev-dependencies]
 moltis-web        = { workspace = true }

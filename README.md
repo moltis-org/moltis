@@ -19,7 +19,7 @@ One binary — sandboxed, secure, yours.
 
 ---
 
-Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com/item?id=46993587). Please [open an issue](https://github.com/moltis-org/moltis/issues) for any friction at all — I'm focused on making Moltis excellent.
+Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com/item?id=46993587). Please [open an issue](https://github.com/moltis-org/moltis/issues) for any friction at all. I'm focused on making Moltis excellent.
 
 **Secure by design** — Your keys never leave your machine. Every command runs in a sandboxed container, never on your host.
 
@@ -59,7 +59,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Voice I/O | Plugin | — | — | — | **Built-in (15+ providers)** |
 | MCP | Yes | — | — | — | **Yes (stdio + HTTP/SSE)** |
 | Hooks | Yes (limited) | — | — | — | **15 event types** |
-| Skills | Yes (store) | Yes | Yes | Yes | **Yes** |
+| Skills | Yes (store) | Yes | Yes | Yes | **Yes (+ OpenClaw Store)** |
 | Memory/RAG | Plugin | — | Per-group | SQLite + FTS | **SQLite + FTS + vector** |
 
 \* `unsafe` is denied workspace-wide. The only exceptions are opt-in FFI wrappers behind the `local-embeddings` feature flag, not part of the core.
@@ -74,7 +74,8 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 |-------|-----|------|
 | `moltis` (cli) | 2.4K | Entry point, CLI commands |
 | `moltis-agents` | 20.1K | LLM providers, agent loop, streaming |
-| `moltis-gateway` | 42.3K | HTTP/WS server, RPC, auth |
+| `moltis-gateway` | 29.2K | HTTP/WS server, RPC, auth |
+| `moltis-chat` | 10.2K | Chat engine, agent orchestration |
 | `moltis-tools` | 13.4K | Tool execution, sandbox |
 | `moltis-config` | 5.1K | Configuration, validation |
 | `moltis-sessions` | 2.7K | Session persistence |
@@ -85,7 +86,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 | Category | Crates | Combined LoC |
 |----------|--------|-------------|
-| Web UI | `moltis-web` | 3.0K |
+| Web UI | `moltis-web` | 4.3K |
 | Voice | `moltis-voice` | 4.7K |
 | Memory | `moltis-memory`, `moltis-qmd` | 5.8K |
 | Channels | `moltis-telegram`, `moltis-channels` | 6.4K |
