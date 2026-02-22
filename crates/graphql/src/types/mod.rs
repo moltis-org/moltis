@@ -770,9 +770,7 @@ pub struct AgentIdentity {
     #[serde(default)]
     pub emoji: Option<String>,
     #[serde(default)]
-    pub creature: Option<String>,
-    #[serde(default)]
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
 }
 
 // ── Memory ──────────────────────────────────────────────────────────────────

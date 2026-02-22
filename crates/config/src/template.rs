@@ -63,8 +63,7 @@ auto_generate = true              # Auto-generate local CA and server certificat
 [identity]
 # name = "moltis"                 # Agent's display name
 # emoji = "🦊"                    # Agent's emoji/avatar
-# creature = "fox"                # Creature type for personality
-# vibe = "helpful"                # Personality vibe/style
+# theme = "wise owl"              # Theme for agent personality (e.g. wise owl, chill fox)
 # soul = ""                       # Freeform personality text injected into system prompt
                                   # Use this for custom instructions, tone, or behavior
 

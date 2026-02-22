@@ -967,11 +967,8 @@ fn load_prompt_persona() -> PromptPersona {
         if file_identity.emoji.is_some() {
             identity.emoji = file_identity.emoji;
         }
-        if file_identity.creature.is_some() {
-            identity.creature = file_identity.creature;
-        }
-        if file_identity.vibe.is_some() {
-            identity.vibe = file_identity.vibe;
+        if file_identity.theme.is_some() {
+            identity.theme = file_identity.theme;
         }
     }
     let mut user = config.user.clone();

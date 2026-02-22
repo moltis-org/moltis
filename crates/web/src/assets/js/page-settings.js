@@ -268,8 +268,7 @@ function IdentitySection() {
 
 	var [name, setName] = useState(id?.name || "");
 	var [emoji, setEmoji] = useState(id?.emoji || "");
-	var [creature, setCreature] = useState(id?.creature || "");
-	var [vibe, setVibe] = useState(id?.vibe || "");
+	var [theme, setTheme] = useState(id?.theme || "");
 	var [userName, setUserName] = useState(id?.user_name || "");
 	var [soul, setSoul] = useState(id?.soul || "");
 	var [saving, setSaving] = useState(false);
@@ -285,8 +284,7 @@ function IdentitySection() {
 		if (!id) return;
 		setName(id.name || "");
 		setEmoji(id.emoji || "");
-		setCreature(id.creature || "");
-		setVibe(id.vibe || "");
+		setTheme(id.theme || "");
 		setUserName(id.user_name || "");
 		setSoul(id.soul || "");
 	}, [id]);
@@ -319,8 +317,7 @@ function IdentitySection() {
 		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
-			creature: creature.trim() || "",
-			vibe: vibe.trim() || "",
+			theme: theme.trim() || "",
 			soul: soul.trim() || null,
 			user_name: userName.trim(),
 		}).then((res) => {
@@ -445,18 +442,12 @@ function IdentitySection() {
 							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Emoji</div>
 							<${EmojiPicker} value=${emoji} onChange=${setEmoji} onSelect=${onEmojiSelect} />
 						</div>
-					<div>
-						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Creature</div>
+					<div style="grid-column:1/-1;">
+						<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Theme</div>
 						<input type="text" class="provider-key-input" style="width:100%;"
-							value=${creature} onInput=${(e) => setCreature(e.target.value)}
-							placeholder="e.g. dog" />
+							value=${theme} onInput=${(e) => setTheme(e.target.value)}
+							placeholder="e.g. wise owl, chill fox" />
 					</div>
-						<div>
-							<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Vibe</div>
-							<input type="text" class="provider-key-input" style="width:100%;"
-								value=${vibe} onInput=${(e) => setVibe(e.target.value)}
-								placeholder="e.g. chill" />
-						</div>
 					</div>
 					${
 						showFaviconReloadHint

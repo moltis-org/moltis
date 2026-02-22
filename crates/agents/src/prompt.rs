@@ -261,11 +261,8 @@ fn append_identity_and_user_sections(
             (Some(name), None) => parts.push(format!("Your name is {name}.")),
             _ => {},
         }
-        if let Some(creature) = id.creature.as_deref() {
-            parts.push(format!("You are a {creature}."));
-        }
-        if let Some(vibe) = id.vibe.as_deref() {
-            parts.push(format!("Your vibe: {vibe}."));
+        if let Some(theme) = id.theme.as_deref() {
+            parts.push(format!("Your theme: {theme}."));
         }
         if !parts.is_empty() {
             prompt.push_str(&parts.join(" "));
@@ -722,8 +719,7 @@ mod tests {
         let identity = AgentIdentity {
             name: Some("Momo".into()),
             emoji: Some("🦜".into()),
-            creature: Some("parrot".into()),
-            vibe: Some("cheerful and curious".into()),
+            theme: Some("cheerful parrot".into()),
         };
         let user = UserProfile {
             name: Some("Alice".into()),
@@ -744,8 +740,7 @@ mod tests {
             None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
-        assert!(prompt.contains("You are a parrot."));
-        assert!(prompt.contains("Your vibe: cheerful and curious."));
+        assert!(prompt.contains("Your theme: cheerful parrot."));
         assert!(prompt.contains("The user's name is Alice."));
         // Default soul should be injected when soul is None.
         assert!(prompt.contains("## Soul"));

@@ -10,8 +10,7 @@ pub enum WizardStep {
     UserName,
     AgentName,
     AgentEmoji,
-    AgentCreature,
-    AgentVibe,
+    AgentTheme,
     Confirm,
     Done,
 }
@@ -48,11 +47,8 @@ impl WizardState {
             WizardStep::UserName => "What's your name?",
             WizardStep::AgentName => "Pick a name for your agent:",
             WizardStep::AgentEmoji => "Choose an emoji for your agent (e.g. \u{1f916}):",
-            WizardStep::AgentCreature => {
-                "What kind of creature is your agent? (e.g. owl, fox, dragon)"
-            },
-            WizardStep::AgentVibe => {
-                "Describe your agent's vibe in a few words (e.g. chill, witty, formal):"
+            WizardStep::AgentTheme => {
+                "Describe your agent's theme (e.g. wise owl, chill fox, witty robot):"
             },
             WizardStep::Confirm => "All set! Press Enter to save, or type 'back' to go back.",
             WizardStep::Done => "Onboarding complete!",
@@ -82,23 +78,17 @@ impl WizardState {
                 if !input.is_empty() {
                     self.identity.emoji = Some(input.to_string());
                 }
-                self.step = WizardStep::AgentCreature;
+                self.step = WizardStep::AgentTheme;
             },
-            WizardStep::AgentCreature => {
+            WizardStep::AgentTheme => {
                 if !input.is_empty() {
-                    self.identity.creature = Some(input.to_string());
-                }
-                self.step = WizardStep::AgentVibe;
-            },
-            WizardStep::AgentVibe => {
-                if !input.is_empty() {
-                    self.identity.vibe = Some(input.to_string());
+                    self.identity.theme = Some(input.to_string());
                 }
                 self.step = WizardStep::Confirm;
             },
             WizardStep::Confirm => {
                 if input.eq_ignore_ascii_case("back") {
-                    self.step = WizardStep::AgentVibe;
+                    self.step = WizardStep::AgentTheme;
                 } else {
                     self.step = WizardStep::Done;
                 }
@@ -131,14 +121,11 @@ mod tests {
         s.advance("Momo"); // → emoji
         assert_eq!(s.identity.name.as_deref(), Some("Momo"));
 
-        s.advance("\u{1f99c}"); // → creature
+        s.advance("\u{1f99c}"); // → theme
         assert_eq!(s.identity.emoji.as_deref(), Some("\u{1f99c}"));
 
-        s.advance("parrot"); // → vibe
-        assert_eq!(s.identity.creature.as_deref(), Some("parrot"));
-
-        s.advance("cheerful and curious"); // → confirm
-        assert_eq!(s.identity.vibe.as_deref(), Some("cheerful and curious"));
+        s.advance("cheerful parrot"); // → confirm
+        assert_eq!(s.identity.theme.as_deref(), Some("cheerful parrot"));
         assert_eq!(s.step, WizardStep::Confirm);
 
         s.advance(""); // confirm → done
@@ -153,12 +140,11 @@ mod tests {
         s.advance("Bob");
         s.advance("Rex");
         s.advance("\u{1f436}");
-        s.advance("dog");
-        s.advance("loyal");
+        s.advance("loyal dog");
         assert_eq!(s.step, WizardStep::Confirm);
 
         s.advance("back");
-        assert_eq!(s.step, WizardStep::AgentVibe);
+        assert_eq!(s.step, WizardStep::AgentTheme);
     }
 
     #[test]
