@@ -20,7 +20,7 @@ How Moltis compares to other open-source AI agent frameworks.
 | Voice I/O | Plugin | — | — | — | **Built-in (15+ providers)** |
 | MCP | Yes | — | — | — | **Yes (stdio + HTTP/SSE)** |
 | Hooks | Yes (limited) | — | — | — | **15 event types** |
-| Skills | Yes (store) | Yes | Yes | Yes | **Yes** |
+| Skills | Yes (store) | Yes | Yes | Yes | **Yes (+ OpenClaw Store)** |
 | Memory/RAG | Plugin | — | Per-group | SQLite + FTS | **SQLite + FTS + vector** |
 
 \* `unsafe` is denied workspace-wide in Moltis. The only exceptions are opt-in
