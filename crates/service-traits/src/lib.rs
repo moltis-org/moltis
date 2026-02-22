@@ -3,11 +3,7 @@
 //! Each trait has a `Noop` implementation that returns empty/default responses,
 //! allowing the gateway to run standalone before domain crates are wired in.
 
-use {
-    async_trait::async_trait,
-    serde_json::Value,
-    tracing::warn,
-};
+use {async_trait::async_trait, serde_json::Value, tracing::warn};
 
 /// Error type returned by service methods.
 pub type ServiceError = String;

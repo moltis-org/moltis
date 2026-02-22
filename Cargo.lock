@@ -4610,6 +4610,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-auth"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "dashmap",
+ "moltis-config",
+ "moltis-tools",
+ "openssl",
+ "password-hash",
+ "rand 0.9.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "webauthn-rs",
+ "webauthn-rs-proto",
+]
+
+[[package]]
 name = "moltis-auto-reply"
 version = "0.9.10"
 dependencies = [
@@ -4739,7 +4766,6 @@ name = "moltis-gateway"
 version = "0.9.10"
 dependencies = [
  "anyhow",
- "argon2",
  "askama",
  "async-graphql",
  "async-graphql-axum",
@@ -4759,6 +4785,7 @@ dependencies = [
  "hyper-util",
  "include_dir",
  "moltis-agents",
+ "moltis-auth",
  "moltis-browser",
  "moltis-canvas",
  "moltis-channels",
@@ -4786,9 +4813,7 @@ dependencies = [
  "moltis-tools",
  "moltis-voice",
  "moltis-web",
- "openssl",
  "p256",
- "password-hash",
  "portable-pty",
  "pulldown-cmark",
  "rand 0.9.2",
@@ -4820,7 +4845,6 @@ dependencies = [
  "uuid",
  "web-push",
  "webauthn-rs",
- "webauthn-rs-proto",
  "which 8.0.0",
 ]
 
