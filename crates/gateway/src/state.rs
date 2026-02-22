@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -383,11 +383,19 @@ pub struct GatewayState {
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
     pub ws_request_logs: bool,
+    /// Runtime GraphQL availability toggle.
+    #[cfg(feature = "graphql")]
+    pub graphql_enabled: AtomicBool,
+    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
+    #[cfg(feature = "graphql")]
+    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
+    /// Monotonic process start timestamp used for uptime calculations.
+    pub started_at: Instant,
     /// Metrics handle for Prometheus export (None if metrics disabled).
     #[cfg(feature = "metrics")]
     pub metrics_handle: Option<MetricsHandle>,
@@ -464,14 +472,27 @@ impl GatewayState {
             ws_request_logs,
             deploy_platform,
             port,
+            started_at: Instant::now(),
+            #[cfg(feature = "graphql")]
+            graphql_enabled: AtomicBool::new(true),
             #[cfg(feature = "metrics")]
             metrics_handle,
             #[cfg(feature = "metrics")]
             metrics_store,
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
+            #[cfg(feature = "graphql")]
+            graphql_broadcast: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
+    }
+
+    /// Process uptime in milliseconds since this gateway state was created.
+    pub fn uptime_ms(&self) -> u64 {
+        self.started_at.elapsed().as_millis() as u64
     }
 
     /// Set a late-bound chat service (for circular init).
@@ -509,6 +530,16 @@ impl GatewayState {
 
     pub fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn is_graphql_enabled(&self) -> bool {
+        self.graphql_enabled.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn set_graphql_enabled(&self, enabled: bool) {
+        self.graphql_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Register a new client connection.

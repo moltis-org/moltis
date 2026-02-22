@@ -26,6 +26,7 @@
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
 - [Browser Automation](browser-automation.md)
+- [GraphQL API](graphql.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
 - [Scheduling (Cron Jobs)](scheduling.md)

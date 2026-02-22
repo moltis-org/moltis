@@ -1,14 +1,16 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{ConnectInfo, FromRef, FromRequestParts, State},
+    extract::{ConnectInfo, FromRef, FromRequestParts},
     http::{HeaderMap, StatusCode, request::Parts},
-    middleware::Next,
-    response::{IntoResponse, Json},
 };
 
 #[cfg(feature = "web-ui")]
-use axum::response::Redirect;
+use axum::{
+    extract::State,
+    middleware::Next,
+    response::{IntoResponse, Json, Redirect},
+};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -256,5 +258,11 @@ mod tests {
     #[test]
     fn chat_ws_path_is_not_public() {
         assert!(!is_public_path("/ws/chat"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn graphql_paths_are_not_public() {
+        assert!(!is_public_path("/graphql"));
     }
 }

@@ -20,6 +20,16 @@ async function spoofSafari(page) {
 	});
 }
 
+function graphqlHttpStatus(page) {
+	return page.evaluate(async () => {
+		const response = await fetch("/graphql", {
+			method: "GET",
+			redirect: "manual",
+		});
+		return response.status;
+	});
+}
+
 test.describe("Settings navigation", () => {
 	test("/settings redirects to /settings/identity", async ({ page }) => {
 		await navigateAndWait(page, "/settings");
@@ -211,6 +221,51 @@ test.describe("Settings navigation", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("graphql toggle applies immediately", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/identity");
+		await waitForWsConnected(page);
+
+		const graphQlNavItem = page.locator(".settings-nav-item", { hasText: "GraphQL" });
+		const hasGraphql = (await graphQlNavItem.count()) > 0;
+		test.skip(!hasGraphql, "GraphQL feature not enabled in this build");
+
+		await graphQlNavItem.click();
+		await expect(page).toHaveURL(/\/settings\/graphql$/);
+
+		const toggleSwitch = page.locator("#graphqlToggleSwitch");
+		const toggle = page.locator("#graphqlEnabledToggle");
+		await expect(toggleSwitch).toBeVisible();
+		const initial = await toggle.isChecked();
+		const settingsUrl = new URL(page.url());
+		const httpEndpoint = `${settingsUrl.origin}/graphql`;
+		const wsScheme = settingsUrl.protocol === "https:" ? "wss:" : "ws:";
+		const wsEndpoint = `${wsScheme}//${settingsUrl.host}/graphql`;
+
+		await toggleSwitch.click();
+		await expect.poll(() => toggle.isChecked()).toBe(!initial);
+
+		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 503 : 200);
+		if (initial) {
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toHaveCount(0);
+		} else {
+			await expect(page.getByText(httpEndpoint, { exact: true })).toBeVisible();
+			await expect(page.getByText(wsEndpoint, { exact: true })).toBeVisible();
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toBeVisible();
+		}
+
+		await toggleSwitch.click();
+		await expect.poll(() => toggle.isChecked()).toBe(initial);
+		await expect.poll(async () => graphqlHttpStatus(page)).toBe(initial ? 200 : 503);
+		if (initial) {
+			await expect(page.getByText(httpEndpoint, { exact: true })).toBeVisible();
+			await expect(page.getByText(wsEndpoint, { exact: true })).toBeVisible();
+			await expect(page.locator('iframe[title="GraphiQL Playground"]')).toBeVisible();
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("sidebar groups and order match product layout", async ({ page }) => {
 		await navigateAndWait(page, "/settings/identity");
 
@@ -220,7 +275,7 @@ test.describe("Settings navigation", () => {
 		await expect(page.locator(".settings-group-label").nth(3)).toHaveText("Systems");
 
 		const navItems = (await page.locator(".settings-nav-item").allTextContents()).map((text) => text.trim());
-		const expectedWithVoice = [
+		const expectedPrefix = [
 			"Identity",
 			"Environment",
 			"Memory",
@@ -234,15 +289,14 @@ test.describe("Settings navigation", () => {
 			"LLMs",
 			"MCP",
 			"Skills",
-			"Voice",
-			"Terminal",
-			"Sandboxes",
-			"Monitoring",
-			"Logs",
-			"Configuration",
 		];
-		const expectedWithoutVoice = expectedWithVoice.filter((item) => item !== "Voice");
-		expect(navItems).toEqual(navItems.includes("Voice") ? expectedWithVoice : expectedWithoutVoice);
+		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
+		const expected = [...expectedPrefix];
+		if (navItems.includes("Voice")) expected.push("Voice");
+		expected.push(...expectedSystem);
+		if (navItems.includes("GraphQL")) expected.push("GraphQL");
+		expected.push("Configuration");
+		expect(navItems).toEqual(expected);
 
 		const llmsNavItem = page.locator(".settings-nav-item", { hasText: "LLMs" });
 		await expect(llmsNavItem.locator(".icon-layers")).toHaveCount(1);
@@ -257,5 +311,10 @@ test.describe("Settings navigation", () => {
 		const configNavItem = page.locator(".settings-nav-item", { hasText: "Configuration" });
 		await expect(configNavItem.locator(".icon-code")).toHaveCount(1);
 		await expect(configNavItem.locator(".icon-document")).toHaveCount(0);
+
+		if (navItems.includes("GraphQL")) {
+			const graphQlNavItem = page.locator(".settings-nav-item", { hasText: "GraphQL" });
+			await expect(graphQlNavItem.locator(".icon-graphql")).toHaveCount(1);
+		}
 	});
 });

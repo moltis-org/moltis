@@ -339,6 +339,7 @@ fn build_schema_map() -> KnownKeys {
             ])),
         ),
         ("auth", Struct(HashMap::from([("disabled", Leaf)]))),
+        ("graphql", Struct(HashMap::from([("enabled", Leaf)]))),
         (
             "metrics",
             Struct(HashMap::from([

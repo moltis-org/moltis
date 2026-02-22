@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
+- New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
+- `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
+- Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
-
 ### Changed
 
 - Voice now auto-selects the first configured TTS/STT provider when no explicit
@@ -19,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   onboarding-ready configs.
 - Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
 - Automatic model/provider selection now prefers subscription-backed providers (OpenAI Codex, GitHub Copilot) ahead of API-key providers, while still honoring explicit model priorities
+- GraphQL gateway now builds its schema once at startup and reuses it for HTTP and WebSocket requests
+- GraphQL resolvers now share common RPC helper macros and use typed response objects for `node.describe`, `voice.config`, `voice.voxtral_requirements`, `skills.security_status`, `skills.security_scan`, and `memory.config`
+- GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
 
 ### Deprecated
 
@@ -36,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
 - OpenAI Codex OAuth token handling now preserves account context across refreshes and resolves `ChatGPT-Account-Id` from additional JWT/auth.json shapes to avoid auth failures with Max-style OAuth flows
 - Onboarding/provider setup now surfaces subscription OAuth providers (OpenAI Codex, GitHub Copilot) as configured when local OAuth tokens are present, even if they are omitted from `providers.offered`
+- GraphQL WebSocket upgrade detection now accepts clients that provide `Upgrade`/`Sec-WebSocket-Key` without `Connection: upgrade`
+- GraphQL channel and memory status bridges now return schema-compatible shapes for `channels.status`, `channels.list`, and `memory.status`
 - Provider errors with `insufficient_quota` now surface as explicit quota/billing failures (with the upstream message) instead of generic retrying/rate-limit behavior
 ### Security
 

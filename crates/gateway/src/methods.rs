@@ -96,6 +96,8 @@ const READ_METHODS: &[&str] = &[
     "voice.config.voxtral_requirements",
     "voice.providers.all",
     "voice.elevenlabs.catalog",
+    #[cfg(feature = "graphql")]
+    "graphql.config.get",
     "memory.status",
     "memory.config.get",
     "memory.qmd.status",
@@ -182,6 +184,8 @@ const WRITE_METHODS: &[&str] = &[
     "voice.override.session.clear",
     "voice.override.channel.set",
     "voice.override.channel.clear",
+    #[cfg(feature = "graphql")]
+    "graphql.config.set",
     "memory.config.update",
     "hooks.enable",
     "hooks.disable",
@@ -392,6 +396,7 @@ impl MethodRegistry {
                         "version": ctx.state.version,
                         "hostname": ctx.state.hostname,
                         "connections": inner.clients.len(),
+                        "uptimeMs": ctx.state.uptime_ms(),
                         "nodes": nodes.count(),
                         "hasMobileNode": nodes.has_mobile_node(),
                     }))
@@ -4229,6 +4234,50 @@ impl MethodRegistry {
             );
         }
 
+        #[cfg(feature = "graphql")]
+        {
+            self.register(
+                "graphql.config.get",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        Ok(serde_json::json!({
+                            "enabled": ctx.state.is_graphql_enabled(),
+                        }))
+                    })
+                }),
+            );
+            self.register(
+                "graphql.config.set",
+                Box::new(|ctx| {
+                    Box::pin(async move {
+                        let enabled = ctx
+                            .params
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .ok_or_else(|| {
+                                ErrorShape::new(error_codes::INVALID_REQUEST, "missing enabled")
+                            })?;
+
+                        ctx.state.set_graphql_enabled(enabled);
+
+                        let mut persisted = true;
+                        if let Err(error) = moltis_config::update_config(|cfg| {
+                            cfg.graphql.enabled = enabled;
+                        }) {
+                            persisted = false;
+                            tracing::warn!(%error, enabled, "failed to persist graphql config");
+                        }
+
+                        Ok(serde_json::json!({
+                            "ok": true,
+                            "enabled": enabled,
+                            "persisted": persisted,
+                        }))
+                    })
+                }),
+            );
+        }
+
         // ── Memory ─────────────────────────────────────────────────────
 
         self.register(
@@ -5833,6 +5882,41 @@ mod tests {
                 "node role should be denied for {method}"
             );
         }
+    }
+
+    #[cfg(feature = "graphql")]
+    #[test]
+    fn graphql_config_get_requires_read() {
+        assert!(
+            authorize_method(
+                "graphql.config.get",
+                "operator",
+                &scopes(&["operator.read"])
+            )
+            .is_none()
+        );
+        assert!(authorize_method("graphql.config.get", "operator", &scopes(&[])).is_some());
+    }
+
+    #[cfg(feature = "graphql")]
+    #[test]
+    fn graphql_config_set_requires_write() {
+        assert!(
+            authorize_method(
+                "graphql.config.set",
+                "operator",
+                &scopes(&["operator.write"])
+            )
+            .is_none()
+        );
+        assert!(
+            authorize_method(
+                "graphql.config.set",
+                "operator",
+                &scopes(&["operator.read"])
+            )
+            .is_some()
+        );
     }
 
     #[test]

@@ -192,6 +192,7 @@ pub struct MoltisConfig {
     pub channels: ChannelsConfig,
     pub tls: TlsConfig,
     pub auth: AuthConfig,
+    pub graphql: GraphqlConfig,
     pub metrics: MetricsConfig,
     pub identity: AgentIdentity,
     pub user: UserProfile,
@@ -882,6 +883,20 @@ fn default_hook_timeout() -> u64 {
 pub struct AuthConfig {
     /// When true, authentication is explicitly disabled (no login required).
     pub disabled: bool,
+}
+
+/// Runtime GraphQL server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphqlConfig {
+    /// Whether GraphQL HTTP/WS handlers accept requests.
+    pub enabled: bool,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Metrics and observability configuration.

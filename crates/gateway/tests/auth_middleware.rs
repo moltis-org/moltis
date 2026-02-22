@@ -6,6 +6,8 @@ use std::{net::SocketAddr, sync::Arc};
 use secrecy::ExposeSecret;
 
 use tokio::net::TcpListener;
+#[cfg(all(feature = "graphql", feature = "web-ui"))]
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 use moltis_gateway::{
     auth::{self, CredentialStore},
@@ -235,6 +237,143 @@ async fn public_routes_accessible_without_auth() {
     // SPA fallback (root page) is public.
     let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+/// GraphQL route is not public and requires authentication.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_requires_auth_when_enabled() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(resp.status().is_redirection());
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/login")
+    );
+}
+
+/// Runtime GraphQL toggle takes effect immediately without restart.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_runtime_toggle_applies_immediately() {
+    let (addr, store, state) = start_auth_server_with_state().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let auth_header = format!("moltis_session={token}");
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    state.set_graphql_enabled(false);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "graphql server is disabled");
+
+    state.set_graphql_enabled(true);
+
+    let resp = client
+        .get(format!("http://{addr}/graphql"))
+        .header("Cookie", &auth_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+/// GraphQL status query always returns an `uptimeMs` value.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_status_includes_uptime_ms() {
+    let (addr, store) = start_auth_server().await;
+    store.set_initial_password("testpass123").await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/graphql"))
+        .header("Cookie", format!("moltis_session={token}"))
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({ "query": "{ status { uptimeMs } }" }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let uptime_ms = body["data"]["status"]["uptimeMs"]
+        .as_u64()
+        .expect("uptimeMs should be present");
+    assert!(uptime_ms < 60_000);
+}
+
+/// GraphQL subscriptions upgrade on `/graphql` with GraphQL WS subprotocols.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_supported_on_graphql_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let (_socket, response) = connect_async(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    assert_eq!(
+        response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .and_then(|value| value.to_str().ok()),
+        Some("graphql-transport-ws")
+    );
+}
+
+/// Legacy `/graphql/ws` endpoint is not supported, subscriptions must use `/graphql`.
+#[cfg(all(feature = "web-ui", feature = "graphql"))]
+#[tokio::test]
+async fn graphql_websocket_upgrade_not_supported_on_legacy_path() {
+    let addr = start_noauth_server().await;
+
+    let mut request = format!("ws://{addr}/graphql/ws")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "graphql-transport-ws".parse().unwrap(),
+    );
+
+    let result = connect_async(request).await;
+    assert!(result.is_err());
 }
 
 /// Invalid session cookie returns 401.
