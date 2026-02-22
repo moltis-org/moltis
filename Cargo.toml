@@ -30,6 +30,8 @@ members = [
   "crates/web",
   "crates/graphql",
   "crates/service-traits",
+  "crates/tailscale",
+  "crates/tls",
 ]
 resolver = "2"
 
@@ -188,7 +190,9 @@ moltis-routing    = { path = "crates/routing" }
 moltis-service-traits = { path = "crates/service-traits" }
 moltis-sessions      = { path = "crates/sessions" }
 moltis-skills     = { path = "crates/skills" }
+moltis-tailscale  = { path = "crates/tailscale" }
 moltis-telegram   = { path = "crates/telegram" }
+moltis-tls        = { path = "crates/tls" }
 moltis-tools      = { path = "crates/tools" }
 moltis-voice      = { path = "crates/voice" }
 moltis-web        = { default-features = false, path = "crates/web" }

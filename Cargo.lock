@@ -4780,7 +4780,9 @@ dependencies = [
  "moltis-service-traits",
  "moltis-sessions",
  "moltis-skills",
+ "moltis-tailscale",
  "moltis-telegram",
+ "moltis-tls",
  "moltis-tools",
  "moltis-voice",
  "moltis-web",
@@ -5077,6 +5079,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-tailscale"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moltis-telegram"
 version = "0.9.10"
 dependencies = [
@@ -5098,6 +5112,25 @@ dependencies = [
  "teloxide",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "moltis-tls"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "axum",
+ "hyper-util",
+ "moltis-config",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile 2.2.0",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tower",
  "tracing",
 ]
 

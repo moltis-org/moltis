@@ -45,6 +45,8 @@ moltis-protocol    = { workspace = true }
 moltis-qmd         = { optional = true, workspace = true }
 moltis-routing         = { workspace = true }
 moltis-service-traits  = { workspace = true }
+moltis-tailscale       = { optional = true, workspace = true }
+moltis-tls             = { optional = true, workspace = true }
 moltis-sessions    = { workspace = true }
 moltis-skills      = { workspace = true }
 moltis-telegram    = { workspace = true }
@@ -111,11 +113,12 @@ metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
 qmd = ["dep:moltis-qmd"]
-tailscale = []
+tailscale = ["dep:moltis-tailscale"]
 tls = [
   "dep:axum-server",
   "dep:hyper",
   "dep:hyper-util",
+  "dep:moltis-tls",
   "dep:rcgen",
   "dep:rustls",
   "dep:rustls-pemfile",

@@ -1,0 +1,25 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-tls"
+repository.workspace = true
+version.workspace    = true
+
+[dependencies]
+anyhow        = { workspace = true }
+axum          = { workspace = true }
+hyper-util    = { workspace = true }
+moltis-config = { workspace = true }
+rcgen         = { workspace = true }
+rustls        = { workspace = true }
+rustls-pemfile = { workspace = true }
+time          = { workspace = true }
+tokio         = { workspace = true }
+tokio-rustls  = { workspace = true }
+tower         = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
