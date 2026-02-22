@@ -85,7 +85,7 @@ pub struct NodeInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SessionEntry {
     #[serde(default)]
-    pub id: Option<i64>,
+    pub id: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]

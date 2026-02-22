@@ -268,7 +268,7 @@ impl SessionService for NoopSessionService {
     }
 
     async fn delete(&self, _p: Value) -> ServiceResult {
-        Ok(serde_json::json!({}))
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _p: Value) -> ServiceResult {
