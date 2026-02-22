@@ -4,27 +4,30 @@
 
 # Moltis
 
-**A personal AI gateway written in Rust. One binary, no runtime, no npm.**
+### A Rust-native claw you can trust
+
+One binary — sandboxed, secure, yours.
 
 [![CI](https://github.com/moltis-org/moltis/actions/workflows/ci.yml/badge.svg)](https://github.com/moltis-org/moltis/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/moltis-org/moltis/graph/badge.svg)](https://codecov.io/gh/moltis-org/moltis)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&style=flat&label=CodSpeed)](https://codspeed.io/moltis-org/moltis)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
-<!-- [![Discord](https://img.shields.io/discord/1469505370169933837?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/XnmrepsXp5) -->
+[![Discord](https://img.shields.io/discord/1469505370169933837?color=5865F2&label=Discord&logo=discord&logoColor=white)](https://discord.gg/XnmrepsXp5)
 
-[Why Moltis?](#why-moltis) • [Installation](#installation) • [Comparison](#comparison) • [Architecture](#architecture--crate-map) • [Security](#security) • [Features](#features) • [How It Works](#how-it-works) • [Contributing](CONTRIBUTING.md) • [Discord](https://discord.gg/XnmrepsXp5)
+[Installation](#installation) • [Comparison](#comparison) • [Architecture](#architecture--crate-map) • [Security](#security) • [Features](#features) • [How It Works](#how-it-works) • [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
 
-## Why Moltis?
+**Secure by design** — Your keys never leave your machine. Every command runs in a sandboxed container, never on your host.
 
-Moltis is a single Rust binary with no runtime dependencies — no Node.js, no npm, no GC pauses.
-The core agent engine (runner + provider model) is **~5K lines of code**; the rest is modular crates you can audit independently.
-Every command the LLM runs executes inside a container (Docker or Apple Container), never on your host.
-Zero `unsafe` code in the core\*, secrets zeroed on drop, and **2,300+ tests** across ~150K lines.
+**Your hardware** — Runs on a Mac Mini, a Raspberry Pi, or any server you own. One Rust binary, no Node.js, no npm, no runtime.
+
+**Full-featured** — Voice, memory, scheduling, Telegram, browser automation, MCP servers — all built-in. No plugin marketplace to get supply-chain attacked through.
+
+**Auditable** — The agent loop + provider model fits in ~5K lines. The full workspace is ~150K lines across modular crates you can audit independently, with 2,300+ tests and zero `unsafe` code\*.
 
 ## Installation
 
@@ -47,8 +50,8 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | | OpenClaw | PicoClaw | NanoClaw | ZeroClaw | **Moltis** |
 |---|---|---|---|---|---|
 | Language | TypeScript | Go | TypeScript | Rust | **Rust** |
-| Core engine | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** (agent loop + provider model) |
-| Total w/ tests | — | — | — | 1,000+ tests | **~150K LoC** (2,300+ tests) |
+| Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** (`runner.rs` + `model.rs`) |
+| Full codebase | — | — | — | 1,000+ tests | **~150K LoC** (2,300+ tests) |
 | Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |

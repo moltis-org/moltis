@@ -11,8 +11,8 @@ How Moltis compares to other open-source AI agent frameworks.
 | | [OpenClaw](https://github.com/openclaw/openclaw) | [PicoClaw](https://github.com/sipeed/picoclaw) | [NanoClaw](https://github.com/qwibitai/nanoclaw) | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | **Moltis** |
 |---|---|---|---|---|---|
 | Language | TypeScript | Go | TypeScript | Rust | **Rust** |
-| Core engine | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** |
-| Total w/ tests | — | — | — | 1,000+ tests | **~150K LoC** (2,300+ tests) |
+| Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** |
+| Full codebase | — | — | — | 1,000+ tests | **~150K LoC** (2,300+ tests) |
 | Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
 | Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
 | Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
