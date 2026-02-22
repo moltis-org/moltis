@@ -6,13 +6,13 @@ use crate::{
     rpc_call, rpc_json_call,
     scalars::Json,
     types::{
-        AgentIdentity, BoolResult, ChannelInfo, ChannelSendersResult, ChatActiveResult,
-        ChatRawPrompt, CronJob,
+        AgentIdentity, BoolResult, ChannelInfo, ChannelSendersResult, ChatRawPrompt, CronJob,
         CronRunRecord, CronStatus, ExecApprovalConfig, ExecNodeConfig, HealthInfo, HeartbeatStatus,
         HookInfo, LocalSystemInfo, LogListResult, LogStatus, LogTailResult, McpServer, McpTool,
         MemoryConfig, MemoryStatus, ModelInfo, NodeDescription, NodeInfo, Project, ProjectContext,
-        ProviderInfo, SecurityScanResult, SecurityStatus, SessionBranch, SessionEntry,
-        SessionShareResult, SkillInfo, SkillRepo, StatusInfo, SttStatus, SystemPresence, TtsStatus,
+        ProviderInfo, SecurityScanResult, SecurityStatus, SessionActiveResult, SessionBranch,
+        SessionEntry, SessionShareResult, SkillInfo, SkillRepo, StatusInfo, SttStatus, SystemPresence,
+        TtsStatus,
         UsageCost, UsageStatus, VoiceConfig, VoicewakeConfig, VoxtralRequirements,
     },
 };
@@ -251,19 +251,6 @@ impl ChatQuery {
             serde_json::json!({ "sessionKey": session_key })
         )
     }
-
-    /// Whether the session has an active run (LLM is responding).
-    async fn active(
-        &self,
-        ctx: &Context<'_>,
-        session_key: String,
-    ) -> Result<ChatActiveResult> {
-        rpc_call!(
-            "chat.active",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
-        )
-    }
 }
 
 // ── Sessions ────────────────────────────────────────────────────────────────
@@ -312,6 +299,19 @@ impl SessionQuery {
             "sessions.share.list",
             ctx,
             serde_json::json!({ "key": key })
+        )
+    }
+
+    /// Whether this session has an active run (LLM is responding).
+    async fn active(
+        &self,
+        ctx: &Context<'_>,
+        session_key: String,
+    ) -> Result<SessionActiveResult> {
+        rpc_call!(
+            "sessions.active",
+            ctx,
+            serde_json::json!({ "sessionKey": session_key })
         )
     }
 }

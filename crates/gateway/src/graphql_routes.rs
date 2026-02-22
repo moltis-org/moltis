@@ -97,10 +97,10 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
                 // Switch needs session resolve + mark_seen, simplified here.
                 s.session.resolve(params).await
             },
+            "sessions.active" => chat.active(params).await,
 
             // ── Chat ────────────────────────────────────────────────────
             "chat.send" => chat.send(params).await,
-            "chat.active" => chat.active(params).await,
             "chat.abort" => chat.abort(params).await,
             "chat.cancel_queued" => chat.cancel_queued(params).await,
             "chat.history" => chat.history(params).await,
