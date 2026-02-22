@@ -482,29 +482,24 @@ fallback_models = []              # Ordered list of fallback models
 # `providers` controls what appears in the Settings UI provider list.
 
 [voice.tts]
-enabled = false                   # Enable text-to-speech
-provider = "elevenlabs"           # Active TTS provider
-providers = ["elevenlabs"]        # UI allowlist (empty = show all TTS providers)
+enabled = true                    # Enable text-to-speech
+# provider = "openai"             # Active TTS provider (auto-selects first configured if omitted)
+providers = ["openai", "elevenlabs"] # UI allowlist (empty = show all TTS providers)
 # All available TTS providers:
-#   "elevenlabs", "openai", "google", "piper", "coqui"
+#   "openai", "elevenlabs", "google", "piper", "coqui"
 
 [voice.stt]
-enabled = false                   # Enable speech-to-text
-provider = "mistral"              # Active STT provider
-providers = ["mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
+enabled = true                    # Enable speech-to-text
+# provider = "whisper"            # Active STT provider (auto-selects first configured if omitted)
+providers = ["whisper", "mistral", "elevenlabs"] # UI allowlist (empty = show all STT providers)
 # All available STT providers:
 #   "whisper", "groq", "deepgram", "google", "mistral",
 #   "voxtral-local", "whisper-cli", "sherpa-onnx", "elevenlabs-stt"
 
-# [voice.tts.elevenlabs]
-# api_key = "${{ELEVENLABS_API_KEY}}" # Or set ELEVENLABS_API_KEY env var
-# voice_id = "21m00Tcm4TlvDq8ikWAM"
-# model = "eleven_flash_v2_5"
-
-# [voice.stt.mistral]
-# api_key = "${{MISTRAL_API_KEY}}"    # Or set MISTRAL_API_KEY env var
-# model = "voxtral-mini-latest"
-# language = "en"
+# No api_key needed for OpenAI TTS/Whisper when OpenAI is configured as an LLM provider.
+# [voice.tts.openai]
+# voice = "alloy"                 # alloy, echo, fable, onyx, nova, shimmer
+# model = "tts-1"                 # tts-1 or tts-1-hd
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAILSCALE

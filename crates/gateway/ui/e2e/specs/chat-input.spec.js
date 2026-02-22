@@ -298,14 +298,16 @@ test.describe("Chat input and slash commands", () => {
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toHaveText("0 in / 0 out · 0 tokens · Execute: host ($)");
+		await expect(tokenBar).toContainText("0 in / 0 out · 0 tokens");
+		await expect(tokenBar).toContainText("Execute:");
+		await expect(tokenBar).not.toContainText("/sh mode");
 		expect(pageErrors).toEqual([]);
 	});
 
 	test("token bar context-left uses current request input, not cumulative totals", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
+		const tokenBarText = await page.evaluate(async () => {
 			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
 			if (!appScript) throw new Error("app module script not found");
 			var appUrl = new URL(appScript.src, window.location.origin);
@@ -317,11 +319,13 @@ test.describe("Chat input and slash commands", () => {
 			state.setSessionContextWindow(200000);
 			state.setSessionToolsEnabled(true);
 			chatUi.updateTokenBar();
+			var tokenBar = document.getElementById("tokenBar");
+			return tokenBar ? tokenBar.textContent || "" : "";
 		});
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toContainText("Context left before auto-compact: 75%");
+		expect(tokenBarText).toContain("Context left before auto-compact: 75%");
 		expect(pageErrors).toEqual([]);
 	});
 

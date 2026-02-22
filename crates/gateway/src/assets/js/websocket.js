@@ -117,6 +117,8 @@ function handleChatThinking(p, isActive, isChatPage, eventSession) {
 	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
 	removeThinking();
+	var welcome = document.getElementById("welcomeCard");
+	if (welcome) welcome.remove();
 	var thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
 	thinkEl.id = "thinkingIndicator";
