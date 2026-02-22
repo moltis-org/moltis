@@ -50,6 +50,19 @@ impl IntoVoiceSttProvider for SttProviderId {
     }
 }
 
+/// Resolve an OpenAI API key with fallback: voice-specific config → `OPENAI_API_KEY`
+/// env var → LLM provider config (`providers.openai.api_key`).
+#[cfg(feature = "voice")]
+fn resolve_openai_key(
+    voice_key: Option<&Secret<String>>,
+    cfg: &moltis_config::MoltisConfig,
+) -> Option<Secret<String>> {
+    voice_key
+        .cloned()
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok().map(Secret::new))
+        .or_else(|| cfg.providers.get("openai").and_then(|p| p.api_key.clone()))
+}
+
 // ── TTS Service ─────────────────────────────────────────────────────────────
 
 /// Live TTS service that delegates to voice providers.
@@ -98,7 +111,7 @@ impl LiveTtsService {
                 similarity_boost: None,
             },
             openai: moltis_voice::OpenAiTtsConfig {
-                api_key: cfg.voice.tts.openai.api_key.clone(),
+                api_key: resolve_openai_key(cfg.voice.tts.openai.api_key.as_ref(), &cfg),
                 voice: cfg.voice.tts.openai.voice.clone(),
                 model: cfg.voice.tts.openai.model.clone(),
                 speed: None,
@@ -180,6 +193,27 @@ impl LiveTtsService {
             (TtsProviderId::Coqui, true), // Always available if server running
         ]
     }
+
+    /// Resolve the active provider: explicit config value, or first configured.
+    fn resolve_provider(config_provider: &str) -> Option<TtsProviderId> {
+        if !config_provider.is_empty() {
+            return TtsProviderId::parse(config_provider);
+        }
+        // Auto-select: first configured provider
+        Self::list_providers()
+            .into_iter()
+            .find(|(_, configured)| *configured)
+            .map(|(id, _)| id)
+    }
+
+    /// Parse provider from JSON params, falling back to config/auto-select.
+    fn resolve_from_params(params: &Value, config_provider: &str) -> Result<TtsProviderId, String> {
+        match params.get("provider").and_then(|v| v.as_str()) {
+            Some(s) => TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'")),
+            None => Self::resolve_provider(config_provider)
+                .ok_or_else(|| "no TTS provider configured".to_string()),
+        }
+    }
 }
 
 #[cfg(feature = "voice")]
@@ -189,10 +223,11 @@ impl TtsService for LiveTtsService {
         let config = Self::load_config();
         let providers = Self::list_providers();
         let any_configured = providers.iter().any(|(_, configured)| *configured);
+        let resolved = Self::resolve_provider(&config.provider);
 
         Ok(json!({
             "enabled": config.enabled && any_configured,
-            "provider": config.provider,
+            "provider": resolved.map(|p| p.to_string()).unwrap_or_default(),
             "auto": format!("{:?}", config.auto).to_lowercase(),
             "maxTextLength": config.max_text_length,
             "configured": any_configured,
@@ -216,14 +251,7 @@ impl TtsService for LiveTtsService {
 
     async fn enable(&self, params: Value) -> ServiceResult {
         let config = Self::load_config();
-
-        let provider_str = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&config.provider);
-
-        let provider_id = TtsProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
+        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
 
         if Self::create_provider(provider_id).is_none() {
             return Err(format!("provider '{}' not configured", provider_id));
@@ -276,13 +304,7 @@ impl TtsService for LiveTtsService {
             ));
         }
 
-        let provider_str = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&config.provider);
-
-        let provider_id = TtsProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
+        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
 
         info!(
             provider = %provider_id,
@@ -509,9 +531,12 @@ impl LiveSttService {
     fn create_provider(provider_id: SttProviderId) -> Option<Box<dyn SttProvider + Send + Sync>> {
         let cfg = moltis_config::discover_and_load();
         match provider_id {
-            SttProviderId::Whisper => cfg.voice.stt.whisper.api_key.as_ref().map(|key| {
-                Box::new(WhisperStt::new(Some(key.clone()))) as Box<dyn SttProvider + Send + Sync>
-            }),
+            SttProviderId::Whisper => {
+                let key = resolve_openai_key(cfg.voice.stt.whisper.api_key.as_ref(), &cfg);
+                key.map(|k| {
+                    Box::new(WhisperStt::new(Some(k))) as Box<dyn SttProvider + Send + Sync>
+                })
+            },
             SttProviderId::Groq => cfg.voice.stt.groq.api_key.as_ref().map(|key| {
                 Box::new(GroqStt::with_options(
                     Some(key.clone()),
@@ -623,6 +648,20 @@ impl LiveSttService {
             ),
         ]
     }
+
+    /// Resolve the active provider: explicit config value, or first configured.
+    fn resolve_provider(
+        config_provider: Option<moltis_config::VoiceSttProvider>,
+    ) -> Option<SttProviderId> {
+        if let Some(p) = config_provider {
+            return SttProviderId::parse(p.as_str());
+        }
+        // Auto-select: first configured provider
+        Self::list_providers()
+            .into_iter()
+            .find(|(_, configured)| *configured)
+            .map(|(id, _)| id)
+    }
 }
 
 #[cfg(feature = "voice")]
@@ -632,10 +671,11 @@ impl SttService for LiveSttService {
         let cfg = moltis_config::discover_and_load();
         let providers = Self::list_providers();
         let any_configured = providers.iter().any(|(_, configured)| *configured);
+        let resolved = Self::resolve_provider(cfg.voice.stt.provider);
 
         Ok(json!({
             "enabled": any_configured,
-            "provider": cfg.voice.stt.provider,
+            "provider": resolved.map(|p| p.to_string()).unwrap_or_default(),
             "configured": any_configured,
         }))
     }
@@ -689,10 +729,14 @@ impl SttService for LiveSttService {
         prompt: Option<&str>,
     ) -> ServiceResult {
         let cfg = moltis_config::discover_and_load();
-        let provider_str = provider.unwrap_or(cfg.voice.stt.provider.as_str());
 
-        let provider_id = SttProviderId::parse(provider_str)
-            .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
+        let provider_id = match provider {
+            Some(s) => {
+                SttProviderId::parse(s).ok_or_else(|| format!("unknown STT provider '{s}'"))?
+            },
+            None => Self::resolve_provider(cfg.voice.stt.provider)
+                .ok_or_else(|| "no STT provider configured".to_string())?,
+        };
 
         let stt_provider: Box<dyn SttProvider + Send + Sync> =
             Self::create_provider(provider_id)
@@ -734,7 +778,7 @@ impl SttService for LiveSttService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.stt.provider = provider_id.into_voice_stt_provider();
+            cfg.voice.stt.provider = Some(provider_id.into_voice_stt_provider());
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 
@@ -782,7 +826,62 @@ impl SttService for NoopSttService {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "voice"))]
 mod tests {
-    use {super::*, serde_json::json};
+    use {super::*, secrecy::ExposeSecret, serde_json::json};
+
+    #[test]
+    fn test_resolve_openai_key_prefers_voice_key_over_llm_provider_key() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                api_key: Some(Secret::new("llm-openai-key".to_string())),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        let resolved = resolve_openai_key(Some(&Secret::new("voice-openai-key".to_string())), &cfg)
+            .map(|value| value.expose_secret().to_string());
+        assert_eq!(resolved.as_deref(), Some("voice-openai-key"));
+    }
+
+    #[test]
+    fn test_resolve_openai_key_uses_llm_provider_key_when_voice_key_missing() {
+        if std::env::var("OPENAI_API_KEY").is_ok() {
+            return;
+        }
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.providers.providers.insert(
+            "openai".to_string(),
+            moltis_config::schema::ProviderEntry {
+                api_key: Some(Secret::new("llm-openai-key".to_string())),
+                ..moltis_config::schema::ProviderEntry::default()
+            },
+        );
+
+        let resolved =
+            resolve_openai_key(None, &cfg).map(|value| value.expose_secret().to_string());
+        assert_eq!(resolved.as_deref(), Some("llm-openai-key"));
+    }
+
+    #[test]
+    fn test_live_tts_resolve_provider_handles_explicit_and_auto_selection() {
+        assert_eq!(
+            LiveTtsService::resolve_provider("openai"),
+            Some(TtsProviderId::OpenAi)
+        );
+        assert_eq!(LiveTtsService::resolve_provider("unknown"), None);
+        assert!(LiveTtsService::resolve_provider("").is_some());
+    }
+
+    #[test]
+    fn test_live_stt_resolve_provider_handles_explicit_and_auto_selection() {
+        assert_eq!(
+            LiveSttService::resolve_provider(Some(moltis_config::VoiceSttProvider::Whisper)),
+            Some(SttProviderId::Whisper)
+        );
+        assert!(LiveSttService::resolve_provider(None).is_some());
+    }
 
     #[tokio::test]
     async fn test_live_tts_service_status() {

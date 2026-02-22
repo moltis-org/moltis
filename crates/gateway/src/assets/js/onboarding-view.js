@@ -2219,7 +2219,10 @@ function SummaryStep({ onBack, onFinish }) {
 	}, []);
 
 	if (loading || !data) {
-		return html`<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>`;
+		return html`<div class="flex flex-col items-center justify-center gap-3 min-h-[200px]">
+			<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin"></div>
+			<div class="text-sm text-[var(--muted)]">Loading summary\u2026</div>
+		</div>`;
 	}
 
 	var activeModel = localStorage.getItem("moltis-model");

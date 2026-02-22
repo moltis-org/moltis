@@ -116,9 +116,18 @@ impl CredentialStore {
         store.init().await?;
         let has = store.has_password().await? || store.has_passkeys().await?;
         store.setup_complete.store(has, Ordering::Relaxed);
-        store
-            .auth_disabled
-            .store(auth_config.disabled, Ordering::Relaxed);
+        sqlx::query(
+            "INSERT OR IGNORE INTO auth_state (id, auth_disabled, updated_at) VALUES (1, ?, datetime('now'))",
+        )
+        .bind(if auth_config.disabled { 1_i64 } else { 0_i64 })
+        .execute(&store.pool)
+        .await?;
+        let db_disabled: Option<(i64,)> =
+            sqlx::query_as("SELECT auth_disabled FROM auth_state WHERE id = 1")
+                .fetch_optional(&store.pool)
+                .await?;
+        let disabled = db_disabled.map_or(auth_config.disabled, |(value,)| value != 0);
+        store.auth_disabled.store(disabled, Ordering::Relaxed);
         Ok(store)
     }
 
@@ -189,6 +198,16 @@ impl CredentialStore {
         .execute(&self.pool)
         .await?;
 
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS auth_state (
+                id            INTEGER PRIMARY KEY CHECK (id = 1),
+                auth_disabled INTEGER NOT NULL DEFAULT 0,
+                updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -205,12 +224,25 @@ impl CredentialStore {
     }
 
     /// Clear the auth-disabled flag (e.g. after completing localhost setup without a password).
-    pub fn clear_auth_disabled(&self) {
+    pub async fn clear_auth_disabled(&self) -> anyhow::Result<()> {
         self.auth_disabled.store(false, Ordering::Relaxed);
-        let _ = self.persist_auth_disabled(false);
+        self.persist_auth_disabled(false).await
     }
 
-    fn persist_auth_disabled(&self, disabled: bool) -> anyhow::Result<()> {
+    async fn persist_auth_disabled(&self, disabled: bool) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO auth_state (id, auth_disabled, updated_at)
+             VALUES (1, ?, datetime('now'))
+             ON CONFLICT(id) DO UPDATE
+             SET auth_disabled = excluded.auth_disabled, updated_at = excluded.updated_at",
+        )
+        .bind(if disabled {
+            1_i64
+        } else {
+            0_i64
+        })
+        .execute(&self.pool)
+        .await?;
         moltis_config::update_config(|c| c.auth.disabled = disabled)?;
         Ok(())
     }
@@ -237,7 +269,7 @@ impl CredentialStore {
             .await?;
         self.setup_complete.store(true, Ordering::Relaxed);
         self.auth_disabled.store(false, Ordering::Relaxed);
-        self.persist_auth_disabled(false)?;
+        self.persist_auth_disabled(false).await?;
         Ok(())
     }
 
@@ -268,7 +300,7 @@ impl CredentialStore {
         }
         self.setup_complete.store(true, Ordering::Relaxed);
         self.auth_disabled.store(false, Ordering::Relaxed);
-        self.persist_auth_disabled(false)?;
+        self.persist_auth_disabled(false).await?;
         Ok(())
     }
 
@@ -525,7 +557,7 @@ impl CredentialStore {
             .await?;
         self.setup_complete.store(false, Ordering::Relaxed);
         self.auth_disabled.store(true, Ordering::Relaxed);
-        self.persist_auth_disabled(true)?;
+        self.persist_auth_disabled(true).await?;
         Ok(())
     }
 

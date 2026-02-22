@@ -82,12 +82,27 @@ const RATE_LIMIT_PATTERNS: &[&str] = &[
     "too many requests",
     "rate limit",
     "rate_limit",
-    "quota exceeded",
 ];
 
 fn is_rate_limit_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     RATE_LIMIT_PATTERNS.iter().any(|p| lower.contains(p))
+}
+
+/// Error patterns that indicate the account is out of credits/quota.
+/// These are not retryable in the short term and should surface directly.
+const BILLING_QUOTA_PATTERNS: &[&str] = &[
+    "insufficient_quota",
+    "quota exceeded",
+    "current quota",
+    "billing details",
+    "billing limit",
+    "credit balance",
+];
+
+fn is_billing_quota_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    BILLING_QUOTA_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
 /// Base delay for non-rate-limit transient retries.
@@ -167,6 +182,11 @@ fn next_retry_delay_ms(
     rate_limit_retries_remaining: &mut u8,
     rate_limit_backoff_ms: &mut Option<u64>,
 ) -> Option<u64> {
+    // Account/billing quota exhaustion is not transient; don't auto-retry.
+    if is_billing_quota_error(msg) {
+        return None;
+    }
+
     if is_rate_limit_error(msg) {
         if *rate_limit_retries_remaining == 0 {
             return None;
@@ -4360,8 +4380,35 @@ mod tests {
         assert!(is_rate_limit_error("HTTP 429 Too Many Requests"));
         assert!(is_rate_limit_error("status=429 upstream limit"));
         assert!(is_rate_limit_error("rate_limit_exceeded"));
-        assert!(is_rate_limit_error("quota exceeded"));
         assert!(!is_rate_limit_error("HTTP 500 Internal Server Error"));
+        assert!(!is_rate_limit_error("insufficient_quota"));
+    }
+
+    #[test]
+    fn test_is_billing_quota_error() {
+        assert!(is_billing_quota_error(
+            "You exceeded your current quota, please check your plan and billing details."
+        ));
+        assert!(is_billing_quota_error("insufficient_quota"));
+        assert!(is_billing_quota_error("quota exceeded"));
+        assert!(!is_billing_quota_error("HTTP 429 Too Many Requests"));
+    }
+
+    #[test]
+    fn test_next_retry_delay_skips_billing_quota_errors() {
+        let mut server_retries_remaining = 2u8;
+        let mut rate_limit_retries_remaining = 2u8;
+        let mut rate_limit_backoff_ms = None;
+        let delay = next_retry_delay_ms(
+            r#"HTTP 429: {"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}}"#,
+            &mut server_retries_remaining,
+            &mut rate_limit_retries_remaining,
+            &mut rate_limit_backoff_ms,
+        );
+        assert!(delay.is_none());
+        assert_eq!(server_retries_remaining, 2);
+        assert_eq!(rate_limit_retries_remaining, 2);
+        assert_eq!(rate_limit_backoff_ms, None);
     }
 
     #[test]
