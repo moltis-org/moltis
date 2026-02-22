@@ -105,6 +105,18 @@ fn configured_models_for_provider(config: &ProvidersConfig, provider: &str) -> V
     )
 }
 
+fn subscription_preference_rank(provider_name: &str) -> usize {
+    if matches!(provider_name, "openai-codex" | "github-copilot") {
+        0
+    } else {
+        1
+    }
+}
+
+fn oauth_discovery_enabled(config: &ProvidersConfig, provider_name: &str) -> bool {
+    config.get(provider_name).is_none_or(|entry| entry.enabled)
+}
+
 fn normalize_unique_models(models: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut normalized_models = Vec::new();
     let mut seen = HashSet::new();
@@ -688,7 +700,7 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
     }
 
     fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool {
-        config.is_enabled(self.provider_name()) && openai_codex::has_stored_tokens()
+        oauth_discovery_enabled(config, self.provider_name()) && openai_codex::has_stored_tokens()
     }
 
     fn configured_models(&self, config: &ProvidersConfig) -> Vec<String> {
@@ -726,7 +738,7 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
     }
 
     fn is_enabled_and_authenticated(&self, config: &ProvidersConfig) -> bool {
-        config.is_enabled(self.provider_name()) && github_copilot::has_stored_tokens()
+        oauth_discovery_enabled(config, self.provider_name()) && github_copilot::has_stored_tokens()
     }
 
     fn configured_models(&self, config: &ProvidersConfig) -> Vec<String> {
@@ -794,14 +806,13 @@ impl ProviderRegistry {
         }
 
         let raw = raw_model_id(model_id);
-        let mut matches = self
-            .models
+        self.models
             .iter()
-            .filter(|m| raw_model_id(&m.id) == raw)
-            .filter(|m| provider_hint.is_none_or(|hint| m.provider == hint))
-            .map(|m| m.id.clone());
-
-        matches.next()
+            .enumerate()
+            .filter(|(_, m)| raw_model_id(&m.id) == raw)
+            .filter(|(_, m)| provider_hint.is_none_or(|hint| m.provider == hint))
+            .min_by_key(|(idx, m)| (subscription_preference_rank(&m.provider), *idx))
+            .map(|(_, m)| m.id.clone())
     }
 
     #[cfg(any(feature = "provider-openai-codex", feature = "provider-github-copilot"))]
@@ -956,11 +967,17 @@ impl ProviderRegistry {
     /// Auto-discover providers from environment variables,
     /// respecting the given config for enable/disable and overrides.
     ///
-    /// Provider priority (first registered wins for a given model ID):
+    /// Provider registration order:
     /// 1. Built-in raw reqwest providers (always available, support tool calling)
     /// 2. async-openai-backed providers (if `provider-async-openai` feature enabled)
     /// 3. genai-backed providers (if `provider-genai` feature enabled, no tool support)
     /// 4. OpenAI Codex OAuth providers (if `provider-openai-codex` feature enabled)
+    ///
+    /// Model/provider auto-selection preference:
+    /// 1. Subscription providers (`openai-codex`, `github-copilot`)
+    /// 2. Everything else
+    ///
+    /// Within the same preference tier, registration order wins.
     pub fn from_env_with_config(config: &ProvidersConfig) -> Self {
         let env_overrides = HashMap::new();
         Self::from_env_with_config_and_overrides(config, &env_overrides)
@@ -1651,7 +1668,10 @@ impl ProviderRegistry {
 
     pub fn first(&self) -> Option<Arc<dyn LlmProvider>> {
         self.models
-            .first()
+            .iter()
+            .enumerate()
+            .min_by_key(|(idx, m)| (subscription_preference_rank(&m.provider), *idx))
+            .map(|(_, m)| m)
             .and_then(|m| self.providers.get(&m.id))
             .cloned()
     }
@@ -1661,9 +1681,11 @@ impl ProviderRegistry {
     pub fn first_with_tools(&self) -> Option<Arc<dyn LlmProvider>> {
         self.models
             .iter()
-            .filter_map(|m| self.providers.get(&m.id))
-            .find(|p| p.supports_tools())
-            .cloned()
+            .enumerate()
+            .filter_map(|(idx, m)| self.providers.get(&m.id).map(|p| (idx, m, p)))
+            .filter(|(_, _, p)| p.supports_tools())
+            .min_by_key(|(idx, m, _)| (subscription_preference_rank(&m.provider), *idx))
+            .map(|(_, _, p)| Arc::clone(p))
             .or_else(|| self.first())
     }
 
@@ -1695,8 +1717,9 @@ impl ProviderRegistry {
     /// Return fallback providers ordered by affinity to the given primary:
     ///
     /// 1. Same model ID on a different provider backend (e.g. `gpt-4o` via openrouter)
-    /// 2. Other models from the same provider (e.g. `claude-opus-4` when primary is `claude-sonnet-4`)
-    /// 3. Models from other providers
+    /// 2. Subscription providers (`openai-codex`, `github-copilot`)
+    /// 3. Other models from the same provider (e.g. `claude-opus-4` when primary is `claude-sonnet-4`)
+    /// 4. Models from other providers
     ///
     /// The primary itself is excluded from the result.
     pub fn fallback_providers_for(
@@ -1705,29 +1728,30 @@ impl ProviderRegistry {
         primary_provider_name: &str,
     ) -> Vec<Arc<dyn LlmProvider>> {
         let primary_raw_model_id = raw_model_id(primary_model_id);
-        let mut same_model_diff_provider = Vec::new();
-        let mut same_provider_diff_model = Vec::new();
-        let mut other = Vec::new();
+        let mut ranked: Vec<(u8, usize, usize, Arc<dyn LlmProvider>)> = Vec::new();
 
-        for info in &self.models {
+        for (idx, info) in self.models.iter().enumerate() {
             if info.id == primary_model_id && info.provider == primary_provider_name {
                 continue; // skip the primary itself
             }
             let Some(p) = self.providers.get(&info.id).cloned() else {
                 continue;
             };
-            if raw_model_id(&info.id) == primary_raw_model_id {
-                same_model_diff_provider.push(p);
+            let provider_rank = subscription_preference_rank(&info.provider);
+            let bucket = if raw_model_id(&info.id) == primary_raw_model_id {
+                0
+            } else if provider_rank == 0 {
+                1
             } else if info.provider == primary_provider_name {
-                same_provider_diff_model.push(p);
+                2
             } else {
-                other.push(p);
-            }
+                3
+            };
+            ranked.push((bucket, provider_rank, idx, p));
         }
 
-        same_model_diff_provider.extend(same_provider_diff_model);
-        same_model_diff_provider.extend(other);
-        same_model_diff_provider
+        ranked.sort_by_key(|(bucket, provider_rank, idx, _)| (*bucket, *provider_rank, *idx));
+        ranked.into_iter().map(|(_, _, _, p)| p).collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1808,6 +1832,40 @@ mod tests {
     #[test]
     fn context_window_fallback_for_unknown_model() {
         assert_eq!(context_window_for_model("some-unknown-model"), 200_000);
+    }
+
+    #[test]
+    fn oauth_discovery_enabled_ignores_offered_allowlist() {
+        let config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        assert!(oauth_discovery_enabled(&config, "openai-codex"));
+        assert!(oauth_discovery_enabled(&config, "github-copilot"));
+    }
+
+    #[test]
+    fn oauth_discovery_enabled_respects_explicit_disable() {
+        let mut config = ProvidersConfig {
+            offered: vec!["openai".into()],
+            ..ProvidersConfig::default()
+        };
+        config.providers.insert(
+            "openai-codex".into(),
+            moltis_config::schema::ProviderEntry {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        config.providers.insert(
+            "github-copilot".into(),
+            moltis_config::schema::ProviderEntry {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        assert!(!oauth_discovery_enabled(&config, "openai-codex"));
+        assert!(!oauth_discovery_enabled(&config, "github-copilot"));
     }
 
     #[test]
@@ -2552,6 +2610,106 @@ mod tests {
 
         // Verify we don't use the openrouter provider we created (not registered).
         drop(provider_or);
+    }
+
+    #[test]
+    fn raw_model_lookup_prefers_subscription_provider() {
+        let mut reg = ProviderRegistry::empty();
+
+        let mk = |id: &str, prov: &str| {
+            (
+                ModelInfo {
+                    id: id.into(),
+                    provider: prov.into(),
+                    display_name: id.into(),
+                    created_at: None,
+                },
+                Arc::new(openai::OpenAiProvider::new_with_name(
+                    secret("k"),
+                    id.into(),
+                    "u".into(),
+                    prov.into(),
+                )) as Arc<dyn LlmProvider>,
+            )
+        };
+
+        let (info, prov) = mk("gpt-5.2", "openai");
+        reg.register(info, prov);
+        let (info, prov) = mk("gpt-5.2", "openai-codex");
+        reg.register(info, prov);
+
+        let selected = reg.get("gpt-5.2").expect("model should resolve");
+        assert_eq!(selected.name(), "openai-codex");
+    }
+
+    #[test]
+    fn first_with_tools_prefers_subscription_provider() {
+        let mut reg = ProviderRegistry::empty();
+
+        let mk = |id: &str, prov: &str| {
+            (
+                ModelInfo {
+                    id: id.into(),
+                    provider: prov.into(),
+                    display_name: id.into(),
+                    created_at: None,
+                },
+                Arc::new(openai::OpenAiProvider::new_with_name(
+                    secret("k"),
+                    id.into(),
+                    "u".into(),
+                    prov.into(),
+                )) as Arc<dyn LlmProvider>,
+            )
+        };
+
+        let (info, prov) = mk("gpt-5-mini", "openai");
+        reg.register(info, prov);
+        let (info, prov) = mk("gpt-5.2-codex", "openai-codex");
+        reg.register(info, prov);
+
+        let selected = reg.first_with_tools().expect("provider should be selected");
+        assert_eq!(selected.name(), "openai-codex");
+    }
+
+    #[test]
+    fn fallback_prefers_subscription_before_same_provider_non_subscription_models() {
+        let mut reg = ProviderRegistry::empty();
+
+        let mk = |id: &str, prov: &str| {
+            (
+                ModelInfo {
+                    id: id.into(),
+                    provider: prov.into(),
+                    display_name: id.into(),
+                    created_at: None,
+                },
+                Arc::new(openai::OpenAiProvider::new_with_name(
+                    secret("k"),
+                    id.into(),
+                    "u".into(),
+                    prov.into(),
+                )) as Arc<dyn LlmProvider>,
+            )
+        };
+
+        let (info, prov) = mk("gpt-5.2", "openai");
+        reg.register(info, prov);
+        let (info, prov) = mk("gpt-5-mini", "openai");
+        reg.register(info, prov);
+        let (info, prov) = mk("gpt-5.3-codex", "openai-codex");
+        reg.register(info, prov);
+        let (info, prov) = mk("claude-sonnet", "anthropic");
+        reg.register(info, prov);
+
+        let fallbacks = reg.fallback_providers_for("openai::gpt-5.2", "openai");
+        let ids: Vec<&str> = fallbacks.iter().map(|p| p.id()).collect();
+
+        assert_eq!(ids, vec![
+            "openai-codex::gpt-5.3-codex",
+            "openai::gpt-5-mini",
+            "anthropic::claude-sonnet",
+        ]);
     }
 
     #[cfg(feature = "local-llm")]

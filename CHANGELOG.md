@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default voice template/settings now favor OpenAI TTS and Whisper STT in
   onboarding-ready configs.
 - Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
+- Automatic model/provider selection now prefers subscription-backed providers (OpenAI Codex, GitHub Copilot) ahead of API-key providers, while still honoring explicit model priorities
 
 ### Deprecated
 
@@ -33,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Onboarding summary loading state now keeps modal sizing stable with a
   centered spinner.
 - Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
+- OpenAI Codex OAuth token handling now preserves account context across refreshes and resolves `ChatGPT-Account-Id` from additional JWT/auth.json shapes to avoid auth failures with Max-style OAuth flows
+- Onboarding/provider setup now surfaces subscription OAuth providers (OpenAI Codex, GitHub Copilot) as configured when local OAuth tokens are present, even if they are omitted from `providers.offered`
+- Provider errors with `insufficient_quota` now surface as explicit quota/billing failures (with the upstream message) instead of generic retrying/rate-limit behavior
 ### Security
 
 ## [0.9.10] - 2026-02-21
