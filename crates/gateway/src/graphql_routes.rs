@@ -100,6 +100,7 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
 
             // ── Chat ────────────────────────────────────────────────────
             "chat.send" => chat.send(params).await,
+            "chat.active" => chat.active(params).await,
             "chat.abort" => chat.abort(params).await,
             "chat.cancel_queued" => chat.cancel_queued(params).await,
             "chat.history" => chat.history(params).await,

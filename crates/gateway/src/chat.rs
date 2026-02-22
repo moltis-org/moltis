@@ -4487,6 +4487,20 @@ impl ChatService for LiveChatService {
         }))
     }
 
+    async fn active(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .or_else(|| params.get("session_key"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'sessionKey' parameter".to_string())?;
+        let active = self
+            .active_runs_by_session
+            .read()
+            .await
+            .contains_key(session_key);
+        Ok(serde_json::json!({ "active": active }))
+    }
+
     async fn active_session_keys(&self) -> Vec<String> {
         self.active_runs_by_session
             .read()

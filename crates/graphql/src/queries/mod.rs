@@ -6,7 +6,8 @@ use crate::{
     rpc_call, rpc_json_call,
     scalars::Json,
     types::{
-        AgentIdentity, BoolResult, ChannelInfo, ChannelSendersResult, ChatRawPrompt, CronJob,
+        AgentIdentity, BoolResult, ChannelInfo, ChannelSendersResult, ChatActiveResult,
+        ChatRawPrompt, CronJob,
         CronRunRecord, CronStatus, ExecApprovalConfig, ExecNodeConfig, HealthInfo, HeartbeatStatus,
         HookInfo, LocalSystemInfo, LogListResult, LogStatus, LogTailResult, McpServer, McpTool,
         MemoryConfig, MemoryStatus, ModelInfo, NodeDescription, NodeInfo, Project, ProjectContext,
@@ -246,6 +247,19 @@ impl ChatQuery {
         // OpenAI messages format — deeply nested, dynamic.
         rpc_json_call!(
             "chat.full_context",
+            ctx,
+            serde_json::json!({ "sessionKey": session_key })
+        )
+    }
+
+    /// Whether the session has an active run (LLM is responding).
+    async fn active(
+        &self,
+        ctx: &Context<'_>,
+        session_key: String,
+    ) -> Result<ChatActiveResult> {
+        rpc_call!(
+            "chat.active",
             ctx,
             serde_json::json!({ "sessionKey": session_key })
         )

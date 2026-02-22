@@ -19,6 +19,13 @@ pub struct BoolResult {
     pub ok: bool,
 }
 
+/// Whether a session currently has an active LLM run (waiting for response).
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatActiveResult {
+    pub active: bool,
+}
+
 // ── Health & Status ─────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
