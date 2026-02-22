@@ -1050,8 +1050,19 @@ pub async fn start_gateway(
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
     let key_store = crate::provider_setup::KeyStore::new();
-    let effective_providers =
-        crate::provider_setup::config_with_saved_keys(&base_provider_config, &key_store);
+    // Collect local-llm model IDs (if the feature is enabled and models are configured).
+    #[cfg(feature = "local-llm")]
+    let local_model_ids: Vec<String> = crate::local_llm_setup::LocalLlmConfig::load()
+        .map(|c| c.models.iter().map(|m| m.model_id.clone()).collect())
+        .unwrap_or_default();
+    #[cfg(not(feature = "local-llm"))]
+    let local_model_ids: Vec<String> = Vec::new();
+
+    let effective_providers = crate::provider_setup::config_with_saved_keys(
+        &base_provider_config,
+        &key_store,
+        &local_model_ids,
+    );
 
     let has_explicit_provider_settings =
         crate::provider_setup::has_explicit_provider_settings(&config.providers);
@@ -1211,7 +1222,8 @@ pub async fn start_gateway(
         config.providers.clone(),
         deploy_platform.clone(),
     )
-    .with_env_overrides(config_env_overrides.clone());
+    .with_env_overrides(config_env_overrides.clone())
+    .with_error_parser(crate::chat_error::parse_chat_error);
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
     let provider_setup_service = Arc::new(provider_setup);
     services.provider_setup =
@@ -2601,8 +2613,10 @@ pub async fn start_gateway(
         svc.set_state(Arc::clone(&state));
     }
 
-    // Set the state on provider setup service for validation progress updates.
-    provider_setup_service.set_state(Arc::clone(&state));
+    // Set the broadcaster on provider setup service for validation progress updates.
+    provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
+        state: Arc::clone(&state),
+    }));
 
     // Set the state on model service for broadcasting model update events.
     live_model_service.set_state(Arc::clone(&state));

@@ -22,6 +22,7 @@ members = [
   "crates/plugins",
   "crates/projects",
   "crates/protocol",
+  "crates/provider-setup",
   "crates/qmd",
   "crates/routing",
   "crates/service-traits",
@@ -187,6 +188,7 @@ moltis-onboarding     = { path = "crates/onboarding" }
 moltis-plugins        = { path = "crates/plugins" }
 moltis-projects       = { path = "crates/projects" }
 moltis-protocol       = { path = "crates/protocol" }
+moltis-provider-setup = { path = "crates/provider-setup" }
 moltis-qmd            = { path = "crates/qmd" }
 moltis-routing        = { path = "crates/routing" }
 moltis-service-traits = { path = "crates/service-traits" }

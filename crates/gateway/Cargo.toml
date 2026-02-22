@@ -42,6 +42,7 @@ moltis-onboarding     = { workspace = true }
 moltis-plugins        = { workspace = true }
 moltis-projects       = { workspace = true }
 moltis-protocol       = { workspace = true }
+moltis-provider-setup = { workspace = true }
 moltis-qmd            = { optional = true, workspace = true }
 moltis-routing        = { workspace = true }
 moltis-service-traits = { workspace = true }
@@ -102,7 +103,7 @@ default = [
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
-local-llm = ["moltis-agents/local-llm"]
+local-llm = ["moltis-agents/local-llm", "moltis-provider-setup/local-llm"]
 local-llm-cuda = ["moltis-agents/local-llm-cuda"]
 local-llm-metal = ["moltis-agents/local-llm-metal"]
 metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]

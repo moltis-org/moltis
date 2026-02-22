@@ -4802,6 +4802,7 @@ dependencies = [
  "moltis-plugins",
  "moltis-projects",
  "moltis-protocol",
+ "moltis-provider-setup",
  "moltis-qmd",
  "moltis-routing",
  "moltis-service-traits",
@@ -5024,6 +5025,26 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "moltis-provider-setup"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "axum",
+ "moltis-agents",
+ "moltis-config",
+ "moltis-oauth",
+ "moltis-service-traits",
+ "reqwest 0.12.28",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
