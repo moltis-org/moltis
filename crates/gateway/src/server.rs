@@ -565,6 +565,8 @@ pub struct AppState {
     pub request_throttle: Arc<crate::request_throttle::RequestThrottle>,
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
+    #[cfg(feature = "graphql")]
+    pub graphql_schema: moltis_graphql::MoltisSchema,
 }
 
 // ── Server startup ───────────────────────────────────────────────────────────
@@ -855,11 +857,21 @@ pub fn build_gateway_app(
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
     }
 
+    #[cfg(feature = "graphql")]
+    let graphql_schema = {
+        let caller = Arc::new(crate::graphql_routes::GatewayServiceCaller {
+            state: Arc::clone(&state),
+        });
+        moltis_graphql::build_schema(caller, state.graphql_broadcast.clone())
+    };
+
     let app_state = AppState {
         gateway: state,
         methods,
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
         push_service,
+        #[cfg(feature = "graphql")]
+        graphql_schema,
     };
 
     // GraphQL routes (behind auth_gate when web-ui is enabled).
@@ -952,10 +964,20 @@ pub fn build_gateway_app(
         router = router.nest("/api/auth", auth_router().with_state(auth_state));
     }
 
+    #[cfg(feature = "graphql")]
+    let graphql_schema = {
+        let caller = Arc::new(crate::graphql_routes::GatewayServiceCaller {
+            state: Arc::clone(&state),
+        });
+        moltis_graphql::build_schema(caller, state.graphql_broadcast.clone())
+    };
+
     let app_state = AppState {
         gateway: state,
         methods,
         request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+        #[cfg(feature = "graphql")]
+        graphql_schema,
     };
 
     // GraphQL routes (behind auth_gate when web-ui is enabled).

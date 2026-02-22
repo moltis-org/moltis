@@ -4826,12 +4826,10 @@ dependencies = [
  "async-graphql",
  "async-stream",
  "async-trait",
- "futures",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
- "tracing",
 ]
 
 [[package]]

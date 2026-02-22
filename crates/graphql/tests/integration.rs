@@ -582,7 +582,7 @@ async fn query_resolvers_smoke_cover_all_namespaces() {
               health { ok }
               status { hostname }
               system { presence { clients { connId } nodes { nodeId } } lastHeartbeat { ok } }
-              node { list { nodeId } describe(nodeId: "n1") pairRequests }
+              node { list { nodeId } describe(nodeId: "n1") { nodeId displayName } pairRequests }
               chat {
                 history(sessionKey: "s1")
                 context(sessionKey: "s1")
@@ -604,15 +604,15 @@ async fn query_resolvers_smoke_cover_all_namespaces() {
               logs { tail(lines: 5) { subscribed entries { ts } } list { entries { ts } } status { unseenWarns } }
               tts { status { enabled } providers { name } generatePhrase }
               stt { status { enabled } providers { name } }
-              voice { config providers { name } elevenlabsCatalog voxtralRequirements }
+              voice { config { tts { enabled } stt { enabled } } providers { name } elevenlabsCatalog voxtralRequirements { os compatible } }
               skills {
                 list { name }
                 status { ok }
                 bins
                 repos { source }
                 detail(name: "skill") { name }
-                securityStatus
-                securityScan
+                securityStatus { supported }
+                securityScan { ok }
               }
               models { list { id } listAll { id } }
               providers {
@@ -634,7 +634,7 @@ async fn query_resolvers_smoke_cover_all_namespaces() {
                 context(id: "p1") { project { id } }
                 completePath(prefix: "./")
               }
-              memory { status { enabled } config qmdStatus { ok } }
+              memory { status { enabled } config { backend } qmdStatus { ok } }
               hooks { list { name } }
               agents { list identity { name } }
               voicewake { get { enabled } }
@@ -916,7 +916,7 @@ async fn mutation_resolvers_smoke_cover_all_namespaces() {
                 request(input: { id: "req-1" }) { ok }
                 resolve(input: { id: "req-1" }) { ok }
               }
-              logs { ack(ids: ["1"]) { ok } }
+              logs { ack { ok } }
               memory { updateConfig(input: { enabled: true }) { ok } }
               hooks {
                 enable(name: "h1") { ok }

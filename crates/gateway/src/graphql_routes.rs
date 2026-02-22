@@ -11,7 +11,7 @@ use {
     axum::{
         Json,
         extract::{FromRequestParts, Request, State, WebSocketUpgrade},
-        http::{HeaderMap, HeaderName, StatusCode, header},
+        http::{HeaderMap, StatusCode, header},
         response::{Html, IntoResponse, Response},
     },
     serde_json::Value,
@@ -198,7 +198,14 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
             "providers.local.remove_model" => s.local_llm.remove_model(params).await,
 
             // ── Channels ────────────────────────────────────────────────
-            "channels.status" | "channels.list" => s.channel.status().await,
+            "channels.status" => Ok(serde_json::json!({ "ok": true })),
+            "channels.list" => {
+                let result = s.channel.status().await?;
+                Ok(result
+                    .get("channels")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])))
+            },
             "channels.add" => s.channel.add(params).await,
             "channels.remove" => s.channel.remove(params).await,
             "channels.update" => s.channel.update(params).await,
@@ -236,7 +243,7 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
             "logs.ack" => s.logs.ack().await,
 
             // ── Memory ──────────────────────────────────────────────────
-            "memory.status" => s.agent.identity_get().await, // fallback for now
+            "memory.status" => Ok(serde_json::json!({ "enabled": false })),
             "memory.config.get" => Ok(serde_json::json!({})),
             "memory.config.update" => Ok(serde_json::json!({ "ok": true })),
             "memory.qmd.status" => Ok(serde_json::json!({ "available": false })),
@@ -403,8 +410,7 @@ pub async fn graphql_handler(
         return graphql_disabled_response();
     }
 
-    let schema = build_schema(&state);
-    async_graphql_axum::GraphQLResponse::from(schema.execute(req.into_inner()).await)
+    async_graphql_axum::GraphQLResponse::from(state.graphql_schema.execute(req.into_inner()).await)
         .into_response()
 }
 
@@ -413,11 +419,10 @@ fn graphql_ws_response(
     protocol: async_graphql_axum::GraphQLProtocol,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let schema = build_schema(state);
-    let selected_protocol = protocol;
+    let schema = state.graphql_schema.clone();
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| {
-            let resp = async_graphql_axum::GraphQLWebSocket::new(socket, schema, selected_protocol);
+            let resp = async_graphql_axum::GraphQLWebSocket::new(socket, schema, protocol);
             async move {
                 resp.serve().await;
             }
@@ -444,27 +449,17 @@ fn graphql_disabled_response() -> Response {
 }
 
 fn is_websocket_upgrade_request(headers: &HeaderMap) -> bool {
-    header_contains_token(headers, header::CONNECTION, "upgrade")
-        || header_contains_token(headers, header::UPGRADE, "websocket")
-        || headers.contains_key(header::SEC_WEBSOCKET_KEY)
-        || headers.contains_key(header::SEC_WEBSOCKET_PROTOCOL)
-}
-
-fn header_contains_token(headers: &HeaderMap, name: HeaderName, expected: &str) -> bool {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| {
-            value
-                .split(',')
-                .any(|token| token.trim().eq_ignore_ascii_case(expected))
+    // A proper WS upgrade has Connection: Upgrade AND Upgrade: websocket,
+    // but we also accept the presence of Sec-WebSocket-Key as a fallback
+    // since some clients (e.g. graphql-ws) may omit the Connection header.
+    let has_upgrade_header = headers
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("websocket"))
         })
-        .unwrap_or(false)
-}
+        .unwrap_or(false);
 
-fn build_schema(state: &AppState) -> moltis_graphql::MoltisSchema {
-    let caller = Arc::new(GatewayServiceCaller {
-        state: Arc::clone(&state.gateway),
-    });
-    moltis_graphql::build_schema(caller, state.gateway.graphql_broadcast.clone())
+    has_upgrade_header || headers.contains_key(header::SEC_WEBSOCKET_KEY)
 }

@@ -7,10 +7,7 @@
 //!
 //! For dynamic/untyped fields, the `Json` scalar is used.
 
-use {
-    async_graphql::{InputObject, SimpleObject},
-    serde::Deserialize,
-};
+use {async_graphql::SimpleObject, serde::Deserialize};
 
 use crate::scalars::Json;
 
@@ -123,39 +120,6 @@ pub struct SessionEntry {
     pub replying: Option<bool>,
 }
 
-#[derive(Debug, InputObject)]
-pub struct SessionPatchInput {
-    pub key: String,
-    #[graphql(default)]
-    pub label: Option<String>,
-    #[graphql(default)]
-    pub model: Option<String>,
-    #[graphql(default)]
-    pub archived: Option<bool>,
-    #[graphql(default)]
-    pub sandbox_enabled: Option<bool>,
-    #[graphql(default)]
-    pub sandbox_image: Option<String>,
-    #[graphql(default)]
-    pub mcp_disabled: Option<bool>,
-}
-
-#[derive(Debug, InputObject)]
-pub struct SessionForkInput {
-    pub key: String,
-    #[graphql(default)]
-    pub label: Option<String>,
-    #[graphql(default)]
-    pub at_index: Option<u64>,
-}
-
-#[derive(Debug, InputObject)]
-pub struct SessionShareInput {
-    pub key: String,
-    #[graphql(default)]
-    pub expires_hours: Option<u64>,
-}
-
 #[derive(Debug, SimpleObject, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionBranch {
@@ -197,23 +161,6 @@ pub struct SessionShareResult {
 }
 
 // ── Chat ────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, InputObject)]
-pub struct ChatSendInput {
-    pub message: String,
-    #[graphql(default)]
-    pub session_key: Option<String>,
-    #[graphql(default)]
-    pub model: Option<String>,
-}
-
-#[derive(Debug, InputObject)]
-pub struct ChatInjectInput {
-    pub role: String,
-    pub content: String,
-    #[graphql(default)]
-    pub session_key: Option<String>,
-}
 
 #[derive(Debug, SimpleObject, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -368,26 +315,6 @@ pub struct Project {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
-}
-
-#[derive(Debug, InputObject)]
-pub struct ProjectInput {
-    #[graphql(default)]
-    pub id: Option<String>,
-    pub label: String,
-    pub directory: String,
-    #[graphql(default)]
-    pub system_prompt: Option<String>,
-    #[graphql(default)]
-    pub auto_worktree: Option<bool>,
-    #[graphql(default)]
-    pub setup_command: Option<String>,
-    #[graphql(default)]
-    pub teardown_command: Option<String>,
-    #[graphql(default)]
-    pub branch_prefix: Option<String>,
-    #[graphql(default)]
-    pub sandbox_image: Option<String>,
 }
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -848,18 +775,6 @@ pub struct AgentIdentity {
     pub vibe: Option<String>,
 }
 
-#[derive(Debug, InputObject)]
-pub struct AgentIdentityInput {
-    #[graphql(default)]
-    pub name: Option<String>,
-    #[graphql(default)]
-    pub emoji: Option<String>,
-    #[graphql(default)]
-    pub creature: Option<String>,
-    #[graphql(default)]
-    pub vibe: Option<String>,
-}
-
 // ── Memory ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, SimpleObject, Deserialize)]
@@ -882,6 +797,175 @@ pub struct MemoryStatus {
 pub struct VoicewakeConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
+}
+
+// ── Node Description ────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeDescription {
+    #[serde(default)]
+    pub node_id: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub capabilities: Option<Vec<String>>,
+    #[serde(default)]
+    pub commands: Option<Vec<String>>,
+    #[graphql(name = "permissions")]
+    #[serde(default)]
+    pub permissions: Option<Json>,
+    #[serde(default)]
+    pub path_env: Option<String>,
+    #[serde(default)]
+    pub remote_ip: Option<String>,
+    #[serde(default)]
+    pub connected_at: Option<u64>,
+}
+
+// ── Voice Config ────────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceConfig {
+    #[serde(default)]
+    pub tts: Option<VoiceTtsConfig>,
+    #[serde(default)]
+    pub stt: Option<VoiceSttConfig>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceTtsConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub elevenlabs_configured: Option<bool>,
+    #[serde(default)]
+    pub openai_configured: Option<bool>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSttConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub whisper_configured: Option<bool>,
+    #[serde(default)]
+    pub groq_configured: Option<bool>,
+    #[serde(default)]
+    pub deepgram_configured: Option<bool>,
+    #[serde(default)]
+    pub google_configured: Option<bool>,
+    #[serde(default)]
+    pub elevenlabs_configured: Option<bool>,
+    #[serde(default)]
+    pub whisper_cli_configured: Option<bool>,
+    #[serde(default)]
+    pub sherpa_onnx_configured: Option<bool>,
+}
+
+// ── Voxtral Requirements ────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoxtralRequirements {
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub arch: Option<String>,
+    #[serde(default)]
+    pub python: Option<VoxtralPythonStatus>,
+    #[serde(default)]
+    pub cuda: Option<VoxtralCudaStatus>,
+    #[serde(default)]
+    pub compatible: Option<bool>,
+    #[serde(default)]
+    pub reasons: Option<Vec<String>>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoxtralPythonStatus {
+    #[serde(default)]
+    pub available: Option<bool>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub sufficient: Option<bool>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoxtralCudaStatus {
+    #[serde(default)]
+    pub available: Option<bool>,
+    #[serde(default)]
+    pub gpu_name: Option<String>,
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    #[serde(default)]
+    pub sufficient: Option<bool>,
+}
+
+// ── Skills Security ─────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityStatus {
+    #[serde(default)]
+    pub mcp_scan_available: Option<bool>,
+    #[serde(default)]
+    pub uvx_available: Option<bool>,
+    #[serde(default)]
+    pub supported: Option<bool>,
+    #[serde(default)]
+    pub installed_skills_dir: Option<String>,
+    #[serde(default)]
+    pub install_hint: Option<String>,
+}
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityScanResult {
+    #[serde(default)]
+    pub ok: Option<bool>,
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Raw mcp-scan output (external tool, variable shape).
+    #[graphql(name = "results")]
+    #[serde(default)]
+    pub results: Option<Json>,
+    #[serde(default)]
+    pub installed_skills_dir: Option<String>,
+}
+
+// ── Memory Config ───────────────────────────────────────────────────────────
+
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryConfig {
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub citations: Option<String>,
+    #[serde(default)]
+    pub disable_rag: Option<bool>,
+    #[serde(default)]
+    pub llm_reranking: Option<bool>,
+    #[serde(default)]
+    pub session_export: Option<bool>,
+    #[serde(default)]
+    pub qmd_feature_enabled: Option<bool>,
 }
 
 // ── Subscription event types ────────────────────────────────────────────────
