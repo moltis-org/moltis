@@ -205,6 +205,15 @@ impl LiveTtsService {
             .find(|(_, configured)| *configured)
             .map(|(id, _)| id)
     }
+
+    /// Parse provider from JSON params, falling back to config/auto-select.
+    fn resolve_from_params(params: &Value, config_provider: &str) -> Result<TtsProviderId, String> {
+        match params.get("provider").and_then(|v| v.as_str()) {
+            Some(s) => TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'")),
+            None => Self::resolve_provider(config_provider)
+                .ok_or_else(|| "no TTS provider configured".to_string()),
+        }
+    }
 }
 
 #[cfg(feature = "voice")]
@@ -242,14 +251,7 @@ impl TtsService for LiveTtsService {
 
     async fn enable(&self, params: Value) -> ServiceResult {
         let config = Self::load_config();
-
-        let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
-            Some(s) => {
-                TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'"))?
-            },
-            None => Self::resolve_provider(&config.provider)
-                .ok_or_else(|| "no TTS provider configured".to_string())?,
-        };
+        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
 
         if Self::create_provider(provider_id).is_none() {
             return Err(format!("provider '{}' not configured", provider_id));
@@ -302,13 +304,7 @@ impl TtsService for LiveTtsService {
             ));
         }
 
-        let provider_id = match params.get("provider").and_then(|v| v.as_str()) {
-            Some(s) => {
-                TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'"))?
-            },
-            None => Self::resolve_provider(&config.provider)
-                .ok_or_else(|| "no TTS provider configured".to_string())?,
-        };
+        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
 
         info!(
             provider = %provider_id,
