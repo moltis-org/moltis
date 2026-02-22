@@ -19,6 +19,8 @@ One binary — sandboxed, secure, yours.
 
 ---
 
+Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com/item?id=46993587). Please [open an issue](https://github.com/moltis-org/moltis/issues) for any friction at all — I'm focused on making Moltis excellent.
+
 **Secure by design** — Your keys never leave your machine. Every command runs in a sandboxed container, never on your host.
 
 **Your hardware** — Runs on a Mac Mini, a Raspberry Pi, or any server you own. One Rust binary, no Node.js, no npm, no runtime.
