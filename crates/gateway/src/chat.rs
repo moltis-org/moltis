@@ -2392,8 +2392,9 @@ impl ChatService for LiveChatService {
         } else {
             let text = params
                 .get("text")
+                .or_else(|| params.get("message"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'text' or 'content' parameter".to_string())?
+                .ok_or_else(|| "missing 'text', 'message', or 'content' parameter".to_string())?
                 .to_string();
             (text.clone(), MessageContent::Text(text))
         };
@@ -2609,6 +2610,7 @@ impl ChatService for LiveChatService {
                     )
                     .await;
                     return Ok(serde_json::json!({
+                        "ok": true,
                         "queued": true,
                         "mode": format!("{queue_mode:?}").to_lowercase(),
                     }));
@@ -2784,7 +2786,7 @@ impl ChatService for LiveChatService {
                 .await
                 .insert(session_key.clone(), run_id.clone());
 
-            return Ok(serde_json::json!({ "runId": run_id }));
+            return Ok(serde_json::json!({ "ok": true, "runId": run_id }));
         }
 
         // Resolve model: explicit param → session metadata → first registered.
@@ -3161,6 +3163,7 @@ impl ChatService for LiveChatService {
                 )
                 .await;
                 return Ok(serde_json::json!({
+                    "ok": true,
                     "queued": true,
                     "mode": format!("{queue_mode:?}").to_lowercase(),
                 }));
@@ -3424,7 +3427,7 @@ impl ChatService for LiveChatService {
             .await
             .insert(session_key.clone(), run_id.clone());
 
-        Ok(serde_json::json!({ "runId": run_id }))
+        Ok(serde_json::json!({ "ok": true, "runId": run_id }))
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
