@@ -4777,6 +4777,7 @@ dependencies = [
  "moltis-protocol",
  "moltis-qmd",
  "moltis-routing",
+ "moltis-service-traits",
  "moltis-sessions",
  "moltis-skills",
  "moltis-telegram",
@@ -5023,6 +5024,17 @@ dependencies = [
  "moltis-metrics",
  "moltis-sessions",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "moltis-service-traits"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 

@@ -405,29 +405,9 @@ impl TtsService for LiveTtsService {
 
 // ── STT Service ─────────────────────────────────────────────────────────────
 
-/// Trait for speech-to-text services.
-#[async_trait]
-pub trait SttService: Send + Sync {
-    /// Get STT service status.
-    async fn status(&self) -> ServiceResult;
-    /// List available STT providers.
-    async fn providers(&self) -> ServiceResult;
-    /// Transcribe audio to text (base64-encoded audio in params).
-    async fn transcribe(&self, params: Value) -> ServiceResult;
-    /// Transcribe raw audio bytes directly (no base64 encoding needed).
-    ///
-    /// `format` is a short name like `"webm"`, `"ogg"`, `"mp3"` etc.
-    async fn transcribe_bytes(
-        &self,
-        audio: bytes::Bytes,
-        format: &str,
-        provider: Option<&str>,
-        language: Option<&str>,
-        prompt: Option<&str>,
-    ) -> ServiceResult;
-    /// Set the active STT provider.
-    async fn set_provider(&self, params: Value) -> ServiceResult;
-}
+// `SttService` trait and `NoopSttService` are defined in `moltis-service-traits`
+// and re-exported via `crate::services::*`.
+pub use crate::services::{NoopSttService, SttService};
 
 /// Live STT service that delegates to voice providers.
 /// Reads fresh config on each operation to pick up changes.
@@ -790,38 +770,6 @@ impl SttService for LiveSttService {
     }
 }
 
-/// No-op STT service for when voice is not configured.
-pub struct NoopSttService;
-
-#[async_trait]
-impl SttService for NoopSttService {
-    async fn status(&self) -> ServiceResult {
-        Ok(json!({ "enabled": false, "configured": false }))
-    }
-
-    async fn providers(&self) -> ServiceResult {
-        Ok(json!([]))
-    }
-
-    async fn transcribe(&self, _params: Value) -> ServiceResult {
-        Err("STT not available".to_string())
-    }
-
-    async fn transcribe_bytes(
-        &self,
-        _audio: bytes::Bytes,
-        _format: &str,
-        _provider: Option<&str>,
-        _language: Option<&str>,
-        _prompt: Option<&str>,
-    ) -> ServiceResult {
-        Err("STT not available".to_string())
-    }
-
-    async fn set_provider(&self, _params: Value) -> ServiceResult {
-        Err("STT not available".to_string())
-    }
-}
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(all(test, feature = "voice"))]
