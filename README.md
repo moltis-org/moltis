@@ -1,6 +1,6 @@
 <div align="center">
 
-# Moltis — A Rust-native claw you can trust
+# [Moltis](https://moltis.org) — A Rust-native claw you can trust
 
 One binary — sandboxed, secure, yours.
 
