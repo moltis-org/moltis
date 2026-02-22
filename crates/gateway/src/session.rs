@@ -119,11 +119,6 @@ fn truncate_preview(s: &str, max: usize) -> String {
     }
 }
 
-/// Extract preview from a single message (used for first-message preview in chat).
-pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
-    message_text(msg).map(|t| truncate_preview(&t, 200))
-}
-
 /// Build a preview by combining user and assistant messages until we
 /// have enough text (target ~80 chars). Skips tool_result messages.
 fn extract_preview(history: &[Value]) -> Option<String> {
@@ -1787,13 +1782,6 @@ mod tests {
         assert!(result.ends_with('…'));
         // 200 'a' chars + the '…' char
         assert!(result.len() <= 204); // 200 bytes + up to 3 for '…'
-    }
-
-    #[test]
-    fn extract_preview_from_value_basic() {
-        let msg = serde_json::json!({"role": "user", "content": "tell me a joke"});
-        let result = extract_preview_from_value(&msg);
-        assert_eq!(result, Some("tell me a joke".to_string()));
     }
 
     #[test]

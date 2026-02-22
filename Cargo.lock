@@ -4704,6 +4704,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-chat"
+version = "0.9.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "futures",
+ "moltis-agents",
+ "moltis-channels",
+ "moltis-common",
+ "moltis-config",
+ "moltis-memory",
+ "moltis-metrics",
+ "moltis-plugins",
+ "moltis-projects",
+ "moltis-service-traits",
+ "moltis-sessions",
+ "moltis-skills",
+ "moltis-telegram",
+ "moltis-tools",
+ "moltis-voice",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "moltis-common"
 version = "0.9.10"
 dependencies = [
@@ -4789,6 +4824,7 @@ dependencies = [
  "moltis-browser",
  "moltis-canvas",
  "moltis-channels",
+ "moltis-chat",
  "moltis-common",
  "moltis-config",
  "moltis-cron",

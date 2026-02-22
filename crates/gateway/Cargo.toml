@@ -29,6 +29,7 @@ moltis-auth           = { workspace = true }
 moltis-browser        = { workspace = true }
 moltis-canvas         = { workspace = true }
 moltis-channels       = { workspace = true }
+moltis-chat           = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
@@ -103,12 +104,12 @@ default = [
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
-local-llm = ["moltis-agents/local-llm", "moltis-provider-setup/local-llm"]
+local-llm = ["moltis-agents/local-llm", "moltis-chat/local-llm", "moltis-provider-setup/local-llm"]
 local-llm-cuda = ["moltis-agents/local-llm-cuda"]
 local-llm-metal = ["moltis-agents/local-llm-metal"]
-metrics = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
+metrics = ["dep:moltis-metrics", "moltis-chat/metrics", "moltis-metrics/sqlite"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
-push-notifications = ["dep:chrono", "dep:p256", "dep:web-push"]
+push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd"]
 tailscale = ["dep:moltis-tailscale"]
 tls = [
@@ -124,7 +125,14 @@ tls = [
   "dep:tower",
 ]
 voice = ["dep:moltis-voice"]
-web-ui = ["dep:askama", "dep:chrono", "dep:include_dir", "dep:portable-pty", "dep:which"]
+web-ui = [
+  "dep:askama",
+  "dep:chrono",
+  "dep:include_dir",
+  "dep:portable-pty",
+  "dep:which",
+  "moltis-chat/web-ui",
+]
 
 [dev-dependencies]
 moltis-web        = { workspace = true }

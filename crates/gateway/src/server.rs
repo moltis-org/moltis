@@ -2619,7 +2619,9 @@ pub async fn start_gateway(
     }));
 
     // Set the state on model service for broadcasting model update events.
-    live_model_service.set_state(Arc::clone(&state));
+    live_model_service.set_state(crate::chat::GatewayChatRuntime::from_state(Arc::clone(
+        &state,
+    )));
 
     // Model support probing is triggered on-demand by the web UI when the
     // user opens the model selector (via the `models.detect_supported` RPC).
@@ -2809,7 +2811,7 @@ pub async fn start_gateway(
         let mut chat_service = LiveChatService::new(
             Arc::clone(&registry),
             Arc::clone(&model_store),
-            Arc::clone(&state),
+            crate::chat::GatewayChatRuntime::from_state(Arc::clone(&state)),
             Arc::clone(&session_store),
             Arc::clone(&session_metadata),
         )

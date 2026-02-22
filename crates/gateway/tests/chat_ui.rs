@@ -253,7 +253,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
             .set_chat(Arc::new(LiveChatService::new(
                 Arc::clone(&registry),
                 Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-                Arc::clone(&state),
+                moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state)),
                 Arc::clone(&session_store1),
                 Arc::clone(&session_metadata1),
             )))
@@ -284,7 +284,7 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         .set_chat(Arc::new(LiveChatService::new(
             Arc::clone(&registry2),
             Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-            Arc::clone(&state2),
+            moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state2)),
             Arc::clone(&session_store2),
             Arc::clone(&session_metadata2),
         )))
