@@ -562,6 +562,82 @@ pub trait SkillsService: Send + Sync {
     async fn security_scan(&self) -> ServiceResult;
 }
 
+/// Minimal stub for `SkillsService` used only by the `Services::default()` impl.
+/// The gateway provides the full implementation (`NoopSkillsService`) that
+/// delegates to `moltis_skills`.
+pub struct NoopSkillsStub;
+
+#[async_trait]
+impl SkillsService for NoopSkillsStub {
+    async fn status(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "installed": [] }))
+    }
+
+    async fn bins(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn install(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn update(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn remove(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn repos_list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn repos_list_full(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn repos_remove(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn emergency_disable(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "ok": true }))
+    }
+
+    async fn skill_enable(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn skill_disable(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn skill_trust(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn skill_detail(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn install_dep(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn security_status(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "ok": true }))
+    }
+
+    async fn security_scan(&self) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+}
+
 // ── Browser ─────────────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -1025,6 +1101,131 @@ impl LocalLlmService for NoopLocalLlmService {
 
     async fn remove_model(&self, _params: Value) -> ServiceResult {
         Err("local-llm feature not enabled".into())
+    }
+}
+
+// ── System Info ──────────────────────────────────────────────────────────────
+
+/// Service trait for gateway-level system information.
+///
+/// Covers methods that read gateway state directly (connections, nodes, hooks,
+/// heartbeat) rather than delegating to a domain service.
+#[async_trait]
+pub trait SystemInfoService: Send + Sync {
+    async fn health(&self) -> ServiceResult;
+    async fn status(&self) -> ServiceResult;
+    async fn system_presence(&self) -> ServiceResult;
+    async fn node_list(&self) -> ServiceResult;
+    async fn node_describe(&self, params: Value) -> ServiceResult;
+    async fn hooks_list(&self) -> ServiceResult;
+    async fn heartbeat_status(&self) -> ServiceResult;
+    async fn heartbeat_runs(&self, params: Value) -> ServiceResult;
+}
+
+pub struct NoopSystemInfoService;
+
+#[async_trait]
+impl SystemInfoService for NoopSystemInfoService {
+    async fn health(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "ok": true, "connections": 0 }))
+    }
+
+    async fn status(&self) -> ServiceResult {
+        Ok(serde_json::json!({
+            "hostname": "unknown",
+            "version": "0.0.0",
+            "connections": 0,
+            "uptimeMs": 0,
+        }))
+    }
+
+    async fn system_presence(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "clients": [], "nodes": [] }))
+    }
+
+    async fn node_list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn node_describe(&self, _params: Value) -> ServiceResult {
+        Err("system info service not configured".into())
+    }
+
+    async fn hooks_list(&self) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+
+    async fn heartbeat_status(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "config": null }))
+    }
+
+    async fn heartbeat_runs(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!([]))
+    }
+}
+
+// ── Services bundle ─────────────────────────────────────────────────────────
+
+use std::sync::Arc;
+
+/// Bundle of all domain service trait objects.
+///
+/// Shared by the gateway (RPC), GraphQL, and any other transport layer.
+/// Both sides call service methods directly through this struct — no
+/// string-based dispatch or RPC indirection.
+pub struct Services {
+    pub agent: Arc<dyn AgentService>,
+    pub session: Arc<dyn SessionService>,
+    pub channel: Arc<dyn ChannelService>,
+    pub config: Arc<dyn ConfigService>,
+    pub cron: Arc<dyn CronService>,
+    pub chat: Arc<dyn ChatService>,
+    pub tts: Arc<dyn TtsService>,
+    pub stt: Arc<dyn SttService>,
+    pub skills: Arc<dyn SkillsService>,
+    pub mcp: Arc<dyn McpService>,
+    pub browser: Arc<dyn BrowserService>,
+    pub usage: Arc<dyn UsageService>,
+    pub exec_approval: Arc<dyn ExecApprovalService>,
+    pub onboarding: Arc<dyn OnboardingService>,
+    pub update: Arc<dyn UpdateService>,
+    pub model: Arc<dyn ModelService>,
+    pub web_login: Arc<dyn WebLoginService>,
+    pub voicewake: Arc<dyn VoicewakeService>,
+    pub logs: Arc<dyn LogsService>,
+    pub provider_setup: Arc<dyn ProviderSetupService>,
+    pub project: Arc<dyn ProjectService>,
+    pub local_llm: Arc<dyn LocalLlmService>,
+    pub system_info: Arc<dyn SystemInfoService>,
+}
+
+impl Default for Services {
+    fn default() -> Self {
+        Self {
+            agent: Arc::new(NoopAgentService),
+            session: Arc::new(NoopSessionService),
+            channel: Arc::new(NoopChannelService),
+            config: Arc::new(NoopConfigService),
+            cron: Arc::new(NoopCronService),
+            chat: Arc::new(NoopChatService),
+            tts: Arc::new(NoopTtsService),
+            stt: Arc::new(NoopSttService),
+            skills: Arc::new(NoopSkillsStub),
+            mcp: Arc::new(NoopMcpService),
+            browser: Arc::new(NoopBrowserService),
+            usage: Arc::new(NoopUsageService),
+            exec_approval: Arc::new(NoopExecApprovalService),
+            onboarding: Arc::new(NoopOnboardingService),
+            update: Arc::new(NoopUpdateService),
+            model: Arc::new(NoopModelService),
+            web_login: Arc::new(NoopWebLoginService),
+            voicewake: Arc::new(NoopVoicewakeService),
+            logs: Arc::new(NoopLogsService),
+            provider_setup: Arc::new(NoopProviderSetupService),
+            project: Arc::new(NoopProjectService),
+            local_llm: Arc::new(NoopLocalLlmService),
+            system_info: Arc::new(NoopSystemInfoService),
+        }
     }
 }
 
