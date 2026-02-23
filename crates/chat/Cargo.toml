@@ -12,7 +12,6 @@ chrono                = { features = ["serde"], optional = true, workspace = tru
 chrono-tz             = { workspace = true }
 futures               = { workspace = true }
 moltis-agents         = { workspace = true }
-moltis-providers      = { workspace = true }
 moltis-channels       = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
@@ -20,6 +19,7 @@ moltis-memory         = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-plugins        = { workspace = true }
 moltis-projects       = { workspace = true }
+moltis-providers      = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }

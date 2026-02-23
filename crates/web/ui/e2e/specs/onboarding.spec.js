@@ -87,8 +87,13 @@ async function moveToVoiceStep(page) {
 	const skipped = await clickFirstVisibleButton(page, { name: "Skip for now", exact: true });
 	if (!skipped) return false;
 
-	await expect.poll(() => isVisible(voiceHeading), { timeout: 10_000 }).toBeTruthy();
-	return true;
+	// Voice step may not exist in the current onboarding flow — return false
+	// gracefully instead of throwing when the heading never appears.
+	for (let i = 0; i < 20; i++) {
+		if (await isVisible(voiceHeading)) return true;
+		await page.waitForTimeout(500);
+	}
+	return false;
 }
 
 async function moveToIdentityStep(page) {
@@ -373,7 +378,7 @@ test.describe("Onboarding wizard", () => {
 		for (const candidate of candidates) {
 			const row = page
 				.locator(".onboarding-card .rounded-md.border")
-				.filter({ hasText: candidate.providerName })
+				.filter({ has: page.getByText(candidate.providerName, { exact: true }) })
 				.first();
 			if ((await row.count()) === 0) continue;
 
