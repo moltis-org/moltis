@@ -120,8 +120,8 @@ impl LiveTtsService {
                 api_key: cfg.voice.tts.google.api_key.clone(),
                 voice: cfg.voice.tts.google.voice.clone(),
                 language_code: cfg.voice.tts.google.language_code.clone(),
-                speaking_rate: None,
-                pitch: None,
+                speaking_rate: cfg.voice.tts.google.speaking_rate.clone(),
+                pitch: cfg.voice.tts.google.pitch.clone(),
             },
             piper: moltis_voice::PiperTtsConfig {
                 binary_path: cfg.voice.tts.piper.binary_path.clone(),
