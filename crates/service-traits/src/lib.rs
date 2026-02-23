@@ -103,7 +103,7 @@ impl SessionService for NoopSessionService {
     }
 
     async fn delete(&self, _p: Value) -> ServiceResult {
-        Ok(serde_json::json!({}))
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _p: Value) -> ServiceResult {
@@ -288,6 +288,10 @@ pub trait ChatService: Send + Sync {
     async fn raw_prompt(&self, params: Value) -> ServiceResult;
     /// Return the full messages array (system prompt + history) in OpenAI format.
     async fn full_context(&self, params: Value) -> ServiceResult;
+    /// Return whether the given session has an active run (LLM responding).
+    async fn active(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "active": false }))
+    }
     /// Return session keys that currently have an active run (model generating).
     async fn active_session_keys(&self) -> Vec<String> {
         Vec::new()
@@ -346,6 +350,10 @@ impl ChatService for NoopChatService {
 
     async fn full_context(&self, _p: Value) -> ServiceResult {
         Err("chat not configured".into())
+    }
+
+    async fn active(&self, _p: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "active": false }))
     }
 }
 

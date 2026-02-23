@@ -14,9 +14,10 @@ use crate::{
         CronRunRecord, CronStatus, ExecApprovalConfig, ExecNodeConfig, HealthInfo, HeartbeatStatus,
         HookInfo, LocalSystemInfo, LogListResult, LogStatus, LogTailResult, McpServer, McpTool,
         MemoryConfig, MemoryStatus, ModelInfo, NodeDescription, NodeInfo, Project, ProjectContext,
-        ProviderInfo, SecurityScanResult, SecurityStatus, SessionBranch, SessionEntry,
-        SessionShareResult, SkillInfo, SkillRepo, StatusInfo, SttStatus, SystemPresence, TtsStatus,
-        UsageCost, UsageStatus, VoiceConfig, VoicewakeConfig, VoxtralRequirements,
+        ProviderInfo, SecurityScanResult, SecurityStatus, SessionActiveResult, SessionBranch,
+        SessionEntry, SessionShareResult, SkillInfo, SkillRepo, StatusInfo, SttStatus,
+        SystemPresence, TtsStatus, UsageCost, UsageStatus, VoiceConfig, VoicewakeConfig,
+        VoxtralRequirements,
     },
 };
 
@@ -323,6 +324,16 @@ impl SessionQuery {
         from_service(
             s.session
                 .share_list(serde_json::json!({ "key": key }))
+                .await,
+        )
+    }
+
+    /// Whether this session has an active run (LLM is responding).
+    async fn active(&self, ctx: &Context<'_>, session_key: String) -> Result<SessionActiveResult> {
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .active(serde_json::json!({ "sessionKey": session_key }))
                 .await,
         )
     }
