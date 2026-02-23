@@ -13,7 +13,7 @@ use {
     tracing::info,
 };
 
-use moltis_agents::providers::{ProviderRegistry, local_gguf, local_llm, raw_model_id};
+use moltis_providers::{ProviderRegistry, local_gguf, local_llm, raw_model_id};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -81,7 +81,7 @@ async fn download_unified_model(
     cache_dir: &std::path::Path,
     state: &Arc<GatewayState>,
 ) -> Result<bool, String> {
-    use moltis_agents::providers::local_llm::models as llm_models;
+    use moltis_providers::local_llm::models as llm_models;
 
     let model_id = model.id.to_string();
     let display_name = model.display_name.to_string();
@@ -855,7 +855,7 @@ impl LocalLlmService for LiveLocalLlmService {
 
                     let mut reg = registry.write().await;
                     reg.register(
-                        moltis_agents::providers::ModelInfo {
+                        moltis_providers::ModelInfo {
                             id: model_id_clone.clone(),
                             provider: "local-llm".into(),
                             display_name,

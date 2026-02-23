@@ -31,10 +31,10 @@ use {
             VOICE_REPLY_SUFFIX, build_system_prompt_minimal_runtime,
             build_system_prompt_with_session_runtime,
         },
-        providers::{ProviderRegistry, raw_model_id},
         runner::{RunnerEvent, run_agent_loop_streaming},
         tool_registry::ToolRegistry,
     },
+    moltis_providers::{ProviderRegistry, raw_model_id},
     moltis_sessions::{
         ContentBlock, MessageContent, PersistedMessage, metadata::SqliteSessionMetadata,
         store::SessionStore,
@@ -385,10 +385,7 @@ fn allowlist_pattern_matches_key(pattern: &str, key: &str) -> bool {
 }
 
 #[allow(dead_code)]
-pub fn model_matches_allowlist(
-    model: &moltis_agents::providers::ModelInfo,
-    patterns: &[String],
-) -> bool {
+pub fn model_matches_allowlist(model: &moltis_providers::ModelInfo, patterns: &[String]) -> bool {
     if patterns.is_empty() {
         return true;
     }
@@ -407,7 +404,7 @@ pub fn model_matches_allowlist(
 
 #[allow(dead_code)]
 pub fn model_matches_allowlist_with_provider(
-    model: &moltis_agents::providers::ModelInfo,
+    model: &moltis_providers::ModelInfo,
     provider_name: Option<&str>,
     patterns: &[String],
 ) -> bool {
@@ -1417,10 +1414,7 @@ impl LiveModelService {
         order
     }
 
-    fn priority_rank(
-        order: &HashMap<String, usize>,
-        model: &moltis_agents::providers::ModelInfo,
-    ) -> usize {
+    fn priority_rank(order: &HashMap<String, usize>, model: &moltis_providers::ModelInfo) -> usize {
         let full = normalize_model_key(&model.id);
         if let Some(rank) = order.get(&full) {
             return *rank;
@@ -1438,9 +1432,9 @@ impl LiveModelService {
 
     fn prioritize_models<'a>(
         order: &HashMap<String, usize>,
-        models: impl Iterator<Item = &'a moltis_agents::providers::ModelInfo>,
-    ) -> Vec<&'a moltis_agents::providers::ModelInfo> {
-        let mut ordered: Vec<(usize, &'a moltis_agents::providers::ModelInfo)> =
+        models: impl Iterator<Item = &'a moltis_providers::ModelInfo>,
+    ) -> Vec<&'a moltis_providers::ModelInfo> {
+        let mut ordered: Vec<(usize, &'a moltis_providers::ModelInfo)> =
             models.enumerate().collect();
         ordered.sort_by_key(|(idx, model)| {
             (
@@ -1597,7 +1591,7 @@ impl ModelService for LiveModelService {
             &order,
             reg.list_models()
                 .iter()
-                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
+                .filter(|m| moltis_providers::is_chat_capable_model(&m.id))
                 .filter(|m| !disabled.is_disabled(&m.id))
                 .filter(|m| disabled.unsupported_info(&m.id).is_none()),
         );
@@ -1633,7 +1627,7 @@ impl ModelService for LiveModelService {
             &order,
             reg.list_models()
                 .iter()
-                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id)),
+                .filter(|m| moltis_providers::is_chat_capable_model(&m.id)),
         );
         info!(model_count = prioritized.len(), "models.list_all response");
         let models: Vec<_> = prioritized
@@ -8606,19 +8600,19 @@ mod tests {
 
     #[test]
     fn priority_models_pin_raw_model_ids_first() {
-        let m1 = moltis_agents::providers::ModelInfo {
+        let m1 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
             created_at: None,
         };
-        let m2 = moltis_agents::providers::ModelInfo {
+        let m2 = moltis_providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
         };
-        let m3 = moltis_agents::providers::ModelInfo {
+        let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
@@ -8635,19 +8629,19 @@ mod tests {
 
     #[test]
     fn priority_models_match_separator_variants() {
-        let m1 = moltis_agents::providers::ModelInfo {
+        let m1 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
         };
-        let m2 = moltis_agents::providers::ModelInfo {
+        let m2 = moltis_providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
             created_at: None,
         };
-        let m3 = moltis_agents::providers::ModelInfo {
+        let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "gemini".into(),
             display_name: "Gemini 3 Flash".into(),
@@ -8664,19 +8658,19 @@ mod tests {
 
     #[test]
     fn models_without_priority_prefer_subscription_providers() {
-        let m1 = moltis_agents::providers::ModelInfo {
+        let m1 = moltis_providers::ModelInfo {
             id: "openai::gpt-5.2".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
         };
-        let m2 = moltis_agents::providers::ModelInfo {
+        let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
         };
-        let m3 = moltis_agents::providers::ModelInfo {
+        let m3 = moltis_providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5-20250929".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
@@ -8692,13 +8686,13 @@ mod tests {
 
     #[test]
     fn explicit_priority_still_overrides_subscription_preference() {
-        let m1 = moltis_agents::providers::ModelInfo {
+        let m1 = moltis_providers::ModelInfo {
             id: "openai::gpt-5.2".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
         };
-        let m2 = moltis_agents::providers::ModelInfo {
+        let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
@@ -8713,19 +8707,19 @@ mod tests {
 
     #[test]
     fn allowed_models_filters_by_substring_match() {
-        let m1 = moltis_agents::providers::ModelInfo {
+        let m1 = moltis_providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
             created_at: None,
         };
-        let m2 = moltis_agents::providers::ModelInfo {
+        let m2 = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT 5.2".into(),
             created_at: None,
         };
-        let m3 = moltis_agents::providers::ModelInfo {
+        let m3 = moltis_providers::ModelInfo {
             id: "google::gemini-3-flash".into(),
             provider: "google".into(),
             display_name: "Gemini 3 Flash".into(),
@@ -8740,7 +8734,7 @@ mod tests {
 
     #[test]
     fn allowed_models_empty_shows_all() {
-        let m = moltis_agents::providers::ModelInfo {
+        let m = moltis_providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
@@ -8751,7 +8745,7 @@ mod tests {
 
     #[test]
     fn allowed_models_case_insensitive() {
-        let m = moltis_agents::providers::ModelInfo {
+        let m = moltis_providers::ModelInfo {
             id: "anthropic::claude-opus-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Opus 4.5".into(),
@@ -8769,7 +8763,7 @@ mod tests {
 
     #[test]
     fn allowed_models_match_separator_variants() {
-        let m = moltis_agents::providers::ModelInfo {
+        let m = moltis_providers::ModelInfo {
             id: "openai-codex::gpt-5.2".into(),
             provider: "openai-codex".into(),
             display_name: "GPT-5.2".into(),
@@ -8785,13 +8779,13 @@ mod tests {
 
     #[test]
     fn allowed_models_numeric_pattern_does_not_match_extended_variants() {
-        let exact = moltis_agents::providers::ModelInfo {
+        let exact = moltis_providers::ModelInfo {
             id: "openai::gpt-5.2".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2".into(),
             created_at: None,
         };
-        let extended = moltis_agents::providers::ModelInfo {
+        let extended = moltis_providers::ModelInfo {
             id: "openai::gpt-5.2-chat-latest".into(),
             provider: "openai".into(),
             display_name: "GPT-5.2 Chat Latest".into(),
@@ -8805,7 +8799,7 @@ mod tests {
 
     #[test]
     fn allowed_models_numeric_pattern_matches_provider_prefixed_models() {
-        let m = moltis_agents::providers::ModelInfo {
+        let m = moltis_providers::ModelInfo {
             id: "anthropic::claude-sonnet-4-5".into(),
             provider: "anthropic".into(),
             display_name: "Claude Sonnet 4.5".into(),
@@ -8818,13 +8812,13 @@ mod tests {
 
     #[test]
     fn allowed_models_does_not_filter_local_llm_or_ollama() {
-        let local = moltis_agents::providers::ModelInfo {
+        let local = moltis_providers::ModelInfo {
             id: "local-llm::qwen2.5-coder-7b-q4_k_m".into(),
             provider: "local-llm".into(),
             display_name: "Qwen2.5 Coder 7B".into(),
             created_at: None,
         };
-        let ollama = moltis_agents::providers::ModelInfo {
+        let ollama = moltis_providers::ModelInfo {
             id: "ollama::llama3.1:8b".into(),
             provider: "ollama".into(),
             display_name: "Llama 3.1 8B".into(),
@@ -8838,7 +8832,7 @@ mod tests {
 
     #[test]
     fn allowed_models_does_not_filter_ollama_when_provider_is_aliased() {
-        let aliased = moltis_agents::providers::ModelInfo {
+        let aliased = moltis_providers::ModelInfo {
             id: "local-ai::llama3.1:8b".into(),
             provider: "local-ai".into(),
             display_name: "Llama 3.1 8B".into(),
@@ -8857,7 +8851,7 @@ mod tests {
     async fn list_and_list_all_return_all_registered_models() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "anthropic::claude-opus-4-5".to_string(),
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus 4.5".to_string(),
@@ -8869,7 +8863,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
@@ -8881,7 +8875,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "google::gemini-3-flash".to_string(),
                 provider: "google".to_string(),
                 display_name: "Gemini 3 Flash".to_string(),
@@ -8909,7 +8903,7 @@ mod tests {
     async fn list_includes_created_at_in_response() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai::gpt-5.3".to_string(),
                 provider: "openai".to_string(),
                 display_name: "GPT-5.3".to_string(),
@@ -8921,7 +8915,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai::babbage-002".to_string(),
                 provider: "openai".to_string(),
                 display_name: "babbage-002".to_string(),
@@ -8933,7 +8927,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "anthropic::claude-opus".to_string(),
                 provider: "anthropic".to_string(),
                 display_name: "Claude Opus".to_string(),
@@ -8982,7 +8976,7 @@ mod tests {
     async fn list_includes_ollama_when_provider_is_aliased() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai-codex::gpt-5.2".to_string(),
                 provider: "openai-codex".to_string(),
                 display_name: "GPT 5.2".to_string(),
@@ -8994,7 +8988,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "local-ai::llama3.1:8b".to_string(),
                 provider: "local-ai".to_string(),
                 display_name: "Llama 3.1 8B".to_string(),
@@ -9092,7 +9086,7 @@ mod tests {
     async fn list_all_includes_disabled_models_and_list_hides_them() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "unit-test-model".to_string(),
                 provider: "unit-test-provider".to_string(),
                 display_name: "Unit Test Model".to_string(),
@@ -9193,7 +9187,7 @@ mod tests {
     async fn model_test_unknown_model_includes_suggestion() {
         let mut registry = ProviderRegistry::empty();
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai::gpt-5.2-codex".to_string(),
                 provider: "openai".to_string(),
                 display_name: "GPT 5.2 Codex".to_string(),
@@ -9205,7 +9199,7 @@ mod tests {
             }),
         );
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "openai::gpt-5".to_string(),
                 provider: "openai".to_string(),
                 display_name: "GPT 5".to_string(),
@@ -9264,7 +9258,7 @@ mod tests {
         );
         // StaticProvider's complete() returns an error ("not implemented for test")
         registry.register(
-            moltis_agents::providers::ModelInfo {
+            moltis_providers::ModelInfo {
                 id: "test-provider::test-model".to_string(),
                 provider: "test-provider".to_string(),
                 display_name: "Test Model".to_string(),

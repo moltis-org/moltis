@@ -14,7 +14,8 @@ base64          = { workspace = true }
 futures         = { workspace = true }
 image           = { workspace = true }
 ipnet           = { workspace = true }
-moltis-agents   = { workspace = true }
+moltis-agents    = { workspace = true }
+moltis-providers = { workspace = true }
 moltis-browser  = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }

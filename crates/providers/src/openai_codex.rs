@@ -10,12 +10,11 @@ use {
     tracing::{debug, info, trace, warn},
 };
 
-use crate::{
-    model::{
-        ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
-    },
-    providers::openai_compat::to_responses_api_tools,
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
 };
+
+use crate::openai_compat::to_responses_api_tools;
 
 pub struct OpenAiCodexProvider {
     model: String,
@@ -172,12 +171,14 @@ impl OpenAiCodexProvider {
                             UserContent::Multimodal(parts) => {
                                 let text_count = parts
                                     .iter()
-                                    .filter(|p| matches!(p, crate::model::ContentPart::Text(_)))
+                                    .filter(|p| {
+                                        matches!(p, moltis_agents::model::ContentPart::Text(_))
+                                    })
                                     .count();
                                 let image_count = parts
                                     .iter()
                                     .filter(|p| {
-                                        matches!(p, crate::model::ContentPart::Image { .. })
+                                        matches!(p, moltis_agents::model::ContentPart::Image { .. })
                                     })
                                     .count();
                                 debug!(
@@ -187,10 +188,13 @@ impl OpenAiCodexProvider {
                                 parts
                                     .iter()
                                     .map(|p| match p {
-                                        crate::model::ContentPart::Text(t) => {
+                                        moltis_agents::model::ContentPart::Text(t) => {
                                             serde_json::json!({"type": "input_text", "text": t})
                                         },
-                                        crate::model::ContentPart::Image { media_type, data } => {
+                                        moltis_agents::model::ContentPart::Image {
+                                            media_type,
+                                            data,
+                                        } => {
                                             let data_uri =
                                                 format!("data:{media_type};base64,{data}");
                                             debug!(
@@ -1216,7 +1220,7 @@ mod tests {
 
     #[test]
     fn convert_messages_user_multimodal_with_image() {
-        use crate::model::ContentPart;
+        use moltis_agents::model::ContentPart;
 
         let messages = vec![ChatMessage::User {
             content: UserContent::Multimodal(vec![

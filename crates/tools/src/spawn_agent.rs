@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use {anyhow::Result, async_trait::async_trait, tracing::info};
 
-use moltis_agents::{
-    model::LlmProvider,
-    providers::ProviderRegistry,
-    runner::{RunnerEvent, run_agent_loop_with_context},
-    tool_registry::{AgentTool, ToolRegistry},
+use {
+    moltis_agents::{
+        model::LlmProvider,
+        runner::{RunnerEvent, run_agent_loop_with_context},
+        tool_registry::{AgentTool, ToolRegistry},
+    },
+    moltis_providers::ProviderRegistry,
 };
 
 /// Maximum nesting depth for sub-agents (prevents infinite recursion).

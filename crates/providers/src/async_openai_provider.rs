@@ -16,7 +16,9 @@ use {
     tokio_stream::Stream,
 };
 
-use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent};
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent,
+};
 
 /// Provider backed by the `async-openai` crate.
 /// Works with OpenAI and any OpenAI-compatible API (Ollama, vLLM, etc.)
@@ -96,12 +98,12 @@ fn build_messages(messages: &[ChatMessage]) -> anyhow::Result<Vec<ChatCompletion
                 let content_parts: Vec<ChatCompletionRequestUserMessageContentPart> = parts
                     .iter()
                     .map(|p| match p {
-                        crate::model::ContentPart::Text(t) => {
+                        moltis_agents::model::ContentPart::Text(t) => {
                             ChatCompletionRequestUserMessageContentPart::Text(
                                 ChatCompletionRequestMessageContentPartText { text: t.clone() },
                             )
                         },
-                        crate::model::ContentPart::Image { media_type, data } => {
+                        moltis_agents::model::ContentPart::Image { media_type, data } => {
                             let data_uri = format!("data:{media_type};base64,{data}");
                             ChatCompletionRequestUserMessageContentPart::ImageUrl(
                                 ChatCompletionRequestMessageContentPartImage {

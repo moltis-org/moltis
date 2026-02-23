@@ -12,6 +12,7 @@ chrono                = { features = ["serde"], optional = true, workspace = tru
 chrono-tz             = { workspace = true }
 futures               = { workspace = true }
 moltis-agents         = { workspace = true }
+moltis-providers      = { workspace = true }
 moltis-channels       = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }

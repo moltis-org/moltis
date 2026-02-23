@@ -4,7 +4,7 @@ use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_
 
 use tracing::{debug, trace, warn};
 
-use crate::model::{
+use moltis_agents::model::{
     ChatMessage, CompletionResponse, ContentPart, LlmProvider, StreamEvent, ToolCall, Usage,
     UserContent,
 };

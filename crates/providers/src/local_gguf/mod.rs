@@ -30,7 +30,7 @@ use {
 #[cfg(feature = "metrics")]
 use moltis_metrics::{gauge, histogram, labels, llm as llm_metrics};
 
-use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage};
+use moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage};
 
 use {
     chat_templates::{ChatTemplateHint, format_messages},

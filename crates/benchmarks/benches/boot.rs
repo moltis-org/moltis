@@ -62,21 +62,17 @@ const MODEL_IDS: &[&str] = &[
 
 #[divan::bench(args = MODEL_IDS)]
 fn context_window_lookup(model_id: &str) -> u32 {
-    divan::black_box(moltis_agents::providers::context_window_for_model(model_id))
+    divan::black_box(moltis_providers::context_window_for_model(model_id))
 }
 
 #[divan::bench(args = MODEL_IDS)]
 fn vision_support_lookup(model_id: &str) -> bool {
-    divan::black_box(moltis_agents::providers::supports_vision_for_model(
-        model_id,
-    ))
+    divan::black_box(moltis_providers::supports_vision_for_model(model_id))
 }
 
 #[divan::bench]
 fn namespaced_model_id() -> String {
-    divan::black_box(moltis_agents::providers::namespaced_model_id(
-        "openai", "gpt-4o",
-    ))
+    divan::black_box(moltis_providers::namespaced_model_id("openai", "gpt-4o"))
 }
 
 // ── Session store ───────────────────────────────────────────────────────────

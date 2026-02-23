@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use {serde::Serialize, tracing::trace};
 
-use crate::model::{StreamEvent, ToolCall, Usage};
+use moltis_agents::model::{StreamEvent, ToolCall, Usage};
 
 // ============================================================================
 // OpenAI Tool Schema Types

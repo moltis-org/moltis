@@ -3,7 +3,7 @@
 //! Different LLM families use different prompt formats. This module provides
 //! template formatting for Llama3, ChatML (Qwen/Kimi), Mistral, and DeepSeek.
 
-use crate::model::{ChatMessage, UserContent};
+use moltis_agents::model::{ChatMessage, UserContent};
 
 /// Hint for which chat template to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

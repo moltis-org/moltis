@@ -31,7 +31,7 @@ use {
 
 use {moltis_channels::ChannelPlugin, moltis_protocol::TICK_INTERVAL_MS};
 
-use moltis_agents::providers::ProviderRegistry;
+use moltis_providers::ProviderRegistry;
 
 use moltis_tools::{
     approval::{ApprovalManager, ApprovalMode, SecurityLevel},

@@ -14,7 +14,7 @@ use {
         SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
         parse_tool_calls, process_openai_sse_line, strip_think_tags, to_openai_tools,
     },
-    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
 
 pub struct OpenAiProvider {
@@ -804,7 +804,7 @@ mod tests {
         tokio_stream::StreamExt,
     };
 
-    use crate::model::{ChatMessage, ToolCall, Usage};
+    use moltis_agents::model::{ChatMessage, ToolCall, Usage};
 
     use super::*;
 
@@ -1375,7 +1375,7 @@ mod tests {
 
     #[test]
     fn merge_with_fallback_uses_discovered_models_when_live_fetch_succeeds() {
-        use crate::providers::DiscoveredModel;
+        use crate::DiscoveredModel;
         let discovered = vec![
             DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
             DiscoveredModel::new("zeta-model", "Zeta"),
@@ -1386,15 +1386,15 @@ mod tests {
             DiscoveredModel::new("gpt-4o", "GPT-4o"),
         ];
 
-        let merged = crate::providers::merge_discovered_with_fallback_catalog(discovered, fallback);
+        let merged = crate::merge_discovered_with_fallback_catalog(discovered, fallback);
         let ids: Vec<String> = merged.into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["gpt-5.2", "zeta-model", "alpha-model"]);
     }
 
     #[test]
     fn merge_with_fallback_uses_fallback_when_discovery_is_empty() {
-        use crate::providers::DiscoveredModel;
-        let merged = crate::providers::merge_discovered_with_fallback_catalog(Vec::new(), vec![
+        use crate::DiscoveredModel;
+        let merged = crate::merge_discovered_with_fallback_catalog(Vec::new(), vec![
             DiscoveredModel::new("gpt-5.2", "GPT-5.2"),
             DiscoveredModel::new("gpt-5-mini", "GPT-5 Mini"),
         ]);

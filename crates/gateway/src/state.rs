@@ -291,7 +291,7 @@ pub struct GatewayInner {
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
     /// LLM provider registry for lightweight generation (e.g. TTS phrases).
-    pub llm_providers: Option<Arc<RwLock<moltis_agents::providers::ProviderRegistry>>>,
+    pub llm_providers: Option<Arc<RwLock<moltis_providers::ProviderRegistry>>>,
     /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
     pub cached_location: Option<moltis_config::GeoLocation>,
     /// Per-session buffer for channel status messages (tool use, model selection).

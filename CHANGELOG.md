@@ -11,12 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
 - New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
+- New `moltis-providers` crate that owns provider integrations and model registry/catalog logic (OpenAI, Anthropic, OpenAI-compatible, OpenAI Codex, GitHub Copilot, Kimi Code, local GGUF, local LLM)
 - `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
 - Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
 - Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
 ### Changed
 
 - **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
+- Provider wiring now routes through `moltis-providers` instead of `moltis-agents::providers`, and local LLM feature flags (`local-llm`, `local-llm-cuda`, `local-llm-metal`) now resolve via `moltis-providers`
 - Voice now auto-selects the first configured TTS/STT provider when no explicit
   provider is set.
 - Default voice template/settings now favor OpenAI TTS and Whisper STT in

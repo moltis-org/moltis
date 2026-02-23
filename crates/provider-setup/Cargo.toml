@@ -7,6 +7,7 @@ version.workspace    = true
 [dependencies]
 async-trait           = { workspace = true }
 moltis-agents         = { workspace = true }
+moltis-providers      = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-oauth          = { workspace = true }
 moltis-service-traits = { workspace = true }
