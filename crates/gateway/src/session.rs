@@ -1403,7 +1403,7 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        Ok(serde_json::json!({}))
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _params: Value) -> ServiceResult {
