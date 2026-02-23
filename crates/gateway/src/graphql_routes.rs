@@ -34,6 +34,8 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
         // This mirrors the gateway's MethodRegistry dispatch but goes through
         // the service trait objects directly.
         let s = &self.state.services;
+        // Chat is late-bound via state.chat() so GraphQL uses the same LiveChatService as WebSocket/methods.
+        let chat = self.state.chat().await;
 
         match method {
             // ── Health & Status ──────────────────────────────────────────
@@ -95,18 +97,19 @@ impl moltis_graphql::context::ServiceCaller for GatewayServiceCaller {
                 // Switch needs session resolve + mark_seen, simplified here.
                 s.session.resolve(params).await
             },
+            "sessions.active" => chat.active(params).await,
 
             // ── Chat ────────────────────────────────────────────────────
-            "chat.send" => s.chat.send(params).await,
-            "chat.abort" => s.chat.abort(params).await,
-            "chat.cancel_queued" => s.chat.cancel_queued(params).await,
-            "chat.history" => s.chat.history(params).await,
-            "chat.inject" => s.chat.inject(params).await,
-            "chat.clear" => s.chat.clear(params).await,
-            "chat.compact" => s.chat.compact(params).await,
-            "chat.context" => s.chat.context(params).await,
-            "chat.raw_prompt" => s.chat.raw_prompt(params).await,
-            "chat.full_context" => s.chat.full_context(params).await,
+            "chat.send" => chat.send(params).await,
+            "chat.abort" => chat.abort(params).await,
+            "chat.cancel_queued" => chat.cancel_queued(params).await,
+            "chat.history" => chat.history(params).await,
+            "chat.inject" => chat.inject(params).await,
+            "chat.clear" => chat.clear(params).await,
+            "chat.compact" => chat.compact(params).await,
+            "chat.context" => chat.context(params).await,
+            "chat.raw_prompt" => chat.raw_prompt(params).await,
+            "chat.full_context" => chat.full_context(params).await,
 
             // ── Config ──────────────────────────────────────────────────
             "config.get" => s.config.get(params).await,
