@@ -310,11 +310,7 @@ impl SessionQuery {
     /// Get session branches.
     async fn branches(&self, ctx: &Context<'_>, key: Option<String>) -> Result<Vec<SessionBranch>> {
         let s = services!(ctx);
-        from_service(
-            s.session
-                .branches(serde_json::json!({ "key": key }))
-                .await,
-        )
+        from_service(s.session.branches(serde_json::json!({ "key": key })).await)
     }
 
     /// List shared session links.

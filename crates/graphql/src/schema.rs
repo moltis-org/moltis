@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
-use {async_graphql::Schema, moltis_service_traits::Services, serde_json::Value, tokio::sync::broadcast};
+use {
+    async_graphql::Schema, moltis_service_traits::Services, serde_json::Value,
+    tokio::sync::broadcast,
+};
 
 use crate::{
-    context::GqlContext,
-    mutations::MutationRoot,
-    queries::QueryRoot,
+    context::GqlContext, mutations::MutationRoot, queries::QueryRoot,
     subscriptions::SubscriptionRoot,
 };
 

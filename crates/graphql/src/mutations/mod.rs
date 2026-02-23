@@ -152,7 +152,11 @@ impl SystemMutation {
     /// Set talk mode.
     async fn talk_mode(&self, ctx: &Context<'_>, mode: String) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(s.voicewake.talk_mode(serde_json::json!({ "mode": mode })).await)
+        from_service(
+            s.voicewake
+                .talk_mode(serde_json::json!({ "mode": mode }))
+                .await,
+        )
     }
 
     /// Check for and run updates.
@@ -394,11 +398,7 @@ impl ChannelMutation {
 
     async fn remove(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(
-            s.channel
-                .remove(serde_json::json!({ "name": name }))
-                .await,
-        )
+        from_service(s.channel.remove(serde_json::json!({ "name": name })).await)
     }
 
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
@@ -408,11 +408,7 @@ impl ChannelMutation {
 
     async fn logout(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(
-            s.channel
-                .logout(serde_json::json!({ "name": name }))
-                .await,
-        )
+        from_service(s.channel.logout(serde_json::json!({ "name": name })).await)
     }
 
     async fn approve_sender(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
@@ -522,11 +518,7 @@ impl TtsMutation {
 
     async fn convert(&self, ctx: &Context<'_>, audio: String) -> Result<TtsConvertResult> {
         let s = services!(ctx);
-        from_service(
-            s.tts
-                .convert(serde_json::json!({ "audio": audio }))
-                .await,
-        )
+        from_service(s.tts.convert(serde_json::json!({ "audio": audio })).await)
     }
 
     async fn set_provider(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
@@ -640,11 +632,7 @@ impl SkillsMutation {
 
     async fn update(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
         let s = services!(ctx);
-        from_service(
-            s.skills
-                .update(serde_json::json!({ "name": name }))
-                .await,
-        )
+        from_service(s.skills.update(serde_json::json!({ "name": name })).await)
     }
 
     async fn repos_remove(&self, ctx: &Context<'_>, source: String) -> Result<BoolResult> {
@@ -852,11 +840,7 @@ impl McpMutation {
 
     async fn oauth_start(&self, ctx: &Context<'_>, name: String) -> Result<McpOAuthStartResult> {
         let s = services!(ctx);
-        from_service(
-            s.mcp
-                .oauth_start(serde_json::json!({ "name": name }))
-                .await,
-        )
+        from_service(s.mcp.oauth_start(serde_json::json!({ "name": name })).await)
     }
 
     async fn oauth_complete(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
