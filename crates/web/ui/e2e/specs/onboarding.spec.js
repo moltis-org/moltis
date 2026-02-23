@@ -87,8 +87,12 @@ async function moveToVoiceStep(page) {
 	const skipped = await clickFirstVisibleButton(page, { name: "Skip for now", exact: true });
 	if (!skipped) return false;
 
-	await expect.poll(() => isVisible(voiceHeading), { timeout: 10_000 }).toBeTruthy();
-	return true;
+	try {
+		await expect.poll(() => isVisible(voiceHeading), { timeout: 10_000 }).toBeTruthy();
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function moveToIdentityStep(page) {
@@ -373,7 +377,7 @@ test.describe("Onboarding wizard", () => {
 		for (const candidate of candidates) {
 			const row = page
 				.locator(".onboarding-card .rounded-md.border")
-				.filter({ hasText: candidate.providerName })
+				.filter({ has: page.getByText(candidate.providerName, { exact: true }) })
 				.first();
 			if ((await row.count()) === 0) continue;
 

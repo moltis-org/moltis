@@ -66,7 +66,9 @@ test.describe("Provider setup page", () => {
 		await navigateAndWait(page, "/settings/providers");
 		await page.getByRole("button", { name: "Add LLM" }).click();
 
-		const openaiItem = page.locator(".provider-modal-backdrop .provider-item").filter({ hasText: "OpenAI" }).first();
+		const openaiItem = page
+			.locator(".provider-modal-backdrop .provider-item")
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) });
 		await expect(openaiItem).toBeVisible();
 		await openaiItem.click();
 
@@ -98,7 +100,9 @@ test.describe("Provider setup page", () => {
 		await navigateAndWait(page, "/settings/providers");
 		await page.getByRole("button", { name: "Add LLM" }).click();
 
-		const openaiItem = page.locator(".provider-modal-backdrop .provider-item").filter({ hasText: "OpenAI" }).first();
+		const openaiItem = page
+			.locator(".provider-modal-backdrop .provider-item")
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) });
 		await expect(openaiItem).toBeVisible();
 		await openaiItem.click();
 
