@@ -2,7 +2,9 @@ use std::pin::Pin;
 
 use {async_trait::async_trait, futures::StreamExt, tokio_stream::Stream};
 
-use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent};
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage, UserContent,
+};
 
 /// Provider backed by the `genai` crate (supports Anthropic, OpenAI, Gemini,
 /// Groq, Ollama, xAI, DeepSeek, Cohere, and more via a single client).

@@ -1,3 +1,8 @@
+//! LLM provider implementations and registry.
+
+// FFI wrappers for llama-cpp-2 require unsafe Send/Sync impls when local-llm feature is enabled.
+#![cfg_attr(feature = "local-llm", allow(unsafe_code))]
+
 pub mod anthropic;
 pub mod openai;
 pub mod openai_compat;
@@ -31,7 +36,17 @@ use std::{
 
 use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret, tokio_stream::Stream};
 
-use crate::model::{ChatMessage, LlmProvider, StreamEvent};
+use moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent};
+
+/// Shared HTTP client for LLM providers.
+///
+/// All providers that don't need custom redirect/proxy settings should
+/// reuse this client to share connection pools, DNS cache, and TLS sessions.
+pub fn shared_http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::LazyLock<reqwest::Client> =
+        std::sync::LazyLock::new(reqwest::Client::new);
+    &CLIENT
+}
 
 /// A model discovered from a provider API (e.g. `/v1/models`).
 ///
@@ -297,7 +312,7 @@ impl LlmProvider for RegistryModelProvider {
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
-    ) -> anyhow::Result<crate::model::CompletionResponse> {
+    ) -> anyhow::Result<moltis_agents::model::CompletionResponse> {
         self.inner.complete(messages, tools).await
     }
 

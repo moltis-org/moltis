@@ -87,12 +87,13 @@ async function moveToVoiceStep(page) {
 	const skipped = await clickFirstVisibleButton(page, { name: "Skip for now", exact: true });
 	if (!skipped) return false;
 
-	try {
-		await expect.poll(() => isVisible(voiceHeading), { timeout: 10_000 }).toBeTruthy();
-		return true;
-	} catch {
-		return false;
+	// Voice step may not exist in the current onboarding flow — return false
+	// gracefully instead of throwing when the heading never appears.
+	for (let i = 0; i < 20; i++) {
+		if (await isVisible(voiceHeading)) return true;
+		await page.waitForTimeout(500);
 	}
+	return false;
 }
 
 async function moveToIdentityStep(page) {

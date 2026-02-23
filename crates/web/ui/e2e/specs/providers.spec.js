@@ -68,7 +68,8 @@ test.describe("Provider setup page", () => {
 
 		const openaiItem = page
 			.locator(".provider-modal-backdrop .provider-item")
-			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) });
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) })
+			.first();
 		await expect(openaiItem).toBeVisible();
 		await openaiItem.click();
 
@@ -102,7 +103,8 @@ test.describe("Provider setup page", () => {
 
 		const openaiItem = page
 			.locator(".provider-modal-backdrop .provider-item")
-			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) });
+			.filter({ has: page.locator(".provider-item-name", { hasText: /^OpenAI$/ }) })
+			.first();
 		await expect(openaiItem).toBeVisible();
 		await openaiItem.click();
 

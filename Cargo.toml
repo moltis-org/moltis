@@ -24,6 +24,7 @@ members = [
   "crates/projects",
   "crates/protocol",
   "crates/provider-setup",
+  "crates/providers",
   "crates/qmd",
   "crates/routing",
   "crates/service-traits",
@@ -169,7 +170,7 @@ which                 = "8"
 
 # Workspace crates
 moltis                = { path = "crates/cli" }
-moltis-agents         = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/agents" }
+moltis-agents         = { path = "crates/agents" }
 moltis-auth           = { path = "crates/auth" }
 moltis-auto-reply     = { path = "crates/auto-reply" }
 moltis-browser        = { path = "crates/browser" }
@@ -191,6 +192,7 @@ moltis-plugins        = { path = "crates/plugins" }
 moltis-projects       = { path = "crates/projects" }
 moltis-protocol       = { path = "crates/protocol" }
 moltis-provider-setup = { path = "crates/provider-setup" }
+moltis-providers      = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
 moltis-qmd            = { path = "crates/qmd" }
 moltis-routing        = { path = "crates/routing" }
 moltis-service-traits = { path = "crates/service-traits" }

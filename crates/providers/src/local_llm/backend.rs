@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use {anyhow::Result, async_trait::async_trait, tokio_stream::Stream};
 
-use crate::model::{ChatMessage, CompletionResponse, StreamEvent};
+use moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent};
 
 use super::LocalLlmConfig;
 
@@ -91,11 +91,8 @@ pub fn detect_best_backend() -> BackendType {
 #[must_use]
 pub fn detect_backend_for_model(model_id: &str) -> BackendType {
     // Check legacy MLX models first (from local_gguf registry)
-    if let Some(def) = crate::providers::local_gguf::models::find_model(model_id) {
-        if matches!(
-            def.backend,
-            crate::providers::local_gguf::models::ModelBackend::Mlx
-        ) {
+    if let Some(def) = crate::local_gguf::models::find_model(model_id) {
+        if matches!(def.backend, crate::local_gguf::models::ModelBackend::Mlx) {
             // MLX model from legacy registry - requires MLX backend
             if is_mlx_available() {
                 return BackendType::Mlx;
@@ -231,11 +228,11 @@ pub mod gguf {
         tracing::{debug, info, warn},
     };
 
-    use crate::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
+    use moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
 
     use {
         super::{BackendType, LocalBackend, LocalLlmConfig},
-        crate::providers::local_llm::models::{
+        crate::local_llm::models::{
             self, LocalModelDef,
             chat_templates::{ChatTemplateHint, format_messages},
         },
@@ -635,18 +632,18 @@ pub mod mlx {
         tracing::{info, warn},
     };
 
-    use crate::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
+    use moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage};
 
     use {
         super::{BackendType, LocalBackend, LocalLlmConfig},
-        crate::providers::local_llm::models::{
+        crate::local_llm::models::{
             LocalModelDef,
             chat_templates::{ChatTemplateHint, format_messages},
         },
     };
 
     // Import the models module for model lookup and download
-    use crate::providers::local_llm::models;
+    use crate::local_llm::models;
 
     /// MLX backend implementation.
     pub struct MlxBackend {
@@ -816,7 +813,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
         max_tokens: u32,
         temperature: f32,
     ) -> Result<(String, u32, u32)> {
-        use crate::providers::local_llm::response_parser::{MlxCliResponseParser, ResponseParser};
+        use crate::local_llm::response_parser::{MlxCliResponseParser, ResponseParser};
 
         // mlx_lm generate --model <model> --prompt <prompt> --max-tokens <N> --temp <T>
         let output = Command::new("mlx_lm")
@@ -1081,19 +1078,16 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
         }
 
         // Check the legacy registry (for models like mlx-qwen2.5-coder-1.5b-4bit)
-        if let Some(legacy_def) = crate::providers::local_gguf::models::find_model(&config.model_id)
-            && legacy_def.backend == crate::providers::local_gguf::models::ModelBackend::Mlx
+        if let Some(legacy_def) = crate::local_gguf::models::find_model(&config.model_id)
+            && legacy_def.backend == crate::local_gguf::models::ModelBackend::Mlx
         {
             info!(
                 model = config.model_id,
                 hf_repo = legacy_def.hf_repo,
                 "found model in legacy registry, downloading"
             );
-            let model_path = crate::providers::local_gguf::models::ensure_mlx_model(
-                legacy_def,
-                &config.cache_dir,
-            )
-            .await?;
+            let model_path =
+                crate::local_gguf::models::ensure_mlx_model(legacy_def, &config.cache_dir).await?;
             let context_size = config.context_size.unwrap_or(legacy_def.context_window);
             return Ok((model_path, None, context_size));
         }

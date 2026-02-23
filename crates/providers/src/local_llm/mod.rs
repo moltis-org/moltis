@@ -19,7 +19,7 @@ use {
     tracing::info,
 };
 
-use crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent};
+use moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent};
 
 pub use {
     backend::{BackendType, LocalBackend},

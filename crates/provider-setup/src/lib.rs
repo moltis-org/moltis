@@ -17,11 +17,11 @@ use {
 };
 
 use {
-    moltis_agents::providers::{ProviderRegistry, raw_model_id},
     moltis_config::schema::ProvidersConfig,
     moltis_oauth::{
         CallbackServer, OAuthFlow, TokenStore, callback_port, device_flow, load_oauth_config,
     },
+    moltis_providers::{ProviderRegistry, raw_model_id},
 };
 
 use moltis_service_traits::{ProviderSetupService, ServiceResult};
@@ -2455,7 +2455,7 @@ impl ProviderSetupService for LiveProviderSetupService {
             // Build model list for the frontend, excluding non-chat models.
             let model_list: Vec<Value> = models
                 .iter()
-                .filter(|m| moltis_agents::providers::is_chat_capable_model(&m.id))
+                .filter(|m| moltis_providers::is_chat_capable_model(&m.id))
                 .map(|m| {
                     let supports_tools =
                         temp_registry.get(&m.id).is_some_and(|p| p.supports_tools());

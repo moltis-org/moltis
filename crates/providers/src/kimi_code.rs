@@ -19,7 +19,7 @@ use {
         SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
         parse_tool_calls, process_openai_sse_line, to_openai_tools,
     },
-    crate::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
