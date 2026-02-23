@@ -378,7 +378,7 @@ test.describe("Onboarding wizard", () => {
 		for (const candidate of candidates) {
 			const row = page
 				.locator(".onboarding-card .rounded-md.border")
-				.filter({ hasText: candidate.providerName })
+				.filter({ has: page.getByText(candidate.providerName, { exact: true }) })
 				.first();
 			if ((await row.count()) === 0) continue;
 
