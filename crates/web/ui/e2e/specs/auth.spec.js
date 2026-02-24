@@ -110,7 +110,7 @@ test.describe("Authentication", () => {
 
 		await page.goto("/settings/security");
 		await expectPageContentMounted(page);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		await expect(page.locator("#logoutBtn")).toBeHidden();
 		await expect(page.getByText("Localhost bypass is active.", { exact: false })).toBeVisible();
 		await expect(page.getByText("Sign out has no effect.", { exact: false })).toBeVisible();
@@ -159,7 +159,7 @@ test.describe("Authentication", () => {
 		}
 
 		await expectPageContentMounted(page);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -211,7 +211,7 @@ test.describe("Authentication", () => {
 		await page.goto("/settings/security");
 		await expectPageContentMounted(page);
 		await expect(page).toHaveURL(/\/settings\/security$/);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		await expect(
 			page.getByText("Localhost-only access is safe, but localhost bypass is active.", { exact: false }),
 		).toBeVisible();
