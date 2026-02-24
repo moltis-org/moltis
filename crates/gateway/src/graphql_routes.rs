@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use {
-    async_graphql::http::GraphiQLSource,
+    async_graphql::http::{GraphiQLPlugin, GraphiQLSource},
     axum::{
         Json,
         extract::{FromRequestParts, Request, State, WebSocketUpgrade},
@@ -212,10 +212,80 @@ fn graphql_ws_response(
 }
 
 fn graphiql_response() -> Response {
+    let asset_guard_plugin = GraphiQLPlugin {
+        name: "MoltisGraphiQLAssetGuard",
+        constructor: "",
+        head_assets: Some(
+            r##"<script>
+  (function () {
+    function fallbackUi() {
+      if (window.React && window.React.createElement) {
+        return window.React.createElement(
+          "div",
+          {
+            style: {
+              padding: "1rem",
+              fontFamily: "system-ui, sans-serif",
+              color: "#666"
+            }
+          },
+          "GraphiQL assets failed to load. Check network access and reload."
+        );
+      }
+      return null;
+    }
+
+    if (!window.React) {
+      window.React = {
+        createElement: function () {
+          return null;
+        }
+      };
+    }
+
+    if (!window.GraphiQL) {
+      function GraphiQLFallback() {
+        return fallbackUi();
+      }
+      GraphiQLFallback.createFetcher = function () {
+        return function () {
+          return Promise.resolve();
+        };
+      };
+      window.GraphiQL = GraphiQLFallback;
+    }
+
+    if (!window.ReactDOM) {
+      window.ReactDOM = {
+        createRoot: function () {
+          return {
+            render: function () {
+              var root = document.getElementById("graphiql");
+              if (root) {
+                root.textContent = "GraphiQL assets failed to load. Check network access and reload.";
+                root.style.padding = "1rem";
+                root.style.fontFamily = "system-ui, sans-serif";
+                root.style.color = "#666";
+              }
+            }
+          };
+        }
+      };
+    }
+  })();
+</script>"##,
+        ),
+        body_assets: None,
+        pre_configs: None,
+        props: None,
+    };
+    let plugins = [asset_guard_plugin];
+
     Html(
         GraphiQLSource::build()
             .endpoint("/graphql")
             .subscription_endpoint("/graphql")
+            .plugins(&plugins)
             .finish(),
     )
     .into_response()
