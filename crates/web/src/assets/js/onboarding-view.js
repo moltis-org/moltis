@@ -432,7 +432,9 @@ function AuthStep({ onNext, skippable }) {
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly ? "Choose how to secure your instance, or skip for now." : "Choose how to secure your instance."}
+			${localhostOnly
+				? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
+				: "Choose how to secure your instance."}
 		</p>
 
 		${
@@ -463,7 +465,7 @@ function AuthStep({ onNext, skippable }) {
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
-				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Set a password and enable the encryption vault for stored secrets</div>
 			</div>
 		</div>
 

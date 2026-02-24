@@ -616,10 +616,10 @@ function EnvironmentSection() {
 		</p>
 		${envVaultStatus && envVaultStatus !== "disabled" ? html`<div class="text-xs" style="max-width:600px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
 			${envVaultStatus === "unsealed"
-				? html`<span style="color:var(--accent);">Vault is unsealed.</span> New variables will be encrypted at rest.`
+				? html`<span style="color:var(--accent);">Vault is unsealed.</span> New variables are encrypted before storage. Existing encrypted variables are decrypted on read.`
 				: envVaultStatus === "sealed"
-					? html`<span style="color:var(--warning,var(--error));">Vault is sealed.</span> New variables will be stored in plaintext. Unlock the vault in Security settings to enable encryption.`
-					: html`<span class="text-[var(--muted)]">Vault is not initialized.</span> Set a password in Security settings to enable encryption.`
+					? html`<span style="color:var(--warning,var(--error));">Vault is sealed.</span> Encrypted variables cannot be read \u2014 sandbox commands using them will fail. New variables will be stored in plaintext. Unlock the vault in <a href="/settings/security" style="color:inherit;text-decoration:underline;">Security</a> settings.`
+					: html`<span class="text-[var(--muted)]">Vault is not initialized.</span> Set a password in <a href="/settings/security" style="color:inherit;text-decoration:underline;">Security</a> settings to enable encryption at rest.`
 			}
 		</div>` : null}
 
@@ -1157,12 +1157,22 @@ function SecuritySection() {
 		}
 
 		${vaultStatus && vaultStatus !== "disabled" ? html`<div style="max-width:600px;">
-			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Vault</h3>
+			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Vault (Encryption at Rest)</h3>
+			<p class="text-xs text-[var(--muted)] leading-relaxed" style="margin:0 0 10px;">
+				The vault encrypts environment variables (API keys, tokens, secrets) stored in the database using XChaCha20-Poly1305.
+				When unsealed, variables are encrypted before writing and decrypted on read. When sealed, encrypted variables cannot be read and new variables are stored in plaintext.
+			</p>
 			<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
 				<span class="provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}">
-					${vaultStatus === "unsealed" ? "Unsealed" : vaultStatus === "sealed" ? "Sealed" : vaultStatus}
+					${vaultStatus === "unsealed" ? "Unsealed" : vaultStatus === "sealed" ? "Sealed" : "Not initialized"}
 				</span>
-				<span class="text-xs text-[var(--muted)]">${vaultStatus === "unsealed" ? "Environment variables are encrypted at rest." : vaultStatus === "sealed" ? "Vault is locked. Unlock to access encrypted variables." : "Vault has not been initialized."}</span>
+				<span class="text-xs text-[var(--muted)]">${
+					vaultStatus === "unsealed"
+						? "Active \u2014 new variables are encrypted, existing encrypted variables are readable."
+						: vaultStatus === "sealed"
+							? "Locked \u2014 encrypted variables cannot be read. Sandbox commands using encrypted variables will fail until you unlock."
+							: "Set a password to initialize the vault. Without it, all variables are stored in plaintext."
+				}</span>
 			</div>
 			${vaultStatus === "sealed" ? html`<form onSubmit=${onVaultUnlock} style="display:flex;flex-direction:column;gap:8px;">
 				<div style="display:flex;gap:8px;">

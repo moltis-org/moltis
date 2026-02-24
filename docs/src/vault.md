@@ -201,7 +201,16 @@ const vaultStatus = gon.get("vault_status");
 
 Live updates are available via `gon.onChange("vault_status", callback)`.
 
-### Recovery key display (onboarding)
+### Onboarding and localhost
+
+The onboarding wizard's Security step explains that setting a password
+also enables the encryption vault for stored secrets. The password
+selection card explicitly says: "Set a password and enable the encryption
+vault for stored secrets."
+
+On localhost, where authentication is optional, the subtitle mentions
+that setting a password enables the vault — giving users a reason to
+set one even when network security is not a concern.
 
 When a password is set during first-time setup, the server returns a
 `recovery_key` field in the JSON response. The onboarding wizard shows an
@@ -220,13 +229,16 @@ derive a KEK from), so the recovery key screen is never shown in that flow.
 ### Vault status in Settings > Security
 
 When the vault is enabled (status is not `"disabled"`), the Security
-settings page shows a **Vault** subsection at the top with:
+settings page shows a **Vault (Encryption at Rest)** subsection at the
+top. A brief explanation describes what the vault does: it encrypts
+environment variables (API keys, tokens, secrets) using XChaCha20-Poly1305,
+and explains the difference between the sealed and unsealed states.
 
-| Vault state | Badge | Description |
-|-------------|-------|-------------|
-| Unsealed | Green ("Unsealed") | Environment variables are encrypted at rest. |
-| Sealed | Amber ("Sealed") | Vault is locked. Unlock to access encrypted variables. |
-| Uninitialized | Gray (state name) | Vault has not been initialized. |
+| Vault state | Badge | What it means |
+|-------------|-------|---------------|
+| **Unsealed** | Green ("Unsealed") | Active — new variables are encrypted before storage, existing encrypted variables are decrypted on read. This is the normal operating state. |
+| **Sealed** | Amber ("Sealed") | Locked — encrypted variables cannot be read. Sandbox commands using encrypted variables will fail. New variables are stored in plaintext. The vault seals automatically on server restart and stays sealed until the next login. |
+| **Not initialized** | Gray ("Not initialized") | No password has been set yet. All variables are stored in plaintext. Set a password to initialize the vault. |
 
 When the vault is **sealed**, a form appears with a toggle between
 **Password** and **Recovery key** unlock modes. Submitting the form
@@ -243,14 +255,16 @@ indicating its encryption status:
 | **Encrypted** | Green (`.provider-item-badge.configured`) | Value is encrypted at rest by the vault |
 | **Plaintext** | Gray (`.provider-item-badge.muted`) | Value is stored in cleartext |
 
-A status note at the top of the section summarizes the current vault
-state and its impact on new variables:
+A status note at the top of the section explains the current vault
+state and its concrete impact:
 
-- **Unsealed**: "New variables will be encrypted at rest."
-- **Sealed**: "New variables will be stored in plaintext. Unlock the
-  vault in Security settings to enable encryption."
-- **Uninitialized**: "Set a password in Security settings to enable
-  encryption."
+- **Unsealed**: New variables are encrypted before storage. Existing
+  encrypted variables are decrypted on read.
+- **Sealed**: Encrypted variables cannot be read — sandbox commands
+  using them will fail. New variables are stored in plaintext. A link
+  to Security settings is provided.
+- **Not initialized**: All variables are stored in plaintext. A link
+  to Security settings is provided to set a password.
 
 ## Disabling the Vault
 
