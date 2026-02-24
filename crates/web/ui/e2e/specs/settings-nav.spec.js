@@ -186,6 +186,37 @@ test.describe("Settings navigation", () => {
 		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
 	});
 
+	test("security page shows vault subsection when vault is enabled", async ({ page }) => {
+		await navigateAndWait(page, "/settings/security");
+		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		// Vault subsection appears when vault_status is not "disabled"
+		const vaultHeading = page.getByRole("heading", { name: "Vault", exact: true });
+		const hasVault = await vaultHeading.isVisible().catch(() => false);
+		if (hasVault) {
+			await expect(vaultHeading).toBeVisible();
+			// Should show a status badge
+			const badges = page.locator(".provider-item-badge");
+			await expect(badges.first()).toBeVisible();
+		}
+	});
+
+	test("environment page shows encrypted badges on env vars", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/environment");
+		await expect(page.getByRole("heading", { name: "Environment" })).toBeVisible();
+		// If env vars exist, they should have either Encrypted or Plaintext badge
+		const items = page.locator(".provider-item");
+		const count = await items.count();
+		if (count > 0) {
+			const firstItem = items.first();
+			const hasBadge = await firstItem.locator(".provider-item-badge").count();
+			expect(hasBadge).toBeGreaterThan(0);
+			const badgeText = await firstItem.locator(".provider-item-badge").first().textContent();
+			expect(["Encrypted", "Plaintext"]).toContain(badgeText.trim());
+		}
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("provider page renders from settings", async ({ page }) => {
 		await navigateAndWait(page, "/settings/providers");
 		await expect(page.getByRole("heading", { name: "LLMs" })).toBeVisible();

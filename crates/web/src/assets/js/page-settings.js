@@ -607,11 +607,21 @@ function EnvironmentSection() {
 		});
 	}
 
+	var envVaultStatus = gon.get("vault_status");
+
 	return html`<div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Environment Variables</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
 			Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 		</p>
+		${envVaultStatus && envVaultStatus !== "disabled" ? html`<div class="text-xs" style="max-width:600px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+			${envVaultStatus === "unsealed"
+				? html`<span style="color:var(--accent);">Vault is unsealed.</span> New variables will be encrypted at rest.`
+				: envVaultStatus === "sealed"
+					? html`<span style="color:var(--warning,var(--error));">Vault is sealed.</span> New variables will be stored in plaintext. Unlock the vault in Security settings to enable encryption.`
+					: html`<span class="text-[var(--muted)]">Vault is not initialized.</span> Set a password in Security settings to enable encryption.`
+			}
+		</div>` : null}
 
 		${
 			envLoading
@@ -631,6 +641,9 @@ function EnvironmentSection() {
 										onConfirmUpdate(v.key);
 									}}>
 									<code style="font-size:0.8rem;font-family:var(--font-mono);">${v.key}</code>
+									${v.encrypted
+										? html`<span class="provider-item-badge configured">Encrypted</span>`
+										: html`<span class="provider-item-badge muted">Plaintext</span>`}
 									<input type="password" class="provider-key-input"
 										name="env_update_value"
 										autocomplete="new-password"
@@ -644,7 +657,12 @@ function EnvironmentSection() {
 									<button type="button" class="provider-btn" onClick=${onCancelUpdate}>Cancel</button>
 								</form>`
 								: html`<div style="flex:1;min-width:0;">
-									<div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">${v.key}</div>
+									<div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">
+										${v.key}
+										${v.encrypted
+											? html`<span class="provider-item-badge configured" style="margin-left:6px;">Encrypted</span>`
+											: html`<span class="provider-item-badge muted" style="margin-left:6px;">Plaintext</span>`}
+									</div>
 									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">
 										<span>\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span>
 										<time datetime=${v.updated_at}>${v.updated_at}</time>
@@ -1011,6 +1029,53 @@ function SecuritySection() {
 			});
 	}
 
+	var [vaultStatus, setVaultStatus] = useState(gon.get("vault_status") || null);
+	var [vaultUnlockPw, setVaultUnlockPw] = useState("");
+	var [vaultRecoveryKey, setVaultRecoveryKey] = useState("");
+	var [vaultUnlockMode, setVaultUnlockMode] = useState("password");
+	var [vaultMsg, setVaultMsg] = useState(null);
+	var [vaultErr, setVaultErr] = useState(null);
+	var [vaultUnlocking, setVaultUnlocking] = useState(false);
+
+	useEffect(() => {
+		return gon.onChange("vault_status", (val) => {
+			setVaultStatus(val);
+			rerender();
+		});
+	}, []);
+
+	function onVaultUnlock(e) {
+		e.preventDefault();
+		setVaultErr(null);
+		setVaultMsg(null);
+		setVaultUnlocking(true);
+		rerender();
+		var url = vaultUnlockMode === "recovery" ? "/api/auth/vault/recovery" : "/api/auth/vault/unlock";
+		var body = vaultUnlockMode === "recovery" ? { recovery_key: vaultRecoveryKey } : { password: vaultUnlockPw };
+		fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		})
+			.then((r) => {
+				if (r.ok) {
+					setVaultMsg("Vault unsealed.");
+					setVaultUnlockPw("");
+					setVaultRecoveryKey("");
+					refreshGon();
+				} else {
+					return r.text().then((t) => setVaultErr(t || "Unlock failed"));
+				}
+				setVaultUnlocking(false);
+				rerender();
+			})
+			.catch((err) => {
+				setVaultErr(err.message);
+				setVaultUnlocking(false);
+				rerender();
+			});
+	}
+
 	var [resetConfirm, setResetConfirm] = useState(false);
 	var [resetBusy, setResetBusy] = useState(false);
 
@@ -1090,6 +1155,33 @@ function SecuritySection() {
 				</div>`
 				: null
 		}
+
+		${vaultStatus && vaultStatus !== "disabled" ? html`<div style="max-width:600px;">
+			<h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Vault</h3>
+			<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+				<span class="provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}">
+					${vaultStatus === "unsealed" ? "Unsealed" : vaultStatus === "sealed" ? "Sealed" : vaultStatus}
+				</span>
+				<span class="text-xs text-[var(--muted)]">${vaultStatus === "unsealed" ? "Environment variables are encrypted at rest." : vaultStatus === "sealed" ? "Vault is locked. Unlock to access encrypted variables." : "Vault has not been initialized."}</span>
+			</div>
+			${vaultStatus === "sealed" ? html`<form onSubmit=${onVaultUnlock} style="display:flex;flex-direction:column;gap:8px;">
+				<div style="display:flex;gap:8px;">
+					<button type="button" class="provider-btn ${vaultUnlockMode === "password" ? "" : "provider-btn-secondary"}" style="font-size:.75rem;" onClick=${() => { setVaultUnlockMode("password"); rerender(); }}>Password</button>
+					<button type="button" class="provider-btn ${vaultUnlockMode === "recovery" ? "" : "provider-btn-secondary"}" style="font-size:.75rem;" onClick=${() => { setVaultUnlockMode("recovery"); rerender(); }}>Recovery key</button>
+				</div>
+				${vaultUnlockMode === "password"
+					? html`<input type="password" class="provider-key-input" style="width:100%;" value=${vaultUnlockPw} onInput=${(e) => setVaultUnlockPw(e.target.value)} placeholder="Vault password" />`
+					: html`<textarea class="provider-key-input" style="width:100%;min-height:60px;font-family:var(--font-mono);font-size:.78rem;" value=${vaultRecoveryKey} onInput=${(e) => setVaultRecoveryKey(e.target.value)} placeholder="Recovery key phrase" />`
+				}
+				<div style="display:flex;align-items:center;gap:8px;">
+					<button type="submit" class="provider-btn" disabled=${vaultUnlocking}>${vaultUnlocking ? "Unlocking\u2026" : "Unlock vault"}</button>
+					${vaultMsg ? html`<span class="text-xs" style="color:var(--accent);">${vaultMsg}</span>` : null}
+					${vaultErr ? html`<span class="text-xs" style="color:var(--error);">${vaultErr}</span>` : null}
+				</div>
+			</form>` : null}
+		</div>
+		<div style="max-width:600px;border-top:1px solid var(--border);padding-top:16px;margin-top:0;"></div>
+		` : null}
 
 		<!-- Password -->
 		<div style="max-width:600px;">

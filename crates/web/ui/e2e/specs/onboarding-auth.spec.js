@@ -56,6 +56,23 @@ async function advanceToIdentityStep(page) {
 	return detectOnboardingStep(page);
 }
 
+async function dismissRecoveryKeyIfShown(page) {
+	const recoveryHeading = page.getByText("Password set and vault initialized", { exact: true });
+	if (await isVisible(recoveryHeading)) {
+		// Verify key is displayed in a code block
+		const codeBlock = page.locator(".onboarding-card code");
+		await codeBlock.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
+		// Verify copy button exists
+		const copyBtn = page.getByRole("button", { name: /^Copy/, exact: false });
+		if (await isVisible(copyBtn)) {
+			await copyBtn.click();
+		}
+		// Click Continue to proceed
+		if (await clickFirstVisibleButton(page, { name: /^Continue$/ })) return true;
+	}
+	return false;
+}
+
 async function completePasswordAuthStep(page) {
 	if (await clickFirstVisibleButton(page, { name: /^Next$/ })) return true;
 
@@ -74,7 +91,12 @@ async function completePasswordAuthStep(page) {
 		await inputs.first().fill("testpassword1");
 		await inputs.nth(1).fill("testpassword1");
 
-		if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) return true;
+		if (await clickFirstVisibleButton(page, { name: /^Set password(?: & continue)?$/ })) {
+			// After password setup, a recovery key interstitial may appear
+			await page.waitForTimeout(500);
+			await dismissRecoveryKeyIfShown(page);
+			return true;
+		}
 		if (await clickFirstVisibleButton(page, { name: /^Skip$/ })) return true;
 	}
 

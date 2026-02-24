@@ -195,12 +195,62 @@ every page load:
 
 ```js
 import * as gon from "./gon.js";
-const vaultStatus = gon.get("vaultStatus");
+const vaultStatus = gon.get("vault_status");
 // "uninitialized" | "sealed" | "unsealed" | "disabled"
 ```
 
-The UI can use this to show a lock icon or prompt for vault unlock when
-the status is `"sealed"`.
+Live updates are available via `gon.onChange("vault_status", callback)`.
+
+### Recovery key display (onboarding)
+
+When a password is set during first-time setup, the server returns a
+`recovery_key` field in the JSON response. The onboarding wizard shows an
+interstitial screen with:
+
+- A success message ("Password set and vault initialized")
+- The recovery key in a monospace `<code>` block with `select-all` for
+  easy selection
+- A **Copy** button using the Clipboard API
+- A warning that the key will not be shown again
+- A **Continue** button to proceed to the next onboarding step
+
+Passkey-only setup does not trigger vault initialization (no password to
+derive a KEK from), so the recovery key screen is never shown in that flow.
+
+### Vault status in Settings > Security
+
+When the vault is enabled (status is not `"disabled"`), the Security
+settings page shows a **Vault** subsection at the top with:
+
+| Vault state | Badge | Description |
+|-------------|-------|-------------|
+| Unsealed | Green ("Unsealed") | Environment variables are encrypted at rest. |
+| Sealed | Amber ("Sealed") | Vault is locked. Unlock to access encrypted variables. |
+| Uninitialized | Gray (state name) | Vault has not been initialized. |
+
+When the vault is **sealed**, a form appears with a toggle between
+**Password** and **Recovery key** unlock modes. Submitting the form
+calls `POST /api/auth/vault/unlock` or `POST /api/auth/vault/recovery`
+respectively, then refreshes gon data to update the status badge.
+
+### Encrypted badges on environment variables
+
+Each environment variable in **Settings > Environment** shows a badge
+indicating its encryption status:
+
+| Badge | Style | Meaning |
+|-------|-------|---------|
+| **Encrypted** | Green (`.provider-item-badge.configured`) | Value is encrypted at rest by the vault |
+| **Plaintext** | Gray (`.provider-item-badge.muted`) | Value is stored in cleartext |
+
+A status note at the top of the section summarizes the current vault
+state and its impact on new variables:
+
+- **Unsealed**: "New variables will be encrypted at rest."
+- **Sealed**: "New variables will be stored in plaintext. Unlock the
+  vault in Security settings to enable encryption."
+- **Uninitialized**: "Set a password in Security settings to enable
+  encryption."
 
 ## Disabling the Vault
 

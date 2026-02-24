@@ -79,6 +79,7 @@ pub struct EnvVarEntry {
     pub key: String,
     pub created_at: String,
     pub updated_at: String,
+    pub encrypted: bool,
 }
 
 // ── Credential store ─────────────────────────────────────────────────────────
@@ -528,18 +529,19 @@ impl CredentialStore {
 
     /// List all environment variables (names only, no values).
     pub async fn list_env_vars(&self) -> anyhow::Result<Vec<EnvVarEntry>> {
-        let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-            "SELECT id, key, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), strftime('%Y-%m-%dT%H:%M:%SZ', updated_at) FROM env_variables ORDER BY key ASC",
+        let rows: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
+            "SELECT id, key, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), strftime('%Y-%m-%dT%H:%M:%SZ', updated_at), COALESCE(encrypted, 0) FROM env_variables ORDER BY key ASC",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, key, created_at, updated_at)| EnvVarEntry {
+            .map(|(id, key, created_at, updated_at, encrypted)| EnvVarEntry {
                 id,
                 key,
                 created_at,
                 updated_at,
+                encrypted: encrypted != 0,
             })
             .collect())
     }
@@ -1144,6 +1146,7 @@ mod tests {
         let vars = store.list_env_vars().await.unwrap();
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].key, "MY_KEY");
+        assert!(!vars[0].encrypted);
 
         // Values returned by get_all_env_values.
         let values = store.get_all_env_values().await.unwrap();
