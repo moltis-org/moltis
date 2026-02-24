@@ -489,6 +489,7 @@ function RepoCard(props) {
 	var expanded = useSignal(false);
 	var searchQuery = useSignal("");
 	var searchResults = useSignal([]);
+	var allSkills = useSignal([]);
 	var searching = useSignal(false);
 	var activeDetail = useSignal(null);
 	var detailLoading = useSignal(false);
@@ -500,7 +501,15 @@ function RepoCard(props) {
 	var href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
 
 	function toggleExpand() {
-		expanded.value = !expanded.value;
+		var willExpand = !expanded.value;
+		expanded.value = willExpand;
+		if (willExpand && !isOrphan && allSkills.value.length === 0) {
+			searching.value = true;
+			searchSkills(repo.source, "").then((results) => {
+				allSkills.value = results;
+				searching.value = false;
+			});
+		}
 	}
 
 	function onSearchInput(e) {
@@ -522,9 +531,9 @@ function RepoCard(props) {
 		}, 200);
 	}
 
+	var displayedSkills = searchQuery.value.trim() ? searchResults.value : allSkills.value;
+
 	function loadDetail(skill) {
-		searchQuery.value = skill.name;
-		searchResults.value = [];
 		detailLoading.value = true;
 		sendRpc("skills.skill.detail", {
 			source: repo.source,
@@ -572,48 +581,41 @@ function RepoCard(props) {
     ${
 			expanded.value &&
 			html`<div class="skills-repo-detail" style="display:block">
-      <div style="position:relative;margin-bottom:8px">
+      <div style="margin-bottom:8px">
         <input type="text" placeholder=${isOrphan ? "Orphaned repo: reinstall to restore metadata" : `Search skills in ${repo.source}\u2026`} value=${searchQuery.value} disabled=${isOrphan}
           onInput=${onSearchInput}
           style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:.8rem;font-family:var(--font-mono);box-sizing:border-box" />
-        ${
-					searchQuery.value &&
-					searchResults.value.length > 0 &&
-					!activeDetail.value &&
-					html`
-          <div class="skills-ac-dropdown" style="display:block">
-            ${searchResults.value.map(
-							(skill) => html`<div key=${skill.name} class="skills-ac-item" onClick=${() => {
-								loadDetail(skill);
-							}}>
-                <div style="display:flex;align-items:center;gap:6px;min-width:0">
-                  <span style="font-family:var(--font-mono);font-weight:500;color:var(--text-strong);white-space:nowrap">${skill.display_name || skill.name}</span>
-                  ${skill.display_name && html`<span style="color:var(--muted);font-size:.68rem;font-family:var(--font-mono);white-space:nowrap">${skill.name}</span>`}
-                  ${skill.description && html`<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${skill.description}</span>`}
-                </div>
-                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
-                  ${skill.enabled && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--accent);color:#fff;font-weight:500">enabled</span>`}
-                  ${skill.trusted === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`}
-                  ${skill.drifted && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
-                  ${skill.eligible === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--error, #e55);color:#fff;font-weight:500">blocked</span>`}
-                </div>
-              </div>`,
-						)}
-          </div>
-        `
-				}
-        ${
-					searchQuery.value &&
-					searchResults.value.length === 0 &&
-					!activeDetail.value &&
-					!searching.value &&
-					html`
-          <div class="skills-ac-dropdown" style="display:block">
-            <div style="padding:8px 10px;color:var(--muted);font-size:.78rem">No matching skills.</div>
-          </div>
-        `
-				}
       </div>
+      ${
+				!activeDetail.value &&
+				displayedSkills.length > 0 &&
+				html`<div class="skills-browse-list">
+          ${displayedSkills.map(
+						(skill) => html`<div key=${skill.name} class="skills-ac-item" onClick=${() => {
+							loadDetail(skill);
+						}}>
+              <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                <span style="font-family:var(--font-mono);font-weight:500;color:var(--text-strong);white-space:nowrap">${skill.display_name || skill.name}</span>
+                ${skill.display_name && html`<span style="color:var(--muted);font-size:.68rem;font-family:var(--font-mono);white-space:nowrap">${skill.name}</span>`}
+                ${skill.description && html`<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${skill.description}</span>`}
+              </div>
+              <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
+                ${skill.enabled && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--accent);color:#fff;font-weight:500">enabled</span>`}
+                ${skill.trusted === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">untrusted</span>`}
+                ${skill.drifted && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--warning, #c77d00);color:#fff;font-weight:500">source changed</span>`}
+                ${skill.eligible === false && html`<span style="font-size:.6rem;padding:1px 5px;border-radius:9999px;background:var(--error, #e55);color:#fff;font-weight:500">blocked</span>`}
+              </div>
+            </div>`,
+					)}
+        </div>`
+			}
+      ${
+				!activeDetail.value &&
+				displayedSkills.length === 0 &&
+				!searching.value &&
+				html`<div style="padding:8px 10px;color:var(--muted);font-size:.78rem">${searchQuery.value.trim() ? "No matching skills." : ""}</div>`
+			}
+      ${searching.value && !activeDetail.value && html`<div style="padding:8px 10px;color:var(--muted);font-size:.78rem">Searching\u2026</div>`}
       ${detailLoading.value && html`<div style="color:var(--muted);font-size:.8rem">Loading\u2026</div>`}
       ${
 				activeDetail.value &&
