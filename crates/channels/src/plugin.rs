@@ -1,6 +1,6 @@
-use {
-    anyhow::Result, async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc,
-};
+use {async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc};
+
+use crate::{Error, Result};
 
 // ── Channel type enum ───────────────────────────────────────────────────────
 
@@ -28,12 +28,14 @@ impl std::fmt::Display for ChannelType {
 }
 
 impl std::str::FromStr for ChannelType {
-    type Err = String;
+    type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "telegram" => Ok(Self::Telegram),
-            other => Err(format!("unknown channel type: {other}")),
+            other => Err(Error::invalid_input(format!(
+                "unknown channel type: {other}"
+            ))),
         }
     }
 }
@@ -138,7 +140,7 @@ pub trait ChannelEventSink: Send + Sync {
     /// The audio format is specified (e.g., "ogg", "mp3", "webm").
     async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
         let _ = (audio_data, format);
-        Err(anyhow::anyhow!("voice transcription not available"))
+        Err(Error::unavailable("voice transcription not available"))
     }
 
     /// Whether voice STT is configured and available for channel audio messages.

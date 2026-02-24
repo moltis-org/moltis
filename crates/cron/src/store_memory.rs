@@ -2,12 +2,10 @@
 
 use std::{collections::HashMap, sync::Mutex};
 
-use {
-    anyhow::{Result, bail},
-    async_trait::async_trait,
-};
+use async_trait::async_trait;
 
 use crate::{
+    Error, Result,
     store::CronStore,
     types::{CronJob, CronRunRecord},
 };
@@ -49,7 +47,7 @@ impl CronStore for InMemoryStore {
     async fn delete_job(&self, id: &str) -> Result<()> {
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         if jobs.remove(id).is_none() {
-            bail!("job not found: {id}");
+            return Err(Error::job_not_found(id));
         }
         Ok(())
     }
@@ -57,7 +55,7 @@ impl CronStore for InMemoryStore {
     async fn update_job(&self, job: &CronJob) -> Result<()> {
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         if !jobs.contains_key(&job.id) {
-            bail!("job not found: {}", job.id);
+            return Err(Error::job_not_found(job.id.clone()));
         }
         jobs.insert(job.id.clone(), job.clone());
         Ok(())

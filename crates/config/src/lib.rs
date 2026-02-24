@@ -6,6 +6,7 @@
 //! Supports `${ENV_VAR}` substitution in all string values.
 
 pub mod env_subst;
+pub mod error;
 pub mod loader;
 pub mod migrate;
 pub mod schema;
@@ -13,6 +14,7 @@ pub mod template;
 pub mod validate;
 
 pub use {
+    error::{Error, Result},
     loader::{
         DEFAULT_SOUL, agents_path, apply_env_overrides, clear_config_dir, clear_data_dir,
         config_dir, data_dir, discover_and_load, find_or_default_config_path,

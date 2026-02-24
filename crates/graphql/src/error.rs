@@ -4,9 +4,9 @@ use moltis_service_traits::ServiceResult;
 
 use crate::scalars::Json;
 
-/// Convert a service error string into an `async_graphql::Error`.
-pub fn gql_err(msg: String) -> async_graphql::Error {
-    async_graphql::Error::new(msg)
+/// Convert a service error into an `async_graphql::Error`.
+pub fn gql_err(error: moltis_service_traits::ServiceError) -> async_graphql::Error {
+    async_graphql::Error::new(error.to_string())
 }
 
 /// Convert a serde_json parse error into an `async_graphql::Error`.

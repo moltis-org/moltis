@@ -6,7 +6,41 @@
 use {async_trait::async_trait, serde_json::Value, tracing::warn};
 
 /// Error type returned by service methods.
-pub type ServiceError = String;
+#[derive(Debug, thiserror::Error)]
+pub enum ServiceError {
+    #[error("{message}")]
+    Message { message: String },
+    #[error("{0}")]
+    Serde(#[from] serde_json::Error),
+}
+
+impl ServiceError {
+    #[must_use]
+    pub fn message(message: impl std::fmt::Display) -> Self {
+        Self::Message {
+            message: message.to_string(),
+        }
+    }
+}
+
+impl From<String> for ServiceError {
+    fn from(value: String) -> Self {
+        Self::message(value)
+    }
+}
+
+impl From<&str> for ServiceError {
+    fn from(value: &str) -> Self {
+        Self::message(value)
+    }
+}
+
+impl From<ServiceError> for moltis_protocol::ErrorShape {
+    fn from(err: ServiceError) -> Self {
+        Self::new(moltis_protocol::error_codes::UNAVAILABLE, err.to_string())
+    }
+}
+
 pub type ServiceResult<T = Value> = Result<T, ServiceError>;
 
 // ── Agent ───────────────────────────────────────────────────────────────────
@@ -436,7 +470,7 @@ impl SttService for NoopSttService {
     }
 
     async fn transcribe(&self, _params: Value) -> ServiceResult {
-        Err("STT not available".to_string())
+        Err("STT not available".into())
     }
 
     async fn transcribe_bytes(
@@ -447,11 +481,11 @@ impl SttService for NoopSttService {
         _language: Option<&str>,
         _prompt: Option<&str>,
     ) -> ServiceResult {
-        Err("STT not available".to_string())
+        Err("STT not available".into())
     }
 
     async fn set_provider(&self, _params: Value) -> ServiceResult {
-        Err("STT not available".to_string())
+        Err("STT not available".into())
     }
 }
 
@@ -1280,6 +1314,6 @@ mod tests {
     #[test]
     fn model_service_not_configured_error_returns_expected_message() {
         let error = model_service_not_configured_error("models.test");
-        assert_eq!(error, "model service not configured");
+        assert_eq!(error.to_string(), "model service not configured");
     }
 }

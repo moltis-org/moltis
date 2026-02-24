@@ -19,6 +19,15 @@ HTTP mode. The key settings are:
 | `MOLTIS_DEPLOY_PLATFORM` | Deploy platform | Hides local-only providers (see below) |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
+```admonish tip
+If requests to your domain are redirected to `:13131`, Moltis TLS is still
+enabled behind a TLS-terminating proxy. Use `--no-tls` (or
+`MOLTIS_NO_TLS=true`).
+
+Only keep Moltis TLS enabled when your proxy talks HTTPS to Moltis (or uses
+TCP TLS passthrough). In that case, set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`.
+```
+
 ```admonish warning
 **Sandbox limitation**: Most cloud providers do not support Docker-in-Docker.
 The sandboxed command execution feature (where the LLM runs shell commands

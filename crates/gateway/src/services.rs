@@ -194,10 +194,10 @@ impl SkillsService for NoopSkillsService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'source' parameter (owner/repo format)".to_string())?;
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         let skills = moltis_skills::install::install_skill(source, &install_dir)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         let installed: Vec<_> = skills
             .iter()
             .map(|m| {
@@ -229,7 +229,7 @@ impl SkillsService for NoopSkillsService {
         };
         let search_paths = FsSkillDiscoverer::default_paths();
         let discoverer = FsSkillDiscoverer::new(search_paths);
-        let skills = discoverer.discover().await.map_err(|e| e.to_string())?;
+        let skills = discoverer.discover().await.map_err(ServiceError::message)?;
         let items: Vec<_> = skills
             .iter()
             .map(|s| {
@@ -263,10 +263,10 @@ impl SkillsService for NoopSkillsService {
             .ok_or_else(|| "missing 'source' parameter".to_string())?;
 
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         moltis_skills::install::remove_repo(source, &install_dir)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         security_audit("skills.remove", serde_json::json!({ "source": source }));
 
@@ -275,15 +275,15 @@ impl SkillsService for NoopSkillsService {
 
     async fn repos_list(&self) -> ServiceResult {
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
+        let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
+            .map_err(ServiceError::message)?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(ServiceError::message)?;
         let (drift_changed, drifted_sources) =
             detect_and_mark_repo_drift(&mut manifest, &install_dir);
         if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
+            store.save(&manifest).map_err(ServiceError::message)?;
         }
 
         let repos: Vec<_> = manifest
@@ -344,15 +344,15 @@ impl SkillsService for NoopSkillsService {
         use moltis_skills::requirements::check_requirements;
 
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
+        let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
+            .map_err(ServiceError::message)?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(ServiceError::message)?;
         let (drift_changed, drifted_sources) =
             detect_and_mark_repo_drift(&mut manifest, &install_dir);
         if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
+            store.save(&manifest).map_err(ServiceError::message)?;
         }
 
         let repos: Vec<_> = manifest
@@ -489,10 +489,10 @@ impl SkillsService for NoopSkillsService {
 
         if let Some(repo_name) = source.strip_prefix("orphan:") {
             let install_dir =
-                moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+                moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
             let dir = install_dir.join(repo_name);
             if dir.exists() {
-                std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+                std::fs::remove_dir_all(&dir).map_err(ServiceError::message)?;
             }
             security_audit(
                 "skills.orphan.remove",
@@ -502,10 +502,10 @@ impl SkillsService for NoopSkillsService {
         }
 
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         moltis_skills::install::remove_repo(source, &install_dir)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         security_audit(
             "skills.repos.remove",
@@ -516,10 +516,10 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn emergency_disable(&self) -> ServiceResult {
-        let manifest_path =
-            moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+        let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
+            .map_err(ServiceError::message)?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(ServiceError::message)?;
 
         let mut disabled = 0_u64;
         for repo in &mut manifest.repos {
@@ -530,7 +530,7 @@ impl SkillsService for NoopSkillsService {
                 skill.enabled = false;
             }
         }
-        store.save(&manifest).map_err(|e| e.to_string())?;
+        store.save(&manifest).map_err(ServiceError::message)?;
 
         security_audit(
             "skills.emergency_disable",
@@ -577,15 +577,15 @@ impl SkillsService for NoopSkillsService {
         }
 
         let install_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
-        let manifest_path =
-            moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
+        let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
+            .map_err(ServiceError::message)?;
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-        let mut manifest = store.load().map_err(|e| e.to_string())?;
+        let mut manifest = store.load().map_err(ServiceError::message)?;
         let (drift_changed, drifted_sources) =
             detect_and_mark_repo_drift(&mut manifest, &install_dir);
         if drift_changed {
-            store.save(&manifest).map_err(|e| e.to_string())?;
+            store.save(&manifest).map_err(ServiceError::message)?;
         }
 
         let repo = manifest
@@ -748,7 +748,7 @@ impl SkillsService for NoopSkillsService {
         // Discover the skill to get its requirements
         let search_paths = FsSkillDiscoverer::default_paths();
         let discoverer = FsSkillDiscoverer::new(search_paths);
-        let skills = discoverer.discover().await.map_err(|e| e.to_string())?;
+        let skills = discoverer.discover().await.map_err(ServiceError::message)?;
 
         let meta = skills
             .iter()
@@ -761,11 +761,12 @@ impl SkillsService for NoopSkillsService {
             .get(index)
             .ok_or_else(|| format!("install option index {index} out of range"))?;
 
-        let command_preview = install_command_preview(spec).map_err(|e| e.to_string())?;
+        let command_preview = install_command_preview(spec).map_err(ServiceError::message)?;
         if !confirm {
             return Err(format!(
                 "dependency install requires explicit confirmation. Re-run with confirm=true after reviewing command: {command_preview}"
-            ));
+            )
+            .into());
         }
 
         if let Some(reason) = risky_install_pattern(&command_preview)
@@ -781,15 +782,13 @@ impl SkillsService for NoopSkillsService {
             );
             return Err(format!(
                 "dependency install blocked as risky ({reason}). Re-run with allow_risky_install=true only after manual review"
-            ));
+            )
+            .into());
         }
 
         let config = moltis_config::discover_and_load();
         if config.tools.exec.sandbox.mode == "off" && !allow_host_install {
-            return Err(
-                "dependency install blocked because sandbox mode is off. Enable sandbox or re-run with allow_host_install=true and confirm=true"
-                    .to_string(),
-            );
+            return Err("dependency install blocked because sandbox mode is off. Enable sandbox or re-run with allow_host_install=true and confirm=true".into());
         }
 
         let mut approval = ApprovalManager::default();
@@ -802,7 +801,7 @@ impl SkillsService for NoopSkillsService {
         match approval
             .check_command(&command_preview)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
         {
             ApprovalAction::Proceed => {},
             // skills.install_dep is an interactive RPC invoked by the user in the UI;
@@ -810,7 +809,7 @@ impl SkillsService for NoopSkillsService {
             ApprovalAction::NeedsApproval => {},
         }
 
-        let result = run_install(spec).await.map_err(|e| e.to_string())?;
+        let result = run_install(spec).await.map_err(ServiceError::message)?;
 
         security_audit(
             "skills.install_dep",
@@ -835,13 +834,14 @@ impl SkillsService for NoopSkillsService {
                 } else {
                     result.stderr
                 }
-            ))
+            )
+            .into())
         }
     }
 
     async fn security_status(&self) -> ServiceResult {
         let installed_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         let mcp_scan_available = command_available("mcp-scan").await;
         let uvx_available = command_available("uvx").await;
         Ok(serde_json::json!({
@@ -855,7 +855,7 @@ impl SkillsService for NoopSkillsService {
 
     async fn security_scan(&self) -> ServiceResult {
         let installed_dir =
-            moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         if !installed_dir.exists() {
             return Ok(serde_json::json!({
                 "ok": true,
@@ -875,7 +875,7 @@ impl SkillsService for NoopSkillsService {
 
         let results = run_mcp_scan(&installed_dir)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         security_audit(
             "skills.security.scan",
             serde_json::json!({ "installed_dir": installed_dir, "status": "ok" }),
@@ -940,13 +940,13 @@ fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
     if is_protected_discovered_skill(skill_name) {
-        return Err(format!(
-            "skill '{skill_name}' is protected and cannot be deleted from the UI"
-        ));
+        return Err(
+            format!("skill '{skill_name}' is protected and cannot be deleted from the UI").into(),
+        );
     }
 
     if !moltis_skills::parse::validate_name(skill_name) {
-        return Err(format!("invalid skill name '{skill_name}'"));
+        return Err(format!("invalid skill name '{skill_name}'").into());
     }
 
     let search_dir = if source_type == "personal" {
@@ -957,7 +957,7 @@ fn delete_discovered_skill(source_type: &str, params: &Value) -> ServiceResult {
 
     let skill_dir = search_dir.join(skill_name);
     if !skill_dir.exists() {
-        return Err(format!("skill '{skill_name}' not found"));
+        return Err(format!("skill '{skill_name}' not found").into());
     }
 
     std::fs::remove_dir_all(&skill_dir)
@@ -1027,21 +1027,23 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
     let manifest_path =
-        moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+        moltis_skills::manifest::ManifestStore::default_path().map_err(ServiceError::message)?;
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-    let mut manifest = store.load().map_err(|e| e.to_string())?;
+    let mut manifest = store.load().map_err(ServiceError::message)?;
 
-    let install_dir = moltis_skills::install::default_install_dir().map_err(|e| e.to_string())?;
+    let install_dir =
+        moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
     let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
     if drift_changed {
-        store.save(&manifest).map_err(|e| e.to_string())?;
+        store.save(&manifest).map_err(ServiceError::message)?;
     }
 
     if enabled {
         if drifted_sources.contains(source) {
             return Err(format!(
                 "skill '{skill_name}' source changed since it was last trusted. Review and run skills.skill.trust before enabling"
-            ));
+            )
+            .into());
         }
 
         let trusted = manifest
@@ -1052,14 +1054,15 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         if !trusted {
             return Err(format!(
                 "skill '{skill_name}' is not trusted. Review it and run skills.skill.trust before enabling"
-            ));
+            )
+            .into());
         }
     }
 
     if !manifest.set_skill_enabled(source, skill_name, enabled) {
-        return Err(format!("skill '{skill_name}' not found in repo '{source}'"));
+        return Err(format!("skill '{skill_name}' not found in repo '{source}'").into());
     }
-    store.save(&manifest).map_err(|e| e.to_string())?;
+    store.save(&manifest).map_err(ServiceError::message)?;
 
     security_audit(
         "skills.skill.toggle",
@@ -1084,19 +1087,19 @@ fn set_skill_trusted(params: &Value, trusted: bool) -> ServiceResult {
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
     let manifest_path =
-        moltis_skills::manifest::ManifestStore::default_path().map_err(|e| e.to_string())?;
+        moltis_skills::manifest::ManifestStore::default_path().map_err(ServiceError::message)?;
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
-    let mut manifest = store.load().map_err(|e| e.to_string())?;
+    let mut manifest = store.load().map_err(ServiceError::message)?;
 
     if !manifest.set_skill_trusted(source, skill_name, trusted) {
-        return Err(format!("skill '{skill_name}' not found in repo '{source}'"));
+        return Err(format!("skill '{skill_name}' not found in repo '{source}'").into());
     }
 
     if !trusted {
         let _ = manifest.set_skill_enabled(source, skill_name, false);
     }
 
-    store.save(&manifest).map_err(|e| e.to_string())?;
+    store.save(&manifest).map_err(ServiceError::message)?;
     security_audit(
         "skills.skill.trust",
         serde_json::json!({
@@ -1145,7 +1148,7 @@ impl BrowserService for RealBrowserService {
 
         let response = self.manager.handle_request(request).await;
 
-        serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))
+        Ok(serde_json::to_value(&response).map_err(|e| format!("serialization error: {e}"))?)
     }
 
     async fn cleanup_idle(&self) {

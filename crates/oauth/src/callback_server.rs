@@ -1,10 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use {
-    anyhow::{Result, bail},
     axum::{Router, extract::Query, response::Html, routing::get},
     tokio::sync::oneshot,
 };
+
+use crate::{Error, Result};
 
 /// Starts a local HTTP server to receive the OAuth callback, then shuts down.
 pub struct CallbackServer;
@@ -40,7 +41,7 @@ impl CallbackServer {
                         }
                         Err(e) => {
                             if let Some(tx) = tx {
-                                let _ = tx.send(Err(anyhow::anyhow!("{e}")));
+                                let _ = tx.send(Err(Error::message(e)));
                             }
                             Html(format!("<h1>Authentication failed</h1><p>{e}</p>"))
                         }
@@ -57,10 +58,10 @@ impl CallbackServer {
                 result?
             }
             _ = server.into_future() => {
-                bail!("server exited unexpectedly")
+                Err(Error::message("server exited unexpectedly"))
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
-                bail!("OAuth callback timed out after 60 seconds")
+                Err(Error::message("OAuth callback timed out after 60 seconds"))
             }
         }
     }

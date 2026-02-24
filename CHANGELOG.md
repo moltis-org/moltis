@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
+- **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
 - `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
 - GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
 - New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
@@ -52,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GraphQL WebSocket upgrade detection now accepts clients that provide `Upgrade`/`Sec-WebSocket-Key` without `Connection: upgrade`
 - GraphQL channel and memory status bridges now return schema-compatible shapes for `channels.status`, `channels.list`, and `memory.status`
 - Provider errors with `insufficient_quota` now surface as explicit quota/billing failures (with the upstream message) instead of generic retrying/rate-limit behavior
+- Linux `aarch64` builds now skip `jemalloc` to prevent startup aborts on 16 KiB page-size kernels (for example Raspberry Pi 5 Debian images)
+- Gateway startup now blocks the common reverse-proxy TLS mismatch (`MOLTIS_BEHIND_PROXY=true` with Moltis TLS enabled) and explains using `--no-tls`; HTTPS-upstream proxy setups can explicitly opt in with `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`
+- WebSocket same-origin checks now accept proxy deployments that rewrite `Host` by using `X-Forwarded-Host` in proxy mode, and treat implicit `:443`/`:80` as equivalent to default ports
 ### Security
 
 ## [0.9.10] - 2026-02-21

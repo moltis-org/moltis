@@ -67,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn device_id_is_stable() -> anyhow::Result<()> {
+    fn device_id_is_stable() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("kimi_device_id");
         let id1 = get_or_create_device_id_at(&path);

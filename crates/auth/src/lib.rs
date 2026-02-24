@@ -14,3 +14,6 @@ pub use {
     locality::{has_proxy_headers, is_local_connection},
     webauthn::{WebAuthnRegistry, WebAuthnState, load_passkeys},
 };
+
+#[cfg(feature = "vault")]
+pub use moltis_vault;

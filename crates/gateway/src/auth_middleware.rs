@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, StatusCode, request::Parts},
 };
 
-#[cfg(feature = "web-ui")]
+#[cfg(any(feature = "web-ui", feature = "vault"))]
 use axum::{
     extract::State,
     middleware::Next,
@@ -156,6 +156,38 @@ fn is_public_path(path: &str) -> bool {
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")
+}
+
+// ── Vault guard ─────────────────────────────────────────────────────────────
+
+/// Middleware that blocks API requests when the vault is sealed.
+///
+/// Returns 423 Locked for API endpoints (except auth and gon) when the vault
+/// is in `Sealed` state. `Uninitialized` is not blocked — the vault doesn't
+/// exist yet and there's nothing to protect.
+#[cfg(feature = "vault")]
+pub async fn vault_guard(
+    State(state): State<super::server::AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> axum::response::Response {
+    let Some(ref vault) = state.gateway.vault else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    // Allow auth, gon, and non-API routes through.
+    if !path.starts_with("/api/") || path.starts_with("/api/auth/") || path == "/api/gon" {
+        return next.run(request).await;
+    }
+    // Only block when Sealed (not Uninitialized).
+    if matches!(vault.status().await, Ok(moltis_vault::VaultStatus::Sealed)) {
+        return (
+            StatusCode::LOCKED,
+            Json(serde_json::json!({"error": "vault is sealed", "status": "sealed"})),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 // ── AuthSession extractor ───────────────────────────────────────────────────

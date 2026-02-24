@@ -23,6 +23,12 @@ pub struct AgentIdentity {
 #[derive(Debug, Clone)]
 pub struct Timezone(pub chrono_tz::Tz);
 
+#[derive(Debug, thiserror::Error)]
+#[error("unknown IANA timezone: {value}")]
+pub struct TimezoneParseError {
+    value: String,
+}
+
 impl Timezone {
     /// The IANA name, e.g. `"Europe/Paris"`.
     #[must_use]
@@ -44,12 +50,14 @@ impl std::fmt::Display for Timezone {
 }
 
 impl std::str::FromStr for Timezone {
-    type Err = String;
+    type Err = TimezoneParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.parse::<chrono_tz::Tz>()
             .map(Self)
-            .map_err(|_| format!("unknown IANA timezone: {s}"))
+            .map_err(|_| TimezoneParseError {
+                value: s.to_string(),
+            })
     }
 }
 
@@ -68,9 +76,7 @@ impl Serialize for Timezone {
 impl<'de> Deserialize<'de> for Timezone {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        s.parse::<chrono_tz::Tz>()
-            .map(Self)
-            .map_err(serde::de::Error::custom)
+        s.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 

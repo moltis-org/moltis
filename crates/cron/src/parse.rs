@@ -1,6 +1,6 @@
 //! Parsing utilities for durations and absolute timestamps.
 
-use anyhow::{Result, bail};
+use crate::{Error, Result};
 
 /// Parse a human-friendly duration string into milliseconds.
 ///
@@ -9,20 +9,24 @@ use anyhow::{Result, bail};
 pub fn parse_duration_ms(input: &str) -> Result<u64> {
     let input = input.trim();
     if input.is_empty() {
-        bail!("empty duration string");
+        return Err(Error::message("empty duration string"));
     }
 
     let (num_str, suffix) = match input.find(|c: char| c.is_alphabetic()) {
         Some(i) => (&input[..i], &input[i..]),
-        None => bail!("duration missing unit suffix (s/m/h/d): {input}"),
+        None => {
+            return Err(Error::message(format!(
+                "duration missing unit suffix (s/m/h/d): {input}"
+            )));
+        },
     };
 
     let value: u64 = num_str
         .parse()
-        .map_err(|_| anyhow::anyhow!("invalid number in duration: {num_str}"))?;
+        .map_err(|_| Error::message(format!("invalid number in duration: {num_str}")))?;
 
     if value == 0 {
-        bail!("duration must be > 0");
+        return Err(Error::message("duration must be > 0"));
     }
 
     let ms = match suffix {
@@ -30,7 +34,11 @@ pub fn parse_duration_ms(input: &str) -> Result<u64> {
         "m" => value * 60_000,
         "h" => value * 3_600_000,
         "d" => value * 86_400_000,
-        _ => bail!("unknown duration suffix: {suffix} (expected s/m/h/d)"),
+        _ => {
+            return Err(Error::message(format!(
+                "unknown duration suffix: {suffix} (expected s/m/h/d)"
+            )));
+        },
     };
 
     Ok(ms)
@@ -42,13 +50,13 @@ pub fn parse_duration_ms(input: &str) -> Result<u64> {
 pub fn parse_absolute_time_ms(input: &str) -> Result<u64> {
     use chrono::{DateTime, Utc};
 
-    let dt: DateTime<Utc> = input
-        .parse::<DateTime<Utc>>()
-        .map_err(|e| anyhow::anyhow!("invalid ISO 8601 timestamp: {e}"))?;
+    let dt: DateTime<Utc> = input.parse::<DateTime<Utc>>().map_err(|source| {
+        Error::external(format!("invalid ISO 8601 timestamp: {source}"), source)
+    })?;
 
     let ms = dt.timestamp_millis();
     if ms < 0 {
-        bail!("timestamp is before epoch");
+        return Err(Error::message("timestamp is before epoch"));
     }
     Ok(ms as u64)
 }

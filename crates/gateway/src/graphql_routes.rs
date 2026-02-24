@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use {
-    async_graphql::http::GraphiQLSource,
+    async_graphql::http::{GraphiQLPlugin, GraphiQLSource},
     axum::{
         Json,
         extract::{FromRequestParts, Request, State, WebSocketUpgrade},
@@ -17,7 +17,7 @@ use {
     serde_json::Value,
 };
 
-use crate::{server::AppState, state::GatewayState};
+use crate::{server::AppState, services::ServiceResult, state::GatewayState};
 
 /// `SystemInfoService` implementation backed by the gateway's live state.
 ///
@@ -29,7 +29,7 @@ pub struct GatewaySystemInfoService {
 
 #[async_trait::async_trait]
 impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
-    async fn health(&self) -> Result<Value, String> {
+    async fn health(&self) -> ServiceResult {
         let count = self.state.client_count().await;
         Ok(serde_json::json!({
             "ok": true,
@@ -37,7 +37,7 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         }))
     }
 
-    async fn status(&self) -> Result<Value, String> {
+    async fn status(&self) -> ServiceResult {
         let inner = self.state.inner.read().await;
         Ok(serde_json::json!({
             "hostname": self.state.hostname,
@@ -47,7 +47,7 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         }))
     }
 
-    async fn system_presence(&self) -> Result<Value, String> {
+    async fn system_presence(&self) -> ServiceResult {
         let inner = self.state.inner.read().await;
         let clients: Vec<_> = inner
             .clients
@@ -77,7 +77,7 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         Ok(serde_json::json!({ "clients": clients, "nodes": nodes }))
     }
 
-    async fn node_list(&self) -> Result<Value, String> {
+    async fn node_list(&self) -> ServiceResult {
         let inner = self.state.inner.read().await;
         let nodes: Vec<_> = inner
             .nodes
@@ -96,7 +96,7 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         Ok(serde_json::json!(nodes))
     }
 
-    async fn node_describe(&self, params: Value) -> Result<Value, String> {
+    async fn node_describe(&self, params: Value) -> ServiceResult {
         let node_id = params
             .get("nodeId")
             .and_then(|v| v.as_str())
@@ -120,7 +120,7 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         }))
     }
 
-    async fn hooks_list(&self) -> Result<Value, String> {
+    async fn hooks_list(&self) -> ServiceResult {
         let inner = self.state.inner.read().await;
         let hooks: Vec<_> = inner
             .discovered_hooks
@@ -143,12 +143,12 @@ impl moltis_service_traits::SystemInfoService for GatewaySystemInfoService {
         Ok(serde_json::json!(hooks))
     }
 
-    async fn heartbeat_status(&self) -> Result<Value, String> {
+    async fn heartbeat_status(&self) -> ServiceResult {
         let inner = self.state.inner.read().await;
         Ok(serde_json::json!({ "config": inner.heartbeat_config }))
     }
 
-    async fn heartbeat_runs(&self, _params: Value) -> Result<Value, String> {
+    async fn heartbeat_runs(&self, _params: Value) -> ServiceResult {
         Ok(serde_json::json!([]))
     }
 }
@@ -212,10 +212,80 @@ fn graphql_ws_response(
 }
 
 fn graphiql_response() -> Response {
+    let asset_guard_plugin = GraphiQLPlugin {
+        name: "MoltisGraphiQLAssetGuard",
+        constructor: "",
+        head_assets: Some(
+            r##"<script>
+  (function () {
+    function fallbackUi() {
+      if (window.React && window.React.createElement) {
+        return window.React.createElement(
+          "div",
+          {
+            style: {
+              padding: "1rem",
+              fontFamily: "system-ui, sans-serif",
+              color: "#666"
+            }
+          },
+          "GraphiQL assets failed to load. Check network access and reload."
+        );
+      }
+      return null;
+    }
+
+    if (!window.React) {
+      window.React = {
+        createElement: function () {
+          return null;
+        }
+      };
+    }
+
+    if (!window.GraphiQL) {
+      function GraphiQLFallback() {
+        return fallbackUi();
+      }
+      GraphiQLFallback.createFetcher = function () {
+        return function () {
+          return Promise.resolve();
+        };
+      };
+      window.GraphiQL = GraphiQLFallback;
+    }
+
+    if (!window.ReactDOM) {
+      window.ReactDOM = {
+        createRoot: function () {
+          return {
+            render: function () {
+              var root = document.getElementById("graphiql");
+              if (root) {
+                root.textContent = "GraphiQL assets failed to load. Check network access and reload.";
+                root.style.padding = "1rem";
+                root.style.fontFamily = "system-ui, sans-serif";
+                root.style.color = "#666";
+              }
+            }
+          };
+        }
+      };
+    }
+  })();
+</script>"##,
+        ),
+        body_assets: None,
+        pre_configs: None,
+        props: None,
+    };
+    let plugins = [asset_guard_plugin];
+
     Html(
         GraphiQLSource::build()
             .endpoint("/graphql")
             .subscription_endpoint("/graphql")
+            .plugins(&plugins)
             .finish(),
     )
     .into_response()

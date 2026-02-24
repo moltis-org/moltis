@@ -11,7 +11,7 @@ use {
     moltis_mcp::tool_bridge::{McpAgentTool, McpToolBridge},
 };
 
-use crate::services::{McpService, ServiceResult};
+use crate::services::{McpService, ServiceError, ServiceResult};
 
 // ── McpToolAdapter: bridge McpAgentTool → AgentTool ─────────────────────────
 
@@ -34,7 +34,9 @@ impl AgentTool for McpToolAdapter {
     }
 
     async fn execute(&self, params: Value) -> Result<Value> {
-        McpAgentTool::execute(&self.0, params).await
+        McpAgentTool::execute(&self.0, params)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 
@@ -74,7 +76,7 @@ pub async fn sync_mcp_tools(
 fn parse_server_config(
     params: &Value,
     existing: Option<&moltis_mcp::McpServerConfig>,
-) -> Result<moltis_mcp::McpServerConfig, String> {
+) -> Result<moltis_mcp::McpServerConfig, ServiceError> {
     let transport = match params.get("transport").and_then(|v| v.as_str()) {
         Some("sse") => moltis_mcp::TransportType::Sse,
         Some(_) => moltis_mcp::TransportType::Stdio,
@@ -91,7 +93,7 @@ fn parse_server_config(
         .unwrap_or_default();
 
     if matches!(transport, moltis_mcp::TransportType::Stdio) && command.trim().is_empty() {
-        return Err("missing 'command' parameter".to_string());
+        return Err(ServiceError::message("missing 'command' parameter"));
     }
 
     let args: Vec<String> = if params.get("args").is_some() {
@@ -133,7 +135,9 @@ fn parse_server_config(
             .as_deref()
             .is_none_or(|candidate| candidate.trim().is_empty())
     {
-        return Err("missing 'url' parameter for 'sse' transport".to_string());
+        return Err(ServiceError::message(
+            "missing 'url' parameter for 'sse' transport",
+        ));
     }
 
     let oauth = if let Some(v) = params.get("oauth") {
@@ -143,17 +147,17 @@ fn parse_server_config(
             let client_id = v
                 .get("client_id")
                 .and_then(|val| val.as_str())
-                .ok_or_else(|| "missing 'oauth.client_id' parameter".to_string())?
+                .ok_or_else(|| ServiceError::message("missing 'oauth.client_id' parameter"))?
                 .to_string();
             let auth_url = v
                 .get("auth_url")
                 .and_then(|val| val.as_str())
-                .ok_or_else(|| "missing 'oauth.auth_url' parameter".to_string())?
+                .ok_or_else(|| ServiceError::message("missing 'oauth.auth_url' parameter"))?
                 .to_string();
             let token_url = v
                 .get("token_url")
                 .and_then(|val| val.as_str())
-                .ok_or_else(|| "missing 'oauth.token_url' parameter".to_string())?
+                .ok_or_else(|| ServiceError::message("missing 'oauth.token_url' parameter"))?
                 .to_string();
             let scopes: Vec<String> = v
                 .get("scopes")
@@ -223,7 +227,7 @@ impl LiveMcpService {
 impl McpService for LiveMcpService {
     async fn list(&self) -> ServiceResult {
         let statuses = self.manager.status_all().await;
-        serde_json::to_value(&statuses).map_err(|e| e.to_string())
+        Ok(serde_json::to_value(&statuses)?)
     }
 
     async fn add(&self, params: Value) -> ServiceResult {
@@ -262,15 +266,16 @@ impl McpService for LiveMcpService {
                 Ok(serde_json::json!({ "ok": true, "name": final_name }))
             },
             Err(e) => {
-                if let Some(moltis_mcp::McpManagerError::OAuthRequired { .. }) =
-                    e.downcast_ref::<moltis_mcp::McpManagerError>()
-                {
+                if matches!(
+                    e,
+                    moltis_mcp::Error::Manager(moltis_mcp::McpManagerError::OAuthRequired { .. })
+                ) {
                     if let Some(uri) = redirect_uri {
                         let auth_url = self
                             .manager
                             .oauth_start_server(&final_name, &uri)
                             .await
-                            .map_err(|error| error.to_string())?;
+                            .map_err(ServiceError::message)?;
                         Ok(serde_json::json!({
                             "ok": true,
                             "name": final_name,
@@ -285,7 +290,7 @@ impl McpService for LiveMcpService {
                         }))
                     }
                 } else {
-                    Err(e.to_string())
+                    Err(ServiceError::message(e))
                 }
             },
         }
@@ -301,7 +306,7 @@ impl McpService for LiveMcpService {
             .manager
             .remove_server(name)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.sync_tools_if_ready().await;
 
@@ -326,15 +331,16 @@ impl McpService for LiveMcpService {
                 Ok(serde_json::json!({ "enabled": true }))
             },
             Err(e) => {
-                if let Some(moltis_mcp::McpManagerError::OAuthRequired { .. }) =
-                    e.downcast_ref::<moltis_mcp::McpManagerError>()
-                {
+                if matches!(
+                    e,
+                    moltis_mcp::Error::Manager(moltis_mcp::McpManagerError::OAuthRequired { .. })
+                ) {
                     if let Some(uri) = redirect_uri {
                         let auth_url = self
                             .manager
                             .oauth_start_server(name, &uri)
                             .await
-                            .map_err(|error| error.to_string())?;
+                            .map_err(ServiceError::message)?;
                         Ok(serde_json::json!({
                             "enabled": false,
                             "oauthPending": true,
@@ -347,7 +353,7 @@ impl McpService for LiveMcpService {
                         }))
                     }
                 } else {
-                    Err(e.to_string())
+                    Err(ServiceError::message(e))
                 }
             },
         }
@@ -363,7 +369,7 @@ impl McpService for LiveMcpService {
             .manager
             .disable_server(name)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.sync_tools_if_ready().await;
 
@@ -377,8 +383,8 @@ impl McpService for LiveMcpService {
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
 
         match self.manager.status(name).await {
-            Some(s) => serde_json::to_value(&s).map_err(|e| e.to_string()),
-            None => Err(format!("MCP server '{name}' not found")),
+            Some(s) => Ok(serde_json::to_value(&s)?),
+            None => Err(format!("MCP server '{name}' not found").into()),
         }
     }
 
@@ -389,8 +395,8 @@ impl McpService for LiveMcpService {
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
 
         match self.manager.server_tools(name).await {
-            Some(tools) => serde_json::to_value(&tools).map_err(|e| e.to_string()),
-            None => Err(format!("MCP server '{name}' not found or not running")),
+            Some(tools) => Ok(serde_json::to_value(&tools)?),
+            None => Err(format!("MCP server '{name}' not found or not running").into()),
         }
     }
 
@@ -403,7 +409,7 @@ impl McpService for LiveMcpService {
         self.manager
             .restart_server(name)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.sync_tools_if_ready().await;
 
@@ -428,7 +434,7 @@ impl McpService for LiveMcpService {
         self.manager
             .update_server(name, config)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.sync_tools_if_ready().await;
 
@@ -451,7 +457,7 @@ impl McpService for LiveMcpService {
             .manager
             .reauth_server(name, redirect_uri)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         Ok(serde_json::json!({
             "ok": true,
@@ -476,7 +482,7 @@ impl McpService for LiveMcpService {
             .manager
             .oauth_start_server(name, redirect_uri)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         Ok(serde_json::json!({
             "ok": true,
@@ -499,7 +505,7 @@ impl McpService for LiveMcpService {
             .manager
             .oauth_complete_callback(state, code)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.sync_tools_if_ready().await;
 
@@ -548,7 +554,10 @@ mod tests {
         )
         .err();
 
-        assert_eq!(err.as_deref(), Some("missing 'command' parameter"));
+        assert_eq!(
+            err.as_ref().map(ToString::to_string).as_deref(),
+            Some("missing 'command' parameter")
+        );
     }
 
     #[test]
@@ -562,7 +571,7 @@ mod tests {
         .err();
 
         assert_eq!(
-            err.as_deref(),
+            err.as_ref().map(ToString::to_string).as_deref(),
             Some("missing 'url' parameter for 'sse' transport")
         );
     }

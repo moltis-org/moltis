@@ -5,7 +5,6 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     secrecy::ExposeSecret,
     teloxide::prelude::Requester,
@@ -13,7 +12,7 @@ use {
 };
 
 use moltis_channels::{
-    ChannelEventSink,
+    ChannelEventSink, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
     plugin::{
         ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus, ChannelStreamOutbound,
@@ -92,14 +91,18 @@ impl TelegramPlugin {
     /// Update the in-memory config for an account without restarting the
     /// polling loop.  Use for allowlist changes that don't need
     /// re-authentication or bot restart.
-    pub fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    pub fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let tg_config: TelegramAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
             state.config = tg_config;
             Ok(())
         } else {
-            Err(anyhow::anyhow!("account not found: {account_id}"))
+            Err(ChannelError::unknown_account(account_id))
         }
     }
 
@@ -132,11 +135,17 @@ impl ChannelPlugin for TelegramPlugin {
         "Telegram"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let tg_config: TelegramAccountConfig = serde_json::from_value(config)?;
 
         if tg_config.token.expose_secret().is_empty() {
-            return Err(anyhow::anyhow!("telegram bot token is required"));
+            return Err(ChannelError::invalid_input(
+                "telegram bot token is required",
+            ));
         }
 
         info!(account_id, "starting telegram account");
@@ -148,12 +157,13 @@ impl ChannelPlugin for TelegramPlugin {
             self.message_log.clone(),
             self.event_sink.clone(),
         )
-        .await?;
+        .await
+        .map_err(|e| ChannelError::unavailable(format!("start telegram polling: {e}")))?;
 
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let cancel = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.cancel.clone())
@@ -182,7 +192,7 @@ impl ChannelPlugin for TelegramPlugin {
 
 #[async_trait]
 impl ChannelStatus for TelegramPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
         // Return cached result if fresh enough.
         if let Ok(cache) = self.probe_cache.read()
             && let Some((snap, ts)) = cache.get(account_id)

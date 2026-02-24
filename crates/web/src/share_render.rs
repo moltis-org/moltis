@@ -25,7 +25,7 @@ pub fn render_share_html(
     visibility: ShareVisibility,
     view_count: u64,
     share_image_url: &str,
-) -> anyhow::Result<String> {
+) -> crate::Result<String> {
     let meta = build_session_share_meta(identity, snapshot);
     let messages = map_share_message_views(snapshot, identity);
     let assistant_name = identity_name(identity).to_owned();
@@ -56,9 +56,11 @@ pub fn render_share_html(
         messages: &messages,
     };
 
-    template
-        .render()
-        .map_err(|e| anyhow::anyhow!("failed to render share template for {share_id}: {e}"))
+    template.render().map_err(|e| {
+        crate::Error::message(format!(
+            "failed to render share template for {share_id}: {e}"
+        ))
+    })
 }
 
 /// Render the OG social-image SVG for a share.
@@ -609,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn render_share_html_produces_valid_output() -> anyhow::Result<()> {
+    fn render_share_html_produces_valid_output() -> crate::Result<()> {
         let snapshot = minimal_snapshot();
         let identity = default_identity();
         let html = render_share_html(

@@ -1,3 +1,5 @@
+#[cfg(feature = "vault")]
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use {
@@ -12,6 +14,9 @@ use {
     sha2::{Digest, Sha256},
     sqlx::SqlitePool,
 };
+
+#[cfg(feature = "vault")]
+use moltis_vault::Vault;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +79,7 @@ pub struct EnvVarEntry {
     pub key: String,
     pub created_at: String,
     pub updated_at: String,
+    pub encrypted: bool,
 }
 
 // ── Credential store ─────────────────────────────────────────────────────────
@@ -85,6 +91,9 @@ pub struct CredentialStore {
     /// When true, auth has been explicitly disabled via "remove all auth".
     /// The middleware and status endpoint treat this as "no auth configured".
     auth_disabled: AtomicBool,
+    /// Encryption-at-rest vault for environment variables.
+    #[cfg(feature = "vault")]
+    vault: Option<Arc<Vault>>,
 }
 
 impl CredentialStore {
@@ -112,6 +121,39 @@ impl CredentialStore {
             pool,
             setup_complete: AtomicBool::new(false),
             auth_disabled: AtomicBool::new(false),
+            #[cfg(feature = "vault")]
+            vault: None,
+        };
+        store.init().await?;
+        let has = store.has_password().await? || store.has_passkeys().await?;
+        store.setup_complete.store(has, Ordering::Relaxed);
+        sqlx::query(
+            "INSERT OR IGNORE INTO auth_state (id, auth_disabled, updated_at) VALUES (1, ?, datetime('now'))",
+        )
+        .bind(if auth_config.disabled { 1_i64 } else { 0_i64 })
+        .execute(&store.pool)
+        .await?;
+        let db_disabled: Option<(i64,)> =
+            sqlx::query_as("SELECT auth_disabled FROM auth_state WHERE id = 1")
+                .fetch_optional(&store.pool)
+                .await?;
+        let disabled = db_disabled.map_or(auth_config.disabled, |(value,)| value != 0);
+        store.auth_disabled.store(disabled, Ordering::Relaxed);
+        Ok(store)
+    }
+
+    /// Create a new store with vault support for encrypting environment variables.
+    #[cfg(feature = "vault")]
+    pub async fn with_vault(
+        pool: SqlitePool,
+        auth_config: &moltis_config::AuthConfig,
+        vault: Option<Arc<Vault>>,
+    ) -> anyhow::Result<Self> {
+        let store = Self {
+            pool,
+            setup_complete: AtomicBool::new(false),
+            auth_disabled: AtomicBool::new(false),
+            vault,
         };
         store.init().await?;
         let has = store.has_password().await? || store.has_passkeys().await?;
@@ -191,6 +233,7 @@ impl CredentialStore {
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 key        TEXT    NOT NULL UNIQUE,
                 value      TEXT    NOT NULL,
+                encrypted  INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT    NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
             )",
@@ -486,30 +529,52 @@ impl CredentialStore {
 
     /// List all environment variables (names only, no values).
     pub async fn list_env_vars(&self) -> anyhow::Result<Vec<EnvVarEntry>> {
-        let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
-            "SELECT id, key, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), strftime('%Y-%m-%dT%H:%M:%SZ', updated_at) FROM env_variables ORDER BY key ASC",
+        let rows: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
+            "SELECT id, key, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), strftime('%Y-%m-%dT%H:%M:%SZ', updated_at), COALESCE(encrypted, 0) FROM env_variables ORDER BY key ASC",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, key, created_at, updated_at)| EnvVarEntry {
+            .map(|(id, key, created_at, updated_at, encrypted)| EnvVarEntry {
                 id,
                 key,
                 created_at,
                 updated_at,
+                encrypted: encrypted != 0,
             })
             .collect())
     }
 
     /// Set (upsert) an environment variable.
+    ///
+    /// When the vault feature is enabled and the vault is unsealed, the value
+    /// is encrypted before storage and `encrypted` is set to `1`.
     pub async fn set_env_var(&self, key: &str, value: &str) -> anyhow::Result<i64> {
+        #[cfg(feature = "vault")]
+        let (store_value, encrypted) = {
+            if let Some(ref vault) = self.vault {
+                if vault.is_unsealed().await {
+                    let aad = format!("env:{key}");
+                    let enc = vault.encrypt_string(value, &aad).await?;
+                    (enc, 1_i64)
+                } else {
+                    (value.to_owned(), 0_i64)
+                }
+            } else {
+                (value.to_owned(), 0_i64)
+            }
+        };
+        #[cfg(not(feature = "vault"))]
+        let (store_value, encrypted) = (value.to_owned(), 0_i64);
+
         let result = sqlx::query(
-            "INSERT INTO env_variables (key, value) VALUES (?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+            "INSERT INTO env_variables (key, value, encrypted) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, encrypted = excluded.encrypted, updated_at = datetime('now')",
         )
         .bind(key)
-        .bind(value)
+        .bind(&store_value)
+        .bind(encrypted)
         .execute(&self.pool)
         .await?;
         Ok(result.last_insert_rowid())
@@ -529,12 +594,44 @@ impl CredentialStore {
     }
 
     /// Get all environment variable key-value pairs (internal use for sandbox injection).
+    ///
+    /// When the vault feature is enabled, rows with `encrypted=1` are decrypted
+    /// using the vault. Rows that fail decryption are skipped with a warning.
     pub async fn get_all_env_values(&self) -> anyhow::Result<Vec<(String, String)>> {
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT key, value FROM env_variables ORDER BY key ASC")
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows)
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+            "SELECT key, value, COALESCE(encrypted, 0) FROM env_variables ORDER BY key ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for (key, value, encrypted) in rows {
+            #[cfg(feature = "vault")]
+            let plaintext = {
+                if encrypted != 0 {
+                    if let Some(ref vault) = self.vault {
+                        let aad = format!("env:{key}");
+                        match vault.decrypt_string(&value, &aad).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!(key = %key, error = %e, "failed to decrypt env var, skipping");
+                                continue;
+                            },
+                        }
+                    } else {
+                        tracing::warn!(key = %key, "encrypted env var but no vault available, skipping");
+                        continue;
+                    }
+                } else {
+                    value
+                }
+            };
+            #[cfg(not(feature = "vault"))]
+            let plaintext = value;
+
+            result.push((key, plaintext));
+        }
+        Ok(result)
     }
 
     // ── Reset (remove all auth) ─────────────────────────────────────────
@@ -559,6 +656,19 @@ impl CredentialStore {
         self.auth_disabled.store(true, Ordering::Relaxed);
         self.persist_auth_disabled(true).await?;
         Ok(())
+    }
+
+    // ── Vault accessors ────────────────────────────────────────────────
+
+    /// Get a reference to the vault (if configured).
+    #[cfg(feature = "vault")]
+    pub fn vault(&self) -> Option<&Arc<Vault>> {
+        self.vault.as_ref()
+    }
+
+    /// Get a reference to the underlying database pool.
+    pub fn db_pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     // ── Passkeys ─────────────────────────────────────────────────────────
@@ -1036,6 +1146,7 @@ mod tests {
         let vars = store.list_env_vars().await.unwrap();
         assert_eq!(vars.len(), 1);
         assert_eq!(vars[0].key, "MY_KEY");
+        assert!(!vars[0].encrypted);
 
         // Values returned by get_all_env_values.
         let values = store.get_all_env_values().await.unwrap();
@@ -1225,5 +1336,84 @@ mod tests {
         assert!(!store.has_passkeys().await.unwrap());
         assert!(store.has_password().await.unwrap());
         assert!(store.is_setup_complete());
+    }
+
+    // ── Vault integration tests ─────────────────────────────────────────
+
+    /// Helper to create a vault-enabled credential store for tests.
+    #[cfg(feature = "vault")]
+    async fn vault_store(password: &str) -> (CredentialStore, Arc<Vault>) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // Run vault migrations first.
+        moltis_vault::run_migrations(&pool).await.unwrap();
+        let vault = Vault::new(pool.clone()).await.unwrap();
+        vault.initialize(password).await.unwrap();
+        let vault = Arc::new(vault);
+        let store = CredentialStore::with_vault(
+            pool,
+            &moltis_config::AuthConfig::default(),
+            Some(vault.clone()),
+        )
+        .await
+        .unwrap();
+        (store, vault)
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn test_env_var_encryption_when_vault_unsealed() {
+        let (store, _vault) = vault_store("testpass123").await;
+
+        store.set_env_var("SECRET_KEY", "hunter2").await.unwrap();
+
+        // The stored value should be encrypted (not plaintext).
+        let row: (String, i64) =
+            sqlx::query_as("SELECT value, encrypted FROM env_variables WHERE key = 'SECRET_KEY'")
+                .fetch_one(store.db_pool())
+                .await
+                .unwrap();
+        assert_eq!(row.1, 1, "encrypted flag should be 1");
+        assert_ne!(row.0, "hunter2", "stored value should be encrypted");
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn test_env_var_plaintext_when_vault_sealed() {
+        let (store, vault) = vault_store("testpass123").await;
+
+        // Seal the vault.
+        vault.seal().await;
+
+        store.set_env_var("PLAIN_KEY", "visible").await.unwrap();
+
+        // The stored value should be plaintext.
+        let row: (String, i64) =
+            sqlx::query_as("SELECT value, encrypted FROM env_variables WHERE key = 'PLAIN_KEY'")
+                .fetch_one(store.db_pool())
+                .await
+                .unwrap();
+        assert_eq!(row.1, 0, "encrypted flag should be 0");
+        assert_eq!(row.0, "visible", "stored value should be plaintext");
+    }
+
+    #[cfg(feature = "vault")]
+    #[tokio::test]
+    async fn test_env_var_decrypt_round_trip() {
+        let (store, _vault) = vault_store("testpass123").await;
+
+        store.set_env_var("API_TOKEN", "sk-abc123").await.unwrap();
+        store
+            .set_env_var("WEBHOOK_URL", "https://example.com/hook")
+            .await
+            .unwrap();
+
+        let values = store.get_all_env_values().await.unwrap();
+        assert_eq!(values.len(), 2);
+        // Values are sorted by key ASC.
+        assert_eq!(values[0], ("API_TOKEN".into(), "sk-abc123".into()));
+        assert_eq!(
+            values[1],
+            ("WEBHOOK_URL".into(), "https://example.com/hook".into())
+        );
     }
 }
