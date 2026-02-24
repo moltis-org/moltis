@@ -12,6 +12,13 @@ var identity = gon.identity || null;
 
 // Set page branding from identity.
 document.title = formatLoginTitle(identity);
+showVaultBanner(gon.vault_status);
+
+function showVaultBanner(status) {
+	var el = document.getElementById("vaultBanner");
+	if (!el) return;
+	el.style.display = status === "sealed" ? "" : "none";
+}
 
 async function parseLoginFailure(response) {
 	if (response.status === 429) {

@@ -70,6 +70,8 @@ pub(crate) struct GonData {
     sandbox: SandboxGonInfo,
     routes: SpaRoutes,
     started_at: u64,
+    #[cfg(feature = "vault")]
+    vault_status: String,
 }
 
 #[derive(serde::Serialize)]
@@ -312,6 +314,17 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         sandbox,
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
+        #[cfg(feature = "vault")]
+        vault_status: {
+            if let Some(ref vault) = gw.vault {
+                match vault.status().await {
+                    Ok(s) => format!("{s:?}").to_lowercase(),
+                    Err(_) => "error".to_owned(),
+                }
+            } else {
+                "disabled".to_owned()
+            }
+        },
     }
 }
 

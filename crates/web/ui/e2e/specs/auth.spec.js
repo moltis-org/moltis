@@ -110,7 +110,7 @@ test.describe("Authentication", () => {
 
 		await page.goto("/settings/security");
 		await expectPageContentMounted(page);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		await expect(page.locator("#logoutBtn")).toBeHidden();
 		await expect(page.getByText("Localhost bypass is active.", { exact: false })).toBeVisible();
 		await expect(page.getByText("Sign out has no effect.", { exact: false })).toBeVisible();
@@ -159,7 +159,7 @@ test.describe("Authentication", () => {
 		}
 
 		await expectPageContentMounted(page);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -211,7 +211,7 @@ test.describe("Authentication", () => {
 		await page.goto("/settings/security");
 		await expectPageContentMounted(page);
 		await expect(page).toHaveURL(/\/settings\/security$/);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 		await expect(
 			page.getByText("Localhost-only access is safe, but localhost bypass is active.", { exact: false }),
 		).toBeVisible();
@@ -223,7 +223,7 @@ test.describe("Authentication", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("setting password after reset reloads and routes to login", async ({ page }) => {
+	test("setting password after reset shows recovery key before login", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.addInitScript(() => {
 			if (localStorage.getItem("__e2eCredentialSet") === null) {
@@ -270,7 +270,7 @@ test.describe("Authentication", () => {
 				if (url.endsWith("/api/auth/password/change")) {
 					localStorage.setItem("__e2eCredentialSet", "1");
 					return Promise.resolve(
-						new Response(JSON.stringify({ ok: true }), {
+						new Response(JSON.stringify({ ok: true, recovery_key: "test-recovery-key-1234" }), {
 							status: 200,
 							headers: { "Content-Type": "application/json" },
 						}),
@@ -301,12 +301,16 @@ test.describe("Authentication", () => {
 
 		await page.goto("/settings/security");
 		await expectPageContentMounted(page);
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: /Authentication|Security/ })).toBeVisible();
 		var passwordForm = page.locator("form").first();
 		var passwordInputs = passwordForm.locator("input[type='password']");
 		await passwordInputs.first().fill("testpass123");
 		await passwordInputs.nth(1).fill("testpass123");
 		await passwordForm.getByRole("button", { name: "Set password" }).click();
+		await expect(page.getByText("Vault initialized — save this recovery key", { exact: true })).toBeVisible();
+		await expect(page.locator("code.select-all")).toContainText("test-recovery-key-1234");
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/settings/security");
+		await page.getByRole("button", { name: "Continue to sign in", exact: true }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/login");
 		expect(pageErrors).toEqual([]);
 	});
@@ -490,6 +494,33 @@ test.describe("Login page", () => {
 		await page.goto("/login");
 		await expect(page.locator(".auth-subtitle")).toContainText("Sign in to continue");
 
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("login page shows sealed vault banner when vault is locked", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockAuthStatus(page);
+		await page.addInitScript(() => {
+			Object.defineProperty(window, "__MOLTIS__", {
+				configurable: true,
+				set(value) {
+					var next = value || {};
+					next.vault_status = "sealed";
+					Object.defineProperty(window, "__MOLTIS__", {
+						value: next,
+						writable: true,
+						configurable: true,
+					});
+				},
+				get() {
+					return undefined;
+				},
+			});
+		});
+
+		await page.goto("/login");
+		await expect(page.locator("#vaultBanner")).toBeVisible();
+		await expect(page.locator("#vaultBanner")).toContainText("Your encryption vault is locked.");
 		expect(pageErrors).toEqual([]);
 	});
 

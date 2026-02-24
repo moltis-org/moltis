@@ -78,6 +78,22 @@ pub fn auth_router() -> axum::Router<AuthState> {
             post(setup_passkey_register_finish_handler),
         )
         .route("/reset", post(reset_auth_handler))
+        // Vault endpoints (encryption-at-rest).
+        .merge(vault_routes())
+}
+
+/// Build vault-specific routes (no-op when vault feature is disabled).
+#[cfg(feature = "vault")]
+fn vault_routes() -> axum::Router<AuthState> {
+    axum::Router::new()
+        .route("/vault/status", get(vault_status_handler))
+        .route("/vault/unlock", post(vault_unlock_handler))
+        .route("/vault/recovery", post(vault_recovery_handler))
+}
+
+#[cfg(not(feature = "vault"))]
+fn vault_routes() -> axum::Router<AuthState> {
+    axum::Router::new()
 }
 
 // ── Status ───────────────────────────────────────────────────────────────────
@@ -180,6 +196,32 @@ async fn setup_handler(
         }
     }
 
+    // Initialize the vault when a password was set.
+    #[cfg(feature = "vault")]
+    let vault_recovery_key = if !password.is_empty() {
+        if let Some(ref vault) = state.gateway_state.vault {
+            match vault.initialize(&password).await {
+                Ok(rk) => {
+                    tracing::info!("vault initialized");
+                    run_vault_env_migration(&state).await;
+                    Some(rk.phrase().to_owned())
+                },
+                Err(moltis_vault::VaultError::AlreadyInitialized) => {
+                    tracing::debug!("vault already initialized, skipping");
+                    None
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "vault initialization failed");
+                    None
+                },
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Disconnect pre-setup WebSocket clients and clear setup code.
     state
         .gateway_state
@@ -187,7 +229,22 @@ async fn setup_handler(
         .await;
     state.gateway_state.inner.write().await.setup_code = None;
     match state.credential_store.create_session().await {
-        Ok(token) => session_response(token, &headers),
+        Ok(token) => {
+            #[cfg(feature = "vault")]
+            if let Some(rk) = vault_recovery_key {
+                let domain_attr = localhost_cookie_domain(&headers);
+                let cookie = format!(
+                    "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000{domain_attr}"
+                );
+                return (
+                    StatusCode::OK,
+                    [(axum::http::header::SET_COOKIE, cookie)],
+                    Json(serde_json::json!({ "ok": true, "recovery_key": rk })),
+                )
+                    .into_response();
+            }
+            session_response(token, &headers)
+        },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to create session: {e}"),
@@ -209,13 +266,28 @@ async fn login_handler(
     Json(body): Json<LoginRequest>,
 ) -> impl IntoResponse {
     match state.credential_store.verify_password(&body.password).await {
-        Ok(true) => match state.credential_store.create_session().await {
-            Ok(token) => session_response(token, &headers),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session error: {e}"),
-            )
-                .into_response(),
+        Ok(true) => {
+            // Best-effort vault unseal on successful login.
+            #[cfg(feature = "vault")]
+            if let Some(ref vault) = state.gateway_state.vault {
+                match vault.unseal(&body.password).await {
+                    Ok(()) => {
+                        tracing::info!("vault unsealed on login");
+                        run_vault_env_migration(&state).await;
+                    },
+                    Err(e) => {
+                        tracing::debug!(error = %e, "vault unseal on login skipped");
+                    },
+                }
+            }
+            match state.credential_store.create_session().await {
+                Ok(token) => session_response(token, &headers),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("session error: {e}"),
+                )
+                    .into_response(),
+            }
         },
         Ok(false) => (StatusCode::UNAUTHORIZED, "invalid password").into_response(),
         Err(e) => (
@@ -292,10 +364,37 @@ async fn change_password_handler(
             .await
         {
             Ok(()) => {
+                // Initialize the vault now that we have a password.
+                #[cfg(feature = "vault")]
+                let vault_recovery_key = if let Some(ref vault) = state.gateway_state.vault {
+                    match vault.initialize(&body.new_password).await {
+                        Ok(rk) => {
+                            tracing::info!("vault initialized on first password set");
+                            run_vault_env_migration(&state).await;
+                            Some(rk.phrase().to_owned())
+                        },
+                        Err(moltis_vault::VaultError::AlreadyInitialized) => {
+                            tracing::debug!("vault already initialized, unsealing");
+                            let _ = vault.unseal(&body.new_password).await;
+                            None
+                        },
+                        Err(e) => {
+                            tracing::warn!(error = %e, "vault initialization failed");
+                            None
+                        },
+                    }
+                } else {
+                    None
+                };
                 state
                     .gateway_state
                     .disconnect_all_clients("password_changed")
                     .await;
+                #[cfg(feature = "vault")]
+                if let Some(rk) = vault_recovery_key {
+                    return Json(serde_json::json!({ "ok": true, "recovery_key": rk }))
+                        .into_response();
+                }
                 Json(serde_json::json!({ "ok": true })).into_response()
             },
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -309,6 +408,17 @@ async fn change_password_handler(
         .await
     {
         Ok(()) => {
+            // Best-effort vault password rotation.
+            #[cfg(feature = "vault")]
+            if let Some(ref vault) = state.gateway_state.vault {
+                match vault
+                    .change_password(&current_password, &body.new_password)
+                    .await
+                {
+                    Ok(()) => tracing::info!("vault password rotated"),
+                    Err(e) => tracing::warn!(error = %e, "vault password rotation failed"),
+                }
+            }
             state
                 .gateway_state
                 .disconnect_all_clients("password_changed")
@@ -800,6 +910,90 @@ fn extract_session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())?;
     crate::auth_middleware::parse_cookie(cookie_header, SESSION_COOKIE)
+}
+
+// ── Vault handlers ──────────────────────────────────────────────────────────
+
+#[cfg(feature = "vault")]
+async fn vault_status_handler(State(state): State<AuthState>) -> impl IntoResponse {
+    let status = if let Some(ref vault) = state.gateway_state.vault {
+        match vault.status().await {
+            Ok(s) => format!("{s:?}").to_lowercase(),
+            Err(_) => "error".to_owned(),
+        }
+    } else {
+        "disabled".to_owned()
+    };
+    Json(serde_json::json!({ "status": status }))
+}
+
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
+struct VaultUnlockRequest {
+    password: String,
+}
+
+#[cfg(feature = "vault")]
+async fn vault_unlock_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<VaultUnlockRequest>,
+) -> impl IntoResponse {
+    let Some(ref vault) = state.gateway_state.vault else {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    };
+    match vault.unseal(&body.password).await {
+        Ok(()) => {
+            run_vault_env_migration(&state).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
+        Err(moltis_vault::VaultError::BadCredential) => {
+            (StatusCode::LOCKED, "invalid password").into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
+struct VaultRecoveryRequest {
+    recovery_key: String,
+}
+
+#[cfg(feature = "vault")]
+async fn vault_recovery_handler(
+    State(state): State<AuthState>,
+    Json(body): Json<VaultRecoveryRequest>,
+) -> impl IntoResponse {
+    let Some(ref vault) = state.gateway_state.vault else {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    };
+    match vault.unseal_with_recovery(&body.recovery_key).await {
+        Ok(()) => {
+            run_vault_env_migration(&state).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        },
+        Err(moltis_vault::VaultError::BadCredential) => {
+            (StatusCode::LOCKED, "invalid recovery key").into_response()
+        },
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Migrate unencrypted env vars to encrypted after vault unseal.
+#[cfg(feature = "vault")]
+async fn run_vault_env_migration(state: &AuthState) {
+    if let Some(vault) = state.credential_store.vault() {
+        let pool = state.credential_store.db_pool();
+        match moltis_vault::migration::migrate_env_vars(vault, pool).await {
+            Ok(n) if n > 0 => {
+                tracing::info!(count = n, "migrated env vars to encrypted");
+            },
+            Ok(_) => {},
+            Err(e) => {
+                tracing::warn!(error = %e, "env var migration failed");
+            },
+        }
+    }
 }
 
 #[cfg(test)]

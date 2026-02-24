@@ -34,6 +34,7 @@ members = [
   "crates/telegram",
   "crates/tls",
   "crates/tools",
+  "crates/vault",
   "crates/voice",
   "crates/web",
 ]
@@ -128,6 +129,7 @@ time           = "0.3"
 tokio-rustls   = "0.26"
 # Cryptography / authentication
 argon2            = "0.5"
+chacha20poly1305  = { features = ["std"], version = "0.10" }
 p256              = "0.13"
 password-hash     = "0.5"
 webauthn-rs       = "0.5"
@@ -167,6 +169,7 @@ tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
 which                 = "8"
+zeroize               = { features = ["derive"], version = "1" }
 
 # Workspace crates
 moltis                = { path = "crates/cli" }
@@ -202,6 +205,7 @@ moltis-tailscale      = { path = "crates/tailscale" }
 moltis-telegram       = { path = "crates/telegram" }
 moltis-tls            = { path = "crates/tls" }
 moltis-tools          = { path = "crates/tools" }
+moltis-vault          = { path = "crates/vault" }
 moltis-voice          = { path = "crates/voice" }
 moltis-web            = { default-features = false, path = "crates/web" }
 

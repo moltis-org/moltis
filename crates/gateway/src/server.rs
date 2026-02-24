@@ -817,6 +817,14 @@ pub fn finalize_gateway_app(
         app_state.clone(),
         crate::auth_middleware::auth_gate,
     ));
+    // Vault guard blocks API requests when the vault is sealed (not
+    // uninitialized). Applied after auth_gate so sealed state is checked
+    // only for authenticated requests.
+    #[cfg(feature = "vault")]
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        crate::auth_middleware::vault_guard,
+    ));
     let router = router.layer(axum::middleware::from_fn_with_state(
         app_state.clone(),
         crate::request_throttle::throttle_gate,
@@ -1365,10 +1373,38 @@ pub async fn start_gateway(
         .await
         .expect("failed to run gateway migrations");
 
+    // Vault migrations (vault_metadata table).
+    #[cfg(feature = "vault")]
+    moltis_vault::run_migrations(&db_pool)
+        .await
+        .expect("failed to run vault migrations");
+
     // Migrate plugins data into unified skills system (idempotent, non-fatal).
     moltis_skills::migration::migrate_plugins_to_skills(&data_dir).await;
 
+    // Initialize vault for encryption-at-rest.
+    #[cfg(feature = "vault")]
+    let vault: Option<Arc<moltis_vault::Vault>> = {
+        match moltis_vault::Vault::new(db_pool.clone()).await {
+            Ok(v) => {
+                info!(status = ?v.status().await, "vault ready");
+                Some(Arc::new(v))
+            },
+            Err(e) => {
+                warn!(error = %e, "vault init failed, encryption disabled");
+                None
+            },
+        }
+    };
+
     // Initialize credential store (auth tables).
+    #[cfg(feature = "vault")]
+    let credential_store = Arc::new(
+        auth::CredentialStore::with_vault(db_pool.clone(), &config.auth, vault.clone())
+            .await
+            .expect("failed to init credential store"),
+    );
+    #[cfg(not(feature = "vault"))]
     let credential_store = Arc::new(
         auth::CredentialStore::new(db_pool.clone())
             .await
@@ -2582,6 +2618,8 @@ pub async fn start_gateway(
         metrics_handle,
         #[cfg(feature = "metrics")]
         metrics_store.clone(),
+        #[cfg(feature = "vault")]
+        vault.clone(),
     );
 
     // Store discovered hook info and disabled set in state for the web UI.

@@ -80,6 +80,7 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "vault",
   "voice",
   "web-ui",
 ]
@@ -98,6 +99,7 @@ push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-not
 qmd                = ["moltis-gateway/qmd"]
 tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
+vault              = ["moltis-gateway/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
 web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
 

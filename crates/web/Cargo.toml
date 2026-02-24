@@ -36,6 +36,7 @@ graphql            = []
 metrics            = ["moltis-gateway/metrics"]
 push-notifications = ["moltis-gateway/push-notifications"]
 tailscale          = ["moltis-gateway/tailscale"]
+vault              = ["moltis-gateway/vault"]
 voice              = []
 
 [lints]

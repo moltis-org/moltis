@@ -78,6 +78,8 @@ async fn start_auth_server_impl(
         None,
         #[cfg(feature = "metrics")]
         None,
+        #[cfg(feature = "vault")]
+        None,
     );
     let state_clone = Arc::clone(&state);
     let methods = Arc::new(MethodRegistry::new());
@@ -100,6 +102,74 @@ async fn start_auth_server_impl(
         .unwrap();
     });
     (addr, cred_store, state_clone)
+}
+
+/// Start a localhost test server with a vault attached.
+#[cfg(feature = "vault")]
+async fn start_localhost_server_with_vault() -> (
+    SocketAddr,
+    Arc<CredentialStore>,
+    Arc<GatewayState>,
+    Arc<moltis_vault::Vault>,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(tmp.path().to_path_buf());
+    moltis_config::set_data_dir(tmp.path().to_path_buf());
+    std::mem::forget(tmp);
+
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    moltis_vault::run_migrations(&pool).await.unwrap();
+    let auth_config = moltis_config::AuthConfig::default();
+    let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+    let cred_store = Arc::new(
+        CredentialStore::with_vault(pool, &auth_config, Some(Arc::clone(&vault)))
+            .await
+            .unwrap(),
+    );
+
+    let resolved_auth = auth::resolve_auth(None, None);
+    let services = GatewayServices::noop();
+    let state = GatewayState::with_options(
+        resolved_auth,
+        services,
+        None,
+        Some(Arc::clone(&cred_store)),
+        true,
+        false,
+        false,
+        None,
+        None,
+        18789,
+        false,
+        None,
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "metrics")]
+        None,
+        #[cfg(feature = "vault")]
+        Some(Arc::clone(&vault)),
+    );
+    let state_clone = Arc::clone(&state);
+    let methods = Arc::new(MethodRegistry::new());
+    #[cfg(feature = "push-notifications")]
+    let (router, app_state) = build_gateway_base(state, methods, None, None);
+    #[cfg(not(feature = "push-notifications"))]
+    let (router, app_state) = build_gateway_base(state, methods, None);
+
+    let router = router.merge(moltis_web::web_routes());
+    let app = finalize_gateway_app(router, app_state, false);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    (addr, cred_store, state_clone, vault)
 }
 
 /// Start a test server without a credential store (no auth).
@@ -1237,4 +1307,87 @@ async fn authenticated_api_endpoint_not_rate_limited() {
             "authenticated requests should bypass throttling"
         );
     }
+}
+
+/// Setting a password via /api/auth/password/change on a localhost server with a
+/// vault should initialize the vault and return a recovery key.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+async fn password_change_initializes_vault() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+
+    // Vault starts uninitialized.
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Uninitialized
+    );
+
+    // Set password via the change endpoint (no current password — first time).
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"new_password":"newpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+
+    // Should have received a recovery key.
+    assert!(
+        body["recovery_key"].is_string(),
+        "response should include a recovery_key after vault initialization"
+    );
+    let rk = body["recovery_key"].as_str().unwrap();
+    assert!(!rk.is_empty());
+
+    // Vault should now be unsealed.
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+
+    // Password should be set.
+    assert!(store.has_password().await.unwrap());
+    assert!(store.verify_password("newpass123").await.unwrap());
+}
+
+/// Setting a password via /api/auth/password/change when the vault is already
+/// initialized should not return a recovery key (no double-init).
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+async fn password_change_on_initialized_vault_no_recovery_key() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+
+    // Pre-initialize the vault to simulate a previous setup.
+    let _rk = vault.initialize("oldpass123").await.unwrap();
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+
+    // Set a password (first credential store password, but vault already initialized).
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .body(r#"{"new_password":"newpass123"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+
+    // No recovery key should be returned since vault was already initialized.
+    assert!(
+        body.get("recovery_key").is_none() || body["recovery_key"].is_null(),
+        "should not return recovery_key for an already-initialized vault"
+    );
+
+    assert!(store.has_password().await.unwrap());
 }

@@ -277,3 +277,12 @@ header snippet and passkey migration guidance.
 | Register passkey | `POST /api/auth/passkey/register/*` | Session |
 | Remove passkey | `DELETE /api/auth/passkeys/{id}` | Session |
 | Remove all auth | `POST /api/auth/reset` | Session |
+| Vault status | `GET /api/auth/vault/status` | No |
+| Vault unlock | `POST /api/auth/vault/unlock` | No |
+| Vault recovery | `POST /api/auth/vault/recovery` | No |
+
+## Encryption at Rest
+
+Environment variables and other sensitive data are encrypted at rest using
+the vault. The vault initializes automatically during password setup and
+unseals on login. See [Encryption at Rest (Vault)](vault.md) for details.

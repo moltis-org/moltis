@@ -131,6 +131,8 @@ function AuthStep({ onNext, skippable }) {
 	var [optPw, setOptPw] = useState("");
 	var [optPwConfirm, setOptPwConfirm] = useState("");
 	var [optPwSaving, setOptPwSaving] = useState(false);
+	var [recoveryKey, setRecoveryKey] = useState(null);
+	var [recoveryCopied, setRecoveryCopied] = useState(false);
 
 	var isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[");
 	var browserSupportsWebauthn = !!window.PublicKeyCredential;
@@ -186,7 +188,17 @@ function AuthStep({ onNext, skippable }) {
 			.then((r) => {
 				if (r.ok) {
 					ensureWsConnected();
-					onNext();
+					return r
+						.json()
+						.then((data) => {
+							if (data.recovery_key) {
+								setRecoveryKey(data.recovery_key);
+								setSaving(false);
+							} else {
+								onNext();
+							}
+						})
+						.catch(() => onNext());
 				} else {
 					return r.text().then((t) => {
 						setError(t || "Setup failed");
@@ -334,6 +346,39 @@ function AuthStep({ onNext, skippable }) {
 		</div>`;
 	}
 
+	// ── Recovery key display after vault initialization ────
+	if (recoveryKey) {
+		return html`<div class="flex flex-col gap-4">
+			<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
+
+			<div class="flex items-center gap-2 text-sm text-[var(--accent)]">
+				<span class="icon icon-checkmark"></span>
+				Password set and vault initialized
+			</div>
+
+			<div style="max-width:600px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+				<div class="text-xs text-[var(--muted)]" style="margin-bottom:8px;">Recovery key</div>
+				<code class="select-all break-all" style="font-family:var(--font-mono);font-size:.8rem;color:var(--text-strong);display:block;line-height:1.5;">${recoveryKey}</code>
+				<div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+					<button type="button" class="provider-btn provider-btn-secondary" onClick=${() => {
+						navigator.clipboard.writeText(recoveryKey).then(() => {
+							setRecoveryCopied(true);
+							setTimeout(() => setRecoveryCopied(false), 2000);
+						});
+					}}>${recoveryCopied ? "Copied!" : "Copy"}</button>
+				</div>
+			</div>
+
+			<div class="text-xs" style="color:var(--error);max-width:600px;">
+				Save this recovery key in a safe place. It will not be shown again. You need it to unlock the vault if you forget your password.
+			</div>
+
+			<div class="flex flex-wrap items-center gap-3 mt-1">
+				<button type="button" class="provider-btn" onClick=${onNext}>Continue</button>
+			</div>
+		</div>`;
+	}
+
 	var passkeyDisabledReason = webauthnAvailable
 		? browserSupportsWebauthn
 			? isIpAddress
@@ -390,7 +435,11 @@ function AuthStep({ onNext, skippable }) {
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly ? "Choose how to secure your instance, or skip for now." : "Choose how to secure your instance."}
+			${
+				localhostOnly
+					? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
+					: "Choose how to secure your instance."
+			}
 		</p>
 
 		${
@@ -421,7 +470,7 @@ function AuthStep({ onNext, skippable }) {
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<span class="text-sm font-medium text-[var(--text)]">Password</span>
 				</div>
-				<div class="text-xs text-[var(--muted)] mt-1">Set a traditional password</div>
+				<div class="text-xs text-[var(--muted)] mt-1">Set a password and enable the encryption vault for stored secrets</div>
 			</div>
 		</div>
 
