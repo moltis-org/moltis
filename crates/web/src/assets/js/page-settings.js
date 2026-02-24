@@ -625,14 +625,19 @@ function EnvironmentSection() {
 		<p class="text-xs text-[var(--muted)] leading-relaxed" style="max-width:600px;margin:0;">
 			Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 		</p>
-		${envVaultStatus && envVaultStatus !== "disabled" ? html`<div class="text-xs" style="max-width:600px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
-			${envVaultStatus === "unsealed"
-				? html`<span style="color:var(--accent);">Vault unlocked.</span> Your keys are stored encrypted.`
-				: envVaultStatus === "sealed"
-					? html`<span style="color:var(--warning,var(--error));">Vault locked.</span> Encrypted keys can\u2019t be read \u2014 sandbox commands won\u2019t work. <a href="/settings/vault" style="color:inherit;text-decoration:underline;">Unlock in Encryption settings.</a>`
-					: html`<span class="text-[var(--muted)]">Vault not set up.</span> <a href="/settings/security" style="color:inherit;text-decoration:underline;">Set a password</a> to encrypt your stored keys.`
+		${
+			envVaultStatus && envVaultStatus !== "disabled"
+				? html`<div class="text-xs" style="max-width:600px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+			${
+				envVaultStatus === "unsealed"
+					? html`<span style="color:var(--accent);">Vault unlocked.</span> Your keys are stored encrypted.`
+					: envVaultStatus === "sealed"
+						? html`<span style="color:var(--warning,var(--error));">Vault locked.</span> Encrypted keys can\u2019t be read \u2014 sandbox commands won\u2019t work. <a href="/settings/vault" style="color:inherit;text-decoration:underline;">Unlock in Encryption settings.</a>`
+						: html`<span class="text-[var(--muted)]">Vault not set up.</span> <a href="/settings/security" style="color:inherit;text-decoration:underline;">Set a password</a> to encrypt your stored keys.`
 			}
-		</div>` : null}
+		</div>`
+				: null
+		}
 
 		${
 			envLoading
@@ -652,9 +657,11 @@ function EnvironmentSection() {
 										onConfirmUpdate(v.key);
 									}}>
 									<code style="font-size:0.8rem;font-family:var(--font-mono);">${v.key}</code>
-									${v.encrypted
-										? html`<span class="provider-item-badge configured">Encrypted</span>`
-										: html`<span class="provider-item-badge muted">Plaintext</span>`}
+									${
+										v.encrypted
+											? html`<span class="provider-item-badge configured">Encrypted</span>`
+											: html`<span class="provider-item-badge muted">Plaintext</span>`
+									}
 									<input type="password" class="provider-key-input"
 										name="env_update_value"
 										autocomplete="new-password"
@@ -670,9 +677,11 @@ function EnvironmentSection() {
 								: html`<div style="flex:1;min-width:0;">
 									<div class="provider-item-name" style="font-family:var(--font-mono);font-size:.8rem;">
 										${v.key}
-										${v.encrypted
-											? html`<span class="provider-item-badge configured" style="margin-left:6px;">Encrypted</span>`
-											: html`<span class="provider-item-badge muted" style="margin-left:6px;">Plaintext</span>`}
+										${
+											v.encrypted
+												? html`<span class="provider-item-badge configured" style="margin-left:6px;">Encrypted</span>`
+												: html`<span class="provider-item-badge muted" style="margin-left:6px;">Plaintext</span>`
+										}
 									</div>
 									<div style="font-size:.7rem;color:var(--muted);margin-top:2px;display:flex;gap:12px;">
 										<span>\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span>
@@ -1187,26 +1196,37 @@ function SecuritySection() {
 					${pwErr ? html`<span class="text-xs" style="color:var(--error);">${pwErr}</span>` : null}
 				</div>
 			</form>
-			${pwRecoveryKey ? html`<div style="margin-top:12px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
+			${
+				pwRecoveryKey
+					? html`<div style="margin-top:12px;padding:12px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg);">
 				<div class="text-xs text-[var(--muted)]" style="margin-bottom:4px;">Vault initialized \u2014 save this recovery key</div>
 				<code class="select-all break-all" style="font-family:var(--font-mono);font-size:.8rem;color:var(--text-strong);display:block;line-height:1.5;">${pwRecoveryKey}</code>
 				<div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
 					<button type="button" class="provider-btn provider-btn-secondary" onClick=${() => {
 						navigator.clipboard.writeText(pwRecoveryKey).then(() => {
 							setPwRecoveryCopied(true);
-							setTimeout(() => { setPwRecoveryCopied(false); rerender(); }, 2000);
+							setTimeout(() => {
+								setPwRecoveryCopied(false);
+								rerender();
+							}, 2000);
 							rerender();
 						});
 					}}>${pwRecoveryCopied ? "Copied!" : "Copy"}</button>
-					${pwAwaitingReauth ? html`<button type="button" class="provider-btn" onClick=${() => {
-						clearPasswordChangedRedirectDeferral();
-						window.location.assign("/login");
-					}}>Continue to sign in</button>` : null}
+					${
+						pwAwaitingReauth
+							? html`<button type="button" class="provider-btn" onClick=${() => {
+									clearPasswordChangedRedirectDeferral();
+									window.location.assign("/login");
+								}}>Continue to sign in</button>`
+							: null
+					}
 				</div>
 				<div class="text-xs" style="color:var(--error);margin-top:8px;">
 					This key will not be shown again. You need it to unlock the vault if you forget your password.
 				</div>
-			</div>` : null}
+			</div>`
+					: null
+			}
 		</div>
 
 		<!-- Passkeys -->
@@ -1480,7 +1500,9 @@ function VaultSection() {
 				}</span>
 			</div>
 
-			${vaultStatus === "sealed" ? html`<div style="display:flex;flex-direction:column;gap:12px;">
+			${
+				vaultStatus === "sealed"
+					? html`<div style="display:flex;flex-direction:column;gap:12px;">
 				<form onSubmit=${onUnlockPw} style="display:flex;flex-direction:column;gap:6px;">
 					<div class="text-xs text-[var(--muted)]">Unlock with password</div>
 					<div style="display:flex;gap:8px;align-items:center;">
@@ -1502,11 +1524,17 @@ function VaultSection() {
 				</form>
 				${msg ? html`<div class="text-xs" style="color:var(--accent);">${msg}</div>` : null}
 				${err ? html`<div class="text-xs" style="color:var(--error);">${err}</div>` : null}
-			</div>` : null}
+			</div>`
+					: null
+			}
 
-			${vaultStatus === "uninitialized" ? html`<div style="margin-top:4px;">
+			${
+				vaultStatus === "uninitialized"
+					? html`<div style="margin-top:4px;">
 				<a href="/settings/security" class="provider-btn provider-btn-secondary" style="font-size:.75rem;text-decoration:none;display:inline-block;">Set a password</a>
-			</div>` : null}
+			</div>`
+					: null
+			}
 		</div>
 	</div>`;
 }

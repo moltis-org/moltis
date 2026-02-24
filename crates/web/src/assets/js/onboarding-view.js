@@ -188,14 +188,17 @@ function AuthStep({ onNext, skippable }) {
 			.then((r) => {
 				if (r.ok) {
 					ensureWsConnected();
-					return r.json().then((data) => {
-						if (data.recovery_key) {
-							setRecoveryKey(data.recovery_key);
-							setSaving(false);
-						} else {
-							onNext();
-						}
-					}).catch(() => onNext());
+					return r
+						.json()
+						.then((data) => {
+							if (data.recovery_key) {
+								setRecoveryKey(data.recovery_key);
+								setSaving(false);
+							} else {
+								onNext();
+							}
+						})
+						.catch(() => onNext());
 				} else {
 					return r.text().then((t) => {
 						setError(t || "Setup failed");
@@ -432,9 +435,11 @@ function AuthStep({ onNext, skippable }) {
 	return html`<div class="flex flex-col gap-4">
 		<h2 class="text-lg font-medium text-[var(--text-strong)]">Secure your instance</h2>
 		<p class="text-xs text-[var(--muted)] leading-relaxed">
-			${localhostOnly
-				? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
-				: "Choose how to secure your instance."}
+			${
+				localhostOnly
+					? "Choose how to secure your instance, or skip for now. Setting a password also enables the encryption vault, which protects API keys and secrets stored in the database."
+					: "Choose how to secure your instance."
+			}
 		</p>
 
 		${
