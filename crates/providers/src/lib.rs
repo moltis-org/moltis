@@ -4,6 +4,7 @@
 #![cfg_attr(feature = "local-llm", allow(unsafe_code))]
 
 pub mod anthropic;
+pub mod error;
 pub mod openai;
 pub mod openai_compat;
 pub mod ws_pool;

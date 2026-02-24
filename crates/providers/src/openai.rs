@@ -568,7 +568,7 @@ impl OpenAiProvider {
             .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
     }
 
-    fn responses_websocket_url(&self) -> anyhow::Result<String> {
+    fn responses_websocket_url(&self) -> crate::error::Result<String> {
         let mut base = self.base_url.trim_end_matches('/').to_string();
         if !base.ends_with("/v1") {
             base.push_str("/v1");
@@ -580,10 +580,10 @@ impl OpenAiProvider {
         if let Some(rest) = url.strip_prefix("http://") {
             return Ok(format!("ws://{rest}"));
         }
-        anyhow::bail!(
+        Err(crate::error::Error::message(format!(
             "invalid OpenAI base_url for websocket mode: expected http:// or https://, got {}",
             self.base_url
-        );
+        )))
     }
 
     fn split_responses_instructions_and_input(
@@ -760,24 +760,19 @@ impl OpenAiProvider {
         // Synchronous pre-flight: URL, request, auth header, pool key.
         // Fail fast and fall back to SSE before entering the async generator,
         // which avoids cloning messages/tools for the four sync-check paths.
-        let (request, pool_key) = match (|| -> anyhow::Result<_> {
+        let (request, pool_key) = match (|| -> crate::error::Result<_> {
             if !self.is_openai_platform_base_url() {
-                anyhow::bail!(
+                return Err(crate::error::Error::message(format!(
                     "websocket mode is only supported for api.openai.com (got {})",
                     self.base_url
-                );
+                )));
             }
             let ws_url = self.responses_websocket_url()?;
             let pk = super::ws_pool::PoolKey::new(&ws_url, &self.api_key);
-            let mut req = ws_url
-                .as_str()
-                .into_client_request()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut req = ws_url.as_str().into_client_request()?;
             let auth = format!("Bearer {}", self.api_key.expose_secret());
-            req.headers_mut().insert(
-                "Authorization",
-                HeaderValue::from_str(&auth).map_err(|e| anyhow::anyhow!("{e}"))?,
-            );
+            req.headers_mut()
+                .insert("Authorization", HeaderValue::from_str(&auth)?);
             req.headers_mut()
                 .insert("OpenAI-Beta", HeaderValue::from_static("responses=v1"));
             Ok((req, pk))
