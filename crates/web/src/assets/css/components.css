@@ -909,6 +909,14 @@
   background: var(--bg-hover);
 }
 
+.skills-browse-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
 /* ── Settings Page ── */
 
 .settings-layout {

@@ -86,17 +86,17 @@ default = [
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 file-watcher       = ["moltis-gateway/file-watcher"]
-graphql            = ["moltis-gateway/graphql"]
+graphql            = ["moltis-gateway/graphql", "moltis-web?/graphql"]
 jemalloc           = ["dep:tikv-jemallocator"]
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
-metrics            = ["moltis-gateway/metrics"]
+metrics            = ["moltis-gateway/metrics", "moltis-web?/metrics"]
 prometheus         = ["moltis-gateway/prometheus"]
-push-notifications = ["moltis-gateway/push-notifications"]
+push-notifications = ["moltis-gateway/push-notifications", "moltis-web?/push-notifications"]
 qmd                = ["moltis-gateway/qmd"]
-tailscale          = ["moltis-gateway/tailscale"]
+tailscale          = ["moltis-gateway/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-gateway/tls"]
-voice              = ["moltis-gateway/voice"]
+voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
 web-ui             = ["dep:moltis-web", "moltis-gateway/web-ui"]
 
 [lints]
