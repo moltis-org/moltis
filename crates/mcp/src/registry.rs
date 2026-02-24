@@ -6,10 +6,11 @@ use std::{
 };
 
 use {
-    anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
     tracing::{debug, info},
 };
+
+use crate::error::{Context, Result};
 
 /// Transport type for MCP server connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -1,5 +1,13 @@
 use std::{collections::HashMap, time::Instant};
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("node not found")]
+    NodeNotFound,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 /// A connected device node (macOS, iOS, Android).
 #[derive(Debug, Clone)]
 pub struct NodeSession {
@@ -63,11 +71,8 @@ impl NodeRegistry {
             .any(|n| n.platform == "ios" || n.platform == "android")
     }
 
-    pub fn rename(&mut self, node_id: &str, display_name: &str) -> Result<(), String> {
-        let node = self
-            .nodes
-            .get_mut(node_id)
-            .ok_or_else(|| "node not found".to_string())?;
+    pub fn rename(&mut self, node_id: &str, display_name: &str) -> Result<()> {
+        let node = self.nodes.get_mut(node_id).ok_or(Error::NodeNotFound)?;
         node.display_name = Some(display_name.to_string());
         Ok(())
     }

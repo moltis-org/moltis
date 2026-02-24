@@ -1,5 +1,7 @@
 //! Browser error types.
 
+use std::error::Error as StdError;
+
 use thiserror::Error;
 
 /// Errors that can occur during browser operations.
@@ -7,6 +9,9 @@ use thiserror::Error;
 pub enum BrowserError {
     #[error("browser not available: Chrome/Chromium not found")]
     BrowserNotAvailable,
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 
     #[error("browser launch failed: {0}")]
     LaunchFailed(String),
@@ -44,8 +49,11 @@ pub enum BrowserError {
     #[error("invalid action: {0}")]
     InvalidAction(String),
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("browser error: {source}")]
+    Other {
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
 }
 
 /// Substrings that indicate the CDP WebSocket connection is dead.
@@ -74,6 +82,12 @@ impl BrowserError {
             | Self::Timeout(msg) => STALE_CONNECTION_PATTERNS.iter().any(|p| msg.contains(p)),
 
             _ => false,
+        }
+    }
+
+    pub fn other(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::Other {
+            source: Box::new(source),
         }
     }
 }

@@ -3,13 +3,15 @@
 use std::{path::PathBuf, sync::Arc};
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     tracing::{debug, info, warn},
 };
 
 use {
-    moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload},
+    moltis_common::{
+        Result,
+        hooks::{HookAction, HookEvent, HookHandler, HookPayload},
+    },
     moltis_sessions::store::SessionStore,
 };
 

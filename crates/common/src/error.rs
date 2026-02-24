@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum MoltisError {
+pub enum Error {
     #[error("config error: {0}")]
     Config(String),
 
@@ -29,6 +29,21 @@ pub enum MoltisError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("internal error")]
+    Other {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
+
+impl Error {
+    #[must_use]
+    pub fn other(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Other {
+            source: Box::new(source),
+        }
+    }
+}
+
+pub type MoltisError = Error;
+pub type Result<T> = std::result::Result<T, Error>;

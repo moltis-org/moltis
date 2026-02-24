@@ -6,13 +6,12 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use {
-    anyhow::Result,
     secrecy::Secret,
     serde::{Deserialize, Serialize},
     tracing::{debug, info, warn},
 };
 
-use crate::config_dir::moltis_config_dir;
+use crate::{Result, config_dir::moltis_config_dir};
 
 /// A stored dynamic client registration.
 #[derive(Clone, Serialize, Deserialize)]

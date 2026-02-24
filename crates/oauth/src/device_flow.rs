@@ -1,6 +1,9 @@
-use {anyhow::Result, reqwest::header::HeaderMap, secrecy::Secret};
+use {reqwest::header::HeaderMap, secrecy::Secret};
 
-use crate::types::{OAuthConfig, OAuthTokens};
+use crate::{
+    Error, Result,
+    types::{OAuthConfig, OAuthTokens},
+};
 
 /// Response from the device code request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -46,7 +49,9 @@ pub async fn request_device_code_with_headers(
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("device code request failed: {body}");
+        return Err(Error::message(format!(
+            "device code request failed: {body}"
+        )));
     }
 
     Ok(resp.json().await?)
@@ -120,8 +125,8 @@ pub async fn poll_for_token_with_headers(
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             },
-            Some(err) => anyhow::bail!("device flow error: {err}"),
-            None => anyhow::bail!("unexpected response from token endpoint"),
+            Some(err) => return Err(Error::message(format!("device flow error: {err}"))),
+            None => return Err(Error::message("unexpected response from token endpoint")),
         }
     }
 }

@@ -4633,7 +4633,6 @@ dependencies = [
 name = "moltis-auto-reply"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "moltis-agents",
  "moltis-common",
  "moltis-metrics",
@@ -4641,6 +4640,7 @@ dependencies = [
  "moltis-sessions",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -4649,7 +4649,6 @@ dependencies = [
 name = "moltis-browser"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "chromiumoxide",
@@ -4673,10 +4672,10 @@ dependencies = [
 name = "moltis-canvas"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "axum",
  "moltis-common",
  "moltis-metrics",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -4685,13 +4684,13 @@ dependencies = [
 name = "moltis-channels"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -4725,6 +4724,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "toml",
@@ -4736,7 +4736,6 @@ dependencies = [
 name = "moltis-common"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures",
  "moltis-metrics",
@@ -4752,7 +4751,6 @@ dependencies = [
 name = "moltis-config"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "chrono-tz",
  "directories",
  "ipnet",
@@ -4762,6 +4760,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "thiserror 2.0.18",
  "toml",
  "toml_edit 0.22.27",
  "tracing",
@@ -4771,7 +4770,6 @@ dependencies = [
 name = "moltis-cron"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "chrono-tz",
@@ -4785,6 +4783,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -4890,6 +4889,7 @@ dependencies = [
  "moltis-service-traits",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
 ]
@@ -4898,7 +4898,6 @@ dependencies = [
 name = "moltis-mcp"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures",
  "mockito",
@@ -4921,11 +4920,11 @@ dependencies = [
 name = "moltis-media"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "image",
  "moltis-common",
  "moltis-metrics",
  "reqwest 0.12.28",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -4960,7 +4959,6 @@ dependencies = [
 name = "moltis-metrics"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "metrics 0.24.3",
  "metrics-exporter-prometheus",
@@ -4969,6 +4967,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4978,7 +4977,6 @@ dependencies = [
 name = "moltis-oauth"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "axum",
  "base64 0.22.1",
  "mockito",
@@ -4991,6 +4989,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",
@@ -5001,13 +5000,13 @@ dependencies = [
 name = "moltis-onboarding"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
@@ -5017,7 +5016,6 @@ dependencies = [
 name = "moltis-plugins"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "moltis-common",
  "moltis-config",
@@ -5026,6 +5024,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "toml",
@@ -5036,13 +5035,13 @@ dependencies = [
 name = "moltis-projects"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "moltis-metrics",
  "serde",
  "serde_json",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
@@ -5075,6 +5074,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",
@@ -5129,12 +5129,12 @@ dependencies = [
 name = "moltis-routing"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
  "moltis-sessions",
  "serde_json",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -5145,6 +5145,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -5153,7 +5154,6 @@ dependencies = [
 name = "moltis-sessions"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "fd-lock",
  "moltis-common",
  "moltis-metrics",
@@ -5161,6 +5161,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -5191,10 +5192,10 @@ dependencies = [
 name = "moltis-tailscale"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -5203,7 +5204,6 @@ dependencies = [
 name = "moltis-telegram"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
  "base64 0.22.1",
@@ -5219,6 +5219,7 @@ dependencies = [
  "serde",
  "serde_json",
  "teloxide",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -5228,7 +5229,6 @@ dependencies = [
 name = "moltis-tls"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "axum",
  "hyper-util",
  "moltis-config",
@@ -5236,6 +5236,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile 2.2.0",
  "tempfile",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-rustls",
@@ -5306,7 +5307,6 @@ dependencies = [
 name = "moltis-web"
 version = "0.9.10"
 dependencies = [
- "anyhow",
  "askama",
  "axum",
  "axum-extra",
@@ -5325,6 +5325,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",

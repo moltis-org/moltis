@@ -5,10 +5,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use {
-    anyhow::Result,
-    serde::{Deserialize, Serialize},
-};
+use serde::{Deserialize, Serialize};
+
+use crate::Result;
 
 /// A single session entry in the metadata index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,7 +341,7 @@ impl SqliteSessionMetadata {
         &self,
         key: &str,
         label: Option<String>,
-    ) -> Result<SessionEntry, sqlx::Error> {
+    ) -> std::result::Result<SessionEntry, sqlx::Error> {
         let now = now_ms() as i64;
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(

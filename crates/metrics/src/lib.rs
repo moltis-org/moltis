@@ -21,6 +21,7 @@
 //! - `tracing`: Enable tracing span context propagation to metrics labels
 
 mod definitions;
+mod error;
 mod recorder;
 mod snapshot;
 #[cfg(feature = "sqlite")]
@@ -29,6 +30,7 @@ pub mod tracing_integration;
 
 pub use {
     definitions::*,
+    error::{Error, Result},
     recorder::{MetricsHandle, MetricsRecorderConfig, init_metrics},
     snapshot::{MetricSnapshot, MetricType, MetricsSnapshot},
 };
