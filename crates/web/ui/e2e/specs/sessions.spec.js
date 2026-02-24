@@ -132,6 +132,8 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 		const sessionItems = page.locator("#sessionList .session-item");
+		// Wait for the session list to populate via RPC before capturing count
+		await expect(sessionItems.first()).toBeVisible();
 		const initialCount = await sessionItems.count();
 
 		await createSession(page);

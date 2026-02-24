@@ -9,7 +9,7 @@
 use {chromiumoxide::Page, serde_json::Value, tracing::debug};
 
 use crate::{
-    error::BrowserError,
+    error::Error,
     types::{DomSnapshot, ElementBounds, ElementRef, ScrollDimensions, ViewportSize},
 };
 
@@ -158,25 +158,25 @@ const FIND_BY_REF_JS: &str = r#"
 "#;
 
 /// Extract a DOM snapshot from the page.
-pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, BrowserError> {
+pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, Error> {
     let url = page
         .url()
         .await
-        .map_err(|e| BrowserError::Cdp(e.to_string()))?
+        .map_err(|e| Error::Cdp(e.to_string()))?
         .unwrap_or_default();
 
     let title = page
         .get_title()
         .await
-        .map_err(|e| BrowserError::Cdp(e.to_string()))?
+        .map_err(|e| Error::Cdp(e.to_string()))?
         .unwrap_or_default();
 
     let result: Value = page
         .evaluate(EXTRACT_ELEMENTS_JS)
         .await
-        .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+        .map_err(|e| Error::JsEvalFailed(e.to_string()))?
         .into_value()
-        .map_err(|e| BrowserError::JsEvalFailed(format!("failed to get result: {e:?}")))?;
+        .map_err(|e| Error::JsEvalFailed(format!("failed to get result: {e:?}")))?;
 
     let elements = parse_elements(&result)?;
     let content = result
@@ -205,32 +205,32 @@ pub async fn extract_snapshot(page: &Page) -> Result<DomSnapshot, BrowserError> 
 }
 
 /// Find an element's center coordinates by its ref number.
-pub async fn find_element_by_ref(page: &Page, ref_: u32) -> Result<(f64, f64), BrowserError> {
+pub async fn find_element_by_ref(page: &Page, ref_: u32) -> Result<(f64, f64), Error> {
     let js = format!("({FIND_BY_REF_JS})({ref_})");
 
     let result: Value = page
         .evaluate(js.as_str())
         .await
-        .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+        .map_err(|e| Error::JsEvalFailed(e.to_string()))?
         .into_value()
-        .map_err(|e| BrowserError::JsEvalFailed(format!("failed to get result: {e:?}")))?;
+        .map_err(|e| Error::JsEvalFailed(format!("failed to get result: {e:?}")))?;
 
     if result.is_null() {
-        return Err(BrowserError::ElementNotFound(ref_));
+        return Err(Error::ElementNotFound(ref_));
     }
 
     let center_x = result["centerX"]
         .as_f64()
-        .ok_or(BrowserError::ElementNotFound(ref_))?;
+        .ok_or(Error::ElementNotFound(ref_))?;
     let center_y = result["centerY"]
         .as_f64()
-        .ok_or(BrowserError::ElementNotFound(ref_))?;
+        .ok_or(Error::ElementNotFound(ref_))?;
 
     Ok((center_x, center_y))
 }
 
 /// Focus an input element by its ref number.
-pub async fn focus_element_by_ref(page: &Page, ref_: u32) -> Result<(), BrowserError> {
+pub async fn focus_element_by_ref(page: &Page, ref_: u32) -> Result<(), Error> {
     let js = format!(
         r#"(() => {{
             const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
@@ -243,19 +243,19 @@ pub async fn focus_element_by_ref(page: &Page, ref_: u32) -> Result<(), BrowserE
     let result: Value = page
         .evaluate(js.as_str())
         .await
-        .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+        .map_err(|e| Error::JsEvalFailed(e.to_string()))?
         .into_value()
-        .map_err(|e| BrowserError::JsEvalFailed(format!("failed to get result: {e:?}")))?;
+        .map_err(|e| Error::JsEvalFailed(format!("failed to get result: {e:?}")))?;
 
     if result.as_bool() != Some(true) {
-        return Err(BrowserError::ElementNotFound(ref_));
+        return Err(Error::ElementNotFound(ref_));
     }
 
     Ok(())
 }
 
 /// Scroll an element into view by its ref number.
-pub async fn scroll_element_into_view(page: &Page, ref_: u32) -> Result<(), BrowserError> {
+pub async fn scroll_element_into_view(page: &Page, ref_: u32) -> Result<(), Error> {
     let js = format!(
         r#"(() => {{
             const el = document.querySelector(`[data-moltis-ref="{ref_}"]`);
@@ -268,21 +268,21 @@ pub async fn scroll_element_into_view(page: &Page, ref_: u32) -> Result<(), Brow
     let result: Value = page
         .evaluate(js.as_str())
         .await
-        .map_err(|e| BrowserError::JsEvalFailed(e.to_string()))?
+        .map_err(|e| Error::JsEvalFailed(e.to_string()))?
         .into_value()
-        .map_err(|e| BrowserError::JsEvalFailed(format!("failed to get result: {e:?}")))?;
+        .map_err(|e| Error::JsEvalFailed(format!("failed to get result: {e:?}")))?;
 
     if result.as_bool() != Some(true) {
-        return Err(BrowserError::ElementNotFound(ref_));
+        return Err(Error::ElementNotFound(ref_));
     }
 
     Ok(())
 }
 
-fn parse_elements(result: &Value) -> Result<Vec<ElementRef>, BrowserError> {
+fn parse_elements(result: &Value) -> Result<Vec<ElementRef>, Error> {
     let elements = result["elements"]
         .as_array()
-        .ok_or_else(|| BrowserError::JsEvalFailed("elements not an array".into()))?;
+        .ok_or_else(|| Error::JsEvalFailed("elements not an array".into()))?;
 
     Ok(elements
         .iter()
@@ -313,7 +313,7 @@ fn parse_bounds(v: &Value) -> Option<ElementBounds> {
     })
 }
 
-fn parse_viewport(result: &Value) -> Result<ViewportSize, BrowserError> {
+fn parse_viewport(result: &Value) -> Result<ViewportSize, Error> {
     let v = &result["viewport"];
     Ok(ViewportSize {
         width: v["width"].as_u64().unwrap_or(1280) as u32,
@@ -321,7 +321,7 @@ fn parse_viewport(result: &Value) -> Result<ViewportSize, BrowserError> {
     })
 }
 
-fn parse_scroll(result: &Value) -> Result<ScrollDimensions, BrowserError> {
+fn parse_scroll(result: &Value) -> Result<ScrollDimensions, Error> {
     let s = &result["scroll"];
     Ok(ScrollDimensions {
         x: s["x"].as_i64().unwrap_or(0) as i32,

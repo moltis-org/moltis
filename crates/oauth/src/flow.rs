@@ -1,5 +1,4 @@
 use {
-    anyhow::Result,
     base64::{
         Engine,
         engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -12,6 +11,7 @@ use {
 use moltis_metrics::{counter, oauth as oauth_metrics};
 
 use crate::{
+    Error, Result,
     pkce::{generate_pkce, generate_state},
     types::{OAuthConfig, OAuthTokens, PkceChallenge},
 };
@@ -46,7 +46,7 @@ impl OAuthFlow {
         let state = generate_state();
 
         let mut url = Url::parse(&self.config.auth_url)
-            .map_err(|e| anyhow::anyhow!("invalid auth_url: {e}"))?;
+            .map_err(|source| Error::external(format!("invalid auth_url: {source}"), source))?;
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.config.client_id)
@@ -156,7 +156,7 @@ impl OAuthFlow {
 fn parse_token_response(resp: &serde_json::Value) -> Result<OAuthTokens> {
     let access_token = resp["access_token"]
         .as_str()
-        .ok_or_else(|| anyhow::anyhow!("missing access_token in response"))?
+        .ok_or_else(|| Error::message("missing access_token in response"))?
         .to_string();
 
     let refresh_token = resp["refresh_token"].as_str().map(|s| s.to_string());

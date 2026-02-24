@@ -9,7 +9,6 @@ use std::{
 };
 
 use {
-    anyhow::{Result, bail},
     tokio::{
         sync::{Mutex, Notify, RwLock},
         task::JoinHandle,
@@ -21,7 +20,8 @@ use {
 use moltis_metrics::{counter, cron as cron_metrics, gauge, histogram};
 
 use crate::{
-    schedule::compute_next_run, store::CronStore, system_events::SystemEventsQueue, types::*,
+    Error, Result, schedule::compute_next_run, store::CronStore, system_events::SystemEventsQueue,
+    types::*,
 };
 
 /// Result of an agent turn, including optional token usage.
@@ -88,11 +88,11 @@ impl RateLimiter {
         }
 
         if self.timestamps.len() >= self.config.max_per_window {
-            bail!(
+            return Err(Error::message(format!(
                 "rate limit exceeded: max {} jobs per {} seconds",
                 self.config.max_per_window,
                 self.config.window_ms / 1000
-            );
+            )));
         }
 
         // Record this attempt.
@@ -333,7 +333,7 @@ impl CronService {
         let job = jobs
             .iter_mut()
             .find(|j| j.id == id)
-            .ok_or_else(|| anyhow::anyhow!("job not found: {id}"))?;
+            .ok_or_else(|| Error::job_not_found(id))?;
 
         if let Some(name) = patch.name {
             job.name = name;
@@ -408,11 +408,13 @@ impl CronService {
             jobs.iter()
                 .find(|j| j.id == id)
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("job not found: {id}"))?
+                .ok_or_else(|| Error::job_not_found(id))?
         };
 
         if !job.enabled && !force {
-            bail!("job is disabled (use force=true to override)");
+            return Err(Error::message(
+                "job is disabled (use force=true to override)",
+            ));
         }
 
         // Mark as running before executing (prevents duplicate runs).
@@ -700,10 +702,14 @@ impl CronService {
 fn validate_job_spec(job: &CronJob) -> Result<()> {
     match (&job.session_target, &job.payload) {
         (SessionTarget::Main, CronPayload::AgentTurn { .. }) => {
-            bail!("sessionTarget=main requires payload kind=systemEvent");
+            return Err(Error::message(
+                "sessionTarget=main requires payload kind=systemEvent",
+            ));
         },
         (SessionTarget::Isolated | SessionTarget::Named(_), CronPayload::SystemEvent { .. }) => {
-            bail!("sessionTarget=isolated/named requires payload kind=agentTurn");
+            return Err(Error::message(
+                "sessionTarget=isolated/named requires payload kind=agentTurn",
+            ));
         },
         _ => {},
     }
@@ -716,10 +722,14 @@ fn validate_job_spec(job: &CronJob) -> Result<()> {
     {
         match (channel.as_deref(), to.as_deref()) {
             (None | Some(""), _) => {
-                bail!("deliver=true requires a non-empty 'channel' (account_id)");
+                return Err(Error::message(
+                    "deliver=true requires a non-empty 'channel' (account_id)",
+                ));
             },
             (_, None | Some("")) => {
-                bail!("deliver=true requires a non-empty 'to' (chat_id)");
+                return Err(Error::message(
+                    "deliver=true requires a non-empty 'to' (chat_id)",
+                ));
             },
             _ => {},
         }

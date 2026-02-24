@@ -400,7 +400,10 @@ async fn main() -> anyhow::Result<()> {
             println!("{result}");
             Ok(())
         },
-        Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
+        Some(Commands::Onboard) => {
+            moltis_onboarding::wizard::run_onboarding().await?;
+            Ok(())
+        },
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),

@@ -52,7 +52,7 @@ pub async fn handle_message_direct(
     bot: &Bot,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -874,7 +874,7 @@ pub async fn handle_edited_location(
     msg: Message,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let Some(loc_info) = extract_location(&msg) else {
         // Not a location edit — ignore (could be a text edit, etc.).
         return Ok(());
@@ -922,9 +922,7 @@ async fn handle_message(
     bot: Bot,
     ctx: Arc<HandlerContext>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    handle_message_direct(msg, &bot, &ctx.account_id, &ctx.accounts)
-        .await
-        .map_err(|e| e.to_string())?;
+    handle_message_direct(msg, &bot, &ctx.account_id, &ctx.accounts).await?;
     Ok(())
 }
 
@@ -1178,7 +1176,7 @@ pub async fn handle_callback_query(
     _bot: &Bot,
     account_id: &str,
     accounts: &AccountStateMap,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let data = match query.data {
         Some(ref d) => d.as_str(),
         None => return Ok(()),
@@ -1474,7 +1472,7 @@ impl ToChannelMessageKind for MediaKind {
 }
 
 /// Download a file from Telegram by file ID.
-async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<u8>> {
+async fn download_telegram_file(bot: &Bot, file_id: &str) -> crate::Result<Vec<u8>> {
     // Get file info from Telegram
     let file = bot.get_file(file_id).await?;
 
@@ -1486,10 +1484,10 @@ async fn download_telegram_file(bot: &Bot, file_id: &str) -> anyhow::Result<Vec<
     // Download using reqwest
     let response = reqwest::get(&url).await?;
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!(
+        return Err(crate::Error::message(format!(
             "failed to download file: HTTP {}",
             response.status()
-        ));
+        )));
     }
 
     let data = response.bytes().await?.to_vec();
@@ -1549,12 +1547,11 @@ mod tests {
     };
 
     use {
-        anyhow::Result,
         async_trait::async_trait,
         axum::{Json, Router, body::Bytes, extract::State, http::Uri, routing::post},
         moltis_channels::{
             ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
-            gating::DmPolicy,
+            Error as ChannelError, Result, gating::DmPolicy,
         },
         secrecy::Secret,
         serde::{Deserialize, Serialize},
@@ -1771,8 +1768,8 @@ mod tests {
                 .expect("lock")
                 .take()
                 .unwrap_or_else(|| {
-                    Err(anyhow::anyhow!(
-                        "transcribe should not be called when STT unavailable"
+                    Err(ChannelError::unavailable(
+                        "transcribe should not be called when STT unavailable",
                     ))
                 })
         }

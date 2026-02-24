@@ -30,12 +30,13 @@ pub async fn start_polling(
     accounts: AccountStateMap,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
-) -> anyhow::Result<CancellationToken> {
+) -> crate::Result<CancellationToken> {
     // Build bot with a client timeout longer than the long-polling timeout (30s)
     // so the HTTP client doesn't abort the request before Telegram responds.
     let client = teloxide::net::default_reqwest_settings()
         .timeout(std::time::Duration::from_secs(45))
-        .build()?;
+        .build()
+        .map_err(|source| crate::Error::external("build telegram client", source))?;
     let bot = Bot::with_client(config.token.expose_secret(), client);
 
     // Verify credentials and get bot username.

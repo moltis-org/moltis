@@ -49,7 +49,7 @@ impl MockDispatch {
         let responses = self.responses.lock().unwrap_or_else(|e| e.into_inner());
         match responses.get(method) {
             Some(v) => Ok(v.clone()),
-            None => Err(format!("no mock response for {method}")),
+            None => Err(format!("no mock response for {method}").into()),
         }
     }
 

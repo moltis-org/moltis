@@ -5,7 +5,6 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
-anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
 chrono                = { features = ["serde"], optional = true, workspace = true }
@@ -28,6 +27,7 @@ moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
+thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
 tracing               = { workspace = true }
@@ -40,6 +40,7 @@ push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
 
 [dev-dependencies]
+anyhow          = { workspace = true }
 moltis-channels = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }

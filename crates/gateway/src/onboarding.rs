@@ -2,7 +2,7 @@
 
 use {async_trait::async_trait, serde_json::Value};
 
-use crate::services::{OnboardingService, ServiceResult};
+use crate::services::{OnboardingService, ServiceError, ServiceResult};
 
 /// Gateway-side onboarding service backed by `moltis_onboarding::service::LiveOnboardingService`.
 pub struct GatewayOnboardingService {
@@ -27,7 +27,7 @@ impl OnboardingService for GatewayOnboardingService {
 
     async fn wizard_next(&self, params: Value) -> ServiceResult {
         let input = params.get("input").and_then(|v| v.as_str()).unwrap_or("");
-        self.inner.wizard_next(input)
+        self.inner.wizard_next(input).map_err(ServiceError::message)
     }
 
     async fn wizard_cancel(&self) -> ServiceResult {
@@ -46,12 +46,12 @@ impl OnboardingService for GatewayOnboardingService {
     async fn identity_update(&self, params: Value) -> ServiceResult {
         self.inner
             .identity_update(params)
-            .map_err(|e| e.to_string())
+            .map_err(ServiceError::message)
     }
 
     async fn identity_update_soul(&self, soul: Option<String>) -> ServiceResult {
         self.inner
             .identity_update_soul(soul)
-            .map_err(|e| e.to_string())
+            .map_err(ServiceError::message)
     }
 }

@@ -2,6 +2,15 @@
 
 use async_graphql::{InputValueError, InputValueResult, Scalar, ScalarType, Value};
 
+#[derive(Debug, thiserror::Error)]
+enum ScalarError {
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+
+    #[error("unsupported value type")]
+    UnsupportedValueType,
+}
+
 /// A JSON scalar that passes through arbitrary `serde_json::Value` data.
 ///
 /// Used for dynamic/untyped fields where the exact shape varies at runtime
@@ -20,10 +29,10 @@ impl ScalarType for Json {
     }
 }
 
-fn gql_value_to_json(v: Value) -> Result<serde_json::Value, String> {
+fn gql_value_to_json(v: Value) -> Result<serde_json::Value, ScalarError> {
     match v {
         Value::Null => Ok(serde_json::Value::Null),
-        Value::Number(n) => serde_json::to_value(n).map_err(|e| e.to_string()),
+        Value::Number(n) => Ok(serde_json::to_value(n)?),
         Value::String(s) => Ok(serde_json::Value::String(s)),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(b)),
         Value::List(l) => {
@@ -38,7 +47,7 @@ fn gql_value_to_json(v: Value) -> Result<serde_json::Value, String> {
                 .collect();
             Ok(serde_json::Value::Object(map?))
         },
-        _ => Err("unsupported value type".into()),
+        _ => Err(ScalarError::UnsupportedValueType),
     }
 }
 

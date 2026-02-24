@@ -19,7 +19,7 @@ use {
 
 use crate::{
     container::BrowserContainer,
-    error::BrowserError,
+    error::Error,
     types::{BrowserConfig, BrowserPreference},
 };
 
@@ -97,7 +97,7 @@ impl BrowserPool {
         session_id: Option<&str>,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<String, BrowserError> {
+    ) -> Result<String, Error> {
         // Treat empty string as None (generate new session ID)
         let session_id = session_id.filter(|s| !s.is_empty());
 
@@ -121,7 +121,7 @@ impl BrowserPool {
 
                     let instances = self.instances.read().await;
                     if instances.len() >= self.config.max_instances {
-                        return Err(BrowserError::PoolExhausted);
+                        return Err(Error::PoolExhausted);
                     }
                 }
             }
@@ -140,7 +140,7 @@ impl BrowserPool {
                         threshold = self.config.memory_limit_percent,
                         "blocking new browser instance due to high memory usage"
                     );
-                    return Err(BrowserError::PoolExhausted);
+                    return Err(Error::PoolExhausted);
                 }
             }
         }
@@ -177,11 +177,9 @@ impl BrowserPool {
     }
 
     /// Get the page for a session, creating one if needed.
-    pub async fn get_page(&self, session_id: &str) -> Result<Page, BrowserError> {
+    pub async fn get_page(&self, session_id: &str) -> Result<Page, Error> {
         let instances = self.instances.read().await;
-        let instance = instances
-            .get(session_id)
-            .ok_or(BrowserError::ElementNotFound(0))?;
+        let instance = instances.get(session_id).ok_or(Error::ElementNotFound(0))?;
 
         let mut inst = instance.lock().await;
         inst.last_used = Instant::now();
@@ -197,7 +195,7 @@ impl BrowserPool {
             .browser
             .new_page("about:blank")
             .await
-            .map_err(|e| BrowserError::LaunchFailed(e.to_string()))?;
+            .map_err(|e| Error::LaunchFailed(e.to_string()))?;
 
         // Explicitly set viewport on page to ensure it matches config
         // (browser-level viewport may not always be applied to new pages)
@@ -207,7 +205,7 @@ impl BrowserPool {
             .device_scale_factor(self.config.device_scale_factor)
             .mobile(false)
             .build()
-            .map_err(|e| BrowserError::Cdp(format!("invalid viewport params: {e}")))?;
+            .map_err(|e| Error::Cdp(format!("invalid viewport params: {e}")))?;
 
         if let Err(e) = page.execute(viewport_cmd).await {
             warn!(session_id, error = %e, "failed to set page viewport");
@@ -226,7 +224,7 @@ impl BrowserPool {
     }
 
     /// Close a specific browser session.
-    pub async fn close_session(&self, session_id: &str) -> Result<(), BrowserError> {
+    pub async fn close_session(&self, session_id: &str) -> Result<(), Error> {
         let instance = {
             let mut instances = self.instances.write().await;
             instances.remove(session_id)
@@ -313,7 +311,7 @@ impl BrowserPool {
         session_id: &str,
         sandbox: bool,
         browser: Option<BrowserPreference>,
-    ) -> Result<BrowserInstance, BrowserError> {
+    ) -> Result<BrowserInstance, Error> {
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
@@ -322,15 +320,12 @@ impl BrowserPool {
     }
 
     /// Launch a browser inside a container (sandboxed mode).
-    async fn launch_sandboxed_browser(
-        &self,
-        session_id: &str,
-    ) -> Result<BrowserInstance, BrowserError> {
+    async fn launch_sandboxed_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
         use crate::container;
 
         // Check container runtime availability (Docker or Apple Container)
         if !container::is_container_available() {
-            return Err(BrowserError::LaunchFailed(
+            return Err(Error::LaunchFailed(
                 "No container runtime available for sandboxed browser. \
                  Please install Docker or Apple Container."
                     .to_string(),
@@ -338,9 +333,8 @@ impl BrowserPool {
         }
 
         // Ensure the container image is available
-        container::ensure_image(&self.config.sandbox_image).map_err(|e| {
-            BrowserError::LaunchFailed(format!("failed to ensure browser image: {e}"))
-        })?;
+        container::ensure_image(&self.config.sandbox_image)
+            .map_err(|e| Error::LaunchFailed(format!("failed to ensure browser image: {e}")))?;
 
         // Resolve and create profile directory on host if needed
         let profile_dir = self.config.resolved_profile_dir();
@@ -363,9 +357,7 @@ impl BrowserPool {
             self.config.low_memory_threshold_mb,
             profile_dir.as_deref(),
         )
-        .map_err(|e| {
-            BrowserError::LaunchFailed(format!("failed to start browser container: {e}"))
-        })?;
+        .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))?;
 
         let ws_url = container.websocket_url();
         info!(
@@ -392,7 +384,7 @@ impl BrowserPool {
         let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
             .await
             .map_err(|e| {
-                BrowserError::LaunchFailed(format!(
+                Error::LaunchFailed(format!(
                     "failed to connect to containerized browser at {}: {}",
                     ws_url, e
                 ))
@@ -427,7 +419,7 @@ impl BrowserPool {
         &self,
         session_id: &str,
         browser: Option<BrowserPreference>,
-    ) -> Result<BrowserInstance, BrowserError> {
+    ) -> Result<BrowserInstance, Error> {
         let requested_browser = browser.unwrap_or_default();
 
         // Detect all installed browser candidates.
@@ -459,7 +451,7 @@ impl BrowserPool {
                 message.push_str("\n\nAuto-install attempt:\n");
                 message.push_str(&attempt.details);
             }
-            return Err(BrowserError::LaunchFailed(message));
+            return Err(Error::LaunchFailed(message));
         }
 
         let selected =
@@ -472,7 +464,7 @@ impl BrowserPool {
                     } else {
                         installed.join(", ")
                     };
-                    return Err(BrowserError::LaunchFailed(format!(
+                    return Err(Error::LaunchFailed(format!(
                         "requested browser '{}' is not installed. Installed browsers: {}",
                         requested_browser, installed_list
                     )));
@@ -560,14 +552,14 @@ impl BrowserPool {
             }
         }
 
-        let config = builder.build().map_err(|e| {
-            BrowserError::LaunchFailed(format!("failed to build browser config: {e}"))
-        })?;
+        let config = builder
+            .build()
+            .map_err(|e| Error::LaunchFailed(format!("failed to build browser config: {e}")))?;
 
         let (browser, mut handler) = Browser::launch(config).await.map_err(|e| {
             // Include install instructions in launch failure messages
             let install_hint = crate::detect::install_instructions();
-            BrowserError::LaunchFailed(format!("browser launch failed: {e}\n\n{install_hint}"))
+            Error::LaunchFailed(format!("browser launch failed: {e}\n\n{install_hint}"))
         })?;
 
         info!(

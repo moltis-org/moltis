@@ -35,7 +35,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -48,7 +48,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .run_wait(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -61,7 +61,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .identity_get()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -74,7 +74,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .identity_update(ctx.params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -92,7 +92,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .identity_update_soul(soul)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -105,7 +105,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .agent
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -121,7 +121,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Inject replying state so the frontend can restore the
                 // thinking indicator after a full page reload.
@@ -150,7 +150,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .preview(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -163,7 +163,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .search(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -176,7 +176,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -197,7 +197,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .patch(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let version = result.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
                 broadcast(
                     &ctx.state,
@@ -246,7 +246,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .voice_generate(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -259,7 +259,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .reset(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -272,7 +272,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -285,7 +285,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .clear_all()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -298,7 +298,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .compact(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -312,7 +312,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .fork(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -325,7 +325,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .branches(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -338,7 +338,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_create(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -351,7 +351,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_list(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -364,7 +364,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .session
                     .share_revoke(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -379,7 +379,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -393,7 +393,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -406,7 +406,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -419,7 +419,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -432,7 +432,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -445,7 +445,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .logout(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -458,7 +458,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .senders_list(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -471,7 +471,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .sender_approve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -484,7 +484,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .sender_deny(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -497,7 +497,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .channel
                     .send(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -512,7 +512,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -525,7 +525,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -538,7 +538,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .apply(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -551,7 +551,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .patch(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -564,7 +564,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .config
                     .schema()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -579,7 +579,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -592,7 +592,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -605,7 +605,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -618,7 +618,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -631,7 +631,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -644,7 +644,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -657,7 +657,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .runs(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -685,7 +685,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs.iter().find(|j| j.name == "__heartbeat__");
@@ -726,7 +726,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .cron
                         .list()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                        .map_err(ErrorShape::from)?;
                     let jobs: Vec<moltis_cron::types::CronJob> =
                         serde_json::from_value(jobs_val).unwrap_or_default();
                     if let Some(hb_job) = jobs.iter().find(|j| j.name == "__heartbeat__") {
@@ -785,7 +785,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "patch": job_patch,
                             }))
                             .await
-                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                            .map_err(ErrorShape::from)?;
                     }
                     Ok(serde_json::json!({ "updated": true }))
                 })
@@ -801,7 +801,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs
@@ -818,7 +818,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "force": true,
                     }))
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 Ok(serde_json::json!({ "triggered": true }))
             })
         }),
@@ -833,7 +833,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .cron
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
                 let jobs: Vec<moltis_cron::types::CronJob> =
                     serde_json::from_value(jobs_val).unwrap_or_default();
                 let hb_job = jobs
@@ -855,7 +855,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "limit": limit,
                     }))
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -889,7 +889,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .send(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -902,7 +902,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .abort(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -915,7 +915,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .cancel_queued(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -930,7 +930,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .history(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -943,7 +943,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .inject(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -958,7 +958,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .clear(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -973,7 +973,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .compact(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -989,7 +989,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .context(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1020,7 +1020,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .raw_prompt(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1051,7 +1051,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .await
                     .full_context(params)
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1227,7 +1227,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .status()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1240,7 +1240,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .providers()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1253,7 +1253,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .enable(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1266,7 +1266,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .disable()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1279,7 +1279,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .convert(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1363,7 +1363,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .tts
                         .set_provider(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1376,7 +1376,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .status()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1389,7 +1389,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .providers()
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1402,7 +1402,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .transcribe(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1415,7 +1415,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .stt
                         .set_provider(ctx.params.clone())
                         .await
-                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        .map_err(ErrorShape::from)
                 })
             }),
         );
@@ -1431,7 +1431,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1444,7 +1444,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1457,7 +1457,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .bins()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1513,12 +1513,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "phase": "error",
                                 "source": source,
                                 "op_id": op_id,
-                                "error": e,
+                                "error": e.to_string(),
                             }),
                             BroadcastOpts::default(),
                         )
                         .await;
-                        Err(ErrorShape::new(error_codes::UNAVAILABLE, e))
+                        Err(ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
                     },
                 }
             })
@@ -1533,7 +1533,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1546,7 +1546,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1559,7 +1559,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .repos_list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1572,7 +1572,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .repos_remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1585,7 +1585,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .emergency_disable()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1598,7 +1598,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_trust(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1611,7 +1611,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1624,7 +1624,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1637,7 +1637,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .skill_detail(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1650,7 +1650,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .skills
                     .install_dep(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1665,7 +1665,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1678,7 +1678,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .add(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1691,7 +1691,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1704,7 +1704,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1717,7 +1717,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1730,7 +1730,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .status(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1743,7 +1743,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .tools(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1756,7 +1756,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .restart(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1769,7 +1769,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .reauth(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1782,7 +1782,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .oauth_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1795,7 +1795,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .oauth_complete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1808,7 +1808,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .mcp
                     .update(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1823,7 +1823,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .browser
                     .request(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1838,7 +1838,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .usage
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1851,7 +1851,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .usage
                     .cost(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1866,7 +1866,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .get()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1879,7 +1879,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1892,7 +1892,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .node_get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1905,7 +1905,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .node_set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1918,7 +1918,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .request(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1931,7 +1931,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .exec_approval
                     .resolve(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1946,7 +1946,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1959,7 +1959,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .list_all()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1972,7 +1972,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .disable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1985,7 +1985,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .enable(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -1998,7 +1998,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .detect_supported(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2011,7 +2011,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .model
                     .test(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2026,7 +2026,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .available()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2046,7 +2046,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Kick off background model detection after saving provider
                 // credentials, matching the behaviour of oauth.complete.
@@ -2070,7 +2070,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .validate_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2089,7 +2089,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // If oauth.start short-circuited because valid tokens already
                 // existed, trigger a provider-scoped background probe now.
@@ -2119,7 +2119,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_status(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2133,7 +2133,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .oauth_complete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 let provider_name = result
                     .get("provider")
@@ -2161,7 +2161,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_model(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2181,7 +2181,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .save_models(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(ErrorShape::from)?;
 
                 // Kick off background support probing after saving preferred models.
                 let model_service = Arc::clone(&ctx.state.services.model);
@@ -2204,7 +2204,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .remove_key(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2218,7 +2218,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .provider_setup
                     .add_custom(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2233,7 +2233,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .system_info()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2246,7 +2246,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .models()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2259,7 +2259,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .configure(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2272,7 +2272,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2285,7 +2285,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .search_hf(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2298,7 +2298,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .configure_custom(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2311,7 +2311,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .local_llm
                     .remove_model(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2326,7 +2326,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .get()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2339,7 +2339,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .set(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2352,7 +2352,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .wake(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2365,7 +2365,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .voicewake
                     .talk_mode(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2380,7 +2380,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .update
                     .run(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2395,7 +2395,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2408,7 +2408,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_next(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2421,7 +2421,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_cancel()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2434,7 +2434,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .onboarding
                     .wizard_status()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2449,7 +2449,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .web_login
                     .start(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2462,7 +2462,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .web_login
                     .wait(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2478,7 +2478,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .list()
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2491,7 +2491,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .get(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2504,7 +2504,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .upsert(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2517,7 +2517,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .delete(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2530,7 +2530,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .detect(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2543,7 +2543,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .complete_path(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );
@@ -2556,7 +2556,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .project
                     .context(ctx.params.clone())
                     .await
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+                    .map_err(ErrorShape::from)
             })
         }),
     );

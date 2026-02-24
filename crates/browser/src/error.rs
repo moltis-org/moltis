@@ -1,12 +1,17 @@
 //! Browser error types.
 
+use std::error::Error as StdError;
+
 use thiserror::Error;
 
 /// Errors that can occur during browser operations.
 #[derive(Debug, Error)]
-pub enum BrowserError {
+pub enum Error {
     #[error("browser not available: Chrome/Chromium not found")]
     BrowserNotAvailable,
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 
     #[error("browser launch failed: {0}")]
     LaunchFailed(String),
@@ -44,8 +49,11 @@ pub enum BrowserError {
     #[error("invalid action: {0}")]
     InvalidAction(String),
 
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("browser error: {source}")]
+    Other {
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
 }
 
 /// Substrings that indicate the CDP WebSocket connection is dead.
@@ -58,7 +66,7 @@ const STALE_CONNECTION_PATTERNS: &[&str] = &[
     "closed connection",
 ];
 
-impl BrowserError {
+impl Error {
     /// Returns `true` when this error indicates the CDP connection to the
     /// browser is dead and the session should be recycled.
     pub fn is_connection_error(&self) -> bool {
@@ -76,11 +84,17 @@ impl BrowserError {
             _ => false,
         }
     }
+
+    pub fn other(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::Other {
+            source: Box::new(source),
+        }
+    }
 }
 
-impl From<chromiumoxide::error::CdpError> for BrowserError {
+impl From<chromiumoxide::error::CdpError> for Error {
     fn from(err: chromiumoxide::error::CdpError) -> Self {
-        BrowserError::Cdp(err.to_string())
+        Error::Cdp(err.to_string())
     }
 }
 
@@ -90,8 +104,8 @@ mod tests {
 
     #[test]
     fn explicit_variants_are_connection_errors() {
-        assert!(BrowserError::BrowserClosed.is_connection_error());
-        assert!(BrowserError::ConnectionClosed("whatever".into()).is_connection_error());
+        assert!(Error::BrowserClosed.is_connection_error());
+        assert!(Error::ConnectionClosed("whatever".into()).is_connection_error());
     }
 
     #[test]
@@ -108,24 +122,21 @@ mod tests {
         // Each pattern should be detected in every message-bearing variant
         for msg in patterns {
             let m = msg.to_string();
+            assert!(Error::Cdp(m.clone()).is_connection_error(), "Cdp({msg})");
             assert!(
-                BrowserError::Cdp(m.clone()).is_connection_error(),
-                "Cdp({msg})"
-            );
-            assert!(
-                BrowserError::ScreenshotFailed(m.clone()).is_connection_error(),
+                Error::ScreenshotFailed(m.clone()).is_connection_error(),
                 "ScreenshotFailed({msg})"
             );
             assert!(
-                BrowserError::JsEvalFailed(m.clone()).is_connection_error(),
+                Error::JsEvalFailed(m.clone()).is_connection_error(),
                 "JsEvalFailed({msg})"
             );
             assert!(
-                BrowserError::NavigationFailed(m.clone()).is_connection_error(),
+                Error::NavigationFailed(m.clone()).is_connection_error(),
                 "NavigationFailed({msg})"
             );
             assert!(
-                BrowserError::Timeout(m.clone()).is_connection_error(),
+                Error::Timeout(m.clone()).is_connection_error(),
                 "Timeout({msg})"
             );
         }
@@ -133,16 +144,14 @@ mod tests {
 
     #[test]
     fn normal_errors_are_not_connection_errors() {
-        assert!(!BrowserError::BrowserNotAvailable.is_connection_error());
-        assert!(!BrowserError::LaunchFailed("out of memory".into()).is_connection_error());
-        assert!(!BrowserError::ElementNotFound(42).is_connection_error());
-        assert!(!BrowserError::InvalidSelector("div>".into()).is_connection_error());
-        assert!(!BrowserError::PoolExhausted.is_connection_error());
-        assert!(!BrowserError::InvalidAction("bad action".into()).is_connection_error());
+        assert!(!Error::BrowserNotAvailable.is_connection_error());
+        assert!(!Error::LaunchFailed("out of memory".into()).is_connection_error());
+        assert!(!Error::ElementNotFound(42).is_connection_error());
+        assert!(!Error::InvalidSelector("div>".into()).is_connection_error());
+        assert!(!Error::PoolExhausted.is_connection_error());
+        assert!(!Error::InvalidAction("bad action".into()).is_connection_error());
         // Message-bearing variant with an unrelated message
-        assert!(!BrowserError::Cdp("some other CDP error".into()).is_connection_error());
-        assert!(
-            !BrowserError::Timeout("element not found after 5000ms".into()).is_connection_error()
-        );
+        assert!(!Error::Cdp("some other CDP error".into()).is_connection_error());
+        assert!(!Error::Timeout("element not found after 5000ms".into()).is_connection_error());
     }
 }

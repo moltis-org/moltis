@@ -1,12 +1,11 @@
 //! Next-run computation for all schedule kinds.
 
 use {
-    anyhow::{Result, bail},
     chrono::{DateTime, TimeZone, Utc},
     cron::Schedule,
 };
 
-use crate::types::CronSchedule;
+use crate::{Error, Result, types::CronSchedule};
 
 /// Compute the next run time (epoch millis) for a given schedule.
 ///
@@ -25,7 +24,7 @@ pub fn compute_next_run(schedule: &CronSchedule, now_ms: u64) -> Result<Option<u
             anchor_ms,
         } => {
             if *every_ms == 0 {
-                bail!("every_ms must be > 0");
+                return Err(Error::message("every_ms must be > 0"));
             }
             let anchor = anchor_ms.unwrap_or(now_ms);
             if anchor > now_ms {
@@ -49,7 +48,12 @@ pub fn compute_next_run(schedule: &CronSchedule, now_ms: u64) -> Result<Option<u
                     let padded = format!("0 {expr} *");
                     padded.parse::<Schedule>()
                 })
-                .map_err(|e| anyhow::anyhow!("invalid cron expression '{expr}': {e}"))?;
+                .map_err(|source| {
+                    Error::external(
+                        format!("invalid cron expression '{expr}': {source}"),
+                        source,
+                    )
+                })?;
 
             let now_dt = DateTime::from_timestamp_millis(now_ms as i64)
                 .unwrap_or_else(|| Utc.timestamp_millis_opt(0).unwrap());
@@ -57,7 +61,7 @@ pub fn compute_next_run(schedule: &CronSchedule, now_ms: u64) -> Result<Option<u
             let next = if let Some(tz_name) = tz {
                 let tz: chrono_tz::Tz = tz_name
                     .parse()
-                    .map_err(|_| anyhow::anyhow!("unknown timezone: {tz_name}"))?;
+                    .map_err(|_| Error::unknown_timezone(tz_name.clone()))?;
                 let now_local = now_dt.with_timezone(&tz);
                 schedule
                     .after(&now_local)

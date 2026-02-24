@@ -90,7 +90,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 inner
                     .nodes
                     .rename(node_id, name)
-                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))?;
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
                 Ok(serde_json::json!({}))
             })
         }),

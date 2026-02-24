@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 
 use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
-use crate::state::{WizardState, WizardStep};
+use crate::{
+    Context, Result,
+    state::{WizardState, WizardStep},
+};
 
 /// Live onboarding service backed by a `WizardState` and config persistence.
 pub struct LiveOnboardingService {
@@ -23,8 +26,9 @@ impl LiveOnboardingService {
     }
 
     /// Save config to the service's config path.
-    fn save(&self, config: &MoltisConfig) -> anyhow::Result<()> {
-        moltis_config::loader::save_config_to_path(&self.config_path, config)?;
+    fn save(&self, config: &MoltisConfig) -> Result<()> {
+        moltis_config::loader::save_config_to_path(&self.config_path, config)
+            .context("failed to save onboarding config")?;
         Ok(())
     }
 
@@ -85,9 +89,9 @@ impl LiveOnboardingService {
     }
 
     /// Advance the wizard with user input.
-    pub fn wizard_next(&self, input: &str) -> Result<Value, String> {
+    pub fn wizard_next(&self, input: &str) -> Result<Value> {
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let ws = guard.as_mut().ok_or("no active wizard session")?;
+        let ws = guard.as_mut().context("no active wizard session")?;
         ws.advance(input);
 
         if ws.is_done() {
@@ -99,14 +103,9 @@ impl LiveOnboardingService {
             };
             config.identity = ws.identity.clone();
             config.user = ws.user.clone();
-            self.save(&config)
-                .map_err(|e| format!("failed to save config: {e}"))?;
-            if let Err(e) = moltis_config::save_identity(&ws.identity) {
-                return Err(format!("failed to save IDENTITY.md: {e}"));
-            }
-            if let Err(e) = moltis_config::save_user(&ws.user) {
-                return Err(format!("failed to save USER.md: {e}"));
-            }
+            self.save(&config).context("failed to save config")?;
+            moltis_config::save_identity(&ws.identity).context("failed to save IDENTITY.md")?;
+            moltis_config::save_user(&ws.user).context("failed to save USER.md")?;
             self.mark_onboarded();
 
             let resp = json!({
@@ -156,7 +155,7 @@ impl LiveOnboardingService {
     ///
     /// Accepts: `{name?, emoji?, theme?, soul?, user_name?, user_timezone?}`
     /// Also accepts `"creature"` and `"vibe"` as backward-compat aliases for `"theme"`.
-    pub fn identity_update(&self, params: Value) -> anyhow::Result<Value> {
+    pub fn identity_update(&self, params: Value) -> Result<Value> {
         let mut config = if self.config_path.exists() {
             moltis_config::loader::load_config(&self.config_path).unwrap_or_default()
         } else {
@@ -212,7 +211,7 @@ impl LiveOnboardingService {
             } else {
                 v.as_str().map(|s| s.to_string())
             };
-            moltis_config::save_soul(soul.as_deref())?;
+            moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
         }
         if let Some(v) = str_field(&params, "user_name") {
             user.name = v;
@@ -227,8 +226,8 @@ impl LiveOnboardingService {
         config.user = user.clone();
 
         self.save(&config)?;
-        moltis_config::save_identity(&identity)?;
-        moltis_config::save_user(&user)?;
+        moltis_config::save_identity(&identity).context("failed to save identity")?;
+        moltis_config::save_user(&user).context("failed to save user")?;
 
         // Mark onboarding complete once both names are present.
         if identity.name.is_some() && user.name.is_some() {
@@ -246,8 +245,8 @@ impl LiveOnboardingService {
     }
 
     /// Update SOUL.md in the workspace root.
-    pub fn identity_update_soul(&self, soul: Option<String>) -> anyhow::Result<Value> {
-        moltis_config::save_soul(soul.as_deref())?;
+    pub fn identity_update_soul(&self, soul: Option<String>) -> Result<Value> {
+        moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
         Ok(json!({}))
     }
 

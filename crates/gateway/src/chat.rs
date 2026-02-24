@@ -178,7 +178,7 @@ impl ChatRuntime for GatewayChatRuntime {
         body: &str,
         url: Option<&str>,
         session_key: Option<&str>,
-    ) -> anyhow::Result<usize> {
+    ) -> error::Result<usize> {
         #[cfg(feature = "push-notifications")]
         {
             if let Some(push_service) = self.state.get_push_service().await {
@@ -189,7 +189,8 @@ impl ChatRuntime for GatewayChatRuntime {
                     url,
                     session_key,
                 )
-                .await;
+                .await
+                .map_err(|source| error::Error::message(source.to_string()));
             }
         }
         let _ = (title, body, url, session_key);
@@ -198,10 +199,12 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Local LLM ───────────────────────────────────────────────────────────
 
-    async fn ensure_local_model_cached(&self, model_id: &str) -> Result<bool, String> {
+    async fn ensure_local_model_cached(&self, model_id: &str) -> error::Result<bool> {
         #[cfg(feature = "local-llm")]
         {
-            return crate::local_llm_setup::ensure_local_model_cached(model_id, &self.state).await;
+            return crate::local_llm_setup::ensure_local_model_cached(model_id, &self.state)
+                .await
+                .map_err(error::Error::message);
         }
         #[cfg(not(feature = "local-llm"))]
         {

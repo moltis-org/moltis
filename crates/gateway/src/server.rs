@@ -1629,7 +1629,7 @@ pub async fn start_gateway(
         Box::pin(async move {
             let state = st
                 .get()
-                .ok_or_else(|| anyhow::anyhow!("gateway not ready"))?;
+                .ok_or_else(|| moltis_cron::Error::message("gateway not ready"))?;
 
             // OpenClaw-style cost guard: if HEARTBEAT.md exists but is effectively
             // empty (comments/blank scaffold) and there's no explicit
@@ -1726,7 +1726,10 @@ pub async fn start_gateway(
             if let Some(ref model) = req.model {
                 params["model"] = serde_json::Value::String(model.clone());
             }
-            let result = chat.send_sync(params).await.map_err(|e| anyhow::anyhow!(e));
+            let result = chat
+                .send_sync(params)
+                .await
+                .map_err(|e| moltis_cron::Error::message(e.to_string()));
 
             // Clean up sandbox overrides.
             if let Some(ref router) = state.sandbox_router {
