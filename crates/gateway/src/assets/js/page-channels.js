@@ -7,6 +7,7 @@ import { useEffect } from "preact/hooks";
 import { addChannel, fetchChannelStatus, validateChannelFields } from "./channel-utils.js";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { connected } from "./signals.js";
 import * as S from "./state.js";
@@ -62,7 +63,7 @@ function ChannelCard(props) {
 	var ch = props.channel;
 
 	function onRemove() {
-		requestConfirm(`Remove ${ch.name || ch.account_id}?`).then((yes) => {
+		requestConfirm(t("channels:card.removeConfirm", { name: ch.name || ch.account_id })).then((yes) => {
 			if (!yes) return;
 			sendRpc("channels.remove", { account_id: ch.account_id }).then((r) => {
 				if (r?.ok) loadChannels();
@@ -76,8 +77,10 @@ function ChannelCard(props) {
 		var active = ch.sessions.filter((s) => s.active);
 		sessionLine =
 			active.length > 0
-				? active.map((s) => `${s.label || s.key} (${s.messageCount} msgs)`).join(", ")
-				: "No active session";
+				? active
+						.map((s) => t("channels:card.sessionInfo", { label: s.label || s.key, count: s.messageCount }))
+						.join(", ")
+				: t("channels:card.noActiveSession");
 	}
 
 	return html`<div class="provider-card" style="padding:12px 14px;border-radius:8px;margin-bottom:8px;">
@@ -86,19 +89,19 @@ function ChannelCard(props) {
         <${TelegramIcon} />
       </span>
       <div style="display:flex;flex-direction:column;gap:2px;">
-        <span class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id || "Telegram"}</span>
+        <span class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id || t("channels:card.defaultName")}</span>
         ${ch.details && html`<span class="text-xs text-[var(--muted)]">${ch.details}</span>`}
         ${sessionLine && html`<span class="text-xs text-[var(--muted)]">${sessionLine}</span>`}
       </div>
-      <span class="provider-item-badge ${statusClass}">${ch.status || "unknown"}</span>
+      <span class="provider-item-badge ${statusClass}">${ch.status || t("channels:card.unknownStatus")}</span>
     </div>
     <div class="flex gap-2">
-      <button class="provider-btn provider-btn-sm provider-btn-secondary" title="Edit ${ch.account_id || "channel"}"
+      <button class="provider-btn provider-btn-sm provider-btn-secondary" title="${t("channels:card.editTitle", { name: ch.account_id || t("channels:card.fallbackName") })}"
         onClick=${() => {
 					editingChannel.value = ch;
-				}}>Edit</button>
-      <button class="provider-btn provider-btn-sm provider-btn-danger" title="Remove ${ch.account_id || "channel"}"
-        onClick=${onRemove}>Remove</button>
+				}}>${t("common:actions.update")}</button>
+      <button class="provider-btn provider-btn-sm provider-btn-danger" title="${t("channels:card.removeTitle", { name: ch.account_id || t("channels:card.fallbackName") })}"
+        onClick=${onRemove}>${t("common:actions.remove")}</button>
     </div>
   </div>`;
 }
@@ -107,8 +110,8 @@ function ChannelCard(props) {
 function ChannelsTab() {
 	if (channels.value.length === 0) {
 		return html`<div style="text-align:center;padding:40px 0;">
-      <div class="text-sm text-[var(--muted)]" style="margin-bottom:12px;">No Telegram bots connected.</div>
-      <div class="text-xs text-[var(--muted)]">Click "+ Add Telegram Bot" to connect one using a token from @BotFather.</div>
+      <div class="text-sm text-[var(--muted)]" style="margin-bottom:12px;">${t("channels:empty.noBotsConnected")}</div>
+      <div class="text-xs text-[var(--muted)]">${t("channels:empty.addBotHint")}</div>
     </div>`;
 	}
 	return html`${channels.value.map((ch) => html`<${ChannelCard} key=${ch.account_id} channel=${ch} />`)}`;
@@ -127,7 +130,7 @@ function SendersTab() {
 	}, [sendersAccount.value]);
 
 	if (channels.value.length === 0) {
-		return html`<div class="text-sm text-[var(--muted)]">No channels configured.</div>`;
+		return html`<div class="text-sm text-[var(--muted)]">${t("channels:empty.noChannelsConfigured")}</div>`;
 	}
 
 	function onAction(identifier, action) {
@@ -143,7 +146,7 @@ function SendersTab() {
 
 	return html`<div>
     <div style="margin-bottom:12px;">
-      <label class="text-xs text-[var(--muted)]" style="margin-right:6px;">Account:</label>
+      <label class="text-xs text-[var(--muted)]" style="margin-right:6px;">${t("channels:senders.accountLabel")}</label>
       <select style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;"
         value=${sendersAccount.value} onChange=${(e) => {
 					sendersAccount.value = e.target.value;
@@ -153,14 +156,14 @@ function SendersTab() {
 				)}
       </select>
     </div>
-    ${senders.value.length === 0 && html`<div class="text-sm text-[var(--muted)] senders-empty">No messages received yet for this account.</div>`}
+    ${senders.value.length === 0 && html`<div class="text-sm text-[var(--muted)] senders-empty">${t("channels:senders.noMessagesYet")}</div>`}
     ${
 			senders.value.length > 0 &&
 			html`<table class="senders-table">
       <thead><tr>
-        <th class="senders-th">Sender</th><th class="senders-th">Username</th>
-        <th class="senders-th">Messages</th><th class="senders-th">Last Seen</th>
-        <th class="senders-th">Status</th><th class="senders-th">Action</th>
+        <th class="senders-th">${t("channels:senders.colSender")}</th><th class="senders-th">${t("channels:senders.colUsername")}</th>
+        <th class="senders-th">${t("channels:senders.colMessages")}</th><th class="senders-th">${t("channels:senders.colLastSeen")}</th>
+        <th class="senders-th">${t("channels:senders.colStatus")}</th><th class="senders-th">${t("channels:senders.colAction")}</th>
       </tr></thead>
       <tbody>
         ${senders.value.map((s) => {
@@ -175,16 +178,18 @@ function SendersTab() {
               ${
 								s.otp_pending
 									? html`<span class="provider-item-badge cursor-pointer select-none" style="background:var(--warning-bg, #fef3c7);color:var(--warning-text, #92400e);" onClick=${() => {
-											navigator.clipboard.writeText(s.otp_pending.code).then(() => showToast("OTP code copied"));
-										}}>OTP: <code class="text-xs">${s.otp_pending.code}</code></span>`
-									: html`<span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? "Allowed" : "Denied"}</span>`
+											navigator.clipboard
+												.writeText(s.otp_pending.code)
+												.then(() => showToast(t("channels:senders.otpCopied")));
+										}}>${t("channels:senders.otpPrefix")}<code class="text-xs">${s.otp_pending.code}</code></span>`
+									: html`<span class="provider-item-badge ${s.allowed ? "configured" : "oauth"}">${s.allowed ? t("channels:senders.allowed") : t("channels:senders.denied")}</span>`
 							}
             </td>
             <td class="senders-td">
               ${
 								s.allowed
-									? html`<button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${() => onAction(identifier, "deny")}>Deny</button>`
-									: html`<button class="provider-btn provider-btn-sm" onClick=${() => onAction(identifier, "approve")}>Approve</button>`
+									? html`<button class="provider-btn provider-btn-sm provider-btn-danger" onClick=${() => onAction(identifier, "deny")}>${t("channels:senders.deny")}</button>`
+									: html`<button class="provider-btn provider-btn-sm" onClick=${() => onAction(identifier, "approve")}>${t("channels:senders.approve")}</button>`
 							}
             </td>
           </tr>`;
@@ -238,7 +243,7 @@ function AllowlistInput({ value, onChange }) {
 				input.value = e.target.value;
 			}}
       onKeyDown=${onKeyDown}
-      placeholder=${value.length === 0 ? "Type a username and press Enter" : ""}
+      placeholder=${value.length === 0 ? t("channels:allowlistPlaceholder") : ""}
       class="flex-1 bg-transparent text-[var(--text)] text-sm outline-none border-none"
       style="min-width:80px;padding:2px 0;font-family:var(--font-body);" />
   </div>`;
@@ -282,15 +287,15 @@ function AddChannelModal() {
 				allowlistItems.value = [];
 				loadChannels();
 			} else {
-				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to connect bot.";
+				error.value = (res?.error && (res.error.message || res.error.detail)) || t("channels:add.failedToConnect");
 			}
 		});
 	}
 
 	var defaultPlaceholder =
 		modelsSig.value.length > 0
-			? `(default: ${modelsSig.value[0].displayName || modelsSig.value[0].id})`
-			: "(server default)";
+			? t("channels:form.modelDefault", { model: modelsSig.value[0].displayName || modelsSig.value[0].id })
+			: t("channels:form.modelServerDefault");
 
 	var selectStyle =
 		"font-family:var(--font-body);background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:.85rem;cursor:pointer;";
@@ -299,50 +304,50 @@ function AddChannelModal() {
 
 	return html`<${Modal} show=${showAddModal.value} onClose=${() => {
 		showAddModal.value = false;
-	}} title="Add Telegram Bot">
+	}} title=${t("channels:add.modalTitle")}>
     <div class="channel-form">
       <div class="channel-card">
-        <span class="text-xs font-medium text-[var(--text-strong)]">How to create a Telegram bot</span>
-        <div class="text-xs text-[var(--muted)] channel-help">1. Open <a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)]" style="text-decoration:underline;">@BotFather</a> in Telegram</div>
-        <div class="text-xs text-[var(--muted)]">2. Send /newbot and follow the prompts to choose a name and username</div>
-        <div class="text-xs text-[var(--muted)]">3. Copy the bot token (looks like 123456:ABC-DEF...) and paste it below</div>
-        <div class="text-xs text-[var(--muted)] channel-help" style="margin-top:2px;">See the <a href="https://core.telegram.org/bots/tutorial" target="_blank" class="text-[var(--accent)]" style="text-decoration:underline;">Telegram Bot Tutorial</a> for more details.</div>
+        <span class="text-xs font-medium text-[var(--text-strong)]">${t("channels:add.helpHeading")}</span>
+        <div class="text-xs text-[var(--muted)] channel-help">${t("channels:add.helpStep1", { link: html`<a href="https://t.me/BotFather" target="_blank" class="text-[var(--accent)]" style="text-decoration:underline;">${t("channels:add.botFather")}</a>` })}</div>
+        <div class="text-xs text-[var(--muted)]">${t("channels:add.helpStep2")}</div>
+        <div class="text-xs text-[var(--muted)]">${t("channels:add.helpStep3")}</div>
+        <div class="text-xs text-[var(--muted)] channel-help" style="margin-top:2px;">${t("channels:add.helpSeeMore", { link: html`<a href="https://core.telegram.org/bots/tutorial" target="_blank" class="text-[var(--accent)]" style="text-decoration:underline;">${t("channels:add.telegramBotTutorial")}</a>` })}</div>
       </div>
-	      <label class="text-xs text-[var(--muted)]">Bot username</label>
-	      <input data-field="accountId" type="text" placeholder="e.g. my_assistant_bot" style=${inputStyle} />
-	      <label class="text-xs text-[var(--muted)]">Bot Token (from @BotFather)</label>
-	      <input data-field="token" type="password" placeholder="123456:ABC-DEF..." style=${inputStyle}
+	      <label class="text-xs text-[var(--muted)]">${t("channels:add.botUsernameLabel")}</label>
+	      <input data-field="accountId" type="text" placeholder=${t("channels:add.botUsernamePlaceholder")} style=${inputStyle} />
+	      <label class="text-xs text-[var(--muted)]">${t("channels:add.botTokenLabel")}</label>
+	      <input data-field="token" type="password" placeholder=${t("channels:add.botTokenPlaceholder")} style=${inputStyle}
 	        autocomplete="new-password"
 	        autocapitalize="none"
 	        autocorrect="off"
 	        spellcheck="false"
 	        name="telegram_bot_token" />
-      <label class="text-xs text-[var(--muted)]">DM Policy</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.dmPolicyLabel")}</label>
       <select data-field="dmPolicy" style=${selectStyle}>
-        <option value="open">Open (anyone)</option>
-        <option value="allowlist">Allowlist only</option>
-        <option value="disabled">Disabled</option>
+        <option value="open">${t("channels:form.dmPolicyOpen")}</option>
+        <option value="allowlist">${t("channels:form.dmPolicyAllowlist")}</option>
+        <option value="disabled">${t("channels:form.dmPolicyDisabled")}</option>
       </select>
-      <label class="text-xs text-[var(--muted)]">Group Mention Mode</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.mentionModeLabel")}</label>
       <select data-field="mentionMode" style=${selectStyle}>
-        <option value="mention">Must @mention bot</option>
-        <option value="always">Always respond</option>
-        <option value="none">Don't respond in groups</option>
+        <option value="mention">${t("channels:form.mentionModeMention")}</option>
+        <option value="always">${t("channels:form.mentionModeAlways")}</option>
+        <option value="none">${t("channels:form.mentionModeNone")}</option>
       </select>
-      <label class="text-xs text-[var(--muted)]">Default Model</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.defaultModelLabel")}</label>
       <${ModelSelect} models=${modelsSig.value} value=${addModel.value}
         onChange=${(v) => {
 					addModel.value = v;
 				}}
         placeholder=${defaultPlaceholder} />
-      <label class="text-xs text-[var(--muted)]">DM Allowlist</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.dmAllowlistLabel")}</label>
       <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
 				allowlistItems.value = v;
 			}} />
       ${error.value && html`<div class="text-xs text-[var(--error)] channel-error" style="display:block;">${error.value}</div>`}
       <button class="provider-btn"
         onClick=${onSubmit} disabled=${saving.value}>
-        ${saving.value ? "Connecting\u2026" : "Connect Bot"}
+        ${saving.value ? t("channels:add.connectingBtn") : t("channels:add.connectBtn")}
       </button>
     </div>
   </${Modal}>`;
@@ -387,50 +392,50 @@ function EditChannelModal() {
 				editingChannel.value = null;
 				loadChannels();
 			} else {
-				error.value = (res?.error && (res.error.message || res.error.detail)) || "Failed to update bot.";
+				error.value = (res?.error && (res.error.message || res.error.detail)) || t("channels:edit.failedToUpdate");
 			}
 		});
 	}
 
 	var defaultPlaceholder =
 		modelsSig.value.length > 0
-			? `(default: ${modelsSig.value[0].displayName || modelsSig.value[0].id})`
-			: "(server default)";
+			? t("channels:form.modelDefault", { model: modelsSig.value[0].displayName || modelsSig.value[0].id })
+			: t("channels:form.modelServerDefault");
 
 	var selectStyle =
 		"font-family:var(--font-body);background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:.85rem;cursor:pointer;";
 
 	return html`<${Modal} show=${true} onClose=${() => {
 		editingChannel.value = null;
-	}} title="Edit Telegram Bot">
+	}} title=${t("channels:edit.modalTitle")}>
     <div class="channel-form">
       <div class="text-sm text-[var(--text-strong)]">${ch.name || ch.account_id}</div>
-      <label class="text-xs text-[var(--muted)]">DM Policy</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.dmPolicyLabel")}</label>
       <select data-field="dmPolicy" style=${selectStyle} value=${cfg.dm_policy || "open"}>
-        <option value="open">Open (anyone)</option>
-        <option value="allowlist">Allowlist only</option>
-        <option value="disabled">Disabled</option>
+        <option value="open">${t("channels:form.dmPolicyOpen")}</option>
+        <option value="allowlist">${t("channels:form.dmPolicyAllowlist")}</option>
+        <option value="disabled">${t("channels:form.dmPolicyDisabled")}</option>
       </select>
-      <label class="text-xs text-[var(--muted)]">Group Mention Mode</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.mentionModeLabel")}</label>
       <select data-field="mentionMode" style=${selectStyle} value=${cfg.mention_mode || "mention"}>
-        <option value="mention">Must @mention bot</option>
-        <option value="always">Always respond</option>
-        <option value="none">Don't respond in groups</option>
+        <option value="mention">${t("channels:form.mentionModeMention")}</option>
+        <option value="always">${t("channels:form.mentionModeAlways")}</option>
+        <option value="none">${t("channels:form.mentionModeNone")}</option>
       </select>
-      <label class="text-xs text-[var(--muted)]">Default Model</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.defaultModelLabel")}</label>
       <${ModelSelect} models=${modelsSig.value} value=${editModel.value}
         onChange=${(v) => {
 					editModel.value = v;
 				}}
         placeholder=${defaultPlaceholder} />
-      <label class="text-xs text-[var(--muted)]">DM Allowlist</label>
+      <label class="text-xs text-[var(--muted)]">${t("channels:form.dmAllowlistLabel")}</label>
       <${AllowlistInput} value=${allowlistItems.value} onChange=${(v) => {
 				allowlistItems.value = v;
 			}} />
       ${error.value && html`<div class="text-xs text-[var(--error)] channel-error" style="display:block;">${error.value}</div>`}
       <button class="provider-btn"
         onClick=${onSave} disabled=${saving.value}>
-        ${saving.value ? "Saving\u2026" : "Save Changes"}
+        ${saving.value ? t("common:actions.saving") : t("channels:edit.saveChangesBtn")}
       </button>
     </div>
   </${Modal}>`;
@@ -466,16 +471,16 @@ function ChannelsPage() {
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">Channels</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">${t("channels:title")}</h2>
         <div style="display:flex;gap:4px;margin-left:12px;">
           <button class="session-action-btn" style=${activeTab.value === "channels" ? "font-weight:600;" : ""}
             onClick=${() => {
 							activeTab.value = "channels";
-						}}>Channels</button>
+						}}>${t("channels:tabs.channels")}</button>
           <button class="session-action-btn" style=${activeTab.value === "senders" ? "font-weight:600;" : ""}
             onClick=${() => {
 							activeTab.value = "senders";
-						}}>Senders</button>
+						}}>${t("channels:tabs.senders")}</button>
         </div>
         ${
 					activeTab.value === "channels" &&
@@ -483,7 +488,7 @@ function ChannelsPage() {
           <button class="provider-btn"
             onClick=${() => {
 							if (connected.value) showAddModal.value = true;
-						}}>+ Add Telegram Bot</button>
+						}}>${t("channels:addTelegramBot")}</button>
         `
 				}
       </div>

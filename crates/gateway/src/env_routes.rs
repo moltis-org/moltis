@@ -5,12 +5,30 @@ use axum::{
     response::IntoResponse,
 };
 
+const ENV_CREDENTIAL_STORE_UNAVAILABLE: &str = "ENV_CREDENTIAL_STORE_UNAVAILABLE";
+const ENV_KEY_REQUIRED: &str = "ENV_KEY_REQUIRED";
+const ENV_KEY_INVALID: &str = "ENV_KEY_INVALID";
+const ENV_LIST_FAILED: &str = "ENV_LIST_FAILED";
+const ENV_SET_FAILED: &str = "ENV_SET_FAILED";
+const ENV_DELETE_FAILED: &str = "ENV_DELETE_FAILED";
+
+fn error_body(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({ "code": code, "error": error.into() })
+}
+
+fn is_valid_env_key(key: &str) -> bool {
+    key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// List all environment variables (names only, no values).
 pub async fn env_list(State(state): State<crate::server::AppState>) -> impl IntoResponse {
     let Some(ref store) = state.gateway.credential_store else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "no credential store" })),
+            Json(error_body(
+                ENV_CREDENTIAL_STORE_UNAVAILABLE,
+                "no credential store",
+            )),
         )
             .into_response();
     };
@@ -18,7 +36,7 @@ pub async fn env_list(State(state): State<crate::server::AppState>) -> impl Into
         Ok(vars) => Json(serde_json::json!({ "env_vars": vars })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(error_body(ENV_LIST_FAILED, e.to_string())),
         )
             .into_response(),
     }
@@ -32,7 +50,10 @@ pub async fn env_set(
     let Some(ref store) = state.gateway.credential_store else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "no credential store" })),
+            Json(error_body(
+                ENV_CREDENTIAL_STORE_UNAVAILABLE,
+                "no credential store",
+            )),
         )
             .into_response();
     };
@@ -51,16 +72,19 @@ pub async fn env_set(
     if key.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "key is required" })),
+            Json(error_body(ENV_KEY_REQUIRED, "key is required")),
         )
             .into_response();
     }
 
     // Validate key format: letters, digits, underscores.
-    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !is_valid_env_key(key) {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "key must contain only letters, digits, and underscores" })),
+            Json(error_body(
+                ENV_KEY_INVALID,
+                "key must contain only letters, digits, and underscores",
+            )),
         )
             .into_response();
     }
@@ -69,7 +93,7 @@ pub async fn env_set(
         Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(error_body(ENV_SET_FAILED, e.to_string())),
         )
             .into_response(),
     }
@@ -83,7 +107,10 @@ pub async fn env_delete(
     let Some(ref store) = state.gateway.credential_store else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "no credential store" })),
+            Json(error_body(
+                ENV_CREDENTIAL_STORE_UNAVAILABLE,
+                "no credential store",
+            )),
         )
             .into_response();
     };
@@ -91,8 +118,29 @@ pub async fn env_delete(
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(error_body(ENV_DELETE_FAILED, e.to_string())),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_body_contains_code_and_error() {
+        let value = error_body("ENV_KEY_REQUIRED", "key is required");
+        assert_eq!(value["code"], "ENV_KEY_REQUIRED");
+        assert_eq!(value["error"], "key is required");
+    }
+
+    #[test]
+    fn env_key_validation_accepts_letters_digits_and_underscore() {
+        assert!(is_valid_env_key("ABC_123"));
+        assert!(is_valid_env_key("my_key"));
+        assert!(!is_valid_env_key("bad-key"));
+        assert!(!is_valid_env_key("bad key"));
+        assert!(!is_valid_env_key("bad.key"));
     }
 }

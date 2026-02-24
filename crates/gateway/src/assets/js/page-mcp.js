@@ -6,6 +6,7 @@ import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { ConfirmDialog, requestConfirm } from "./ui.js";
 
@@ -44,10 +45,10 @@ async function addServer(name, command, args, env) {
 	var res = await sendRpc("mcp.add", { name, command, args, env });
 	if (res?.ok) {
 		var finalName = res.payload?.name || name;
-		showToast(`Added MCP tool "${finalName}"`, "success");
+		showToast(t("mcp:addedServer", { name: finalName }), "success");
 	} else {
 		var msg = res?.error?.message || res?.error || "unknown error";
-		showToast(`Failed to add "${name}": ${msg}`, "error");
+		showToast(t("mcp:failedToAdd", { name, error: msg }), "error");
 	}
 	await refreshServers();
 }
@@ -72,26 +73,26 @@ var featuredServers = [
 	{
 		name: "filesystem",
 		repo: "modelcontextprotocol/servers",
-		desc: "Secure file operations with configurable access controls",
+		descKey: "mcp:featured.filesystemDesc",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-		hint: "Last arg is the allowed directory path",
+		hintKey: "mcp:featured.filesystemHint",
 	},
 	{
 		name: "memory",
 		repo: "modelcontextprotocol/servers",
-		desc: "Knowledge graph-based persistent memory system",
+		descKey: "mcp:featured.memoryDesc",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-memory"],
 	},
 	{
 		name: "github",
 		repo: "modelcontextprotocol/servers",
-		desc: "GitHub API integration — repos, issues, PRs, code search",
+		descKey: "mcp:featured.githubDesc",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-github"],
 		envKeys: ["GITHUB_PERSONAL_ACCESS_TOKEN"],
-		hint: "Requires a GitHub personal access token",
+		hintKey: "mcp:featured.githubHint",
 	},
 ];
 
@@ -121,9 +122,9 @@ function StatusBadge({ state }) {
 
 function ConfigForm({ server, argsVal, envVal, onCancel }) {
 	return html`<div class="mt-2 flex flex-col gap-1.5">
-    ${server.hint && html`<div class="text-xs text-[var(--warn)]">${server.hint}</div>`}
+    ${server.hintKey && html`<div class="text-xs text-[var(--warn)]">${t(server.hintKey)}</div>`}
     <div class="project-edit-group">
-      <div class="text-xs text-[var(--muted)] mb-1">Arguments</div>
+      <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:argumentsLabel")}</div>
       <input type="text" value=${argsVal.value}
         onInput=${(e) => {
 					argsVal.value = e.target.value;
@@ -134,7 +135,7 @@ function ConfigForm({ server, argsVal, envVal, onCancel }) {
 			server.envKeys &&
 			server.envKeys.length > 0 &&
 			html`<div class="project-edit-group">
-        <div class="text-xs text-[var(--muted)] mb-1">Environment variables (KEY=VALUE per line)</div>
+        <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:envVarsLabel")}</div>
         <textarea value=${envVal.value}
           onInput=${(e) => {
 						envVal.value = e.target.value;
@@ -144,15 +145,15 @@ function ConfigForm({ server, argsVal, envVal, onCancel }) {
       </div>`
 		}
     <button onClick=${onCancel}
-      class="self-start provider-btn provider-btn-secondary provider-btn-sm">Cancel</button>
+      class="self-start provider-btn provider-btn-secondary provider-btn-sm">${t("common:actions.cancel")}</button>
   </div>`;
 }
 
 function featuredButtonLabel(installing, configuring, needsConfig) {
-	if (installing) return "Adding\u2026";
-	if (configuring) return "Confirm";
-	if (needsConfig) return "Configure";
-	return "Add";
+	if (installing) return t("mcp:adding");
+	if (configuring) return t("mcp:confirm");
+	if (needsConfig) return t("common:actions.configure");
+	return t("common:actions.add");
 }
 
 function FeaturedCard(props) {
@@ -162,7 +163,7 @@ function FeaturedCard(props) {
 	var argsVal = useSignal(f.args.join(" "));
 	var envVal = useSignal((f.envKeys || []).map((k) => `${k}=`).join("\n"));
 
-	var needsConfig = f.envKeys || f.hint;
+	var needsConfig = f.envKeys || f.hintKey;
 
 	function onAdd() {
 		if (needsConfig && !configuring.value) {
@@ -183,8 +184,8 @@ function FeaturedCard(props) {
       <div class="flex-1 min-w-0">
         <div class="provider-item-name font-mono text-sm">${f.name}</div>
         <div class="text-xs text-[var(--muted)] mt-0.5 flex gap-3 items-center">
-          <span>${f.desc}</span>
-          ${needsConfig && html`<span class="text-[0.6rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">config required</span>`}
+          <span>${t(f.descKey)}</span>
+          ${needsConfig && html`<span class="text-[0.6rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${t("mcp:configRequired")}</span>`}
         </div>
       </div>
       <button onClick=${onAdd} disabled=${installing.value}
@@ -206,9 +207,9 @@ function FeaturedCard(props) {
 function FeaturedSection() {
 	return html`<div>
     <div class="flex items-center justify-between mb-2">
-      <h3 class="text-sm font-medium text-[var(--text-strong)]">Popular MCP Servers</h3>
+      <h3 class="text-sm font-medium text-[var(--text-strong)]">${t("mcp:popularTitle")}</h3>
       <a href="https://github.com/modelcontextprotocol/servers" target="_blank" rel="noopener noreferrer"
-        class="text-xs text-[var(--accent)] hover:underline">Browse all servers on GitHub \u2192</a>
+        class="text-xs text-[var(--accent)] hover:underline">${t("mcp:browseAll")}</a>
     </div>
     <div>
       ${featuredServers.map((f) => html`<${FeaturedCard} key=${f.name} server=${f} />`)}
@@ -286,9 +287,9 @@ function InstallBox() {
 				url: sseUrl.value.trim(),
 			}).then((res) => {
 				if (res?.ok) {
-					showToast(`Added MCP tool "${res.payload?.name || sseName}"`, "success");
+					showToast(t("mcp:addedServer", { name: res.payload?.name || sseName }), "success");
 				} else {
-					showToast(`Failed: ${res?.error?.message || res?.error || "unknown error"}`, "error");
+					showToast(t("mcp:failedGeneric", { error: res?.error?.message || res?.error || "unknown error" }), "error");
 				}
 				refreshServers();
 				adding.value = false;
@@ -313,48 +314,56 @@ function InstallBox() {
 	}
 
 	return html`<div class="max-w-[600px] border-t border-[var(--border)] pt-4">
-    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Add Custom MCP Server</h3>
+    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("mcp:addCustomTitle")}</h3>
     <div class="flex gap-2 mb-3">
       <button onClick=${() => {
 				transportType.value = "stdio";
 			}}
-        class="provider-btn provider-btn-sm ${transportType.value === "stdio" ? "" : "provider-btn-secondary"}">Stdio (local)</button>
+        class="provider-btn provider-btn-sm ${transportType.value === "stdio" ? "" : "provider-btn-secondary"}">${t("mcp:stdioLocal")}</button>
       <button onClick=${() => {
 				transportType.value = "sse";
 			}}
-        class="provider-btn provider-btn-sm ${transportType.value === "sse" ? "" : "provider-btn-secondary"}">SSE (remote)</button>
+        class="provider-btn provider-btn-sm ${transportType.value === "sse" ? "" : "provider-btn-secondary"}">${t("mcp:sseRemote")}</button>
     </div>
     ${
 			!isSse &&
 			html`<div class="project-edit-group mb-2">
-      <div class="text-xs text-[var(--muted)] mb-1">Command</div>
-      <input type="text" class="provider-key-input w-full font-mono" placeholder="npx -y mcp-remote https://mcp.example.com/mcp"
+      <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:commandLabel")}</div>
+      <input
+        type="text"
+        class="provider-key-input w-full font-mono"
+        placeholder=${t("mcp:commandPlaceholder")}
         value=${cmdLine.value}
         onInput=${(e) => {
 					cmdLine.value = e.target.value;
 				}}
         onKeyDown=${onKey} />
-      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span> <span class="opacity-60">(editable after adding)</span></div>`}
+      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">${t("mcp:nameLabel")} <span class="font-mono text-[var(--text-strong)]">${detectedName}</span> <span class="opacity-60">${t("mcp:editableAfterAdding")}</span></div>`}
     </div>`
 		}
     ${
 			isSse &&
 			html`<div class="project-edit-group mb-2">
-      <div class="text-xs text-[var(--muted)] mb-1">Server URL</div>
-      <input type="text" class="provider-key-input w-full font-mono" placeholder="https://mcp.example.com/mcp"
+      <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:serverUrlLabel")}</div>
+      <input
+        type="text"
+        class="provider-key-input w-full font-mono"
+        placeholder=${t("mcp:serverUrlPlaceholder")}
         value=${sseUrl.value}
         onInput=${(e) => {
 					sseUrl.value = e.target.value;
 				}}
         onKeyDown=${onKey} />
-      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">Name: <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
+      ${detectedName && html`<div class="text-xs text-[var(--muted)] mt-1">${t("mcp:nameLabel")} <span class="font-mono text-[var(--text-strong)]">${detectedName}</span></div>`}
     </div>`
 		}
     ${
 			showEnv.value &&
 			html`<div class="project-edit-group mb-2">
-        <div class="text-xs text-[var(--muted)] mb-1">Environment variables (KEY=VALUE per line)</div>
-        <textarea class="provider-key-input w-full min-h-[60px] resize-y font-mono text-sm" placeholder="API_KEY=sk-..."
+        <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:envVarsLabel")}</div>
+        <textarea
+          class="provider-key-input w-full min-h-[60px] resize-y font-mono text-sm"
+          placeholder=${t("mcp:envVarsPlaceholder")}
           rows="3"
           value=${envVal.value}
           onInput=${(e) => {
@@ -364,13 +373,13 @@ function InstallBox() {
 		}
     <div class="flex gap-2 items-center">
       <button class="provider-btn" onClick=${onAdd} disabled=${adding.value || !canAdd}>
-        ${adding.value ? "Adding\u2026" : "Add"}
+        ${adding.value ? t("mcp:adding") : t("common:actions.add")}
       </button>
       <button onClick=${() => {
 				showEnv.value = !showEnv.value;
 			}}
         class="provider-btn provider-btn-secondary provider-btn-sm whitespace-nowrap">
-        ${showEnv.value ? "Hide env vars" : "+ Environment variables"}
+        ${showEnv.value ? t("mcp:hideEnvVars") : t("mcp:showEnvVars")}
       </button>
     </div>
   </div>`;
@@ -405,7 +414,7 @@ function ServerCard({ server }) {
 
 	async function restart() {
 		await sendRpc("mcp.restart", { name: server.name });
-		showToast(`Restarted "${server.name}"`, "success");
+		showToast(t("mcp:restarted", { name: server.name }), "success");
 		await refreshServers();
 	}
 
@@ -430,11 +439,11 @@ function ServerCard({ server }) {
 			env,
 		});
 		if (res?.ok) {
-			showToast(`Updated "${server.name}"`, "success");
+			showToast(t("mcp:updated", { name: server.name }), "success");
 			editing.value = false;
 		} else {
 			var msg = res?.error?.message || res?.error || "unknown error";
-			showToast(`Failed to update: ${msg}`, "error");
+			showToast(t("mcp:failedToUpdate", { error: msg }), "error");
 		}
 		saving.value = false;
 		await refreshServers();
@@ -442,16 +451,23 @@ function ServerCard({ server }) {
 
 	function remove(e) {
 		e.stopPropagation();
-		requestConfirm(`This will stop and remove the "${server.name}" MCP tool. This action cannot be undone.`).then(
-			(yes) => {
-				if (!yes) return;
-				sendRpc("mcp.remove", { name: server.name }).then(() => {
-					showToast(`Removed "${server.name}"`, "success");
-					refreshServers();
-				});
-			},
-		);
+		requestConfirm(t("mcp:removeConfirm", { name: server.name })).then((yes) => {
+			if (!yes) return;
+			sendRpc("mcp.remove", { name: server.name }).then(() => {
+				showToast(t("mcp:removed", { name: server.name }), "success");
+				refreshServers();
+			});
+		});
 	}
+
+	var toolCountText =
+		server.tool_count !== 1
+			? t("mcp:toolCountPlural", { count: server.tool_count })
+			: t("mcp:toolCount", { count: server.tool_count });
+	var tokenText =
+		server.state === "running" && server.tool_count > 0
+			? ` \u00b7 ${t("mcp:tokenEstimate", { tokens: server.tool_count * 300 })}`
+			: "";
 
 	return html`<div class="skills-repo-card">
     <div class="skills-repo-header" onClick=${toggleTools}>
@@ -460,44 +476,44 @@ function ServerCard({ server }) {
         <${StatusBadge} state=${server.state} />
         <span class="font-mono text-sm font-medium text-[var(--text-strong)]">${server.name}</span>
         <span class="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--surface2)] text-[var(--muted)] font-medium">${server.state || "stopped"}</span>
-        <span class="text-xs text-[var(--muted)]">${server.tool_count} tool${server.tool_count !== 1 ? "s" : ""}${server.state === "running" && server.tool_count > 0 ? ` · ~${server.tool_count * 300} tokens` : ""}</span>
+        <span class="text-xs text-[var(--muted)]">${toolCountText}${tokenText}</span>
       </div>
       <div class="flex items-center gap-1.5">
         <button onClick=${startEdit}
-          class="provider-btn provider-btn-secondary provider-btn-sm" title="Edit">Edit</button>
+          class="provider-btn provider-btn-secondary provider-btn-sm" title=${t("mcp:edit")}>${t("mcp:edit")}</button>
         <button onClick=${(e) => {
 					e.stopPropagation();
 					toggleEnabled();
 				}} disabled=${toggling.value}
-          class="provider-btn provider-btn-sm ${server.enabled ? "provider-btn-secondary" : ""} ${toggling.value ? "cursor-wait opacity-60" : ""}">${toggling.value ? "\u2026" : server.enabled ? "Disable" : "Enable"}</button>
+          class="provider-btn provider-btn-sm ${server.enabled ? "provider-btn-secondary" : ""} ${toggling.value ? "cursor-wait opacity-60" : ""}">${toggling.value ? "\u2026" : server.enabled ? t("common:actions.disable") : t("common:actions.enable")}</button>
         <button onClick=${(e) => {
 					e.stopPropagation();
 					restart();
 				}} disabled=${!server.enabled}
-          class="provider-btn provider-btn-secondary provider-btn-sm">Restart</button>
+          class="provider-btn provider-btn-secondary provider-btn-sm">${t("mcp:restart")}</button>
         <button onClick=${remove}
-          class="provider-btn provider-btn-danger provider-btn-sm">Remove</button>
+          class="provider-btn provider-btn-danger provider-btn-sm">${t("common:actions.remove")}</button>
       </div>
     </div>
     ${
 			editing.value &&
 			html`<div class="px-3 pb-3 border border-t-0 border-[var(--border)] rounded-b-[var(--radius-sm)]" onClick=${(e) => e.stopPropagation()}>
         <div class="project-edit-group mb-2 mt-2">
-          <div class="text-xs text-[var(--muted)] mb-1">Command</div>
+          <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:commandLabel")}</div>
           <input type="text" class="provider-key-input w-full font-mono" value=${editCmd.value}
             onInput=${(e) => {
 							editCmd.value = e.target.value;
 						}} />
         </div>
         <div class="project-edit-group mb-2">
-          <div class="text-xs text-[var(--muted)] mb-1">Arguments</div>
+          <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:argumentsLabel")}</div>
           <input type="text" class="provider-key-input w-full font-mono" value=${editArgs.value}
             onInput=${(e) => {
 							editArgs.value = e.target.value;
 						}} />
         </div>
         <div class="project-edit-group mb-2">
-          <div class="text-xs text-[var(--muted)] mb-1">Environment variables (KEY=VALUE per line)</div>
+          <div class="text-xs text-[var(--muted)] mb-1">${t("mcp:envVarsLabel")}</div>
           <textarea class="provider-key-input w-full min-h-[40px] resize-y font-mono text-sm" rows="2"
             value=${editEnv.value}
             onInput=${(e) => {
@@ -506,12 +522,12 @@ function ServerCard({ server }) {
         </div>
         <div class="flex gap-2">
           <button class="provider-btn" onClick=${saveEdit} disabled=${saving.value}>
-            ${saving.value ? "Saving\u2026" : "Save"}
+            ${saving.value ? t("common:actions.saving") : t("common:actions.save")}
           </button>
           <button onClick=${() => {
 						editing.value = false;
 					}}
-            class="provider-btn provider-btn-secondary provider-btn-sm">Cancel</button>
+            class="provider-btn provider-btn-secondary provider-btn-sm">${t("common:actions.cancel")}</button>
         </div>
       </div>`
 		}
@@ -522,7 +538,7 @@ function ServerCard({ server }) {
         <span class="opacity-60">$</span>
         <code class="font-mono text-[var(--text)]">${server.command} ${(server.args || []).join(" ")}</code>
       </div>
-      ${!tools.value && html`<div class="text-[var(--muted)] text-sm py-2">Loading tools\u2026</div>`}
+      ${!tools.value && html`<div class="text-[var(--muted)] text-sm py-2">${t("mcp:loadingTools")}</div>`}
       ${
 				tools.value &&
 				tools.value.length > 0 &&
@@ -539,7 +555,7 @@ function ServerCard({ server }) {
 				)}
       </div>`
 			}
-      ${tools.value && tools.value.length === 0 && html`<div class="text-[var(--muted)] text-sm py-2">No tools exposed by this server.</div>`}
+      ${tools.value && tools.value.length === 0 && html`<div class="text-[var(--muted)] text-sm py-2">${t("mcp:noTools")}</div>`}
     </div>`
 		}
   </div>`;
@@ -548,9 +564,9 @@ function ServerCard({ server }) {
 function ConfiguredServersSection() {
 	var s = servers.value;
 	return html`<div>
-    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Configured MCP Servers</h3>
+    <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">${t("mcp:configuredTitle")}</h3>
     <div>
-      ${(!s || s.length === 0) && !loading.value && html`<div class="p-3 text-[var(--muted)] text-sm">No MCP tools configured. Add one from the popular list above or enter a custom command.</div>`}
+      ${(!s || s.length === 0) && !loading.value && html`<div class="p-3 text-[var(--muted)] text-sm">${t("mcp:noServersConfigured")}</div>`}
       ${s.map((server) => html`<${ServerCard} key=${server.name} server=${server} />`)}
     </div>
   </div>`;
@@ -572,36 +588,35 @@ function McpPage() {
 	return html`
     <div class="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">MCP</h2>
-        <button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${refreshServers}>Refresh</button>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">${t("mcp:title")}</h2>
+        <button class="provider-btn provider-btn-secondary provider-btn-sm" onClick=${refreshServers}>${t("mcp:refresh")}</button>
       </div>
       <div class="max-w-[600px] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius)] px-5 py-4 leading-relaxed">
         <p class="text-sm text-[var(--text)] mb-2.5">
-          <strong class="text-[var(--text-strong)]">MCP (Model Context Protocol)</strong> tools extend the AI agent with external capabilities — file access, web fetch, database queries, code search, and more.
+          <strong class="text-[var(--text-strong)]">${t("mcp:introTitle")}</strong> ${t("mcp:introDescription")}
         </p>
         <div class="flex items-center gap-2 my-3 px-3.5 py-2.5 bg-[var(--surface)] rounded-[var(--radius-sm)] font-mono text-xs text-[var(--text-strong)]">
-          <span class="opacity-50">Agent</span>
+          <span class="opacity-50">${t("mcp:flowAgent")}</span>
           <span class="text-[var(--accent)]">\u2192</span>
-          <span>Moltis</span>
+          <span>${t("mcp:flowMoltis")}</span>
           <span class="text-[var(--accent)]">\u2192</span>
-          <span>Local MCP process</span>
+          <span>${t("mcp:flowLocalProcess")}</span>
           <span class="text-[var(--accent)]">\u2192</span>
-          <span class="opacity-50">External API</span>
+          <span class="opacity-50">${t("mcp:flowExternalApi")}</span>
         </div>
-        <p class="text-xs text-[var(--muted)]">
-          Each tool runs as a <strong>local process</strong> on your machine (spawned via npm/uvx). Moltis connects to it over stdio and the process makes outbound API calls on your behalf using your tokens. No data is sent to third-party MCP hosts.
+        <p class="text-xs text-[var(--muted)]" dangerouslySetInnerHTML=${{ __html: t("mcp:introDetail") }}>
         </p>
       </div>
       <div class="skills-warn max-w-[600px]">
-        <div class="skills-warn-title">\u26a0\ufe0f MCP servers run as local processes \u2014 review before enabling</div>
-        <div>Each MCP server runs with <strong>your full system privileges</strong>. A malicious or compromised server can read your files, exfiltrate credentials, or execute arbitrary commands \u2014 just like any local process.</div>
-        <div style="margin-top:4px"><strong>Triple-check the source code</strong> of any MCP server before enabling it. Only install servers from authors you trust, and keep them updated.</div>
-        <div style="margin-top:4px">Each enabled server also adds tool definitions to every chat session's context, consuming tokens. Only enable servers you actively need.</div>
+        <div class="skills-warn-title">${t("mcp:securityTitle")}</div>
+        <div dangerouslySetInnerHTML=${{ __html: t("mcp:securityPrivileges") }}></div>
+        <div style="margin-top:4px" dangerouslySetInnerHTML=${{ __html: t("mcp:securityReview") }}></div>
+        <div style="margin-top:4px">${t("mcp:securityTokens")}</div>
       </div>
       <${InstallBox} />
       <${FeaturedSection} />
       <${ConfiguredServersSection} />
-      ${loading.value && servers.value.length === 0 && html`<div class="p-6 text-center text-[var(--muted)] text-sm">Loading MCP servers\u2026</div>`}
+      ${loading.value && servers.value.length === 0 && html`<div class="p-6 text-center text-[var(--muted)] text-sm">${t("mcp:loadingServers")}</div>`}
     </div>
     <${Toasts} />
     <${ConfirmDialog} />

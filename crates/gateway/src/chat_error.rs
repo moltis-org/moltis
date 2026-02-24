@@ -6,7 +6,8 @@
 use serde_json::Value;
 
 /// Parse a raw error string into a structured error object with `type`, `icon`,
-/// `title`, `detail`, and optionally `provider` and `resetsAt` fields.
+/// `title`, `detail`, and optionally translation key and metadata fields:
+/// `title_key`, `detail_key`, `detail_params`, `provider`, and `resetsAt`.
 pub fn parse_chat_error(raw: &str, provider_name: Option<&str>) -> Value {
     let mut error = try_parse_known_error(raw);
 
@@ -41,6 +42,9 @@ fn try_parse_known_error(raw: &str) -> Value {
                 "Usage limit reached",
                 &format!("Your {} plan limit has been reached.", plan_type),
                 resets_at,
+                Some("errors:chat.usageLimitReached.title"),
+                Some("errors:chat.usageLimitReached.detail"),
+                Some(serde_json::json!({ "planType": plan_type })),
             );
         }
 
@@ -49,10 +53,8 @@ fn try_parse_known_error(raw: &str) -> Value {
             || matches_type_or_message(err_obj, "rate_limit_exceeded", "quota exceeded")
             || http_status == Some(429)
         {
-            let detail = err_obj
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Too many requests. Please wait a moment.");
+            let provider_detail = err_obj.get("message").and_then(|v| v.as_str());
+            let detail = provider_detail.unwrap_or("Too many requests. Please wait a moment.");
             let resets_at = extract_resets_at(err_obj);
             return build_error(
                 "rate_limit_exceeded",
@@ -60,6 +62,13 @@ fn try_parse_known_error(raw: &str) -> Value {
                 "Rate limited",
                 detail,
                 resets_at,
+                Some("errors:chat.rateLimited.title"),
+                if provider_detail.is_some() {
+                    None
+                } else {
+                    Some("errors:chat.rateLimited.detail")
+                },
+                None,
             );
         }
 
@@ -73,12 +82,24 @@ fn try_parse_known_error(raw: &str) -> Value {
                 "Model not supported",
                 msg,
                 None,
+                Some("errors:chat.unsupportedModel.title"),
+                None,
+                None,
             );
         }
 
         // Generic JSON error with a message field
         if let Some(msg) = err_obj.get("message").and_then(|v| v.as_str()) {
-            return build_error("api_error", "\u{26A0}\u{FE0F}", "Error", msg, None);
+            return build_error(
+                "api_error",
+                "\u{26A0}\u{FE0F}",
+                "Error",
+                msg,
+                None,
+                Some("errors:generic.title"),
+                None,
+                None,
+            );
         }
     }
 
@@ -92,6 +113,9 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "Authentication error",
                     "Your session may have expired or credentials are invalid.",
                     None,
+                    Some("errors:chat.authError.title"),
+                    Some("errors:chat.authError.detail"),
+                    None,
                 );
             },
             429 => {
@@ -101,6 +125,9 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "Rate limited",
                     "Too many requests. Please wait a moment and try again.",
                     None,
+                    Some("errors:chat.rateLimited.title"),
+                    Some("errors:chat.rateLimited.detail"),
+                    None,
                 );
             },
             code if code >= 500 => {
@@ -109,6 +136,9 @@ fn try_parse_known_error(raw: &str) -> Value {
                     "\u{1F6A8}",
                     "Server error",
                     "The upstream provider returned an error. Please try again later.",
+                    None,
+                    Some("errors:chat.serverError.title"),
+                    Some("errors:chat.serverError.detail"),
                     None,
                 );
             },
@@ -123,11 +153,23 @@ fn try_parse_known_error(raw: &str) -> Value {
             "Model not supported",
             raw,
             None,
+            Some("errors:chat.unsupportedModel.title"),
+            None,
+            None,
         );
     }
 
     // Default: pass through raw message.
-    build_error("unknown", "\u{26A0}\u{FE0F}", "Error", raw, None)
+    build_error(
+        "unknown",
+        "\u{26A0}\u{FE0F}",
+        "Error",
+        raw,
+        None,
+        Some("errors:generic.title"),
+        None,
+        None,
+    )
 }
 
 fn extract_message(obj: &Value) -> Option<&str> {
@@ -208,6 +250,9 @@ fn build_error(
     title: &str,
     detail: &str,
     resets_at: Option<u64>,
+    title_key: Option<&str>,
+    detail_key: Option<&str>,
+    detail_params: Option<Value>,
 ) -> Value {
     let mut obj = serde_json::json!({
         "type": error_type,
@@ -215,10 +260,22 @@ fn build_error(
         "title": title,
         "detail": detail,
     });
-    if let Some(ts) = resets_at {
-        // Send as milliseconds for the frontend.
-        if let Some(map) = obj.as_object_mut() {
-            map.insert("resetsAt".into(), Value::Number((ts * 1000).into()));
+    if let Some(map) = obj.as_object_mut() {
+        if let Some(key) = title_key {
+            map.insert("title_key".into(), Value::String(key.to_string()));
+        }
+        if let Some(key) = detail_key {
+            map.insert("detail_key".into(), Value::String(key.to_string()));
+        }
+        if let Some(params) = detail_params {
+            map.insert("detail_params".into(), params);
+        }
+        if let Some(ts) = resets_at {
+            // Send as milliseconds for the frontend.
+            map.insert(
+                "resetsAt".into(),
+                Value::Number(ts.saturating_mul(1000).into()),
+            );
         }
     }
     obj
@@ -235,6 +292,9 @@ mod tests {
         let result = parse_chat_error(raw, Some("openai-codex"));
         assert_eq!(result["type"], "usage_limit_reached");
         assert_eq!(result["title"], "Usage limit reached");
+        assert_eq!(result["title_key"], "errors:chat.usageLimitReached.title");
+        assert_eq!(result["detail_key"], "errors:chat.usageLimitReached.detail");
+        assert_eq!(result["detail_params"]["planType"], "plus");
         assert!(result["detail"].as_str().unwrap().contains("plus"));
         assert_eq!(result["resetsAt"], 1769972721000u64);
         assert_eq!(result["provider"], "openai-codex");
@@ -246,6 +306,8 @@ mod tests {
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "rate_limit_exceeded");
         assert_eq!(result["title"], "Rate limited");
+        assert_eq!(result["title_key"], "errors:chat.rateLimited.title");
+        assert!(result.get("detail_key").is_none());
         assert_eq!(result["resetsAt"], 1700000000000u64);
     }
 
@@ -262,6 +324,8 @@ mod tests {
         let raw = "Request failed with HTTP 429";
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "rate_limit_exceeded");
+        assert_eq!(result["title_key"], "errors:chat.rateLimited.title");
+        assert_eq!(result["detail_key"], "errors:chat.rateLimited.detail");
     }
 
     #[test]
@@ -269,6 +333,8 @@ mod tests {
         let raw = "Request failed with HTTP 502 Bad Gateway";
         let result = parse_chat_error(raw, None);
         assert_eq!(result["type"], "server_error");
+        assert_eq!(result["title_key"], "errors:chat.serverError.title");
+        assert_eq!(result["detail_key"], "errors:chat.serverError.detail");
     }
 
     #[test]
@@ -351,6 +417,7 @@ mod tests {
         let result = parse_chat_error(raw, Some("openai-codex"));
         assert_eq!(result["type"], "unsupported_model");
         assert_eq!(result["title"], "Model not supported");
+        assert_eq!(result["title_key"], "errors:chat.unsupportedModel.title");
         assert_eq!(result["provider"], "openai-codex");
     }
 

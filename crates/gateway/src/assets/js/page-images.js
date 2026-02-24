@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import { html } from "htm/preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { sandboxInfo } from "./signals.js";
 
@@ -18,8 +19,7 @@ var building = signal(false);
 var buildStatus = signal("");
 var buildWarning = signal("");
 var pruning = signal(false);
-var SANDBOX_DISABLED_HINT =
-	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
+var SANDBOX_DISABLED_HINT = () => t("images:sandboxDisabledHint");
 
 function sandboxRuntimeAvailable() {
 	return (sandboxInfo.value?.backend || "none") !== "none";
@@ -67,7 +67,7 @@ function pruneAll() {
 }
 
 function doBuild(name, base, pkgs) {
-	buildStatus.value = "Building image\u2026";
+	buildStatus.value = t("images:build.buildingImage");
 	fetch("/api/images/build", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -76,16 +76,16 @@ function doBuild(name, base, pkgs) {
 		.then((r) => r.json())
 		.then((data) => {
 			if (data.error) {
-				buildStatus.value = `Error: ${data.error}`;
+				buildStatus.value = t("images:build.errorPrefix", { message: data.error });
 			} else {
-				buildStatus.value = `Built: ${data.tag}`;
+				buildStatus.value = t("images:build.builtTag", { tag: data.tag });
 				buildName.value = "";
 				buildPackages.value = "";
 				fetchImages();
 			}
 		})
 		.catch((e) => {
-			buildStatus.value = `Error: ${e.message}`;
+			buildStatus.value = t("images:build.errorPrefix", { message: e.message });
 		})
 		.finally(() => {
 			building.value = false;
@@ -101,12 +101,12 @@ function buildImage() {
 		.split(/[\s,]+/)
 		.filter(Boolean);
 	if (pkgs.length === 0) {
-		buildStatus.value = "Please specify at least one package.";
+		buildStatus.value = t("images:build.noPackages");
 		return;
 	}
 	building.value = true;
 	buildWarning.value = "";
-	buildStatus.value = "Checking packages in base image\u2026";
+	buildStatus.value = t("images:build.checkingPackages");
 
 	fetch("/api/images/check-packages", {
 		method: "POST",
@@ -122,13 +122,13 @@ function buildImage() {
 			if (present.length > 0 && missing.length === 0) {
 				// All packages already in base image
 				building.value = false;
-				buildWarning.value = `All requested packages are already present in ${base}: ${present.join(", ")}. No image build needed.`;
+				buildWarning.value = t("images:build.allPresent", { base, packages: present.join(", ") });
 				buildStatus.value = "";
 				return;
 			}
 
 			if (present.length > 0) {
-				buildWarning.value = `Already in ${base}: ${present.join(", ")}. Only installing: ${missing.join(", ")}.`;
+				buildWarning.value = t("images:build.alreadyInBase", { base, present: present.join(", "), missing: missing.join(", ") });
 			}
 
 			doBuild(name, base, missing.length > 0 ? missing : pkgs);
@@ -140,10 +140,10 @@ function buildImage() {
 }
 
 var BACKEND_LABELS = {
-	"apple-container": "Apple Container (VM-isolated)",
-	docker: "Docker",
-	cgroup: "cgroup (systemd-run)",
-	none: "None (host execution)",
+	"apple-container": () => t("images:backend.appleContainer"),
+	docker: () => t("images:backend.docker"),
+	cgroup: () => t("images:backend.cgroup"),
+	none: () => t("images:backend.none"),
 };
 
 function backendRecommendation(info) {
@@ -155,33 +155,33 @@ function backendRecommendation(info) {
 		if (os === "macos") {
 			return {
 				level: "warn",
-				text: "No container runtime detected. Install Apple Container (macOS 26+) for VM-isolated sandboxing, or install Docker as an alternative.",
+				text: t("images:recommendation.noRuntimeMacos"),
 				link: "https://developer.apple.com/documentation/virtualization",
 			};
 		}
 		if (os === "linux") {
 			return {
 				level: "warn",
-				text: "No container runtime detected. Install Docker for sandboxed execution, or ensure systemd is available for cgroup isolation.",
+				text: t("images:recommendation.noRuntimeLinux"),
 			};
 		}
 		return {
 			level: "warn",
-			text: "No container runtime detected. Install Docker for sandboxed execution.",
+			text: t("images:recommendation.noRuntimeGeneric"),
 		};
 	}
 
 	if (os === "macos" && backend === "docker") {
 		return {
 			level: "info",
-			text: "Apple Container provides stronger VM-level isolation on macOS 26+. Install it for automatic use (moltis prefers it over Docker). Run: brew install container",
+			text: t("images:recommendation.macosDockerTip"),
 		};
 	}
 
 	if (os === "linux" && backend === "docker") {
 		return {
 			level: "info",
-			text: "Docker is a good choice on Linux. For lighter-weight isolation without Docker overhead, systemd cgroup sandboxing is also supported.",
+			text: t("images:recommendation.linuxDockerTip"),
 		};
 	}
 
@@ -192,7 +192,8 @@ function SandboxBanner() {
 	var info = sandboxInfo.value;
 	if (!info) return null;
 
-	var label = BACKEND_LABELS[info.backend] || info.backend;
+	var labelFn = BACKEND_LABELS[info.backend];
+	var label = labelFn ? labelFn() : info.backend;
 	var rec = backendRecommendation(info);
 
 	var badgeColor =
@@ -201,7 +202,7 @@ function SandboxBanner() {
 	return html`<div>
     <div class="info-bar" style="margin-bottom:8px;">
       <span class="info-field">
-        <span class="info-label">Container backend:</span>
+        <span class="info-label">${t("images:backend.containerBackendLabel")}</span>
         <span class="info-value-strong" style="color:${badgeColor};font-family:var(--font-mono)">${label}</span>
       </span>
     </div>
@@ -210,7 +211,7 @@ function SandboxBanner() {
 			html`
       <div class="${rec.level === "warn" ? "alert-warning-text" : "alert-info-text"}">
         <span class="${rec.level === "warn" ? "alert-label-warn" : "alert-label-info"}">
-          ${rec.level === "warn" ? "Warning: " : "Tip: "}
+          ${rec.level === "warn" ? t("images:alertWarning") : t("images:alertTip")}
         </span>${rec.text}
       </div>
     `
@@ -244,9 +245,9 @@ function DefaultImageSelector() {
 	}
 
 	return html`<div class="max-w-form">
-    <h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">Default image</h3>
+    <h3 class="text-sm font-medium text-[var(--text-strong)]" style="margin-bottom:8px;">${t("images:defaultImage.title")}</h3>
     <p class="text-xs text-[var(--muted)]" style="margin:0 0 8px;">
-      Base image used for new sessions and projects unless overridden. Leave empty to use the built-in default (ubuntu:25.10).
+      ${t("images:defaultImage.description")}
     </p>
     <div style="display:flex;gap:8px;align-items:center;">
       <input type="text" class="provider-key-input" list="default-image-list"
@@ -257,8 +258,8 @@ function DefaultImageSelector() {
 					defaultImage.value = e.target.value;
 				}} />
       <button class="provider-btn" onClick=${onSave} disabled=${savingDefault.value || !sandboxAvailable}
-			title=${sandboxAvailable ? null : SANDBOX_DISABLED_HINT}>
-        ${savingDefault.value ? "Saving\u2026" : "Save"}
+			title=${sandboxAvailable ? null : SANDBOX_DISABLED_HINT()}>
+        ${savingDefault.value ? t("common:actions.saving") : t("common:actions.save")}
       </button>
     </div>
     <datalist id="default-image-list">

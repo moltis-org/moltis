@@ -1,10 +1,10 @@
 // ── Sandbox toggle + image selector ─────────────────────────
 
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import * as S from "./state.js";
 
-var SANDBOX_DISABLED_HINT =
-	"Sandboxes are disabled on cloud deploys without a container runtime. Install on a VM with Docker or Apple Container to enable this feature.";
+var SANDBOX_DISABLED_HINT = () => t("chat:sandboxDisabledHint");
 
 function sandboxRuntimeAvailable() {
 	return (S.sandboxInfo?.backend || "none") !== "none";
@@ -13,7 +13,7 @@ function sandboxRuntimeAvailable() {
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
 function applySandboxControlAvailability() {
 	var available = sandboxRuntimeAvailable();
-	var title = available ? null : SANDBOX_DISABLED_HINT;
+	var title = available ? null : SANDBOX_DISABLED_HINT();
 
 	if (S.sandboxToggleBtn) {
 		S.sandboxToggleBtn.disabled = !available;
@@ -22,7 +22,7 @@ function applySandboxControlAvailability() {
 		if (title) {
 			S.sandboxToggleBtn.title = title;
 		} else {
-			S.sandboxToggleBtn.title = "Toggle sandbox mode";
+			S.sandboxToggleBtn.title = t("chat:sandboxToggleTooltip");
 		}
 	}
 
@@ -33,7 +33,7 @@ function applySandboxControlAvailability() {
 		if (title) {
 			S.sandboxImageBtn.title = title;
 		} else {
-			S.sandboxImageBtn.title = "Sandbox image";
+			S.sandboxImageBtn.title = t("chat:sandboxImageTooltip");
 		}
 	}
 
@@ -50,17 +50,17 @@ export function updateSandboxUI(enabled) {
 	S.setSessionSandboxEnabled(!!enabled);
 	if (!(S.sandboxLabel && S.sandboxToggleBtn)) return;
 	if (!applySandboxControlAvailability()) {
-		S.sandboxLabel.textContent = "disabled";
+		S.sandboxLabel.textContent = t("chat:sandboxDisabled");
 		S.sandboxToggleBtn.style.borderColor = "";
 		S.sandboxToggleBtn.style.color = "var(--muted)";
 		return;
 	}
 	if (S.sessionSandboxEnabled) {
-		S.sandboxLabel.textContent = "sandboxed";
+		S.sandboxLabel.textContent = t("chat:sandboxed");
 		S.sandboxToggleBtn.style.borderColor = "var(--accent, #f59e0b)";
 		S.sandboxToggleBtn.style.color = "var(--accent, #f59e0b)";
 	} else {
-		S.sandboxLabel.textContent = "direct";
+		S.sandboxLabel.textContent = t("chat:sandboxDirect");
 		S.sandboxToggleBtn.style.borderColor = "";
 		S.sandboxToggleBtn.style.color = "var(--muted)";
 	}
@@ -92,7 +92,7 @@ export function updateSandboxImageUI(image) {
 	S.setSessionSandboxImage(image || null);
 	if (!S.sandboxImageLabel) return;
 	if (!applySandboxControlAvailability()) {
-		S.sandboxImageLabel.textContent = "unavailable";
+		S.sandboxImageLabel.textContent = t("chat:sandboxUnavailable");
 		return;
 	}
 	S.sandboxImageLabel.textContent = image || DEFAULT_IMAGE;

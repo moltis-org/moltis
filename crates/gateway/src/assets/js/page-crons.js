@@ -7,6 +7,7 @@ import { useEffect } from "preact/hooks";
 import * as gon from "./gon.js";
 import { refresh as refreshGon } from "./gon.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { navigate, registerPrefix } from "./router.js";
 import { routes } from "./routes.js";
@@ -71,13 +72,13 @@ function loadHeartbeatRuns() {
 
 function heartbeatRunBlockedReason(cfg, promptSource, job) {
 	if (cfg.enabled === false) {
-		return "Heartbeat is disabled. Enable it to allow manual runs.";
+		return t("crons:heartbeat.blockedDisabled");
 	}
 	if (promptSource === "default") {
-		return "Heartbeat is inactive because no prompt is configured. Add a custom prompt or write actionable content in HEARTBEAT.md.";
+		return t("crons:heartbeat.blockedNoPrompt");
 	}
 	if (!job) {
-		return "Heartbeat has no active cron job yet. Save the heartbeat settings to recreate it.";
+		return t("crons:heartbeat.blockedNoJob");
 	}
 	return null;
 }
@@ -98,12 +99,12 @@ function loadJobs() {
 }
 
 function formatSchedule(sched) {
-	if (sched.kind === "at") return `At ${new Date(sched.atMs).toLocaleString()}`;
+	if (sched.kind === "at") return t("crons:jobs.scheduleAt", { time: new Date(sched.atMs).toLocaleString() });
 	if (sched.kind === "every") {
 		var ms = sched.everyMs;
-		if (ms >= 3600000) return `Every ${ms / 3600000}h`;
-		if (ms >= 60000) return `Every ${ms / 60000}m`;
-		return `Every ${ms / 1000}s`;
+		if (ms >= 3600000) return t("crons:jobs.scheduleEveryHours", { count: ms / 3600000 });
+		if (ms >= 60000) return t("crons:jobs.scheduleEveryMinutes", { count: ms / 60000 });
+		return t("crons:jobs.scheduleEverySeconds", { count: ms / 1000 });
 	}
 	if (sched.kind === "cron") return sched.expr + (sched.tz ? ` (${sched.tz})` : "");
 	return JSON.stringify(sched);
@@ -114,12 +115,12 @@ function formatSchedule(sched) {
 var sections = [
 	{
 		id: "jobs",
-		label: "Cron Jobs",
+		get label() { return t("crons:sidebar.cronJobs"); },
 		icon: html`<span class="icon icon-cron"></span>`,
 	},
 	{
 		id: "heartbeat",
-		label: "Heartbeat",
+		get label() { return t("crons:sidebar.heartbeat"); },
 		icon: html`<span class="icon icon-heart"></span>`,
 	},
 ];
@@ -165,14 +166,14 @@ function formatTokens(n) {
 function TokenBadge({ run }) {
 	if (run.inputTokens == null && run.outputTokens == null) return null;
 	var parts = [];
-	if (run.inputTokens != null) parts.push(`${formatTokens(run.inputTokens)} in`);
-	if (run.outputTokens != null) parts.push(`${formatTokens(run.outputTokens)} out`);
+	if (run.inputTokens != null) parts.push(t("crons:heartbeat.tokenIn", { count: formatTokens(run.inputTokens) }));
+	if (run.outputTokens != null) parts.push(t("crons:heartbeat.tokenOut", { count: formatTokens(run.outputTokens) }));
 	return html`<span class="text-xs text-[var(--muted)] font-mono">${parts.join(" / ")}</span>`;
 }
 
 function HeartbeatRunsList({ runs }) {
-	if (runs === null) return html`<div class="text-xs text-[var(--muted)]">Loading\u2026</div>`;
-	if (runs.length === 0) return html`<div class="text-xs text-[var(--muted)]">No runs yet.</div>`;
+	if (runs === null) return html`<div class="text-xs text-[var(--muted)]">${t("common:status.loading")}</div>`;
+	if (runs.length === 0) return html`<div class="text-xs text-[var(--muted)]">${t("crons:heartbeat.noRunsYet")}</div>`;
 	return html`<div class="flex flex-col">
     ${runs.map(
 			(
@@ -196,19 +197,19 @@ function HeartbeatJobStatus({ job }) {
 	return html`<div class="info-bar" style="margin-top:16px;margin-bottom:16px;">
     <span class="info-field">
       <span class="status-dot ${statusDotClass}"></span>
-      <span class="info-label">${job.enabled ? "Enabled" : "Disabled"}</span>
+      <span class="info-label">${job.enabled ? t("common:status.enabled") : t("common:status.disabled")}</span>
     </span>
     ${
 			job.state?.lastStatus &&
 			html`<span class="info-field">
-      <span class="info-label">Last:</span>
+      <span class="info-label">${t("crons:heartbeat.lastLabel")}</span>
       <span class="cron-badge ${job.state.lastStatus}">${job.state.lastStatus}</span>
     </span>`
 		}
     ${
 			job.state?.nextRunAtMs &&
 			html`<span class="info-field">
-      <span class="info-label">Next:</span>
+      <span class="info-label">${t("crons:heartbeat.nextLabel")}</span>
       <span class="info-value"><time data-epoch-ms="${job.state.nextRunAtMs}">${new Date(job.state.nextRunAtMs).toLocaleString()}</time></span>
     </span>`
 		}
@@ -217,8 +218,8 @@ function HeartbeatJobStatus({ job }) {
 
 function heartbeatModelPlaceholder() {
 	return modelsSig.value.length > 0
-		? `(default: ${modelsSig.value[0].displayName || modelsSig.value[0].id})`
-		: "(server default)";
+		? t("crons:heartbeat.modelDefaultPlaceholder", { model: modelsSig.value[0].displayName || modelsSig.value[0].id })
+		: t("crons:heartbeat.modelServerDefault");
 }
 
 function collectHeartbeatForm(form) {
@@ -295,21 +296,21 @@ function HeartbeatSection() {
 	var runNowDisabled = running || !!runBlockedReason;
 	var promptSourceText =
 		promptSource === "config"
-			? "config custom prompt"
+			? t("crons:heartbeat.promptSourceConfig")
 			: promptSource === "heartbeat_md"
-				? "HEARTBEAT.md"
-				: "none (heartbeat inactive)";
+				? t("crons:heartbeat.promptSourceMd")
+				: t("crons:heartbeat.promptSourceDefault");
 
 	return html`<div class="heartbeat-form" style="max-width:600px;">
     <!-- Header -->
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-3">
-        <h2 class="text-lg font-medium text-[var(--text-strong)]">Heartbeat</h2>
+        <h2 class="text-lg font-medium text-[var(--text-strong)]">${t("crons:heartbeat.title")}</h2>
         <label class="cron-toggle">
           <input data-hb="enabled" type="checkbox" checked=${cfg.enabled !== false} onChange=${onToggleEnabled} />
           <span class="cron-slider"></span>
         </label>
-        <span class="text-xs text-[var(--muted)]">Enable</span>
+        <span class="text-xs text-[var(--muted)]">${t("crons:heartbeat.enable")}</span>
       </div>
       <button
         class="provider-btn provider-btn-secondary"
@@ -317,14 +318,14 @@ function HeartbeatSection() {
         disabled=${runNowDisabled}
         title=${runBlockedReason}
       >
-        ${running ? "Running\u2026" : "Run Now"}
+        ${running ? t("crons:heartbeat.running") : t("crons:heartbeat.runNow")}
       </button>
 	</div>
-	<p class="text-sm text-[var(--muted)] mb-4">Periodic AI check-in that monitors your environment and reports status.</p>
+	<p class="text-sm text-[var(--muted)] mb-4">${t("crons:heartbeat.description")}</p>
 	${
 		runBlockedReason &&
 		html`<div class="alert-info-text max-w-form mb-4">
-      <span class="alert-label-info">Heartbeat inactive:</span> ${runBlockedReason}
+      <span class="alert-label-info">${t("crons:heartbeat.inactiveLabel")}</span> ${runBlockedReason}
     </div>`
 	}
 
@@ -332,14 +333,14 @@ function HeartbeatSection() {
 
     <!-- Schedule -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Schedule</h3>
+      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("crons:heartbeat.scheduleTitle")}</h3>
       <div class="grid gap-4" style="grid-template-columns:1fr 1fr;">
         <div>
-          <label class="block text-xs text-[var(--muted)] mb-1">Interval</label>
+          <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.intervalLabel")}</label>
           <input data-hb="every" class="provider-key-input" placeholder="30m" value=${cfg.every || "30m"} />
         </div>
         <div>
-          <label class="block text-xs text-[var(--muted)] mb-1">Model</label>
+          <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.modelLabel")}</label>
           <${ModelSelect} models=${modelsSig.value} value=${heartbeatModel.value}
             onChange=${(v) => {
 							heartbeatModel.value = v;
@@ -351,14 +352,14 @@ function HeartbeatSection() {
 
     <!-- Prompt -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Prompt</h3>
-      <label class="block text-xs text-[var(--muted)] mb-1">Custom Prompt (optional)</label>
-      <textarea data-hb="prompt" class="provider-key-input textarea-sm" placeholder="Leave blank to use default heartbeat prompt">${cfg.prompt || ""}</textarea>
-      <p class="text-xs text-[var(--muted)] mt-2">Leave this empty to use <code>HEARTBEAT.md</code> in your workspace root. If that file exists but is empty/comments-only, heartbeat LLM runs are skipped to save tokens.</p>
-      <p class="text-xs text-[var(--muted)] mt-1">Effective prompt source: <span class="text-[var(--text)]">${promptSourceText}</span></p>
+      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("crons:heartbeat.promptTitle")}</h3>
+      <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.customPromptLabel")}</label>
+      <textarea data-hb="prompt" class="provider-key-input textarea-sm" placeholder="${t("crons:heartbeat.customPromptPlaceholder")}">${cfg.prompt || ""}</textarea>
+      <p class="text-xs text-[var(--muted)] mt-2">${t("crons:heartbeat.customPromptHint")}</p>
+      <p class="text-xs text-[var(--muted)] mt-1">${t("crons:heartbeat.promptSourceLabel")} <span class="text-[var(--text)]">${promptSourceText}</span></p>
       <div class="grid gap-4 mt-3" style="grid-template-columns:1fr;">
         <div>
-          <label class="block text-xs text-[var(--muted)] mb-1">Max Response Characters</label>
+          <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.maxResponseCharsLabel")}</label>
           <input data-hb="ackMax" class="provider-key-input" type="number" min="50" value=${cfg.ack_max_chars || 300} />
         </div>
       </div>
@@ -366,22 +367,22 @@ function HeartbeatSection() {
 
     <!-- Active Hours -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Active Hours</h3>
-      <p class="text-xs text-[var(--muted)] mb-3">Only run heartbeat during these hours.</p>
+      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("crons:heartbeat.activeHoursTitle")}</h3>
+      <p class="text-xs text-[var(--muted)] mb-3">${t("crons:heartbeat.activeHoursDescription")}</p>
       <div class="grid gap-4" style="grid-template-columns:1fr 1fr;">
         <div>
-          <label class="block text-xs text-[var(--muted)] mb-1">Start</label>
+          <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.startLabel")}</label>
           <input data-hb="ahStart" type="time" class="provider-key-input" value=${cfg.active_hours?.start || "08:00"} />
         </div>
         <div>
-          <label class="block text-xs text-[var(--muted)] mb-1">End</label>
+          <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.endLabel")}</label>
           <input data-hb="ahEnd" type="time" class="provider-key-input" value=${cfg.active_hours?.end === "24:00" ? "23:59" : cfg.active_hours?.end || "23:59"} />
         </div>
       </div>
       <div class="mt-3">
-        <label class="block text-xs text-[var(--muted)] mb-1">Timezone</label>
+        <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.timezoneLabel")}</label>
         <select data-hb="ahTz" class="provider-key-input">
-          <option value="local" selected=${!cfg.active_hours?.timezone || cfg.active_hours?.timezone === "local"}>Local (${systemTimezone})</option>
+          <option value="local" selected=${!cfg.active_hours?.timezone || cfg.active_hours?.timezone === "local"}>${t("crons:heartbeat.timezoneLocal", { tz: systemTimezone })}</option>
           <option value="UTC" selected=${cfg.active_hours?.timezone === "UTC"}>UTC</option>
           <option value="America/New_York" selected=${cfg.active_hours?.timezone === "America/New_York"}>America/New_York (EST/EDT)</option>
           <option value="America/Chicago" selected=${cfg.active_hours?.timezone === "America/Chicago"}>America/Chicago (CST/CDT)</option>
@@ -400,39 +401,39 @@ function HeartbeatSection() {
 
     <!-- Sandbox -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Sandbox</h3>
-      <p class="text-xs text-[var(--muted)] mb-3">Run heartbeat commands in an isolated container.</p>
+      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("crons:heartbeat.sandboxTitle")}</h3>
+      <p class="text-xs text-[var(--muted)] mb-3">${t("crons:heartbeat.sandboxDescription")}</p>
       <div class="flex items-center gap-3 mb-3">
         <label class="cron-toggle">
           <input data-hb="sandboxEnabled" type="checkbox" checked=${cfg.sandbox_enabled !== false} />
           <span class="cron-slider"></span>
         </label>
-        <span class="text-sm text-[var(--text)]">Enable sandbox</span>
+        <span class="text-sm text-[var(--text)]">${t("crons:heartbeat.enableSandbox")}</span>
       </div>
       <div>
-        <label class="block text-xs text-[var(--muted)] mb-1">Sandbox Image</label>
+        <label class="block text-xs text-[var(--muted)] mb-1">${t("crons:heartbeat.sandboxImageLabel")}</label>
         <${ComboSelect}
           options=${sandboxImages.value.map((img) => ({ value: img.tag, label: img.tag }))}
           value=${heartbeatSandboxImage.value}
           onChange=${(v) => {
 						heartbeatSandboxImage.value = v;
 					}}
-          placeholder="Default image"
-          searchPlaceholder="Search images\u2026"
+          placeholder="${t("crons:heartbeat.sandboxImagePlaceholder")}"
+          searchPlaceholder="${t("crons:heartbeat.sandboxSearchPlaceholder")}"
         />
       </div>
     </div>
 
     <!-- Recent Runs -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
-      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">Recent Runs</h3>
+      <h3 class="text-sm font-medium text-[var(--text-strong)] mb-3">${t("crons:heartbeat.recentRunsTitle")}</h3>
       <${HeartbeatRunsList} runs=${heartbeatRuns.value} />
     </div>
 
     <!-- Save -->
     <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:16px;">
       <button class="provider-btn" onClick=${onSave} disabled=${saving}>
-        ${saving ? "Saving\u2026" : "Save"}
+        ${saving ? t("common:actions.saving") : t("common:actions.save")}
       </button>
     </div>
   </div>`;

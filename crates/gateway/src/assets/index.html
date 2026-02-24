@@ -48,7 +48,8 @@
     "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
     "luxon": "{{ asset_prefix }}js/vendor/luxon.mjs",
     "uplot": "{{ asset_prefix }}js/vendor/uplot.mjs",
-    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs"
+    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs",
+    "i18next": "{{ asset_prefix }}js/vendor/i18next.mjs"
   }
 }
 </script>
@@ -97,6 +98,8 @@
 <link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-signals.mjs">
 <link rel="modulepreload" href="{{ asset_prefix }}js/vendor/htm-preact.mjs">
 <link rel="modulepreload" href="{{ asset_prefix }}js/vendor/luxon.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/i18next.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/i18n.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/time-format.js">
 </head>
 <body>
@@ -104,7 +107,7 @@
 <!-- Git branch banner (shown when running on a non-main branch) -->
 <div id="branchBanner" class="branch-banner" style="display:none">
   <span class="icon icon-md icon-link"></span>
-  <span>Running on: <strong id="branchName"></strong></span>
+  <span><span data-i18n="common:branch.runningOn">Running on:</span> <strong id="branchName"></strong></span>
 </div>
 
 <!-- Top bar -->
@@ -112,15 +115,25 @@
   <a href="{{ routes.chats }}" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
   <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name&&String(i.name).trim())||"moltis";document.title=a}()</script>
   <span class="status-dot" id="statusDot"></span>
-  <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
+  <span class="text-xs text-[var(--muted)]" id="statusText" data-i18n="common:status.disconnected">disconnected</span>
   <div class="flex-1"></div>
 
-  <span id="memoryInfo" class="text-xs text-[var(--muted)]" title="Process memory · System free memory"></span>
+  <span
+    id="memoryInfo"
+    class="text-xs text-[var(--muted)]"
+    title="Process memory · System free memory"
+    data-i18n-title="common:header.memoryTooltip"
+  ></span>
 
   <div class="header-actions">
-    <button id="settingsBtn" class="header-link-btn" title="Settings">
+    <button
+      id="settingsBtn"
+      class="header-link-btn"
+      title="Settings"
+      data-i18n-title="common:header.settings"
+    >
       <span class="icon icon-settings"></span>
-      <span class="header-link-label">Settings</span>
+      <span class="header-link-label" data-i18n="common:header.settings">Settings</span>
     </button>
     <a
       href="https://github.com/moltis-org/moltis/issues/new"
@@ -128,27 +141,28 @@
       rel="noopener noreferrer"
       class="header-link-btn"
       title="Report an issue"
+      data-i18n-title="common:header.reportIssueTitle"
     >
       <span class="icon icon-link"></span>
-      <span class="header-link-label">Report issue</span>
+      <span class="header-link-label" data-i18n="common:header.reportIssue">Report issue</span>
     </a>
   </div>
 
   <!-- Theme toggle -->
   <div class="theme-toggle" id="themeToggle">
-    <button class="theme-btn" data-theme-val="light" title="Light theme">
+    <button class="theme-btn" data-theme-val="light" title="Light theme" data-i18n-title="common:header.themeLight">
       <span class="icon icon-sun"></span>
     </button>
-    <button class="theme-btn" data-theme-val="system" title="System theme">
+    <button class="theme-btn" data-theme-val="system" title="System theme" data-i18n-title="common:header.themeSystem">
       <span class="icon icon-monitor"></span>
     </button>
-    <button class="theme-btn" data-theme-val="dark" title="Dark theme">
+    <button class="theme-btn" data-theme-val="dark" title="Dark theme" data-i18n-title="common:header.themeDark">
       <span class="icon icon-moon"></span>
     </button>
   </div>
 
   <!-- Logout button (shown by JS only when auth is active) -->
-  <button id="logoutBtn" class="logout-btn" title="Sign out" style="display:none">
+  <button id="logoutBtn" class="logout-btn" title="Sign out" data-i18n-title="common:header.signOut" style="display:none">
     <span class="icon icon-logout"></span>
   </button>
 
@@ -156,18 +170,30 @@
 
 <!-- Auth disabled warning banner (shown by JS when auth is removed) -->
 <div id="authDisabledBanner" class="auth-disabled-banner" style="display:none">
-  <span>Authentication is disabled. Anyone with network access can control moltis and your computer.</span>
-  <a href="{{ routes.security }}" class="auth-disabled-setup">Set up authentication</a>
+  <span data-i18n="common:banners.authDisabled">Authentication is disabled. Anyone with network access can control moltis and your computer.</span>
+  <a href="{{ routes.security }}" class="auth-disabled-setup" data-i18n="common:banners.setupAuthentication">Set up authentication</a>
 </div>
 
 <!-- Update available banner (shown when a newer GitHub release exists) -->
 <div id="updateBanner" class="info-banner" style="display:none">
   <span>
-    An update is available
+    <span data-i18n="common:banners.updateAvailable">An update is available</span>
     <strong id="updateLatestVersion"></strong>
   </span>
-  <a id="updateReleaseLink" href="https://github.com/moltis-org/moltis/releases/latest" target="_blank" rel="noopener noreferrer" class="auth-disabled-setup">View release</a>
-  <button id="updateDismissBtn" type="button" class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer">Dismiss</button>
+  <a
+    id="updateReleaseLink"
+    href="https://github.com/moltis-org/moltis/releases/latest"
+    target="_blank"
+    rel="noopener noreferrer"
+    class="auth-disabled-setup"
+    data-i18n="common:banners.viewRelease"
+  >View release</a>
+  <button
+    id="updateDismissBtn"
+    type="button"
+    class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer"
+    data-i18n="common:banners.dismiss"
+  >Dismiss</button>
 </div>
 
 <!-- PWA Install Banner (shown on mobile when not installed) -->
@@ -177,8 +203,8 @@
     <div data-instructions class="flex-1 min-w-0"></div>
   </div>
   <div class="flex gap-2 justify-end">
-    <button data-install-btn class="provider-btn" style="display:none">Install</button>
-    <button data-dismiss-btn class="provider-btn provider-btn-secondary">Not now</button>
+    <button data-install-btn class="provider-btn" style="display:none" data-i18n="common:actions.install">Install</button>
+    <button data-dismiss-btn class="provider-btn provider-btn-secondary" data-i18n="common:actions.notNow">Not now</button>
   </div>
 </div>
 
@@ -193,21 +219,43 @@
     <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] hidden">
       <div id="projectFilterCombo" class="model-combo">
         <button id="projectFilterBtn" class="model-combo-btn" type="button" style="width:100%;max-width:none;justify-content:space-between">
-          <span id="projectFilterLabel">All sessions</span>
+          <span id="projectFilterLabel" data-i18n="common:sessions.allSessions">All sessions</span>
           <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
         </button>
         <div id="projectFilterDropdown" class="model-dropdown hidden" style="width:100%">
-          <input id="projectFilterSearch" type="text" placeholder="Search projects…" class="model-search-input" autocomplete="off" />
+          <input
+            id="projectFilterSearch"
+            type="text"
+            placeholder="Search projects…"
+            data-i18n-placeholder="common:sessions.searchProjects"
+            class="model-search-input"
+            autocomplete="off"
+          />
           <div id="projectFilterList" class="model-dropdown-list"></div>
         </div>
       </div>
     </div>
     <div class="px-3 py-2 border-b border-[var(--border)] relative">
       <div class="flex items-center gap-1">
-        <input id="sessionSearch" type="text" placeholder="Search sessions…"
+        <input
+          id="sessionSearch"
+          type="text"
+          placeholder="Search sessions…"
+          data-i18n-placeholder="common:sessions.searchSessions"
                class="flex-1 min-w-0 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
-        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
-        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
+        <button
+          id="newSessionBtn"
+          class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
+          title="New session"
+          data-i18n-title="common:sessions.newSessionTitle"
+        >+</button>
+        <button
+          id="clearAllSessionsBtn"
+          class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden"
+          title="Clear all sessions"
+          data-i18n-title="common:sessions.clearAllSessionsTitle"
+          data-i18n="common:sessions.clear"
+        >Clear</button>
       </div>
       <div id="searchResults" class="hidden"></div>
     </div>
@@ -219,7 +267,7 @@
 </div>
 
 <!-- Mobile sessions toggle FAB -->
-<button id="sessionsToggle" class="sessions-toggle-btn" title="Toggle sessions">
+<button id="sessionsToggle" class="sessions-toggle-btn" title="Toggle sessions" data-i18n-title="common:sessions.toggleSessions">
   <span class="icon icon-xl icon-chat-dots"></span>
 </button>
 

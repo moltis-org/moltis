@@ -7,6 +7,7 @@ import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { onEvent } from "./events.js";
 import { sendRpc } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateNavCount } from "./nav-counts.js";
 import { registerPage } from "./router.js";
 import { routes } from "./routes.js";

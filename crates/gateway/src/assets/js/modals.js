@@ -1,5 +1,7 @@
 // ── Modals: create modal DOM on demand ───────────────────────
 
+import { t } from "./i18n.js";
+
 var root = document.getElementById("modalRoot");
 
 function createModal(id, titleId, bodyId, closeId) {
@@ -43,20 +45,31 @@ function createModal(id, titleId, bodyId, closeId) {
 export function ensureProviderModal() {
 	var el = createModal("providerModal", "providerModalTitle", "providerModalBody", "providerModalClose");
 	var title = document.getElementById("providerModalTitle");
-	title.textContent = "Add Provider";
+	title.textContent = t("common:modals.addProvider");
 	return el;
 }
 
 export function ensureChannelModal() {
 	var el = createModal("channelModal", "channelModalTitle", "channelModalBody", "channelModalClose");
 	var title = document.getElementById("channelModalTitle");
-	title.textContent = "Add Channel";
+	title.textContent = t("common:modals.addChannel");
 	return el;
 }
 
 export function ensureProjectModal() {
 	var el = createModal("projectModal", "projectModalTitle", "projectModalBody", "projectModalClose");
 	var title = document.getElementById("projectModalTitle");
-	title.textContent = "Manage Projects";
+	title.textContent = t("common:modals.manageProjects");
 	return el;
 }
+
+function refreshModalTitles() {
+	var provider = document.getElementById("providerModalTitle");
+	if (provider) provider.textContent = t("common:modals.addProvider");
+	var channel = document.getElementById("channelModalTitle");
+	if (channel) channel.textContent = t("common:modals.addChannel");
+	var project = document.getElementById("projectModalTitle");
+	if (project) project.textContent = t("common:modals.manageProjects");
+}
+
+window.addEventListener("moltis:locale-changed", refreshModalTitles);

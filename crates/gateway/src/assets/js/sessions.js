@@ -19,6 +19,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
+import { t } from "./i18n.js";
 import { updateSessionProjectSelect } from "./project-combo.js";
 import { currentPrefix, navigate, sessionPath } from "./router.js";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox.js";
@@ -90,7 +91,7 @@ export function clearActiveSession() {
 		}
 		S.setLastHistoryIndex(prevHistoryIdx);
 		S.setChatSeq(prevSeq);
-		chatAddMsg("error", res?.error?.message || "Clear failed");
+		chatAddMsg("error", res?.error?.message || t("sessions:actions.clearFailed"));
 		return res;
 	});
 }
@@ -204,14 +205,16 @@ if (clearAllBtn) {
 		).length;
 		if (count === 0) return;
 		confirmDialog(
-			`Delete ${count} session${count !== 1 ? "s" : ""}? Main, Telegram and cron sessions will be kept.`,
+			count !== 1
+				? t("sessions:list.clearAllConfirmPlural", { count })
+				: t("sessions:list.clearAllConfirm", { count }),
 		).then((yes) => {
 			if (!yes) return;
 			clearAllBtn.disabled = true;
-			clearAllBtn.textContent = "Clearing\u2026";
+			clearAllBtn.textContent = t("sessions:list.clearing");
 			sendRpc("sessions.clear_all", {}).then((res) => {
 				clearAllBtn.disabled = false;
-				clearAllBtn.textContent = "Clear";
+				clearAllBtn.textContent = t("sessions:list.clearAll");
 				if (res?.ok) {
 					// If the active session was deleted, switch to main.
 					var active = sessionStore.getByKey(sessionStore.activeSessionKey.value);
@@ -332,9 +335,14 @@ function renderHistoryUserMessage(msg) {
 function createModelFooter(msg) {
 	var ft = document.createElement("div");
 	ft.className = "msg-model-footer";
-	var ftText = msg.provider ? `${msg.provider} / ${msg.model}` : msg.model;
+	var ftText = msg.provider
+		? t("sessions:meta.modelProvider", { provider: msg.provider, model: msg.model })
+		: msg.model;
 	if (msg.inputTokens || msg.outputTokens) {
-		ftText += ` \u00b7 ${formatTokens(msg.inputTokens || 0)} in / ${formatTokens(msg.outputTokens || 0)} out`;
+		ftText += ` \u00b7 ${t("sessions:meta.tokenUsage", {
+			inTokens: formatTokens(msg.inputTokens || 0),
+			outTokens: formatTokens(msg.outputTokens || 0),
+		})}`;
 	}
 	ft.textContent = ftText;
 	return ft;
@@ -517,7 +525,10 @@ function showWelcomeCard() {
 	var botEmoji = identity?.emoji || "";
 
 	var greetingEl = card.querySelector("[data-welcome-greeting]");
-	if (greetingEl) greetingEl.textContent = userName ? `Hello, ${userName}!` : "Hello!";
+	if (greetingEl)
+		greetingEl.textContent = userName
+			? t("sessions:welcome.greetingWithName", { name: userName })
+			: t("sessions:welcome.greeting");
 	var emojiEl = card.querySelector("[data-welcome-emoji]");
 	if (emojiEl) emojiEl.textContent = botEmoji;
 	var nameEl = card.querySelector("[data-welcome-bot-name]");

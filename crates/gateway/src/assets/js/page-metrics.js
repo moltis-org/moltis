@@ -8,6 +8,7 @@ import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import uPlot from "uplot";
 import { onEvent } from "./events.js";
+import { t } from "./i18n.js";
 import { registerPrefix } from "./router.js";
 import { routes } from "./routes.js";
 
@@ -23,10 +24,10 @@ var monitoringSyncPath = true;
 
 // Time range options (in seconds)
 var TIME_RANGES = {
-	"5m": { label: "5 min", seconds: 5 * 60, maxPoints: 30 },
-	"1h": { label: "1 hour", seconds: 60 * 60, maxPoints: 360 },
-	"24h": { label: "24 hours", seconds: 24 * 60 * 60, maxPoints: 1440 },
-	"7d": { label: "7 days", seconds: 7 * 24 * 60 * 60, maxPoints: 2016 },
+	"5m": { label: () => t("metrics:timeRange.fiveMin"), seconds: 5 * 60, maxPoints: 30 },
+	"1h": { label: () => t("metrics:timeRange.oneHour"), seconds: 60 * 60, maxPoints: 360 },
+	"24h": { label: () => t("metrics:timeRange.twentyFourHours"), seconds: 24 * 60 * 60, maxPoints: 1440 },
+	"7d": { label: () => t("metrics:timeRange.sevenDays"), seconds: 7 * 24 * 60 * 60, maxPoints: 2016 },
 };
 
 async function fetchMetrics() {
@@ -34,7 +35,7 @@ async function fetchMetrics() {
 		var resp = await fetch("/api/metrics");
 		if (!resp.ok) {
 			if (resp.status === 503) {
-				error.value = "Metrics are not enabled. Enable them in moltis.toml with [metrics] enabled = true";
+				error.value = t("metrics:metricsDisabled");
 				loading.value = false;
 			}
 			// For transient errors (401, 5xx, etc.) stay in loading state —
@@ -87,14 +88,14 @@ function subscribeToMetrics() {
 }
 
 function formatNumber(n) {
-	if (n === undefined || n === null) return "—";
+	if (n === undefined || n === null) return "\u2014";
 	if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
 	if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
 	return n.toString();
 }
 
 function formatUptime(seconds) {
-	if (!seconds) return "—";
+	if (!seconds) return "\u2014";
 	var days = Math.floor(seconds / 86400);
 	var hours = Math.floor((seconds % 86400) / 3600);
 	var mins = Math.floor((seconds % 3600) / 60);
@@ -128,7 +129,7 @@ function LiveIndicator({ live }) {
 		return html`
 			<div class="flex items-center gap-2 text-xs text-[var(--muted)]">
 				<span class="inline-flex rounded-full h-2.5 w-2.5 bg-gray-500"></span>
-				Connecting...
+				${t("common:status.connecting")}
 			</div>
 		`;
 	}
@@ -138,7 +139,7 @@ function LiveIndicator({ live }) {
 				<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
 				<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
 			</span>
-			Live
+			${t("metrics:live")}
 		</div>
 	`;
 }
@@ -218,7 +219,7 @@ function TimeSeriesChart({ title, data, series, height = 220 }) {
 				},
 			],
 			series: [
-				{ label: "Time" },
+				{ label: t("metrics:series.time") },
 				...series.map((s, i) => ({
 					label: s.label,
 					stroke: s.color || Object.values(chartColors)[i % Object.values(chartColors).length],
@@ -347,8 +348,8 @@ function MetricsGrid({ categories }) {
 		return html`
 			<${EmptyState}
 				icon=${activityIcon}
-				title="No activity yet"
-				description="Metrics will appear here once you start using moltis. Try sending a message or running a tool to see data."
+				title=${t("metrics:noActivityTitle")}
+				description=${t("metrics:noActivityDescription")}
 			/>
 		`;
 	}
@@ -357,50 +358,50 @@ function MetricsGrid({ categories }) {
 		<div class="space-y-10">
 			<!-- System Overview -->
 			<section>
-				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">System</h3>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.system")}</h3>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
-					<${MetricCard} title="Uptime" value=${formatUptime(system?.uptime_seconds)} />
-					<${MetricCard} title="Connected Clients" value=${formatNumber(system?.connected_clients)} />
-					<${MetricCard} title="Active Sessions" value=${formatNumber(system?.active_sessions)} />
-					<${MetricCard} title="HTTP Requests" value=${formatNumber(http?.total)} />
+					<${MetricCard} title=${t("metrics:cards.uptime")} value=${formatUptime(system?.uptime_seconds)} />
+					<${MetricCard} title=${t("metrics:cards.connectedClients")} value=${formatNumber(system?.connected_clients)} />
+					<${MetricCard} title=${t("metrics:cards.activeSessions")} value=${formatNumber(system?.active_sessions)} />
+					<${MetricCard} title=${t("metrics:cards.httpRequests")} value=${formatNumber(http?.total)} />
 				</div>
 			</section>
 
 			<!-- LLM Metrics -->
 			<section>
-				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">LLM Usage</h3>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.llmUsage")}</h3>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
 					<${MetricCard}
-						title="Completions"
+						title=${t("metrics:cards.completions")}
 						value=${formatNumber(llm?.completions_total)}
-						subtitle=${llm?.errors > 0 ? `${llm.errors} errors` : undefined}
+						subtitle=${llm?.errors > 0 ? t("metrics:errorsCount", { count: llm.errors }) : undefined}
 					/>
-					<${MetricCard} title="Input Tokens" value=${formatNumber(llm?.input_tokens)} />
-					<${MetricCard} title="Output Tokens" value=${formatNumber(llm?.output_tokens)} />
+					<${MetricCard} title=${t("metrics:cards.inputTokens")} value=${formatNumber(llm?.input_tokens)} />
+					<${MetricCard} title=${t("metrics:cards.outputTokens")} value=${formatNumber(llm?.output_tokens)} />
 					<${MetricCard}
-						title="Cache Tokens"
+						title=${t("metrics:cards.cacheTokens")}
 						value=${formatNumber((llm?.cache_read_tokens || 0) + (llm?.cache_write_tokens || 0))}
-						subtitle=${llm?.cache_read_tokens ? `read: ${formatNumber(llm.cache_read_tokens)}` : undefined}
+						subtitle=${llm?.cache_read_tokens ? t("metrics:cacheRead", { value: formatNumber(llm.cache_read_tokens) }) : undefined}
 					/>
 				</div>
 			</section>
 
 			<!-- Tools & MCP -->
 			<section>
-				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">Tools & MCP</h3>
+				<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.toolsMcp")}</h3>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-6">
 					<${MetricCard}
-						title="Tool Executions"
+						title=${t("metrics:cards.toolExecutions")}
 						value=${formatNumber(tools?.total)}
-						subtitle=${tools?.errors > 0 ? `${tools.errors} errors` : undefined}
+						subtitle=${tools?.errors > 0 ? t("metrics:errorsCount", { count: tools.errors }) : undefined}
 					/>
-					<${MetricCard} title="Tools Active" value=${formatNumber(tools?.active)} />
+					<${MetricCard} title=${t("metrics:cards.toolsActive")} value=${formatNumber(tools?.active)} />
 					<${MetricCard}
-						title="MCP Tool Calls"
+						title=${t("metrics:cards.mcpToolCalls")}
 						value=${formatNumber(mcp?.total)}
-						subtitle=${mcp?.errors > 0 ? `${mcp.errors} errors` : undefined}
+						subtitle=${mcp?.errors > 0 ? t("metrics:errorsCount", { count: mcp.errors }) : undefined}
 					/>
-					<${MetricCard} title="MCP Servers" value=${formatNumber(mcp?.active)} />
+					<${MetricCard} title=${t("metrics:cards.mcpServers")} value=${formatNumber(mcp?.active)} />
 				</div>
 			</section>
 		</div>
@@ -416,8 +417,8 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 				<${TimeRangeSelector} value=${timeRange} onChange=${onTimeRangeChange} />
 				<${EmptyState}
 					icon=${chartIcon}
-					title="Collecting data..."
-					description="Historical charts will appear here after a few data points are collected. This typically takes about 20-30 seconds."
+					title=${t("metrics:collectingTitle")}
+					description=${t("metrics:collectingDescription")}
 				/>
 			</div>
 		`;
@@ -446,11 +447,11 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					tokenData &&
 					html`
 					<${TimeSeriesChart}
-						title="Token Usage (Total)"
+						title=${t("metrics:charts.tokenUsageTotal")}
 						data=${tokenData}
 						series=${[
-							{ label: "Input Tokens", color: chartColors.primary },
-							{ label: "Output Tokens", color: chartColors.secondary },
+							{ label: t("metrics:series.inputTokens"), color: chartColors.primary },
+							{ label: t("metrics:series.outputTokens"), color: chartColors.secondary },
 						]}
 					/>
 				`
@@ -460,7 +461,7 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					providers.length > 0 &&
 					html`
 					<${TimeSeriesChart}
-						title="Input Tokens by Provider"
+						title=${t("metrics:charts.inputTokensByProvider")}
 						data=${providerInputData}
 						series=${providerSeries}
 					/>
@@ -471,7 +472,7 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					providers.length > 0 &&
 					html`
 					<${TimeSeriesChart}
-						title="Output Tokens by Provider"
+						title=${t("metrics:charts.outputTokensByProvider")}
 						data=${providerOutputData}
 						series=${providerSeries}
 					/>
@@ -481,11 +482,11 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					requestData &&
 					html`
 					<${TimeSeriesChart}
-						title="Requests"
+						title=${t("metrics:charts.requests")}
 						data=${requestData}
 						series=${[
-							{ label: "HTTP Requests", color: chartColors.tertiary },
-							{ label: "LLM Completions", color: chartColors.primary },
+							{ label: t("metrics:series.httpRequests"), color: chartColors.tertiary },
+							{ label: t("metrics:series.llmCompletions"), color: chartColors.primary },
 						]}
 					/>
 				`
@@ -494,11 +495,11 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					connectionsData &&
 					html`
 					<${TimeSeriesChart}
-						title="Connections"
+						title=${t("metrics:charts.connections")}
 						data=${connectionsData}
 						series=${[
-							{ label: "WebSocket Active", color: chartColors.secondary },
-							{ label: "Active Sessions", color: chartColors.tertiary },
+							{ label: t("metrics:series.wsActive"), color: chartColors.secondary },
+							{ label: t("metrics:series.activeSessions"), color: chartColors.tertiary },
 						]}
 					/>
 				`
@@ -507,11 +508,11 @@ function ChartsSection({ points, timeRange, onTimeRangeChange }) {
 					toolsData &&
 					html`
 					<${TimeSeriesChart}
-						title="Tool Activity"
+						title=${t("metrics:charts.toolActivity")}
 						data=${toolsData}
 						series=${[
-							{ label: "Tool Executions", color: chartColors.primary },
-							{ label: "MCP Calls", color: chartColors.secondary },
+							{ label: t("metrics:series.toolExecutions"), color: chartColors.primary },
+							{ label: t("metrics:series.mcpCalls"), color: chartColors.secondary },
 						]}
 					/>
 				`
@@ -531,7 +532,7 @@ function TimeRangeSelector({ value, onChange }) {
 					class="px-3 py-1.5 text-xs rounded transition-colors ${value === key ? "bg-[var(--surface2)] text-[var(--text)] font-medium" : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface2)]"}"
 					onClick=${() => onChange(key)}
 				>
-					${range.label}
+					${range.label()}
 				</button>
 			`,
 			)}
@@ -544,16 +545,16 @@ function ProviderTable({ byProvider }) {
 
 	return html`
 		<section>
-			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">By Provider</h3>
+			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.byProvider")}</h3>
 			<div class="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
 				<table class="w-full text-sm">
 					<thead>
 						<tr class="border-b border-[var(--border)] bg-[var(--surface2)]">
-							<th class="text-left px-6 py-4 font-medium">Provider</th>
-							<th class="text-right px-6 py-4 font-medium">Completions</th>
-							<th class="text-right px-6 py-4 font-medium">Input Tokens</th>
-							<th class="text-right px-6 py-4 font-medium">Output Tokens</th>
-							<th class="text-right px-6 py-4 font-medium">Errors</th>
+							<th class="text-left px-6 py-4 font-medium">${t("metrics:table.provider")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.completions")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.inputTokens")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.outputTokens")}</th>
+							<th class="text-right px-6 py-4 font-medium">${t("metrics:table.errors")}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -588,10 +589,10 @@ function PrometheusEndpoint() {
 
 	return html`
 		<section>
-			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">Prometheus Endpoint</h3>
+			<h3 class="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">${t("metrics:sections.prometheus")}</h3>
 			<div class="p-6 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
 				<p class="text-sm text-[var(--muted)] mb-5">
-					Scrape this endpoint with Prometheus or import into Grafana for advanced visualization.
+					${t("metrics:prometheusDescription")}
 				</p>
 				<div class="flex items-center gap-4">
 					<code class="flex-1 px-4 py-3 bg-[var(--surface2)] rounded-md text-sm font-mono overflow-x-auto">${endpoint}</code>
@@ -599,7 +600,7 @@ function PrometheusEndpoint() {
 						class="provider-btn provider-btn-secondary text-sm shrink-0"
 						onClick=${copyEndpoint}
 					>
-						${copied ? "Copied!" : "Copy"}
+						${copied ? t("common:actions.copied") : t("common:actions.copy")}
 					</button>
 				</div>
 			</div>
@@ -643,7 +644,7 @@ function MonitoringPage({ initialTab }) {
 			<div class="flex items-center justify-center h-64 text-[var(--muted)]">
 				<div class="text-center">
 					<div class="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin mb-4"></div>
-					<p>Loading metrics...</p>
+					<p>${t("metrics:loadingMetrics")}</p>
 				</div>
 			</div>
 		`;
@@ -667,7 +668,7 @@ function MonitoringPage({ initialTab }) {
 			<div class="max-w-7xl mx-auto">
 				<div class="flex items-center justify-between mb-10">
 					<div class="flex items-center gap-4">
-						<h2 class="text-xl font-semibold">Monitoring</h2>
+						<h2 class="text-xl font-semibold">${t("metrics:title")}</h2>
 						<${LiveIndicator} live=${isLive.value} />
 					</div>
 					<div class="flex items-center gap-4">
@@ -676,13 +677,13 @@ function MonitoringPage({ initialTab }) {
 								class="px-5 py-2.5 text-sm transition-colors ${activeTab === "overview" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}"
 								onClick=${() => handleTabChange("overview")}
 							>
-								Overview
+								${t("metrics:tabs.overview")}
 							</button>
 							<button
 								class="px-5 py-2.5 text-sm transition-colors ${activeTab === "charts" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}"
 								onClick=${() => handleTabChange("charts")}
 							>
-								Charts
+								${t("metrics:tabs.charts")}
 							</button>
 						</div>
 					</div>

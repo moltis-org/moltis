@@ -5,6 +5,7 @@ import { render } from "preact";
 import { chatAddMsg, chatAddMsgWithImages } from "./chat-ui.js";
 import { SessionHeader } from "./components/session-header.js";
 import { formatBytes, formatTokens, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers.js";
+import { t } from "./i18n.js";
 import {
 	clearPendingImages,
 	getPendingImages,
@@ -28,9 +29,9 @@ import { initVoiceInput, teardownVoiceInput } from "./voice-input.js";
 
 // ── Slash commands ───────────────────────────────────────
 var slashCommands = [
-	{ name: "clear", description: "Clear conversation history" },
-	{ name: "compact", description: "Summarize conversation to save tokens" },
-	{ name: "context", description: "Show session context and project info" },
+	{ name: "clear", description: t("chat:slashClear") },
+	{ name: "compact", description: t("chat:slashCompact") },
+	{ name: "context", description: t("chat:slashContext") },
 ];
 var slashMenuEl = null;
 var slashMenuIdx = 0;
@@ -192,26 +193,34 @@ function ctxSection(title) {
 // ── Context card per-section renderers ───────────────────
 function renderContextSessionSection(card, data) {
 	var sess = data.session || {};
-	var sessSection = ctxSection("Session");
-	sessSection.appendChild(ctxRow("Key", sess.key || "unknown", true));
-	sessSection.appendChild(ctxRow("Messages", String(sess.messageCount || 0)));
-	sessSection.appendChild(ctxRow("Model", sess.model || "default", true));
-	if (sess.provider) sessSection.appendChild(ctxRow("Provider", sess.provider, true));
-	if (sess.label) sessSection.appendChild(ctxRow("Label", sess.label));
-	sessSection.appendChild(ctxRow("Tool Support", data.supportsTools === false ? "Disabled" : "Enabled"));
+	var sessSection = ctxSection(t("chat:context.session"));
+	sessSection.appendChild(ctxRow(t("chat:context.key"), sess.key || t("chat:context.unknown"), true));
+	sessSection.appendChild(ctxRow(t("chat:context.messages"), String(sess.messageCount || 0)));
+	sessSection.appendChild(ctxRow(t("chat:context.model"), sess.model || t("chat:context.defaultModel"), true));
+	if (sess.provider) sessSection.appendChild(ctxRow(t("chat:context.providerLabel"), sess.provider, true));
+	if (sess.label) sessSection.appendChild(ctxRow(t("chat:context.label"), sess.label));
+	sessSection.appendChild(
+		ctxRow(
+			t("chat:context.toolSupport"),
+			data.supportsTools === false ? t("chat:context.disabled") : t("chat:context.enabled"),
+		),
+	);
 	card.appendChild(sessSection);
 }
 
 function renderContextProjectSection(card, data) {
 	var proj = data.project;
-	var projSection = ctxSection("Project");
+	var projSection = ctxSection(t("chat:context.project"));
 	if (proj && proj !== null) {
-		projSection.appendChild(ctxRow("Name", proj.label || "(unnamed)"));
-		if (proj.directory) projSection.appendChild(ctxRow("Directory", proj.directory, true));
-		if (proj.systemPrompt) projSection.appendChild(ctxRow("System Prompt", `${proj.systemPrompt.length} chars`));
+		projSection.appendChild(ctxRow(t("chat:context.projectName"), proj.label || t("chat:context.unnamed")));
+		if (proj.directory) projSection.appendChild(ctxRow(t("chat:context.directory"), proj.directory, true));
+		if (proj.systemPrompt)
+			projSection.appendChild(
+				ctxRow(t("chat:context.systemPrompt"), t("chat:context.charsCount", { count: proj.systemPrompt.length })),
+			);
 		var ctxFiles = proj.contextFiles || [];
 		if (ctxFiles.length > 0) {
-			var filesLabel = ctxEl("div", "ctx-section-title", `Context Files (${ctxFiles.length})`);
+			var filesLabel = ctxEl("div", "ctx-section-title", t("chat:context.contextFiles", { count: ctxFiles.length }));
 			filesLabel.classList.add("spaced");
 			projSection.appendChild(filesLabel);
 			ctxFiles.forEach((f) => {
@@ -222,41 +231,39 @@ function renderContextProjectSection(card, data) {
 			});
 		}
 	} else {
-		projSection.appendChild(ctxEl("div", "ctx-empty", "No project bound to this session"));
+		projSection.appendChild(ctxEl("div", "ctx-empty", t("chat:context.noProject")));
 	}
 	card.appendChild(projSection);
 }
 
 function renderContextToolsSection(card, data) {
 	var tools = data.tools || [];
-	var toolsSection = ctxSection("Tools");
+	var toolsSection = ctxSection(t("chat:context.tools"));
 	if (data.supportsTools === false) {
-		toolsSection.appendChild(ctxEl("div", "ctx-disabled", "Tools disabled \u2014 model doesn't support tool calling"));
+		toolsSection.appendChild(ctxEl("div", "ctx-disabled", t("chat:context.toolsDisabledNoSupport")));
 	} else if (tools.length > 0) {
 		var toolWrap = ctxEl("div", "");
 		toolWrap.className = "ctx-tool-wrap";
-		tools.forEach((t) => {
+		tools.forEach((tool) => {
 			var tag = ctxEl("span", "ctx-tag");
 			var dot = ctxEl("span", "ctx-tag-dot");
 			tag.appendChild(dot);
-			tag.appendChild(document.createTextNode(t.name));
-			tag.title = t.description;
+			tag.appendChild(document.createTextNode(tool.name));
+			tag.title = tool.description;
 			toolWrap.appendChild(tag);
 		});
 		toolsSection.appendChild(toolWrap);
 	} else {
-		toolsSection.appendChild(ctxEl("div", "ctx-empty", "No tools registered"));
+		toolsSection.appendChild(ctxEl("div", "ctx-empty", t("chat:context.noTools")));
 	}
 	card.appendChild(toolsSection);
 }
 
 function renderContextSkillsSection(card, data) {
 	var skills = data.skills || [];
-	var skillsSection = ctxSection("Skills & Plugins");
+	var skillsSection = ctxSection(t("chat:context.skillsAndPlugins"));
 	if (data.supportsTools === false) {
-		skillsSection.appendChild(
-			ctxEl("div", "ctx-disabled", "Skills disabled \u2014 model doesn't support tool calling"),
-		);
+		skillsSection.appendChild(ctxEl("div", "ctx-disabled", t("chat:context.skillsDisabledNoSupport")));
 	} else if (skills.length > 0) {
 		var wrap = ctxEl("div", "");
 		wrap.className = "ctx-tool-wrap";
@@ -267,23 +274,23 @@ function renderContextSkillsSection(card, data) {
 			dot.style.background = isPlugin ? "var(--accent)" : "var(--success, #4a9)";
 			tag.appendChild(dot);
 			tag.appendChild(document.createTextNode(s.name));
-			tag.title = (isPlugin ? "[Plugin] " : "[Skill] ") + (s.description || "");
+			tag.title = (isPlugin ? t("chat:context.pluginPrefix") : t("chat:context.skillPrefix")) + (s.description || "");
 			wrap.appendChild(tag);
 		});
 		skillsSection.appendChild(wrap);
 	} else {
-		skillsSection.appendChild(ctxEl("div", "ctx-empty", "No skills or plugins enabled"));
+		skillsSection.appendChild(ctxEl("div", "ctx-empty", t("chat:context.noSkillsOrPlugins")));
 	}
 	card.appendChild(skillsSection);
 }
 
 function renderContextMcpSection(card, data) {
 	var servers = data.mcpServers || [];
-	var section = ctxSection("MCP Tools");
+	var section = ctxSection(t("chat:context.mcpTools"));
 	if (data.supportsTools === false) {
-		section.appendChild(ctxEl("div", "ctx-disabled", "MCP tools disabled \u2014 model doesn't support tool calling"));
+		section.appendChild(ctxEl("div", "ctx-disabled", t("chat:context.mcpToolsDisabledNoSupport")));
 	} else if (data.mcpDisabled) {
-		section.appendChild(ctxEl("div", "ctx-disabled", "MCP tools disabled for this session"));
+		section.appendChild(ctxEl("div", "ctx-disabled", t("chat:context.mcpToolsDisabledSession")));
 	} else {
 		var running = servers.filter((s) => s.state === "running");
 		if (running.length > 0) {
@@ -295,12 +302,12 @@ function renderContextMcpSection(card, data) {
 				dot.style.background = "var(--ok)";
 				tag.appendChild(dot);
 				tag.appendChild(document.createTextNode(s.name));
-				tag.title = `${s.tool_count} tool${s.tool_count !== 1 ? "s" : ""} — ${s.state}`;
+				tag.title = `${s.tool_count} ${t("chat:context.toolCount", { count: s.tool_count })} — ${s.state}`;
 				wrap.appendChild(tag);
 			});
 			section.appendChild(wrap);
 		} else {
-			section.appendChild(ctxEl("div", "ctx-empty", "No MCP tools running"));
+			section.appendChild(ctxEl("div", "ctx-empty", t("chat:context.noMcpTools")));
 		}
 	}
 	card.appendChild(section);
@@ -308,28 +315,36 @@ function renderContextMcpSection(card, data) {
 
 function renderContextSandboxSection(card, data) {
 	var sb = data.sandbox || {};
-	var sandboxSection = ctxSection("Sandbox");
-	sandboxSection.appendChild(ctxRow("Enabled", sb.enabled ? "yes" : "no", true));
+	var sandboxSection = ctxSection(t("chat:context.sandbox"));
+	sandboxSection.appendChild(
+		ctxRow(t("common:status.enabled"), sb.enabled ? t("common:status.yes") : t("common:status.no"), true),
+	);
 	if (sb.backend) {
-		sandboxSection.appendChild(ctxRow("Backend", sb.backend));
-		if (sb.mode) sandboxSection.appendChild(ctxRow("Mode", sb.mode));
-		if (sb.scope) sandboxSection.appendChild(ctxRow("Scope", sb.scope));
-		if (sb.workspaceMount) sandboxSection.appendChild(ctxRow("Workspace Mount", sb.workspaceMount));
-		if (sb.image) sandboxSection.appendChild(ctxRow("Image", sb.image, true));
-		if (sb.containerName) sandboxSection.appendChild(ctxRow("Container", sb.containerName));
+		sandboxSection.appendChild(ctxRow(t("chat:context.backend"), sb.backend));
+		if (sb.mode) sandboxSection.appendChild(ctxRow(t("chat:context.mode"), sb.mode));
+		if (sb.scope) sandboxSection.appendChild(ctxRow(t("chat:context.scope"), sb.scope));
+		if (sb.workspaceMount) sandboxSection.appendChild(ctxRow(t("chat:context.workspaceMount"), sb.workspaceMount));
+		if (sb.image) sandboxSection.appendChild(ctxRow(t("chat:context.image"), sb.image, true));
+		if (sb.containerName) sandboxSection.appendChild(ctxRow(t("chat:context.container"), sb.containerName));
 	}
 	card.appendChild(sandboxSection);
 }
 
 function renderContextTokensSection(card, data) {
 	var tu = data.tokenUsage || {};
-	var tokenSection = ctxSection("Token Usage");
-	tokenSection.appendChild(ctxRow("Input", formatTokens(tu.inputTokens || 0), true));
-	tokenSection.appendChild(ctxRow("Output", formatTokens(tu.outputTokens || 0), true));
-	tokenSection.appendChild(ctxRow("Total", formatTokens(tu.total || 0), true));
+	var tokenSection = ctxSection(t("chat:context.tokenUsage"));
+	tokenSection.appendChild(ctxRow(t("chat:context.input"), formatTokens(tu.inputTokens || 0), true));
+	tokenSection.appendChild(ctxRow(t("chat:context.output"), formatTokens(tu.outputTokens || 0), true));
+	tokenSection.appendChild(ctxRow(t("chat:context.total"), formatTokens(tu.total || 0), true));
 	if (tu.contextWindow > 0) {
 		var pct = Math.max(0, 100 - Math.round(((tu.total || 0) / tu.contextWindow) * 100));
-		tokenSection.appendChild(ctxRow("Context left", `${pct}% of ${formatTokens(tu.contextWindow)}`, true));
+		tokenSection.appendChild(
+			ctxRow(
+				t("chat:context.contextLeft"),
+				t("chat:context.contextPct", { pct: pct, total: formatTokens(tu.contextWindow) }),
+				true,
+			),
+		);
 	}
 	card.appendChild(tokenSection);
 }
@@ -344,7 +359,7 @@ function renderContextCard(data) {
 	var icon = document.createElement("span");
 	icon.className = "icon icon-settings-gear";
 	header.appendChild(icon);
-	header.appendChild(ctxEl("span", "ctx-header-title", "Context"));
+	header.appendChild(ctxEl("span", "ctx-header-title", t("chat:context.title")));
 	card.appendChild(header);
 
 	// Show warning if tools are disabled
@@ -353,11 +368,7 @@ function renderContextCard(data) {
 		var warnIcon = document.createElement("span");
 		warnIcon.className = "icon icon-warn-triangle-light";
 		warning.appendChild(warnIcon);
-		warning.appendChild(
-			document.createTextNode(
-				"Tools disabled \u2014 the current model doesn't support tool calling. Running in chat-only mode.",
-			),
-		);
+		warning.appendChild(document.createTextNode(t("chat:toolsDisabledWarning")));
 		card.appendChild(warning);
 	}
 
@@ -383,21 +394,26 @@ export function renderCompactCard(data) {
 	var icon = document.createElement("span");
 	icon.className = "icon icon-compress";
 	header.appendChild(icon);
-	header.appendChild(ctxEl("span", "ctx-header-title", "Conversation compacted"));
+	header.appendChild(ctxEl("span", "ctx-header-title", t("chat:compact.title")));
 	card.appendChild(header);
 
-	var statsSection = ctxSection("Before compact");
-	statsSection.appendChild(ctxRow("Messages", String(data.messageCount || 0)));
-	statsSection.appendChild(ctxRow("Total tokens", formatTokens(data.totalTokens || 0)));
+	var statsSection = ctxSection(t("chat:compact.beforeCompact"));
+	statsSection.appendChild(ctxRow(t("chat:compact.messages"), String(data.messageCount || 0)));
+	statsSection.appendChild(ctxRow(t("chat:compact.totalTokens"), formatTokens(data.totalTokens || 0)));
 	if (data.contextWindow) {
 		var pctUsed = Math.round(((data.totalTokens || 0) / data.contextWindow) * 100);
-		statsSection.appendChild(ctxRow("Context usage", `${pctUsed}% of ${formatTokens(data.contextWindow)}`));
+		statsSection.appendChild(
+			ctxRow(
+				t("chat:compact.contextUsage"),
+				t("chat:compact.usageFormat", { pct: pctUsed, total: formatTokens(data.contextWindow) }),
+			),
+		);
 	}
 	card.appendChild(statsSection);
 
-	var afterSection = ctxSection("After compact");
-	afterSection.appendChild(ctxRow("Messages", "1 (summary)"));
-	afterSection.appendChild(ctxRow("Status", "Conversation history replaced with a summary"));
+	var afterSection = ctxSection(t("chat:compact.afterCompact"));
+	afterSection.appendChild(ctxRow(t("chat:compact.messages"), t("chat:compact.summaryMessage")));
+	afterSection.appendChild(ctxRow(t("chat:compact.status"), t("chat:compact.statusMessage")));
 	card.appendChild(afterSection);
 
 	S.chatMsgBox.appendChild(card);
@@ -410,13 +426,13 @@ function refreshDebugPanel() {
 	if (!panel) return;
 	panel.textContent = "";
 
-	var loading = ctxEl("div", "text-xs text-[var(--muted)]", "Loading context\u2026");
+	var loading = ctxEl("div", "text-xs text-[var(--muted)]", t("chat:loadingContext"));
 	panel.appendChild(loading);
 
 	sendRpc("chat.context", {}).then((res) => {
 		panel.textContent = "";
 		if (!(res?.ok && res.payload)) {
-			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to load context"));
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", t("chat:failedToLoadContext")));
 			return;
 		}
 		slashInjectStyles();
@@ -453,20 +469,20 @@ function ctxMsgBadge(role) {
 	var color = ROLE_COLORS[role] || "var(--text)";
 	var badge = ctxEl("span", "text-xs font-semibold uppercase px-1.5 py-0.5 rounded");
 	badge.style.cssText = `color:${color};background:color-mix(in srgb, ${color} 15%, transparent)`;
-	badge.textContent = role;
+	badge.textContent = role === "unknown" ? t("chat:roles.unknown") : role;
 	return badge;
 }
 
 function ctxMsgMeta(msg, contentStr) {
 	var parts = [];
 	var chars = contentStr ? contentStr.length : 0;
-	if (chars > 0) parts.push(`${chars.toLocaleString()} chars`);
+	if (chars > 0) parts.push(`${chars.toLocaleString()} ${t("chat:fullContext.chars")}`);
 	var toolCalls = msg.tool_calls || [];
 	if (toolCalls.length > 0) {
-		parts.push(`${toolCalls.length} tool call${toolCalls.length > 1 ? "s" : ""}`);
+		parts.push(`${toolCalls.length} ${t("chat:fullContext.toolCall", { count: toolCalls.length })}`);
 	}
 	if (msg.role === "tool" && msg.tool_call_id) {
-		parts.push(`id: ${msg.tool_call_id}`);
+		parts.push(`${t("chat:fullContext.id")}: ${msg.tool_call_id}`);
 	}
 	return parts.join(" \xb7 ");
 }
@@ -534,26 +550,27 @@ function refreshFullContextPanel() {
 	var panel = S.$("fullContextPanel");
 	if (!panel) return;
 	panel.textContent = "";
-	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building full context\u2026"));
+	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", t("chat:buildingContext")));
 
 	sendRpc("chat.full_context", {}).then((res) => {
 		panel.textContent = "";
 		if (!(res?.ok && res.payload)) {
-			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", t("chat:failedToBuildContext")));
 			return;
 		}
 		var headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
 		var headerText = ctxEl("span", "text-xs text-[var(--muted)]");
-		headerText.textContent =
-			`${res.payload.messageCount} messages \xb7 ` +
-			`system prompt ${res.payload.systemPromptChars.toLocaleString()} chars \xb7 ` +
-			`total ${res.payload.totalChars.toLocaleString()} chars`;
+		headerText.textContent = t("chat:fullContext.messagesSummary", {
+			count: res.payload.messageCount,
+			systemChars: res.payload.systemPromptChars.toLocaleString(),
+			totalChars: res.payload.totalChars.toLocaleString(),
+		});
 		headerRow.appendChild(headerText);
 
 		var messages = res.payload.messages || [];
 
 		var copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
-		copyBtn.textContent = "Copy";
+		copyBtn.textContent = t("chat:copyBtn");
 		copyBtn.addEventListener("click", () => {
 			var lines = messages.map((m) => {
 				var content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
@@ -564,9 +581,9 @@ function refreshFullContextPanel() {
 				return `[${m.role}] ${parts.join("\n")}`;
 			});
 			navigator.clipboard.writeText(lines.join("\n")).then(() => {
-				copyBtn.textContent = "Copied!";
+				copyBtn.textContent = t("chat:fullContext.copied");
 				setTimeout(() => {
-					copyBtn.textContent = "Copy";
+					copyBtn.textContent = t("chat:copyBtn");
 				}, 1500);
 			});
 		});
@@ -603,19 +620,19 @@ export function updateMcpToggleUI(enabled) {
 	if (enabled) {
 		btn.style.color = "var(--ok)";
 		btn.style.borderColor = "var(--ok)";
-		if (label) label.textContent = "MCP";
-		btn.title = "MCP tools enabled — click to disable for this session";
+		if (label) label.textContent = t("chat:mcpEnabled");
+		btn.title = t("chat:mcpEnabledTooltip");
 	} else {
 		btn.style.color = "var(--muted)";
 		btn.style.borderColor = "var(--border)";
-		if (label) label.textContent = "MCP off";
-		btn.title = "MCP tools disabled — click to enable for this session";
+		if (label) label.textContent = t("chat:mcpDisabled");
+		btn.title = t("chat:mcpDisabledTooltip");
 	}
 }
 
 function toggleMcp() {
 	var label = S.$("mcpToggleLabel");
-	var isEnabled = label && label.textContent === "MCP";
+	var isEnabled = label && label.textContent === t("chat:mcpEnabled");
 	var newDisabled = isEnabled;
 	sendRpc("sessions.patch", { key: S.activeSessionKey, mcp_disabled: newDisabled }).then((res) => {
 		if (res?.ok) {
@@ -649,28 +666,28 @@ function handleSlashCommand(cmdName) {
 		return;
 	}
 	if (cmdName === "compact") {
-		chatAddMsg("system", "Compacting conversation\u2026");
+		chatAddMsg("system", t("chat:compactingConversation"));
 		sendRpc("chat.compact", {}).then((res) => {
 			if (res?.ok) {
 				switchSession(S.activeSessionKey);
 			} else {
-				chatAddMsg("error", res?.error?.message || "Compact failed");
+				chatAddMsg("error", res?.error?.message || t("chat:compactFailed"));
 			}
 		});
 		return;
 	}
 	if (cmdName === "context") {
-		chatAddMsg("system", "Loading context\u2026");
+		chatAddMsg("system", t("chat:loadingContext"));
 		sendRpc("chat.context", {}).then((res) => {
 			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 			if (res?.ok && res.payload) {
 				try {
 					renderContextCard(res.payload);
 				} catch (err) {
-					chatAddMsg("error", `Render error: ${err.message}`);
+					chatAddMsg("error", t("chat:renderError", { message: err.message }));
 				}
 			} else {
-				chatAddMsg("error", res?.error?.message || "Context failed");
+				chatAddMsg("error", res?.error?.message || t("chat:contextFailed"));
 			}
 		});
 	}
@@ -761,10 +778,10 @@ function markMessageQueued(el, sessionKey) {
 	badge.className = "queued-badge";
 	var label = document.createElement("span");
 	label.className = "queued-label";
-	label.textContent = "Queued";
+	label.textContent = t("chat:queued");
 	var btn = document.createElement("button");
 	btn.className = "queued-cancel";
-	btn.title = "Cancel all queued";
+	btn.title = t("chat:queuedMessages.cancelAllTooltip");
 	btn.textContent = "\u2715";
 	btn.addEventListener("click", (e) => {
 		e.stopPropagation();
@@ -866,8 +883,8 @@ var chatPageHTML =
 	"</div></div>";
 
 function msgRole(el) {
-	if (el.classList.contains("user")) return "You";
-	if (el.classList.contains("assistant")) return "Assistant";
+	if (el.classList.contains("user")) return t("chat:roles.you");
+	if (el.classList.contains("assistant")) return t("chat:roles.assistant");
 	return null;
 }
 
@@ -900,13 +917,16 @@ registerPrefix(
 
 		S.setChatMsgBox(S.$("messages"));
 		S.setChatInput(S.$("chatInput"));
+		if (S.chatInput) S.chatInput.placeholder = t("chat:placeholder");
 		S.setChatSendBtn(S.$("sendBtn"));
+		if (S.chatSendBtn) S.chatSendBtn.textContent = t("chat:sendBtn");
 
 		S.setModelCombo(S.$("modelCombo"));
 		S.setModelComboBtn(S.$("modelComboBtn"));
 		S.setModelComboLabel(S.$("modelComboLabel"));
 		S.setModelDropdown(S.$("modelDropdown"));
 		S.setModelSearchInput(S.$("modelSearchInput"));
+		if (S.modelSearchInput) S.modelSearchInput.placeholder = t("common:labels.searchModels");
 		S.setModelDropdownList(S.$("modelDropdownList"));
 		bindModelComboEvents();
 
@@ -929,9 +949,16 @@ registerPrefix(
 		updateMcpToggleUI(true); // default: MCP enabled
 
 		var debugBtn = S.$("debugPanelBtn");
+		if (debugBtn) debugBtn.title = t("chat:debugTooltip");
+		var debugLabel = S.$("debugPanelLabel");
+		if (debugLabel) debugLabel.textContent = t("chat:debugLabel");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
 
-		S.$("fullContextBtn")?.addEventListener("click", toggleFullContextPanel);
+		var fullContextBtn = S.$("fullContextBtn");
+		if (fullContextBtn) fullContextBtn.title = t("chat:contextTooltip");
+		var fullContextLabel = S.$("fullContextLabel");
+		if (fullContextLabel) fullContextLabel.textContent = t("chat:contextLabel");
+		fullContextBtn?.addEventListener("click", toggleFullContextPanel);
 
 		if (S.models.length > 0 && S.modelComboLabel) {
 			var found = S.models.find((m) => m.id === S.selectedModelId);

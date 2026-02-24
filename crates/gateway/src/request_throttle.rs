@@ -20,6 +20,7 @@ use {
 use crate::server::AppState;
 
 const CLEANUP_EVERY_REQUESTS: u64 = 512;
+const RATE_LIMITED: &str = "RATE_LIMITED";
 
 #[derive(Clone)]
 pub struct RequestThrottle {
@@ -261,6 +262,7 @@ fn rate_limited_response(path: String, retry_after: Duration) -> Response {
         (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({
+                "code": RATE_LIMITED,
                 "error": "too many requests",
                 "retry_after_seconds": retry_after_secs
             })),

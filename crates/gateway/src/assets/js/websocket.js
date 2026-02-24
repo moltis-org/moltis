@@ -13,6 +13,7 @@ import {
 import { eventListeners } from "./events.js";
 import {
 	formatTokens,
+	localizeStructuredError,
 	renderAudioPlayer,
 	renderMapLinks,
 	renderMarkdown,
@@ -20,6 +21,7 @@ import {
 	sendRpc,
 	toolCallSummary,
 } from "./helpers.js";
+import { t } from "./i18n.js";
 import { clearLogsAlert, updateLogsAlert } from "./logs-alert.js";
 import { fetchModels } from "./models.js";
 import { prefetchChannels } from "./page-channels.js";
@@ -246,10 +248,11 @@ function completeToolCard(toolCard, p, eventSession) {
 		appendToolResult(toolCard, p.result, eventSession);
 		return;
 	}
-	if (!p.success && p.error && p.error.detail) {
+	var localizedError = localizeStructuredError(p.error);
+	if (!p.success && localizedError && localizedError.detail) {
 		var errMsg = document.createElement("div");
 		errMsg.className = isToolValidationErrorPayload(p) ? "exec-retry-detail" : "exec-error-detail";
-		errMsg.textContent = p.error.detail;
+		errMsg.textContent = localizedError.detail;
 		toolCard.appendChild(errMsg);
 	}
 }
@@ -484,7 +487,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
 function handleChatAutoCompact(p, isActive, isChatPage) {
 	if (!(isActive && isChatPage)) return;
 	if (p.phase === "start") {
-		chatAddMsg("system", "Compacting conversation (context limit reached)\u2026");
+		chatAddMsg("system", t("chat:autoCompactContextLimit"));
 	} else if (p.phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		renderCompactCard(p);
@@ -492,7 +495,12 @@ function handleChatAutoCompact(p, isActive, isChatPage) {
 		updateTokenBar();
 	} else if (p.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("error", `Auto-compact failed: ${p.error || "unknown error"}`);
+		chatAddMsg(
+			"error",
+			t("chat:autoCompactFailed", {
+				error: p.error || t("chat:unknownError"),
+			}),
+		);
 	}
 }
 
@@ -511,7 +519,7 @@ function handleChatError(p, isActive, isChatPage, eventSession) {
 	if (p.error?.title) {
 		chatAddErrorCard(p.error);
 	} else {
-		chatAddErrorMsg(p.message || "unknown");
+		chatAddErrorMsg(p.message || t("chat:unknown"));
 	}
 	S.setStreamEl(null);
 	S.setStreamText("");
@@ -610,14 +618,21 @@ function handleSandboxImageBuild(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
 	if (payload.phase === "start") {
-		chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
+		chatAddMsg("system", t("chat:sandboxImageBuildStart"));
 	} else if (payload.phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		var msg = payload.built ? `Sandbox image ready: ${payload.tag}` : `Sandbox image already cached: ${payload.tag}`;
+		var msg = payload.built
+			? t("chat:sandboxImageReady", { tag: payload.tag })
+			: t("chat:sandboxImageCached", { tag: payload.tag });
 		chatAddMsg("system", msg);
 	} else if (payload.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("error", `Sandbox image build failed: ${payload.error || "unknown"}`);
+		chatAddMsg(
+			"error",
+			t("chat:sandboxImageBuildFailed", {
+				error: payload.error || t("chat:unknown"),
+			}),
+		);
 	}
 }
 
@@ -625,13 +640,18 @@ function handleSandboxImageProvision(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
 	if (payload.phase === "start") {
-		chatAddMsg("system", "Provisioning sandbox packages\u2026");
+		chatAddMsg("system", t("chat:sandboxProvisionStart"));
 	} else if (payload.phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("system", "Sandbox packages provisioned");
+		chatAddMsg("system", t("chat:sandboxProvisionDone"));
 	} else if (payload.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("error", `Sandbox provisioning failed: ${payload.error || "unknown"}`);
+		chatAddMsg(
+			"error",
+			t("chat:sandboxProvisionFailed", {
+				error: payload.error || t("chat:unknown"),
+			}),
+		);
 	}
 }
 
@@ -639,32 +659,52 @@ function handleSandboxHostProvision(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
 	if (payload.phase === "start") {
-		var msg = `Installing ${payload.count || ""} package${payload.count === 1 ? "" : "s"} on host\u2026`;
+		var msg = t("chat:sandboxHostInstallStart", { count: payload.count || 0 });
 		chatAddMsg("system", msg);
 	} else if (payload.phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 		var parts = [];
-		if (payload.installed > 0) parts.push(`${payload.installed} installed`);
-		if (payload.skipped > 0) parts.push(`${payload.skipped} already present`);
-		chatAddMsg("system", `Host packages ready (${parts.join(", ") || "done"})`);
+		if (payload.installed > 0) parts.push(t("chat:sandboxHostInstalledCount", { count: payload.installed }));
+		if (payload.skipped > 0) parts.push(t("chat:sandboxHostAlreadyPresentCount", { count: payload.skipped }));
+		chatAddMsg(
+			"system",
+			t("chat:sandboxHostReady", {
+				details: parts.join(", ") || t("chat:done"),
+			}),
+		);
 	} else if (payload.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("error", `Host package install failed: ${payload.error || "unknown"}`);
+		chatAddMsg(
+			"error",
+			t("chat:sandboxHostInstallFailed", {
+				error: payload.error || t("chat:unknown"),
+			}),
+		);
 	}
 }
 
 function handleBrowserImagePull(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
-	var image = payload.image || "browser container";
+	var image = payload.image || t("chat:browserContainer");
 	if (payload.phase === "start") {
-		chatAddMsg("system", `Pulling browser container image (${image})\u2026 This may take a few minutes on first run.`);
+		chatAddMsg(
+			"system",
+			t("chat:browserImagePullStart", {
+				image: image,
+			}),
+		);
 	} else if (payload.phase === "done") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("system", `Browser container image ready: ${image}`);
+		chatAddMsg("system", t("chat:browserImageReady", { image: image }));
 	} else if (payload.phase === "error") {
 		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		chatAddMsg("error", `Browser container image pull failed: ${payload.error || "unknown"}`);
+		chatAddMsg(
+			"error",
+			t("chat:browserImagePullFailed", {
+				error: payload.error || t("chat:unknown"),
+			}),
+		);
 	}
 }
 
@@ -684,7 +724,13 @@ function handleLocalLlmDownload(payload) {
 			downloadIndicatorEl.remove();
 			downloadIndicatorEl = null;
 		}
-		chatAddMsg("error", `Failed to download ${modelName}: ${payload.error}`);
+		chatAddMsg(
+			"error",
+			t("chat:downloadFailed", {
+				modelName: modelName,
+				error: payload.error,
+			}),
+		);
 		return;
 	}
 
@@ -694,7 +740,7 @@ function handleLocalLlmDownload(payload) {
 			downloadIndicatorEl.remove();
 			downloadIndicatorEl = null;
 		}
-		chatAddMsg("system", `${modelName} ready`);
+		chatAddMsg("system", t("chat:downloadReady", { modelName: modelName }));
 		return;
 	}
 
@@ -705,7 +751,7 @@ function handleLocalLlmDownload(payload) {
 
 		var status = document.createElement("div");
 		status.className = "download-status";
-		status.textContent = `Downloading ${modelName}\u2026`;
+		status.textContent = t("chat:downloadingModel", { modelName: modelName });
 		downloadIndicatorEl.appendChild(status);
 
 		var progressContainer = document.createElement("div");
@@ -746,9 +792,9 @@ function handleLocalLlmDownload(payload) {
 		var downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
 		if (payload.total != null) {
 			var totalMb = (payload.total / (1024 * 1024)).toFixed(1);
-			textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
+			textEl.textContent = t("chat:downloadProgressWithTotal", { downloaded: downloadedMb, total: totalMb });
 		} else {
-			textEl.textContent = `${downloadedMb} MB`;
+			textEl.textContent = t("chat:downloadProgressNoTotal", { downloaded: downloadedMb });
 		}
 	}
 }
@@ -772,7 +818,7 @@ function handleModelsUpdated(payload) {
 function handleWsError(payload) {
 	var isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
-	chatAddErrorMsg(payload.message || "Unknown error");
+	chatAddErrorMsg(payload.message || t("chat:unknownError"));
 }
 
 function handleLocationRequest(payload) {
@@ -782,7 +828,7 @@ function handleLocationRequest(payload) {
 	if (!navigator.geolocation) {
 		sendRpc("location.result", {
 			requestId,
-			error: { code: 0, message: "Geolocation not supported" },
+			error: { code: 0, message: t("chat:geolocationNotSupported") },
 		});
 		return;
 	}
@@ -854,7 +900,13 @@ var connectOpts = {
 			minute: "2-digit",
 			second: "2-digit",
 		});
-		chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
+		chatAddMsg(
+			"system",
+			t("chat:connectedToGateway", {
+				version: hello.server.version,
+				time: ts,
+			}),
+		);
 		fetchModels();
 		fetchSessions();
 		fetchProjects();
@@ -871,13 +923,13 @@ var connectOpts = {
 		if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage);
 	},
 	onHandshakeFailed: (frame) => {
-		setStatus("", "handshake failed");
-		var reason = frame.error?.message || "unknown error";
-		chatAddMsg("error", `Handshake failed: ${reason}`);
+		setStatus("", t("chat:statusHandshakeFailed"));
+		var reason = frame.error?.message || t("chat:unknownError");
+		chatAddMsg("error", t("chat:handshakeFailed", { reason: reason }));
 	},
 	onDisconnected: (wasConnected) => {
 		if (wasConnected) {
-			setStatus("", "disconnected \u2014 reconnecting\u2026");
+			setStatus("", t("chat:statusDisconnectedReconnecting"));
 		}
 		// Reset active session's stream state
 		var activeS = sessionStore.activeSession.value;
@@ -888,7 +940,7 @@ var connectOpts = {
 };
 
 export function connect() {
-	setStatus("connecting", "connecting...");
+	setStatus("connecting", t("chat:statusConnecting"));
 	connectWs(connectOpts);
 }
 
@@ -906,4 +958,12 @@ document.addEventListener("visibilitychange", () => {
 	if (!(document.hidden || S.connected)) {
 		forceReconnect(connectOpts);
 	}
+});
+
+window.addEventListener("moltis:locale-changed", () => {
+	if (S.ws && (S.ws.readyState === WebSocket.OPEN || S.ws.readyState === WebSocket.CONNECTING)) {
+		S.ws.close();
+		return;
+	}
+	forceReconnect(connectOpts);
 });

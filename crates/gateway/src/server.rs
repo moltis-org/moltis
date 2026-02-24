@@ -143,11 +143,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         {
             let mut inner_w = self.state.inner.write().await;
             let invokes = &mut inner_w.pending_invokes;
-            invokes.insert(request_id.clone(), crate::state::PendingInvoke {
-                request_id: request_id.clone(),
-                sender: tx,
-                created_at: std::time::Instant::now(),
-            });
+            invokes.insert(
+                request_id.clone(),
+                crate::state::PendingInvoke {
+                    request_id: request_id.clone(),
+                    sender: tx,
+                    created_at: std::time::Instant::now(),
+                },
+            );
         }
 
         // Wait up to 30 seconds for the user to grant/deny permission.
@@ -261,13 +264,14 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.state.inner.write().await;
-            inner
-                .pending_invokes
-                .insert(pending_key.clone(), crate::state::PendingInvoke {
+            inner.pending_invokes.insert(
+                pending_key.clone(),
+                crate::state::PendingInvoke {
                     request_id: pending_key.clone(),
                     sender: tx,
                     created_at: std::time::Instant::now(),
-                });
+                },
+            );
         }
 
         // Wait up to 60 seconds — user needs to navigate Telegram's UI.
@@ -1240,16 +1244,17 @@ pub async fn start_gateway(
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     _ => moltis_mcp::registry::TransportType::Stdio,
                 };
-                merged
-                    .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                merged.servers.insert(
+                    name.clone(),
+                    moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),
                         enabled: entry.enabled,
                         transport,
                         url: entry.url.clone(),
-                    });
+                    },
+                );
             }
         }
         mcp_configured_count = merged.servers.values().filter(|s| s.enabled).count();
@@ -3073,10 +3078,15 @@ pub async fn start_gateway(
                         }
                     };
                     if changed && let Ok(payload) = serde_json::to_value(&next) {
-                        broadcast(&update_state, "update.available", payload, BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        })
+                        broadcast(
+                            &update_state,
+                            "update.available",
+                            payload,
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
                         .await;
                     }
                 },
@@ -3139,12 +3149,15 @@ pub async fn start_gateway(
                         .by_provider
                         .iter()
                         .map(|(name, metrics)| {
-                            (name.clone(), moltis_metrics::ProviderTokens {
-                                input_tokens: metrics.input_tokens,
-                                output_tokens: metrics.output_tokens,
-                                completions: metrics.completions,
-                                errors: metrics.errors,
-                            })
+                            (
+                                name.clone(),
+                                moltis_metrics::ProviderTokens {
+                                    input_tokens: metrics.input_tokens,
+                                    output_tokens: metrics.output_tokens,
+                                    completions: metrics.completions,
+                                    errors: metrics.errors,
+                                },
+                            )
                         })
                         .collect();
 
@@ -5132,6 +5145,37 @@ async fn api_skills_search_handler(
     api_search_handler(repos, &source, &query).await
 }
 
+#[cfg(feature = "web-ui")]
+const IMAGE_CACHE_LIST_FAILED: &str = "IMAGE_CACHE_LIST_FAILED";
+#[cfg(feature = "web-ui")]
+const IMAGE_CACHE_DELETE_FAILED: &str = "IMAGE_CACHE_DELETE_FAILED";
+#[cfg(feature = "web-ui")]
+const IMAGE_CACHE_PRUNE_FAILED: &str = "IMAGE_CACHE_PRUNE_FAILED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_CHECK_PACKAGES_FAILED: &str = "SANDBOX_CHECK_PACKAGES_FAILED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_BACKEND_UNAVAILABLE: &str = "SANDBOX_BACKEND_UNAVAILABLE";
+#[cfg(feature = "web-ui")]
+const SANDBOX_IMAGE_NAME_REQUIRED: &str = "SANDBOX_IMAGE_NAME_REQUIRED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_IMAGE_PACKAGES_REQUIRED: &str = "SANDBOX_IMAGE_PACKAGES_REQUIRED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_IMAGE_NAME_INVALID: &str = "SANDBOX_IMAGE_NAME_INVALID";
+#[cfg(feature = "web-ui")]
+const SANDBOX_TMP_DIR_CREATE_FAILED: &str = "SANDBOX_TMP_DIR_CREATE_FAILED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_DOCKERFILE_WRITE_FAILED: &str = "SANDBOX_DOCKERFILE_WRITE_FAILED";
+#[cfg(feature = "web-ui")]
+const SANDBOX_IMAGE_BUILD_FAILED: &str = "SANDBOX_IMAGE_BUILD_FAILED";
+
+#[cfg(feature = "web-ui")]
+fn web_ui_error(code: &str, error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
+        "error": error.into()
+    })
+}
+
 /// List cached tool images.
 #[cfg(feature = "web-ui")]
 async fn api_cached_images_handler() -> impl IntoResponse {
@@ -5142,7 +5186,7 @@ async fn api_cached_images_handler() -> impl IntoResponse {
             let msg = e.to_string();
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
+                Json(web_ui_error(IMAGE_CACHE_LIST_FAILED, msg)),
             )
                 .into_response()
         },
@@ -5165,7 +5209,7 @@ async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl IntoRe
             let msg = e.to_string();
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
+                Json(web_ui_error(IMAGE_CACHE_DELETE_FAILED, msg)),
             )
                 .into_response()
         },
@@ -5182,7 +5226,7 @@ async fn api_prune_cached_images_handler() -> impl IntoResponse {
             let msg = e.to_string();
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": msg })),
+                Json(web_ui_error(IMAGE_CACHE_PRUNE_FAILED, msg)),
             )
                 .into_response()
         },
@@ -5248,7 +5292,7 @@ async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> impl
         },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(web_ui_error(SANDBOX_CHECK_PACKAGES_FAILED, e.to_string())),
         )
             .into_response(),
     }
@@ -5281,7 +5325,10 @@ async fn api_set_default_image_handler(
     } else {
         (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "no sandbox backend available" })),
+            Json(web_ui_error(
+                SANDBOX_BACKEND_UNAVAILABLE,
+                "no sandbox backend available",
+            )),
         )
             .into_response()
     }
@@ -5314,14 +5361,20 @@ async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl In
     if name.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "name is required" })),
+            Json(web_ui_error(
+                SANDBOX_IMAGE_NAME_REQUIRED,
+                "name is required",
+            )),
         )
             .into_response();
     }
     if packages.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "packages list is empty" })),
+            Json(web_ui_error(
+                SANDBOX_IMAGE_PACKAGES_REQUIRED,
+                "packages list is empty",
+            )),
         )
             .into_response();
     }
@@ -5333,7 +5386,10 @@ async fn api_build_image_handler(Json(body): Json<serde_json::Value>) -> impl In
     {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "name must be alphanumeric, dash, or underscore" })),
+            Json(web_ui_error(
+                SANDBOX_IMAGE_NAME_INVALID,
+                "name must be alphanumeric, dash, or underscore",
+            )),
         )
             .into_response();
     }
@@ -5351,7 +5407,7 @@ WORKDIR /home/sandbox\n"
     if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(web_ui_error(SANDBOX_TMP_DIR_CREATE_FAILED, e.to_string())),
         )
             .into_response();
     }
@@ -5361,7 +5417,7 @@ WORKDIR /home/sandbox\n"
         let _ = std::fs::remove_dir_all(&tmp_dir);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(web_ui_error(SANDBOX_DOCKERFILE_WRITE_FAILED, e.to_string())),
         )
             .into_response();
     }
@@ -5373,7 +5429,7 @@ WORKDIR /home/sandbox\n"
         Ok(tag) => Json(serde_json::json!({ "tag": tag })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
+            Json(web_ui_error(SANDBOX_IMAGE_BUILD_FAILED, e.to_string())),
         )
             .into_response(),
     }

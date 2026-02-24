@@ -1,9 +1,14 @@
 // ── Shared WebSocket connection with JSON-RPC handshake and reconnect ──
-import { nextId } from "./helpers.js";
+import { localizeRpcError, nextId } from "./helpers.js";
+import { getPreferredLocale } from "./i18n.js";
 import * as S from "./state.js";
 
 var reconnectTimer = null;
 var lastOpts = null;
+
+function resolveLocale() {
+	return getPreferredLocale();
+}
 
 /**
  * Open a WebSocket, perform the protocol handshake, route RPC responses to
@@ -51,6 +56,7 @@ export function connectWs(opts) {
 						platform: "browser",
 						mode: "operator",
 					},
+					locale: resolveLocale(),
 					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 				},
 			}),
@@ -63,6 +69,9 @@ export function connectWs(opts) {
 			frame = JSON.parse(evt.data);
 		} catch {
 			return;
+		}
+		if (frame?.type === "res" && frame.error) {
+			frame.error = localizeRpcError(frame.error);
 		}
 		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
 			S.pending[frame.id](frame);

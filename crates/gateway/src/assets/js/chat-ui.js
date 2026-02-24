@@ -1,6 +1,7 @@
 // ── Chat UI ─────────────────────────────────────────────────
 
-import { formatTokens, parseErrorMessage, sendRpc, updateCountdown } from "./helpers.js";
+import { formatTokens, localizeStructuredError, parseErrorMessage, sendRpc, updateCountdown } from "./helpers.js";
+import { t } from "./i18n.js";
 import * as S from "./state.js";
 
 // Scroll chat to bottom and keep it pinned until layout settles.
@@ -93,7 +94,7 @@ export function appendChannelFooter(el, channel) {
 	}
 
 	var text = document.createElement("span");
-	text.textContent = `via ${label}`;
+	text.textContent = t("chat:viaChannel", { label: label });
 	ft.appendChild(text);
 	el.appendChild(ft);
 }
@@ -105,12 +106,13 @@ export function removeThinking() {
 
 export function chatAddErrorCard(err) {
 	if (!S.chatMsgBox) return;
+	var localized = localizeStructuredError(err) || err;
 	var el = document.createElement("div");
 	el.className = "msg error-card";
 
 	var icon = document.createElement("div");
 	icon.className = "error-icon";
-	icon.textContent = err.icon || "\u26A0\uFE0F";
+	icon.textContent = localized.icon || "\u26A0\uFE0F";
 	el.appendChild(icon);
 
 	var body = document.createElement("div");
@@ -118,33 +120,33 @@ export function chatAddErrorCard(err) {
 
 	var title = document.createElement("div");
 	title.className = "error-title";
-	title.textContent = err.title;
+	title.textContent = localized.title || t("errors:generic.title");
 	body.appendChild(title);
 
-	if (err.detail) {
+	if (localized.detail) {
 		var detail = document.createElement("div");
 		detail.className = "error-detail";
-		detail.textContent = err.detail;
+		detail.textContent = localized.detail;
 		body.appendChild(detail);
 	}
 
-	if (err.provider) {
+	if (localized.provider) {
 		var prov = document.createElement("div");
 		prov.className = "error-detail";
-		prov.textContent = `Provider: ${err.provider}`;
+		prov.textContent = t("chat:provider", { name: localized.provider });
 		prov.style.marginTop = "4px";
 		prov.style.opacity = "0.6";
 		body.appendChild(prov);
 	}
 
-	if (err.resetsAt) {
+	if (localized.resetsAt) {
 		var countdown = document.createElement("div");
 		countdown.className = "error-countdown";
 		el.appendChild(body);
 		el.appendChild(countdown);
-		updateCountdown(countdown, err.resetsAt);
+		updateCountdown(countdown, localized.resetsAt);
 		var timer = setInterval(() => {
-			if (updateCountdown(countdown, err.resetsAt)) clearInterval(timer);
+			if (updateCountdown(countdown, localized.resetsAt)) clearInterval(timer);
 		}, 1000);
 	} else {
 		el.appendChild(body);
@@ -186,7 +188,7 @@ export function renderApprovalCard(requestId, command) {
 			card.classList.add("approval-expired");
 			allowBtn.disabled = true;
 			denyBtn.disabled = true;
-			countdown.textContent = "expired";
+			countdown.textContent = t("chat:expired");
 		}
 	}, 1000);
 	countdown.textContent = `${remaining}s`;
@@ -205,7 +207,7 @@ export function resolveApproval(requestId, decision, command, card) {
 		});
 		var status = document.createElement("div");
 		status.className = "approval-status";
-		status.textContent = decision === "approved" ? "Allowed" : "Denied";
+		status.textContent = decision === "approved" ? t("chat:allowed") : t("chat:denied");
 		card.appendChild(status);
 	});
 }
@@ -285,17 +287,17 @@ export function updateTokenBar() {
 	}
 	var text =
 		formatTokens(S.sessionTokens.input) +
-		" in / " +
+		t("chat:tokenBar.inLabel") +
 		formatTokens(S.sessionTokens.output) +
-		" out \u00b7 " +
+		t("chat:tokenBar.outLabel") +
 		formatTokens(total) +
-		" tokens";
+		t("chat:tokenBar.tokensSuffix");
 	if (S.sessionContextWindow > 0) {
 		var pct = Math.max(0, 100 - Math.round((total / S.sessionContextWindow) * 100));
-		text += ` \u00b7 Context left before auto-compact: ${pct}%`;
+		text += t("chat:tokenBar.contextLeft", { pct: pct });
 	}
 	if (!S.sessionToolsEnabled) {
-		text += " \u00b7 Tools: disabled";
+		text += t("chat:tokenBar.toolsDisabled");
 	}
 	bar.textContent = text;
 }

@@ -18,6 +18,8 @@ use crate::{
 
 /// Session cookie name.
 pub const SESSION_COOKIE: &str = "moltis_session";
+const AUTH_SETUP_REQUIRED: &str = "AUTH_SETUP_REQUIRED";
+const AUTH_NOT_AUTHENTICATED: &str = "AUTH_NOT_AUTHENTICATED";
 
 // ── AuthResult — single source of truth for auth decisions ──────────────────
 
@@ -124,7 +126,10 @@ pub async fn auth_gate(
             } else if path.starts_with("/api/") || path == "/ws" {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "setup required"})),
+                    Json(serde_json::json!({
+                        "code": AUTH_SETUP_REQUIRED,
+                        "error": "setup required"
+                    })),
                 )
                     .into_response()
             } else {
@@ -135,7 +140,10 @@ pub async fn auth_gate(
             if path.starts_with("/api/") || path == "/ws" {
                 (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "not authenticated"})),
+                    Json(serde_json::json!({
+                        "code": AUTH_NOT_AUTHENTICATED,
+                        "error": "not authenticated"
+                    })),
                 )
                     .into_response()
             } else {
