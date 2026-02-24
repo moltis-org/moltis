@@ -20,6 +20,7 @@ pub enum Error {
 }
 
 impl Error {
+    #[must_use]
     pub fn external<E>(context: impl Into<String>, source: E) -> Self
     where
         E: StdError + Send + Sync + 'static,

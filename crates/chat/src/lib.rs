@@ -1315,7 +1315,7 @@ impl DisabledModelsStore {
 
     /// Save disabled models to config file.
     pub fn save(&self) -> error::Result<()> {
-        let path = Self::config_path().ok_or(error::ChatError::NoConfigDirectory)?;
+        let path = Self::config_path().ok_or(error::Error::NoConfigDirectory)?;
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
@@ -2316,7 +2316,7 @@ impl LiveChatService {
         model_id
             .and_then(|id| reg.get(&id))
             .or_else(|| reg.first())
-            .ok_or_else(|| error::ChatError::message("no LLM providers configured"))
+            .ok_or_else(|| error::Error::message("no LLM providers configured"))
     }
 
     /// Resolve the active session key for a connection.
@@ -5752,9 +5752,9 @@ async fn compact_session(
     let history = store
         .read(session_key)
         .await
-        .map_err(|source| error::ChatError::external("failed to read session history", source))?;
+        .map_err(|source| error::Error::external("failed to read session history", source))?;
     if history.is_empty() {
-        return Err(error::ChatError::message("nothing to compact"));
+        return Err(error::Error::message("nothing to compact"));
     }
 
     // Use structured ChatMessage objects so role boundaries are maintained via
@@ -5775,7 +5775,7 @@ async fn compact_session(
             StreamEvent::Delta(delta) => summary.push_str(&delta),
             StreamEvent::Done(_) => break,
             StreamEvent::Error(e) => {
-                return Err(error::ChatError::message(format!(
+                return Err(error::Error::message(format!(
                     "compact summarization failed: {e}"
                 )));
             },
@@ -5792,7 +5792,7 @@ async fn compact_session(
     }
 
     if summary.is_empty() {
-        return Err(error::ChatError::message("compact produced empty summary"));
+        return Err(error::Error::message("compact produced empty summary"));
     }
 
     let compacted_msg = PersistedMessage::Assistant {
@@ -5817,9 +5817,7 @@ async fn compact_session(
     store
         .replace_history(session_key, compacted)
         .await
-        .map_err(|source| {
-            error::ChatError::external("failed to replace compacted history", source)
-        })?;
+        .map_err(|source| error::Error::external("failed to replace compacted history", source))?;
 
     Ok(())
 }
@@ -6701,20 +6699,18 @@ async fn generate_tts_audio(
         .tts_service()
         .status()
         .await
-        .map_err(error::ChatError::message)?;
+        .map_err(error::Error::message)?;
     let status: TtsStatusResponse = serde_json::from_value(tts_status)
-        .map_err(|_| error::ChatError::message("invalid tts.status response"))?;
+        .map_err(|_| error::Error::message("invalid tts.status response"))?;
     if !status.enabled {
-        return Err(error::ChatError::message(
-            "TTS is disabled or not configured",
-        ));
+        return Err(error::Error::message("TTS is disabled or not configured"));
     }
 
     // Layer 2: strip markdown/URLs the LLM may have included despite the prompt.
     let text = moltis_voice::tts::sanitize_text_for_tts(text);
     let text = text.trim();
     if text.is_empty() {
-        return Err(error::ChatError::message("response has no speakable text"));
+        return Err(error::Error::message("response has no speakable text"));
     }
 
     let (_, session_override) = state.tts_overrides(session_key, "").await;
@@ -6728,18 +6724,18 @@ async fn generate_tts_audio(
     };
 
     let request_value = serde_json::to_value(request)
-        .map_err(|_| error::ChatError::message("failed to build tts.convert request"))?;
+        .map_err(|_| error::Error::message("failed to build tts.convert request"))?;
     let tts_result = state
         .tts_service()
         .convert(request_value)
         .await
-        .map_err(error::ChatError::message)?;
+        .map_err(error::Error::message)?;
 
     let response: TtsConvertResponse = serde_json::from_value(tts_result)
-        .map_err(|_| error::ChatError::message("invalid tts.convert response"))?;
+        .map_err(|_| error::Error::message("invalid tts.convert response"))?;
     base64::engine::general_purpose::STANDARD
         .decode(&response.audio)
-        .map_err(|_| error::ChatError::message("invalid base64 audio returned by TTS provider"))
+        .map_err(|_| error::Error::message("invalid base64 audio returned by TTS provider"))
 }
 
 async fn build_tts_payload(

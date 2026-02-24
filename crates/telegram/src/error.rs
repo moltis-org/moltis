@@ -14,9 +14,9 @@ pub enum Error {
     #[error("{message}")]
     Message { message: String },
 
-    #[error("{context}")]
+    #[error("{context}: {source}")]
     External {
-        context: &'static str,
+        context: String,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
@@ -32,11 +32,11 @@ impl Error {
 
     #[must_use]
     pub fn external(
-        context: &'static str,
+        context: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::External {
-            context,
+            context: context.into(),
             source: Box::new(source),
         }
     }

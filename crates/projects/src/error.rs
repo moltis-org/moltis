@@ -36,10 +36,12 @@ pub enum Error {
 }
 
 impl Error {
+    #[must_use]
     pub fn command_execution(operation: &'static str, source: std::io::Error) -> Self {
         Self::CommandExecution { operation, source }
     }
 
+    #[must_use]
     pub fn command_failed(operation: &'static str, stderr: impl Into<String>) -> Self {
         Self::CommandFailed {
             operation,
@@ -47,6 +49,7 @@ impl Error {
         }
     }
 
+    #[must_use]
     pub fn external<E>(context: impl Into<String>, source: E) -> Self
     where
         E: StdError + Send + Sync + 'static,

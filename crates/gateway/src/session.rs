@@ -1214,7 +1214,7 @@ impl SessionService for LiveSessionService {
                 shared_messages
             },
         };
-        let snapshot_json = serde_json::to_string(&snapshot).map_err(ServiceError::message)?;
+        let snapshot_json = serde_json::to_string(&snapshot)?;
 
         let created = share_store
             .create_or_replace(

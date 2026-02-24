@@ -25,7 +25,7 @@ impl LiveProjectService {
 impl ProjectService for LiveProjectService {
     async fn list(&self) -> ServiceResult {
         let projects = self.store.list().await.map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(projects).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(projects)?)
     }
 
     async fn get(&self, params: Value) -> ServiceResult {
@@ -34,17 +34,16 @@ impl ProjectService for LiveProjectService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'id' parameter".to_string())?;
         let project = self.store.get(id).await.map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(project).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(project)?)
     }
 
     async fn upsert(&self, params: Value) -> ServiceResult {
-        let project: moltis_projects::Project =
-            serde_json::from_value(params).map_err(ServiceError::message)?;
+        let project: moltis_projects::Project = serde_json::from_value(params)?;
         self.store
             .upsert(project.clone())
             .await
             .map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(project).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(project)?)
     }
 
     async fn delete(&self, params: Value) -> ServiceResult {
@@ -79,7 +78,7 @@ impl ProjectService for LiveProjectService {
             }
         }
 
-        Ok(serde_json::to_value(detected).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(detected)?)
     }
 
     async fn complete_path(&self, params: Value) -> ServiceResult {
@@ -88,7 +87,7 @@ impl ProjectService for LiveProjectService {
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        Ok(serde_json::to_value(results).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(results)?)
     }
 
     async fn context(&self, params: Value) -> ServiceResult {

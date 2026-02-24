@@ -88,7 +88,7 @@ impl HookHandler for ShellHookHandler {
 
     async fn handle(&self, _event: HookEvent, payload: &HookPayload) -> HookResult<HookAction> {
         let payload_json = serde_json::to_string(payload).map_err(|source| {
-            HookError::Plugin(format!("failed to serialize hook payload: {source}"))
+            HookError::message(format!("failed to serialize hook payload: {source}"))
         })?;
 
         debug!(
@@ -111,7 +111,7 @@ impl HookHandler for ShellHookHandler {
         }
 
         let mut child = cmd.spawn().map_err(|source| {
-            HookError::Plugin(format!(
+            HookError::message(format!(
                 "failed to spawn hook command '{}': {source}",
                 self.command
             ))
@@ -122,7 +122,7 @@ impl HookHandler for ShellHookHandler {
             && let Err(e) = stdin.write_all(payload_json.as_bytes()).await
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
-            return Err(HookError::Plugin(format!(
+            return Err(HookError::message(format!(
                 "failed writing payload to hook '{}': {e}",
                 self.hook_name
             )));
@@ -132,13 +132,13 @@ impl HookHandler for ShellHookHandler {
         let output = tokio::time::timeout(self.timeout, child.wait_with_output())
             .await
             .map_err(|_| {
-                HookError::Plugin(format!(
+                HookError::message(format!(
                     "hook '{}' timed out after {:?}",
                     self.hook_name, self.timeout
                 ))
             })?
             .map_err(|source| {
-                HookError::Plugin(format!(
+                HookError::message(format!(
                     "hook '{}' failed to complete: {source}",
                     self.hook_name
                 ))
@@ -165,7 +165,7 @@ impl HookHandler for ShellHookHandler {
         }
 
         if exit_code != 0 {
-            return Err(HookError::Plugin(format!(
+            return Err(HookError::message(format!(
                 "hook '{}' exited with code {}: {}",
                 self.hook_name,
                 exit_code,

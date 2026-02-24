@@ -190,7 +190,7 @@ impl ChatRuntime for GatewayChatRuntime {
                     session_key,
                 )
                 .await
-                .map_err(|source| error::ChatError::message(source.to_string()));
+                .map_err(|source| error::Error::message(source.to_string()));
             }
         }
         let _ = (title, body, url, session_key);
@@ -204,7 +204,7 @@ impl ChatRuntime for GatewayChatRuntime {
         {
             return crate::local_llm_setup::ensure_local_model_cached(model_id, &self.state)
                 .await
-                .map_err(error::ChatError::message);
+                .map_err(error::Error::message);
         }
         #[cfg(not(feature = "local-llm"))]
         {

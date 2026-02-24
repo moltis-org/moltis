@@ -30,12 +30,12 @@ impl LiveCronService {
 impl CronServiceTrait for LiveCronService {
     async fn list(&self) -> ServiceResult {
         let jobs = self.inner.list().await;
-        Ok(serde_json::to_value(jobs).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(jobs)?)
     }
 
     async fn status(&self) -> ServiceResult {
         let status = self.inner.status().await;
-        Ok(serde_json::to_value(status).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(status)?)
     }
 
     async fn add(&self, params: Value) -> ServiceResult {
@@ -45,7 +45,7 @@ impl CronServiceTrait for LiveCronService {
             error!(error = %e, "cron add failed");
             ServiceError::message(e)
         })?;
-        Ok(serde_json::to_value(job).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(job)?)
     }
 
     async fn update(&self, params: Value) -> ServiceResult {
@@ -65,7 +65,7 @@ impl CronServiceTrait for LiveCronService {
             .update(id, patch)
             .await
             .map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(job).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(job)?)
     }
 
     async fn remove(&self, params: Value) -> ServiceResult {
@@ -104,6 +104,6 @@ impl CronServiceTrait for LiveCronService {
             .runs(id, limit)
             .await
             .map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(runs).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(runs)?)
     }
 }

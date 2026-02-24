@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum ChatError {
+pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -14,15 +14,15 @@ pub enum ChatError {
     #[error("{message}")]
     Message { message: String },
 
-    #[error("{context}")]
+    #[error("{context}: {source}")]
     External {
-        context: &'static str,
+        context: String,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
 
-impl ChatError {
+impl Error {
     #[must_use]
     pub fn message(message: impl std::fmt::Display) -> Self {
         Self::Message {
@@ -32,14 +32,14 @@ impl ChatError {
 
     #[must_use]
     pub fn external(
-        context: &'static str,
+        context: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::External {
-            context,
+            context: context.into(),
             source: Box::new(source),
         }
     }
 }
 
-pub type Result<T> = std::result::Result<T, ChatError>;
+pub type Result<T> = std::result::Result<T, Error>;

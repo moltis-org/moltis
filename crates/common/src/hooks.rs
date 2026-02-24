@@ -780,7 +780,7 @@ mod tests {
                 _event: HookEvent,
                 _payload: &HookPayload,
             ) -> Result<HookAction> {
-                Err(crate::error::Error::Plugin("always fails".to_string()))
+                Err(crate::error::Error::message("always fails"))
             }
         }
 

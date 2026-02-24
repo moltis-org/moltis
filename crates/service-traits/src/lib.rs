@@ -10,6 +10,8 @@ use {async_trait::async_trait, serde_json::Value, tracing::warn};
 pub enum ServiceError {
     #[error("{message}")]
     Message { message: String },
+    #[error("{0}")]
+    Serde(#[from] serde_json::Error),
 }
 
 impl ServiceError {
@@ -30,6 +32,12 @@ impl From<String> for ServiceError {
 impl From<&str> for ServiceError {
     fn from(value: &str) -> Self {
         Self::message(value)
+    }
+}
+
+impl From<ServiceError> for moltis_protocol::ErrorShape {
+    fn from(err: ServiceError) -> Self {
+        Self::new(moltis_protocol::error_codes::UNAVAILABLE, err.to_string())
     }
 }
 

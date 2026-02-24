@@ -6,11 +6,11 @@
 use std::{fmt::Display, process::Command};
 
 use {
-    crate::error::BrowserError,
+    crate::error::Error,
     tracing::{debug, info, warn},
 };
 
-type Result<T> = std::result::Result<T, BrowserError>;
+type Result<T> = std::result::Result<T, Error>;
 
 trait ContextExt<T> {
     fn context(self, context: impl Into<String>) -> Result<T>;
@@ -27,7 +27,7 @@ where
 {
     fn context(self, context: impl Into<String>) -> Result<T> {
         let context = context.into();
-        self.map_err(|source| BrowserError::LaunchFailed(format!("{context}: {source}")))
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
     }
 
     fn with_context<C, F>(self, f: F) -> Result<T>
@@ -36,13 +36,13 @@ where
         F: FnOnce() -> C,
     {
         let context = f().into();
-        self.map_err(|source| BrowserError::LaunchFailed(format!("{context}: {source}")))
+        self.map_err(|source| Error::LaunchFailed(format!("{context}: {source}")))
     }
 }
 
 impl<T> ContextExt<T> for Option<T> {
     fn context(self, context: impl Into<String>) -> Result<T> {
-        self.ok_or_else(|| BrowserError::LaunchFailed(context.into()))
+        self.ok_or_else(|| Error::LaunchFailed(context.into()))
     }
 
     fn with_context<C, F>(self, f: F) -> Result<T>
@@ -50,7 +50,7 @@ impl<T> ContextExt<T> for Option<T> {
         C: Into<String>,
         F: FnOnce() -> C,
     {
-        self.ok_or_else(|| BrowserError::LaunchFailed(f().into()))
+        self.ok_or_else(|| Error::LaunchFailed(f().into()))
     }
 }
 
@@ -140,7 +140,7 @@ impl BrowserContainer {
         profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         if !backend.is_available() {
-            return Err(BrowserError::LaunchFailed(format!(
+            return Err(Error::LaunchFailed(format!(
                 "{} is not available. Please install it to use sandboxed browser.",
                 backend.cli()
             )));
@@ -374,14 +374,14 @@ fn start_docker_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BrowserError::LaunchFailed(format!(
+        return Err(Error::LaunchFailed(format!(
             "failed to start docker container: {}",
             stderr.trim()
         )));
     }
 
     if container_name.is_empty() {
-        return Err(BrowserError::LaunchFailed(
+        return Err(Error::LaunchFailed(
             "docker container name is empty".to_string(),
         ));
     }
@@ -444,7 +444,7 @@ fn start_apple_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BrowserError::LaunchFailed(format!(
+        return Err(Error::LaunchFailed(format!(
             "failed to start apple container: {}",
             stderr.trim()
         )));
@@ -471,7 +471,7 @@ pub fn detect_backend() -> Result<ContainerBackend> {
         return Ok(ContainerBackend::Docker);
     }
 
-    Err(BrowserError::LaunchFailed(
+    Err(Error::LaunchFailed(
         "No container runtime available. Please install Docker to use sandboxed browser mode."
             .to_string(),
     ))
@@ -531,7 +531,7 @@ fn wait_for_ready(port: u16) -> Result<()> {
 
     loop {
         if start.elapsed() > timeout {
-            return Err(BrowserError::LaunchFailed(format!(
+            return Err(Error::LaunchFailed(format!(
                 "browser container failed to become ready within {}s",
                 timeout.as_secs()
             )));
@@ -566,7 +566,7 @@ fn probe_http_endpoint(port: u16) -> Result<bool> {
     let addr = format!("127.0.0.1:{}", port);
     let socket_addr = addr
         .parse()
-        .map_err(|e| BrowserError::LaunchFailed(format!("invalid address {addr}: {e}")))?;
+        .map_err(|e| Error::LaunchFailed(format!("invalid address {addr}: {e}")))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -662,7 +662,7 @@ fn cleanup_stale_docker_browser_containers(container_prefix: &str) -> Result<usi
         .context("failed to list docker containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BrowserError::LaunchFailed(format!(
+        return Err(Error::LaunchFailed(format!(
             "docker ps failed while cleaning stale browser containers: {}",
             stderr.trim()
         )));
@@ -702,7 +702,7 @@ fn cleanup_stale_apple_browser_containers(container_prefix: &str) -> Result<usiz
         .context("failed to list apple containers")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BrowserError::LaunchFailed(format!(
+        return Err(Error::LaunchFailed(format!(
             "container list failed while cleaning stale browser containers: {}",
             stderr.trim()
         )));
@@ -810,7 +810,7 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BrowserError::LaunchFailed(format!(
+        return Err(Error::LaunchFailed(format!(
             "failed to pull browser image: {}",
             stderr.trim()
         )));

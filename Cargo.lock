@@ -4900,6 +4900,7 @@ dependencies = [
  "async-trait",
  "futures",
  "mockito",
+ "moltis-common",
  "moltis-metrics",
  "moltis-oauth",
  "reqwest 0.12.28",
@@ -5143,6 +5144,7 @@ version = "0.9.10"
 dependencies = [
  "async-trait",
  "bytes",
+ "moltis-protocol",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -5230,6 +5232,7 @@ version = "0.9.10"
 dependencies = [
  "axum",
  "hyper-util",
+ "moltis-common",
  "moltis-config",
  "rcgen",
  "rustls",

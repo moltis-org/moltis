@@ -29,7 +29,7 @@ pub enum Error {
     #[error("{message}")]
     Message { message: String },
 
-    #[error("{context}")]
+    #[error("{context}: {source}")]
     External {
         context: String,
         #[source]

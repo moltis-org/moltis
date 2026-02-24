@@ -227,7 +227,7 @@ impl LiveMcpService {
 impl McpService for LiveMcpService {
     async fn list(&self) -> ServiceResult {
         let statuses = self.manager.status_all().await;
-        Ok(serde_json::to_value(&statuses).map_err(ServiceError::message)?)
+        Ok(serde_json::to_value(&statuses)?)
     }
 
     async fn add(&self, params: Value) -> ServiceResult {
@@ -383,7 +383,7 @@ impl McpService for LiveMcpService {
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
 
         match self.manager.status(name).await {
-            Some(s) => Ok(serde_json::to_value(&s).map_err(ServiceError::message)?),
+            Some(s) => Ok(serde_json::to_value(&s)?),
             None => Err(format!("MCP server '{name}' not found").into()),
         }
     }
@@ -395,7 +395,7 @@ impl McpService for LiveMcpService {
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
 
         match self.manager.server_tools(name).await {
-            Some(tools) => Ok(serde_json::to_value(&tools).map_err(ServiceError::message)?),
+            Some(tools) => Ok(serde_json::to_value(&tools)?),
             None => Err(format!("MCP server '{name}' not found or not running").into()),
         }
     }

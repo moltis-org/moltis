@@ -19,9 +19,9 @@ pub enum Error {
     Unavailable { message: String },
 
     /// Wrapped source error from an external dependency.
-    #[error("channel operation failed: {context}")]
+    #[error("channel operation failed: {context}: {source}")]
     External {
-        context: &'static str,
+        context: String,
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
@@ -58,9 +58,12 @@ impl Error {
     }
 
     #[must_use]
-    pub fn external(context: &'static str, source: impl StdError + Send + Sync + 'static) -> Self {
+    pub fn external(
+        context: impl Into<String>,
+        source: impl StdError + Send + Sync + 'static,
+    ) -> Self {
         Self::External {
-            context,
+            context: context.into(),
             source: Box::new(source),
         }
     }

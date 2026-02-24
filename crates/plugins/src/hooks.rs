@@ -121,7 +121,7 @@ mod tests {
         }
 
         async fn handle(&self, _event: HookEvent, _payload: &HookPayload) -> Result<HookAction> {
-            Err(HookError::Plugin("handler failed".to_string()))
+            Err(HookError::message("handler failed"))
         }
     }
 
