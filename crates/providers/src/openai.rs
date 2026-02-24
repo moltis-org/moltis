@@ -5,16 +5,24 @@ use std::{
     time::Duration,
 };
 
-use {async_trait::async_trait, futures::StreamExt, secrecy::ExposeSecret, tokio_stream::Stream};
+use {
+    async_trait::async_trait,
+    futures::{SinkExt, StreamExt},
+    moltis_config::schema::ProviderStreamTransport,
+    secrecy::ExposeSecret,
+    tokio_stream::Stream,
+    tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
+};
 
 use tracing::{debug, trace, warn};
 
 use {
     super::openai_compat::{
-        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage_from_payload,
-        parse_tool_calls, process_openai_sse_line, strip_think_tags, to_openai_tools,
+        SseLineResult, StreamingToolState, finalize_stream, parse_openai_compat_usage,
+        parse_openai_compat_usage_from_payload, parse_tool_calls, process_openai_sse_line,
+        strip_think_tags, to_openai_tools, to_responses_api_tools, to_responses_input,
     },
-    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent},
+    moltis_agents::model::{ChatMessage, CompletionResponse, LlmProvider, StreamEvent, Usage},
 };
 
 pub struct OpenAiProvider {
@@ -23,6 +31,7 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_name: String,
     client: &'static reqwest::Client,
+    stream_transport: ProviderStreamTransport,
 }
 
 const OPENAI_MODELS_ENDPOINT_PATH: &str = "/models";
@@ -398,6 +407,7 @@ impl OpenAiProvider {
             base_url,
             provider_name: "openai".into(),
             client: crate::shared_http_client(),
+            stream_transport: ProviderStreamTransport::Sse,
         }
     }
 
@@ -413,7 +423,14 @@ impl OpenAiProvider {
             base_url,
             provider_name,
             client: crate::shared_http_client(),
+            stream_transport: ProviderStreamTransport::Sse,
         }
+    }
+
+    #[must_use]
+    pub fn with_stream_transport(mut self, stream_transport: ProviderStreamTransport) -> Self {
+        self.stream_transport = stream_transport;
+        self
     }
 
     fn requires_reasoning_content_on_tool_messages(&self) -> bool {
@@ -528,6 +545,484 @@ impl OpenAiProvider {
         }
 
         out
+    }
+
+    fn is_openai_platform_base_url(&self) -> bool {
+        reqwest::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(ToString::to_string))
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
+    }
+
+    fn responses_websocket_url(&self) -> anyhow::Result<String> {
+        let mut base = self.base_url.trim_end_matches('/').to_string();
+        if !base.ends_with("/v1") {
+            base.push_str("/v1");
+        }
+        let url = format!("{base}/responses");
+        if let Some(rest) = url.strip_prefix("https://") {
+            return Ok(format!("wss://{rest}"));
+        }
+        if let Some(rest) = url.strip_prefix("http://") {
+            return Ok(format!("ws://{rest}"));
+        }
+        anyhow::bail!(
+            "invalid OpenAI base_url for websocket mode: expected http:// or https://, got {}",
+            self.base_url
+        );
+    }
+
+    fn split_responses_instructions_and_input(
+        messages: Vec<ChatMessage>,
+    ) -> (Option<String>, Vec<serde_json::Value>) {
+        let mut instruction_parts: Vec<String> = Vec::new();
+        let mut non_system: Vec<ChatMessage> = Vec::new();
+
+        for message in messages {
+            match message {
+                ChatMessage::System { content } => {
+                    if !content.trim().is_empty() {
+                        instruction_parts.push(content);
+                    }
+                },
+                other => non_system.push(other),
+            }
+        }
+
+        let instructions = if instruction_parts.is_empty() {
+            None
+        } else {
+            Some(instruction_parts.join("\n\n"))
+        };
+
+        (instructions, to_responses_input(&non_system))
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools_sse(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let serialized_messages = self.serialize_messages_for_request(&messages);
+            let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
+            let mut body = serde_json::json!({
+                "model": self.model,
+                "messages": openai_messages,
+                "stream": true,
+                "stream_options": { "include_usage": true },
+            });
+
+            if let Some(system_prompt) = system_prompt {
+                body["system"] = serde_json::Value::String(system_prompt);
+            }
+
+            if !tools.is_empty() {
+                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
+            }
+
+            debug!(
+                model = %self.model,
+                messages_count = openai_messages.len(),
+                tools_count = tools.len(),
+                "openai stream_with_tools request (sse)"
+            );
+            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body (sse)");
+
+            let resp = match self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {}", self.api_key.expose_secret()))
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    if let Err(e) = r.error_for_status_ref() {
+                        let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
+                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
+                        let body_text = r.text().await.unwrap_or_default();
+                        yield StreamEvent::Error(super::with_retry_after_marker(
+                            format!("HTTP {status}: {body_text}"),
+                            retry_after_ms,
+                        ));
+                        return;
+                    }
+                    r
+                }
+                Err(e) => {
+                    yield StreamEvent::Error(e.to_string());
+                    return;
+                }
+            };
+
+            let mut byte_stream = resp.bytes_stream();
+            let mut buf = String::new();
+            let mut state = StreamingToolState::default();
+
+            while let Some(chunk) = byte_stream.next().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        yield StreamEvent::Error(e.to_string());
+                        return;
+                    }
+                };
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let Some(data) = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))
+                    else {
+                        continue;
+                    };
+
+                    match process_openai_sse_line(data, &mut state) {
+                        SseLineResult::Done => {
+                            for event in finalize_stream(&mut state) {
+                                yield event;
+                            }
+                            return;
+                        }
+                        SseLineResult::Events(events) => {
+                            for event in events {
+                                yield event;
+                            }
+                        }
+                        SseLineResult::Skip => {}
+                    }
+                }
+            }
+
+            // Some OpenAI-compatible providers may close the stream without
+            // an explicit [DONE] frame or trailing newline. Process any
+            // residual buffered line and always finalize on EOF so usage
+            // metadata still propagates.
+            let line = buf.trim().to_string();
+            if !line.is_empty()
+                && let Some(data) = line
+                    .strip_prefix("data: ")
+                    .or_else(|| line.strip_prefix("data:"))
+            {
+                match process_openai_sse_line(data, &mut state) {
+                    SseLineResult::Done => {
+                        for event in finalize_stream(&mut state) {
+                            yield event;
+                        }
+                        return;
+                    }
+                    SseLineResult::Events(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                    }
+                    SseLineResult::Skip => {}
+                }
+            }
+
+            for event in finalize_stream(&mut state) {
+                yield event;
+            }
+        })
+    }
+
+    #[allow(clippy::collapsible_if)]
+    fn stream_with_tools_websocket(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        fallback_to_sse: bool,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(async_stream::stream! {
+            let fallback_messages = messages.clone();
+            let fallback_tools = tools.clone();
+
+            if !self.is_openai_platform_base_url() {
+                let msg = format!(
+                    "websocket mode is only supported for api.openai.com base_url (got {})",
+                    self.base_url
+                );
+                if fallback_to_sse {
+                    debug!(error = %msg, "openai websocket transport unavailable, falling back to sse");
+                    let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                    while let Some(event) = sse.next().await {
+                        yield event;
+                    }
+                    return;
+                }
+                yield StreamEvent::Error(msg);
+                return;
+            }
+
+            let ws_url = match self.responses_websocket_url() {
+                Ok(url) => url,
+                Err(err) => {
+                    if fallback_to_sse {
+                        debug!(error = %err, "failed to build websocket url, falling back to sse");
+                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                        while let Some(event) = sse.next().await {
+                            yield event;
+                        }
+                        return;
+                    }
+                    yield StreamEvent::Error(err.to_string());
+                    return;
+                }
+            };
+
+            let mut request = match ws_url.as_str().into_client_request() {
+                Ok(request) => request,
+                Err(err) => {
+                    if fallback_to_sse {
+                        debug!(error = %err, "failed to build websocket request, falling back to sse");
+                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                        while let Some(event) = sse.next().await {
+                            yield event;
+                        }
+                        return;
+                    }
+                    yield StreamEvent::Error(err.to_string());
+                    return;
+                }
+            };
+
+            let auth_value = format!("Bearer {}", self.api_key.expose_secret());
+            let auth_header = match HeaderValue::from_str(&auth_value) {
+                Ok(header) => header,
+                Err(err) => {
+                    if fallback_to_sse {
+                        debug!(error = %err, "invalid Authorization header for websocket request, falling back to sse");
+                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                        while let Some(event) = sse.next().await {
+                            yield event;
+                        }
+                        return;
+                    }
+                    yield StreamEvent::Error(err.to_string());
+                    return;
+                }
+            };
+            request.headers_mut().insert("Authorization", auth_header);
+            request.headers_mut().insert(
+                "OpenAI-Beta",
+                HeaderValue::from_static("responses=v1"),
+            );
+
+            let (mut ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
+                Ok(conn) => conn,
+                Err(err) => {
+                    if fallback_to_sse {
+                        debug!(error = %err, "openai websocket connection failed, falling back to sse");
+                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                        while let Some(event) = sse.next().await {
+                            yield event;
+                        }
+                        return;
+                    }
+                    yield StreamEvent::Error(err.to_string());
+                    return;
+                }
+            };
+
+            let (instructions, input) = Self::split_responses_instructions_and_input(messages);
+            let mut response_payload = serde_json::json!({
+                "model": self.model,
+                "stream": true,
+                "store": false,
+                "input": input,
+            });
+            if let Some(instructions) = instructions {
+                response_payload["instructions"] = serde_json::Value::String(instructions);
+            }
+            if !tools.is_empty() {
+                response_payload["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
+                response_payload["tool_choice"] = serde_json::json!("auto");
+            }
+
+            let create_event = serde_json::json!({
+                "type": "response.create",
+                "response": response_payload,
+            });
+
+            debug!(
+                model = %self.model,
+                tools_count = tools.len(),
+                "openai stream_with_tools request (websocket)"
+            );
+            trace!(event = %create_event, "openai websocket create event");
+
+            if let Err(err) = ws_stream
+                .send(Message::Text(create_event.to_string().into()))
+                .await
+            {
+                if fallback_to_sse {
+                    debug!(error = %err, "failed to send websocket create event, falling back to sse");
+                    let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
+                    while let Some(event) = sse.next().await {
+                        yield event;
+                    }
+                    return;
+                }
+                yield StreamEvent::Error(err.to_string());
+                return;
+            }
+
+            let mut input_tokens: u32 = 0;
+            let mut output_tokens: u32 = 0;
+            let mut current_tool_index: usize = 0;
+            let mut tool_calls: HashMap<usize, (String, String)> = HashMap::new();
+            let mut completed_tool_calls: HashSet<usize> = HashSet::new();
+
+            while let Some(frame) = ws_stream.next().await {
+                let message = match frame {
+                    Ok(m) => m,
+                    Err(err) => {
+                        yield StreamEvent::Error(err.to_string());
+                        return;
+                    }
+                };
+
+                let payload = match message {
+                    Message::Text(text) => Some(text.to_string()),
+                    Message::Binary(bytes) => {
+                        Some(String::from_utf8_lossy(&bytes).to_string())
+                    }
+                    Message::Ping(payload) => {
+                        if let Err(err) = ws_stream.send(Message::Pong(payload)).await {
+                            yield StreamEvent::Error(err.to_string());
+                            return;
+                        }
+                        None
+                    }
+                    Message::Pong(_) => None,
+                    Message::Close(_) => break,
+                    _ => None,
+                };
+
+                let Some(payload) = payload else {
+                    continue;
+                };
+
+                let Ok(evt) = serde_json::from_str::<serde_json::Value>(&payload) else {
+                    continue;
+                };
+                trace!(event = %evt, "openai websocket event");
+
+                let resolve_tool_index =
+                    |event: &serde_json::Value,
+                     current_index: usize,
+                     known_calls: &HashMap<usize, (String, String)>|
+                     -> usize {
+                        for key in ["output_index", "item_index", "index"] {
+                            if let Some(index) = event.get(key).and_then(serde_json::Value::as_u64) {
+                                return index as usize;
+                            }
+                        }
+                        if let Some(call_id) = event.get("call_id").and_then(serde_json::Value::as_str)
+                            && let Some(index) = known_calls.iter().find_map(|(idx, (id, _))| {
+                                if id == call_id {
+                                    Some(*idx)
+                                } else {
+                                    None
+                                }
+                            })
+                        {
+                            return index;
+                        }
+                        current_index.saturating_sub(1)
+                    };
+
+                match evt["type"].as_str().unwrap_or("") {
+                    "response.output_text.delta" => {
+                        if let Some(delta) = evt["delta"].as_str()
+                            && !delta.is_empty()
+                        {
+                            yield StreamEvent::Delta(delta.to_string());
+                        }
+                    }
+                    "response.output_item.added" => {
+                        if evt["item"]["type"].as_str() == Some("function_call") {
+                            let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                            let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                            let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                            current_tool_index = current_tool_index.max(index + 1);
+                            tool_calls.insert(index, (id.clone(), name.clone()));
+                            yield StreamEvent::ToolCallStart { id, name, index };
+                        }
+                    }
+                    "response.function_call_arguments.delta" => {
+                        if let Some(delta) = evt["delta"].as_str()
+                            && !delta.is_empty()
+                        {
+                            let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                            yield StreamEvent::ToolCallArgumentsDelta {
+                                index,
+                                delta: delta.to_string(),
+                            };
+                        }
+                    }
+                    "response.function_call_arguments.done" => {
+                        let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                        if completed_tool_calls.insert(index) {
+                            yield StreamEvent::ToolCallComplete { index };
+                        }
+                    }
+                    "response.completed" => {
+                        if let Some(usage) = evt.get("response").and_then(|response| response.get("usage")) {
+                            let parsed = parse_openai_compat_usage(usage);
+                            input_tokens = parsed.input_tokens;
+                            output_tokens = parsed.output_tokens;
+                        }
+                        let mut pending: Vec<usize> = tool_calls.keys().copied().collect();
+                        pending.sort_unstable();
+                        for index in pending {
+                            if completed_tool_calls.insert(index) {
+                                yield StreamEvent::ToolCallComplete { index };
+                            }
+                        }
+                        yield StreamEvent::Done(Usage {
+                            input_tokens,
+                            output_tokens,
+                            ..Default::default()
+                        });
+                        return;
+                    }
+                    "error" | "response.failed" => {
+                        let msg = evt["error"]["message"]
+                            .as_str()
+                            .or_else(|| evt["response"]["error"]["message"].as_str())
+                            .or_else(|| evt["message"].as_str())
+                            .unwrap_or("unknown error");
+                        yield StreamEvent::Error(msg.to_string());
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut pending: Vec<usize> = tool_calls.keys().copied().collect();
+            pending.sort_unstable();
+            for index in pending {
+                if completed_tool_calls.insert(index) {
+                    yield StreamEvent::ToolCallComplete { index };
+                }
+            }
+            yield StreamEvent::Done(Usage {
+                input_tokens,
+                output_tokens,
+                ..Default::default()
+            });
+        })
     }
 }
 
@@ -660,136 +1155,15 @@ impl LlmProvider for OpenAiProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        Box::pin(async_stream::stream! {
-            let serialized_messages = self.serialize_messages_for_request(&messages);
-            let (openai_messages, system_prompt) = self.prepare_request_messages(serialized_messages);
-            let mut body = serde_json::json!({
-                "model": self.model,
-                "messages": openai_messages,
-                "stream": true,
-                "stream_options": { "include_usage": true },
-            });
-
-            if let Some(system_prompt) = system_prompt {
-                body["system"] = serde_json::Value::String(system_prompt);
-            }
-
-            if !tools.is_empty() {
-                body["tools"] = serde_json::Value::Array(to_openai_tools(&tools));
-            }
-
-            debug!(
-                model = %self.model,
-                messages_count = openai_messages.len(),
-                tools_count = tools.len(),
-                "openai stream_with_tools request"
-            );
-            trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai stream request body");
-
-            let resp = match self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key.expose_secret()))
-                .header("content-type", "application/json")
-                .json(&body)
-                .send()
-                .await
-            {
-                Ok(r) => {
-                    if let Err(e) = r.error_for_status_ref() {
-                        let status = e.status().map(|s| s.as_u16()).unwrap_or(0);
-                        let retry_after_ms = super::retry_after_ms_from_headers(r.headers());
-                        let body_text = r.text().await.unwrap_or_default();
-                        yield StreamEvent::Error(super::with_retry_after_marker(
-                            format!("HTTP {status}: {body_text}"),
-                            retry_after_ms,
-                        ));
-                        return;
-                    }
-                    r
-                }
-                Err(e) => {
-                    yield StreamEvent::Error(e.to_string());
-                    return;
-                }
-            };
-
-            let mut byte_stream = resp.bytes_stream();
-            let mut buf = String::new();
-            let mut state = StreamingToolState::default();
-
-            while let Some(chunk) = byte_stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        yield StreamEvent::Error(e.to_string());
-                        return;
-                    }
-                };
-                buf.push_str(&String::from_utf8_lossy(&chunk));
-
-                while let Some(pos) = buf.find('\n') {
-                    let line = buf[..pos].trim().to_string();
-                    buf = buf[pos + 1..].to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    let Some(data) = line
-                        .strip_prefix("data: ")
-                        .or_else(|| line.strip_prefix("data:"))
-                    else {
-                        continue;
-                    };
-
-                    match process_openai_sse_line(data, &mut state) {
-                        SseLineResult::Done => {
-                            for event in finalize_stream(&mut state) {
-                                yield event;
-                            }
-                            return;
-                        }
-                        SseLineResult::Events(events) => {
-                            for event in events {
-                                yield event;
-                            }
-                        }
-                        SseLineResult::Skip => {}
-                    }
-                }
-            }
-
-            // Some OpenAI-compatible providers may close the stream without
-            // an explicit [DONE] frame or trailing newline. Process any
-            // residual buffered line and always finalize on EOF so usage
-            // metadata still propagates.
-            let line = buf.trim().to_string();
-            if !line.is_empty()
-                && let Some(data) = line
-                    .strip_prefix("data: ")
-                    .or_else(|| line.strip_prefix("data:"))
-            {
-                match process_openai_sse_line(data, &mut state) {
-                    SseLineResult::Done => {
-                        for event in finalize_stream(&mut state) {
-                            yield event;
-                        }
-                        return;
-                    }
-                    SseLineResult::Events(events) => {
-                        for event in events {
-                            yield event;
-                        }
-                    }
-                    SseLineResult::Skip => {}
-                }
-            }
-
-            for event in finalize_stream(&mut state) {
-                yield event;
-            }
-        })
+        match self.stream_transport {
+            ProviderStreamTransport::Sse => self.stream_with_tools_sse(messages, tools),
+            ProviderStreamTransport::Websocket => {
+                self.stream_with_tools_websocket(messages, tools, false)
+            },
+            ProviderStreamTransport::Auto => {
+                self.stream_with_tools_websocket(messages, tools, true)
+            },
+        }
     }
 }
 
@@ -1502,5 +1876,70 @@ mod tests {
         assert!(!is_chat_capable_model("gpt-4o-realtime-preview"));
         assert!(!is_chat_capable_model("gpt-4o-mini-realtime"));
         assert!(!is_chat_capable_model("gpt-4o-mini-transcribe"));
+    }
+
+    #[tokio::test]
+    async fn websocket_auto_falls_back_to_sse_for_non_openai_base_url() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let (base_url, _) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-5.2".to_string(),
+            base_url,
+        )
+        .with_stream_transport(ProviderStreamTransport::Auto);
+
+        let mut stream =
+            provider.stream_with_tools(vec![ChatMessage::user("test")], sample_tools());
+
+        let mut saw_delta = false;
+        let mut saw_done = false;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::Delta(delta) => {
+                    saw_delta = true;
+                    assert_eq!(delta, "hi");
+                },
+                StreamEvent::Done(usage) => {
+                    saw_done = true;
+                    assert_eq!(usage.input_tokens, 11);
+                    assert_eq!(usage.output_tokens, 7);
+                },
+                StreamEvent::Error(err) => panic!("unexpected stream error: {err}"),
+                _ => {},
+            }
+        }
+
+        assert!(saw_delta, "expected fallback stream to emit Delta");
+        assert!(saw_done, "expected fallback stream to emit Done");
+    }
+
+    #[tokio::test]
+    async fn websocket_mode_errors_for_non_openai_base_url_without_fallback() {
+        let sse = "data: [DONE]\n\n";
+        let (base_url, _) = start_sse_mock(sse.to_string()).await;
+        let provider = OpenAiProvider::new(
+            Secret::new("test-key".to_string()),
+            "gpt-5.2".to_string(),
+            base_url,
+        )
+        .with_stream_transport(ProviderStreamTransport::Websocket);
+
+        let mut stream = provider.stream_with_tools(vec![ChatMessage::user("test")], vec![]);
+        let first = stream
+            .next()
+            .await
+            .expect("stream should emit an immediate error");
+        match first {
+            StreamEvent::Error(msg) => {
+                assert!(msg.contains("api.openai.com"), "unexpected error: {msg}");
+            },
+            other => panic!("expected stream error, got {other:?}"),
+        }
     }
 }

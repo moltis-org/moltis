@@ -114,6 +114,7 @@ fn build_schema_map() -> KnownKeys {
             ("base_url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
         ]))
     };
@@ -445,9 +446,9 @@ fn build_schema_map() -> KnownKeys {
                             Struct(HashMap::from([
                                 ("api_key", Leaf),
                                 ("language_code", Leaf),
-                                ("voice", Leaf), 
-                                ("speaking_rate", Leaf), 
-                                ("pitch", Leaf),  
+                                ("voice", Leaf),
+                                ("speaking_rate", Leaf),
+                                ("pitch", Leaf),
                             ])),
                         ),
                         ("piper", Struct(HashMap::from([("model_path", Leaf)]))),
