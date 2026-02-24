@@ -183,17 +183,15 @@ test.describe("Settings navigation", () => {
 
 	test("security page renders", async ({ page }) => {
 		await navigateAndWait(page, "/settings/security");
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Authentication" })).toBeVisible();
 	});
 
-	test("security page shows vault subsection when vault is enabled", async ({ page }) => {
-		await navigateAndWait(page, "/settings/security");
-		await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
-		// Vault subsection appears when vault_status is not "disabled"
-		const vaultHeading = page.getByRole("heading", { name: "Vault", exact: true });
-		const hasVault = await vaultHeading.isVisible().catch(() => false);
+	test("encryption page shows vault status when vault is enabled", async ({ page }) => {
+		await navigateAndWait(page, "/settings/vault");
+		const heading = page.getByRole("heading", { name: "Encryption" });
+		const hasVault = await heading.isVisible().catch(() => false);
 		if (hasVault) {
-			await expect(vaultHeading).toBeVisible();
+			await expect(heading).toBeVisible();
 			// Should show a status badge
 			const badges = page.locator(".provider-item-badge");
 			await expect(badges.first()).toBeVisible();

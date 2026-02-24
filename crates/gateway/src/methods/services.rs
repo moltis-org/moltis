@@ -3400,6 +3400,64 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+
+    // ── Logs ────────────────────────────────────────────────────────────────
+
+    reg.register(
+        "logs.tail",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .tail(ctx.params)
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.list",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .list(ctx.params)
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.status",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .status()
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+            })
+        }),
+    );
+
+    reg.register(
+        "logs.ack",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .logs
+                    .ack()
+                    .await
+                    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e))
+            })
+        }),
+    );
 }
 
 async fn reload_hooks(state: &Arc<crate::state::GatewayState>) {

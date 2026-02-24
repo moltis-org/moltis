@@ -183,6 +183,12 @@
   <a href="{{ routes.security }}" class="auth-disabled-setup">Set up authentication</a>
 </div>
 
+<!-- Vault sealed banner (shown after restart until user unlocks) -->
+<div id="vaultBanner" class="info-banner" style="display:none">
+  <span>Your encryption vault is locked. Please log in or unlock it so Moltis can read your keys.</span>
+  <a href="/settings/vault" class="auth-disabled-setup">Unlock vault</a>
+</div>
+
 <!-- Update available banner (shown when a newer GitHub release exists) -->
 <div id="updateBanner" class="info-banner" style="display:none">
   <span>

@@ -364,10 +364,37 @@ async fn change_password_handler(
             .await
         {
             Ok(()) => {
+                // Initialize the vault now that we have a password.
+                #[cfg(feature = "vault")]
+                let vault_recovery_key = if let Some(ref vault) = state.gateway_state.vault {
+                    match vault.initialize(&body.new_password).await {
+                        Ok(rk) => {
+                            tracing::info!("vault initialized on first password set");
+                            run_vault_env_migration(&state).await;
+                            Some(rk.phrase().to_owned())
+                        },
+                        Err(moltis_vault::VaultError::AlreadyInitialized) => {
+                            tracing::debug!("vault already initialized, unsealing");
+                            let _ = vault.unseal(&body.new_password).await;
+                            None
+                        },
+                        Err(e) => {
+                            tracing::warn!(error = %e, "vault initialization failed");
+                            None
+                        },
+                    }
+                } else {
+                    None
+                };
                 state
                     .gateway_state
                     .disconnect_all_clients("password_changed")
                     .await;
+                #[cfg(feature = "vault")]
+                if let Some(rk) = vault_recovery_key {
+                    return Json(serde_json::json!({ "ok": true, "recovery_key": rk }))
+                        .into_response();
+                }
                 Json(serde_json::json!({ "ok": true })).into_response()
             },
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

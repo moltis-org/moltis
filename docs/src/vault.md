@@ -226,19 +226,18 @@ interstitial screen with:
 Passkey-only setup does not trigger vault initialization (no password to
 derive a KEK from), so the recovery key screen is never shown in that flow.
 
-### Vault status in Settings > Security
+### Vault status in Settings > Encryption
 
-When the vault is enabled (status is not `"disabled"`), the Security
-settings page shows a **Vault (Encryption at Rest)** subsection at the
-top. A brief explanation describes what the vault does: it encrypts
-environment variables (API keys, tokens, secrets) using XChaCha20-Poly1305,
-and explains the difference between the sealed and unsealed states.
+When the vault feature is compiled in, an **Encryption** tab appears in
+Settings (under the Security group). It tells the user their API keys
+and secrets are encrypted before being stored, and that the vault locks
+on restart and unlocks on login.
 
 | Vault state | Badge | What it means |
 |-------------|-------|---------------|
-| **Unsealed** | Green ("Unsealed") | Active — new variables are encrypted before storage, existing encrypted variables are decrypted on read. This is the normal operating state. |
-| **Sealed** | Amber ("Sealed") | Locked — encrypted variables cannot be read. Sandbox commands using encrypted variables will fail. New variables are stored in plaintext. The vault seals automatically on server restart and stays sealed until the next login. |
-| **Not initialized** | Gray ("Not initialized") | No password has been set yet. All variables are stored in plaintext. Set a password to initialize the vault. |
+| **Unsealed** | Green ("Unlocked") | Your API keys and secrets are encrypted in the database. Everything is working. |
+| **Sealed** | Amber ("Locked") | Log in or unlock below to access your encrypted keys. |
+| **Uninitialized** | Gray ("Off") | Set a password in Authentication settings to start encrypting your stored keys. |
 
 When the vault is **sealed**, a form appears with a toggle between
 **Password** and **Recovery key** unlock modes. Submitting the form
@@ -255,16 +254,13 @@ indicating its encryption status:
 | **Encrypted** | Green (`.provider-item-badge.configured`) | Value is encrypted at rest by the vault |
 | **Plaintext** | Gray (`.provider-item-badge.muted`) | Value is stored in cleartext |
 
-A status note at the top of the section explains the current vault
-state and its concrete impact:
+A status note at the top of the section explains the current vault state:
 
-- **Unsealed**: New variables are encrypted before storage. Existing
-  encrypted variables are decrypted on read.
-- **Sealed**: Encrypted variables cannot be read — sandbox commands
-  using them will fail. New variables are stored in plaintext. A link
-  to Security settings is provided.
-- **Not initialized**: All variables are stored in plaintext. A link
-  to Security settings is provided to set a password.
+- **Unlocked**: "Your keys are stored encrypted."
+- **Locked**: "Encrypted keys can't be read — sandbox commands won't
+  work." Links to Encryption settings to unlock.
+- **Not set up**: "Set a password to encrypt your stored keys." Links
+  to Authentication settings.
 
 ## Disabling the Vault
 
