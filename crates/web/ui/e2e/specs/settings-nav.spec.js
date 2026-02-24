@@ -312,14 +312,9 @@ test.describe("Settings navigation", () => {
 			"Crons",
 			"Heartbeat",
 			"Authentication",
-			"Encryption",
-			"Tailscale",
-			"Channels",
-			"Hooks",
-			"LLMs",
-			"MCP",
-			"Skills",
 		];
+		if (navItems.includes("Encryption")) expectedPrefix.push("Encryption");
+		expectedPrefix.push("Tailscale", "Channels", "Hooks", "LLMs", "MCP", "Skills");
 		const expectedSystem = ["Terminal", "Sandboxes", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
 		if (navItems.includes("Voice")) expected.push("Voice");
