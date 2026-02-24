@@ -4943,6 +4943,8 @@ dependencies = [
  "async-graphql",
  "async-stream",
  "async-trait",
+ "bytes",
+ "moltis-service-traits",
  "serde",
  "serde_json",
  "tokio",

@@ -2437,8 +2437,9 @@ impl ChatService for LiveChatService {
         } else {
             let text = params
                 .get("text")
+                .or_else(|| params.get("message"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing 'text' or 'content' parameter".to_string())?
+                .ok_or_else(|| "missing 'text', 'message', or 'content' parameter".to_string())?
                 .to_string();
             (text.clone(), MessageContent::Text(text))
         };
@@ -2654,6 +2655,7 @@ impl ChatService for LiveChatService {
                     )
                     .await;
                     return Ok(serde_json::json!({
+                        "ok": true,
                         "queued": true,
                         "mode": format!("{queue_mode:?}").to_lowercase(),
                     }));
@@ -2829,7 +2831,7 @@ impl ChatService for LiveChatService {
                 .await
                 .insert(session_key.clone(), run_id.clone());
 
-            return Ok(serde_json::json!({ "runId": run_id }));
+            return Ok(serde_json::json!({ "ok": true, "runId": run_id }));
         }
 
         // Resolve model: explicit param → session metadata → first registered.
@@ -3203,6 +3205,7 @@ impl ChatService for LiveChatService {
                 )
                 .await;
                 return Ok(serde_json::json!({
+                    "ok": true,
                     "queued": true,
                     "mode": format!("{queue_mode:?}").to_lowercase(),
                 }));
@@ -3466,7 +3469,7 @@ impl ChatService for LiveChatService {
             .await
             .insert(session_key.clone(), run_id.clone());
 
-        Ok(serde_json::json!({ "runId": run_id }))
+        Ok(serde_json::json!({ "ok": true, "runId": run_id }))
     }
 
     async fn send_sync(&self, params: Value) -> ServiceResult {
@@ -4523,6 +4526,20 @@ impl ChatService for LiveChatService {
         }))
     }
 
+    async fn active(&self, params: Value) -> ServiceResult {
+        let session_key = params
+            .get("sessionKey")
+            .or_else(|| params.get("session_key"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'sessionKey' parameter".to_string())?;
+        let active = self
+            .active_runs_by_session
+            .read()
+            .await
+            .contains_key(session_key);
+        Ok(serde_json::json!({ "active": active }))
+    }
+
     async fn active_session_keys(&self) -> Vec<String> {
         self.active_runs_by_session
             .read()
@@ -5176,12 +5193,18 @@ async fn run_with_tools(
                     if let Some(ref err) = error {
                         payload["error"] = serde_json::json!(parse_chat_error(err, None));
                     }
-                    // Check for screenshot to send to channel (Telegram, etc.)
+                    // Check for screenshot/image to send to channel (Telegram, etc.)
                     let screenshot_to_send = result
                         .as_ref()
                         .and_then(|r| r.get("screenshot"))
                         .and_then(|s| s.as_str())
                         .filter(|s| s.starts_with("data:image/"))
+                        .map(String::from);
+
+                    let image_caption = result
+                        .as_ref()
+                        .and_then(|r| r.get("caption"))
+                        .and_then(|c| c.as_str())
                         .map(String::from);
 
                     // Extract location from show_map results for native pin
@@ -5230,13 +5253,18 @@ async fn run_with_tools(
                         });
                     }
 
-                    // Send screenshot to channel targets (Telegram) if present.
+                    // Send screenshot/image to channel targets (Telegram) if present.
                     if let Some(screenshot_data) = screenshot_to_send {
                         let state_clone = Arc::clone(&state);
                         let sk_clone = sk.clone();
                         tokio::spawn(async move {
-                            send_screenshot_to_channels(&state_clone, &sk_clone, &screenshot_data)
-                                .await;
+                            send_screenshot_to_channels(
+                                &state_clone,
+                                &sk_clone,
+                                &screenshot_data,
+                                image_caption.as_deref(),
+                            )
+                            .await;
                         });
                     }
 
@@ -6872,6 +6900,7 @@ async fn send_screenshot_to_channels(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
     screenshot_data: &str,
+    caption: Option<&str>,
 ) {
     use moltis_common::types::{MediaAttachment, ReplyPayload};
 
@@ -6885,11 +6914,19 @@ async fn send_screenshot_to_channels(
         None => return,
     };
 
+    // Extract actual MIME from "data:image/jpeg;base64,..." instead of
+    // hardcoding PNG — supports JPEG, GIF, WebP from send_image tool.
+    let mime_type = screenshot_data
+        .strip_prefix("data:")
+        .and_then(|s| s.split(';').next())
+        .unwrap_or("image/png")
+        .to_string();
+
     let payload = ReplyPayload {
-        text: String::new(), // No caption, just the image
+        text: caption.unwrap_or_default().to_string(),
         media: Some(MediaAttachment {
             url: screenshot_data.to_string(),
-            mime_type: "image/png".to_string(),
+            mime_type,
         }),
         reply_to_id: None,
         silent: false,

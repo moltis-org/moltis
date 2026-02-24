@@ -583,6 +583,20 @@ impl AgentTool for CronTool {
          - payload.kind: \"agentTurn\"\n\
          - payload.message: the prompt for the isolated agent run\n\
          \n\
+         To deliver the agent output to a channel (e.g. Telegram) after the run:\n\
+         - payload.deliver: true\n\
+         - payload.channel: the channel account identifier (e.g. the Telegram \
+           bot username like \"my_telegram_bot\")\n\
+         - payload.to: the recipient chat ID (e.g. \"123456789\")\n\
+         All three fields are required together. deliver=true without channel \
+         and to will be rejected. Delivery only works with agentTurn payloads.\n\
+         \n\
+         Important constraints:\n\
+         - sessionTarget \"main\" requires payload kind \"systemEvent\"\n\
+         - sessionTarget \"isolated\" requires payload kind \"agentTurn\"\n\
+         - When the user asks to send output to a channel, always use \
+           sessionTarget \"isolated\" + kind \"agentTurn\" + deliver fields\n\
+         \n\
          Optional execution controls for agent turns:\n\
          - payload.model: model id for this job\n\
          - sandbox.enabled: true for sandbox execution, false for host\n\
@@ -625,9 +639,9 @@ impl AgentTool for CronTool {
                                 "message": { "type": "string" },
                                 "model": { "type": "string" },
                                 "timeout_secs": { "type": "integer" },
-                                "deliver": { "type": "boolean" },
-                                "channel": { "type": "string" },
-                                "to": { "type": "string" }
+                                "deliver": { "type": "boolean", "description": "Set to true to deliver the agent output to a channel (e.g. Telegram) after the run. Requires channel and to." },
+                                "channel": { "type": "string", "description": "Channel account identifier for delivery (e.g. the Telegram bot username like 'my_telegram_bot'). Required when deliver=true." },
+                                "to": { "type": "string", "description": "Recipient chat ID for delivery (e.g. '123456789' for Telegram). Required when deliver=true." }
                             },
                             "required": ["kind"]
                         },

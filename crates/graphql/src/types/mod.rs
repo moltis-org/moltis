@@ -85,7 +85,7 @@ pub struct NodeInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SessionEntry {
     #[serde(default)]
-    pub id: Option<i64>,
+    pub id: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
     #[serde(default)]
@@ -118,6 +118,13 @@ pub struct SessionEntry {
     pub mcp_disabled: Option<bool>,
     #[serde(default)]
     pub replying: Option<bool>,
+}
+
+/// Whether a session currently has an active LLM run (waiting for response).
+#[derive(Debug, SimpleObject, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionActiveResult {
+    pub active: bool,
 }
 
 #[derive(Debug, SimpleObject, Deserialize)]

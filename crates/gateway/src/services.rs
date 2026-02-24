@@ -1321,6 +1321,40 @@ impl GatewayServices {
         self.stt = stt;
         self
     }
+
+    /// Create a [`Services`] bundle for sharing with the GraphQL schema.
+    ///
+    /// Clones all service `Arc`s (cheap pointer bumps) into the shared bundle.
+    /// The `system_info` service is provided separately because it needs the
+    /// fully-constructed `GatewayState` which isn't available during
+    /// `GatewayServices` construction.
+    pub fn to_services(&self, system_info: Arc<dyn SystemInfoService>) -> Arc<Services> {
+        Arc::new(Services {
+            agent: self.agent.clone(),
+            session: self.session.clone(),
+            channel: self.channel.clone(),
+            config: self.config.clone(),
+            cron: self.cron.clone(),
+            chat: self.chat.clone(),
+            tts: self.tts.clone(),
+            stt: self.stt.clone(),
+            skills: self.skills.clone(),
+            mcp: self.mcp.clone(),
+            browser: self.browser.clone(),
+            usage: self.usage.clone(),
+            exec_approval: self.exec_approval.clone(),
+            onboarding: self.onboarding.clone(),
+            update: self.update.clone(),
+            model: self.model.clone(),
+            web_login: self.web_login.clone(),
+            voicewake: self.voicewake.clone(),
+            logs: self.logs.clone(),
+            provider_setup: self.provider_setup.clone(),
+            project: self.project.clone(),
+            local_llm: self.local_llm.clone(),
+            system_info,
+        })
+    }
 }
 
 #[cfg(test)]

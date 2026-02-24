@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
 - **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
+- `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
 - GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
 - New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
 - New `moltis-providers` crate that owns provider integrations and model registry/catalog logic (OpenAI, Anthropic, OpenAI-compatible, OpenAI Codex, GitHub Copilot, Kimi Code, local GGUF, local LLM)
@@ -37,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
 - OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
   voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
 - Voice provider parsing now accepts `openai-tts` and `google-tts` aliases

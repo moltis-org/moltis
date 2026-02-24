@@ -708,10 +708,11 @@ pub fn build_gateway_base(
 
     #[cfg(feature = "graphql")]
     let graphql_schema = {
-        let caller = Arc::new(crate::graphql_routes::GatewayServiceCaller {
+        let system_info = Arc::new(crate::graphql_routes::GatewaySystemInfoService {
             state: Arc::clone(&state),
         });
-        moltis_graphql::build_schema(caller, state.graphql_broadcast.clone())
+        let services = state.services.to_services(system_info);
+        moltis_graphql::build_schema(services, state.graphql_broadcast.clone())
     };
 
     let app_state = AppState {
@@ -771,10 +772,11 @@ pub fn build_gateway_base(
 
     #[cfg(feature = "graphql")]
     let graphql_schema = {
-        let caller = Arc::new(crate::graphql_routes::GatewayServiceCaller {
+        let system_info = Arc::new(crate::graphql_routes::GatewaySystemInfoService {
             state: Arc::clone(&state),
         });
-        moltis_graphql::build_schema(caller, state.graphql_broadcast.clone())
+        let services = state.services.to_services(system_info);
+        moltis_graphql::build_schema(services, state.graphql_broadcast.clone())
     };
 
     let app_state = AppState {
@@ -2706,6 +2708,7 @@ pub async fn start_gateway(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(moltis_tools::send_image::SendImageTool::new()));
         if let Some(t) = moltis_tools::web_search::WebSearchTool::from_config_with_env_overrides(
             &config.tools.web.search,
             &runtime_env_overrides,

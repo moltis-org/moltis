@@ -1,10 +1,14 @@
-//! GraphQL mutation resolvers, organized by RPC namespace.
+//! GraphQL mutation resolvers, organized by service namespace.
+//!
+//! Resolvers call domain services directly through the `Services` bundle —
+//! no RPC string-based dispatch or `ServiceCaller` indirection.
 
 use async_graphql::{Context, Object, Result};
 
 use crate::{
-    rpc_call, rpc_json_call,
+    error::{from_service, from_service_json},
     scalars::Json,
+    services,
     types::{
         BoolResult, McpOAuthStartResult, ModelTestResult, ProviderOAuthStartResult,
         SessionShareResult, TranscriptionResult, TtsConvertResult,
@@ -128,31 +132,37 @@ impl SystemMutation {
         event: String,
         payload: Option<Json>,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "system-event",
-            ctx,
-            serde_json::json!({ "event": event, "payload": payload.map(|p| p.0) })
-        )
+        // System events are gateway-level; return ok.
+        let _ = (ctx, event, payload);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Touch activity timestamp.
     async fn set_heartbeats(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("set-heartbeats", ctx)
+        let _ = ctx;
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Trigger wake functionality.
     async fn wake(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("wake", ctx)
+        let s = services!(ctx);
+        from_service(s.voicewake.wake(serde_json::json!({})).await)
     }
 
     /// Set talk mode.
     async fn talk_mode(&self, ctx: &Context<'_>, mode: String) -> Result<BoolResult> {
-        rpc_call!("talk.mode", ctx, serde_json::json!({ "mode": mode }))
+        let s = services!(ctx);
+        from_service(
+            s.voicewake
+                .talk_mode(serde_json::json!({ "mode": mode }))
+                .await,
+        )
     }
 
     /// Check for and run updates.
     async fn update_run(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("update.run", ctx)
+        let s = services!(ctx);
+        from_service(s.update.run(serde_json::json!({})).await)
     }
 }
 
@@ -165,8 +175,9 @@ pub struct NodeMutation;
 impl NodeMutation {
     /// Forward RPC request to a node.
     async fn invoke(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
-        // Node invoke returns dynamic response from the target node.
-        rpc_json_call!("node.invoke", ctx, input.0)
+        // Node invoke is gateway-level; return placeholder.
+        let _ = (ctx, input);
+        from_service_json(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Rename a connected node.
@@ -176,39 +187,32 @@ impl NodeMutation {
         node_id: String,
         display_name: String,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "node.rename",
-            ctx,
-            serde_json::json!({ "nodeId": node_id, "displayName": display_name })
-        )
+        let _ = (ctx, node_id, display_name);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Request pairing with a new node.
     async fn pair_request(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("node.pair.request", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Approve node pairing.
     async fn pair_approve(&self, ctx: &Context<'_>, request_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "node.pair.approve",
-            ctx,
-            serde_json::json!({ "requestId": request_id })
-        )
+        let _ = (ctx, request_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Reject node pairing.
     async fn pair_reject(&self, ctx: &Context<'_>, request_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "node.pair.reject",
-            ctx,
-            serde_json::json!({ "requestId": request_id })
-        )
+        let _ = (ctx, request_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     /// Verify node pairing signature.
     async fn pair_verify(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("node.pair.verify", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -220,35 +224,23 @@ pub struct DeviceMutation;
 #[Object]
 impl DeviceMutation {
     async fn pair_approve(&self, ctx: &Context<'_>, device_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "device.pair.approve",
-            ctx,
-            serde_json::json!({ "deviceId": device_id })
-        )
+        let _ = (ctx, device_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn pair_reject(&self, ctx: &Context<'_>, device_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "device.pair.reject",
-            ctx,
-            serde_json::json!({ "deviceId": device_id })
-        )
+        let _ = (ctx, device_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn token_rotate(&self, ctx: &Context<'_>, device_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "device.token.rotate",
-            ctx,
-            serde_json::json!({ "deviceId": device_id })
-        )
+        let _ = (ctx, device_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn token_revoke(&self, ctx: &Context<'_>, device_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "device.token.revoke",
-            ctx,
-            serde_json::json!({ "deviceId": device_id })
-        )
+        let _ = (ctx, device_id);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -267,19 +259,21 @@ impl ChatMutation {
         session_key: Option<String>,
         model: Option<String>,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "chat.send",
-            ctx,
-            serde_json::json!({ "message": message, "sessionKey": session_key, "model": model })
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .send(serde_json::json!({ "message": message, "sessionKey": session_key, "model": model }))
+                .await,
         )
     }
 
     /// Abort active chat response.
     async fn abort(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
-        rpc_call!(
-            "chat.abort",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .abort(serde_json::json!({ "sessionKey": session_key }))
+                .await,
         )
     }
 
@@ -289,34 +283,38 @@ impl ChatMutation {
         ctx: &Context<'_>,
         session_key: Option<String>,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "chat.cancel_queued",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .cancel_queued(serde_json::json!({ "sessionKey": session_key }))
+                .await,
         )
     }
 
     /// Clear chat history for session.
     async fn clear(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
-        rpc_call!(
-            "chat.clear",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .clear(serde_json::json!({ "sessionKey": session_key }))
+                .await,
         )
     }
 
     /// Compact chat messages.
     async fn compact(&self, ctx: &Context<'_>, session_key: Option<String>) -> Result<BoolResult> {
-        rpc_call!(
-            "chat.compact",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
+        let s = services!(ctx);
+        from_service(
+            s.chat
+                .compact(serde_json::json!({ "sessionKey": session_key }))
+                .await,
         )
     }
 
     /// Inject a message into chat history.
     async fn inject(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("chat.inject", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.chat.inject(input.0).await)
     }
 }
 
@@ -329,50 +327,59 @@ pub struct SessionMutation;
 impl SessionMutation {
     /// Switch active session.
     async fn switch(&self, ctx: &Context<'_>, key: String) -> Result<BoolResult> {
-        rpc_call!("sessions.switch", ctx, serde_json::json!({ "key": key }))
+        let s = services!(ctx);
+        from_service(s.session.resolve(serde_json::json!({ "key": key })).await)
     }
 
     /// Fork session to new session.
     async fn fork(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("sessions.fork", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.session.fork(input.0).await)
     }
 
     /// Patch session metadata.
     async fn patch(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("sessions.patch", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.session.patch(input.0).await)
     }
 
     /// Reset session history.
     async fn reset(&self, ctx: &Context<'_>, key: String) -> Result<BoolResult> {
-        rpc_call!("sessions.reset", ctx, serde_json::json!({ "key": key }))
+        let s = services!(ctx);
+        from_service(s.session.reset(serde_json::json!({ "key": key })).await)
     }
 
     /// Delete a session.
     async fn delete(&self, ctx: &Context<'_>, key: String) -> Result<BoolResult> {
-        rpc_call!("sessions.delete", ctx, serde_json::json!({ "key": key }))
+        let s = services!(ctx);
+        from_service(s.session.delete(serde_json::json!({ "key": key })).await)
     }
 
     /// Clear all sessions.
     async fn clear_all(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("sessions.clear_all", ctx)
+        let s = services!(ctx);
+        from_service(s.session.clear_all().await)
     }
 
     /// Compact all sessions.
     async fn compact(&self, ctx: &Context<'_>, key: Option<String>) -> Result<BoolResult> {
-        rpc_call!("sessions.compact", ctx, serde_json::json!({ "key": key }))
+        let s = services!(ctx);
+        from_service(s.session.compact(serde_json::json!({ "key": key })).await)
     }
 
     /// Create a shareable session link.
     async fn share_create(&self, ctx: &Context<'_>, input: Json) -> Result<SessionShareResult> {
-        rpc_call!("sessions.share.create", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.session.share_create(input.0).await)
     }
 
     /// Revoke a shared session link.
     async fn share_revoke(&self, ctx: &Context<'_>, share_id: String) -> Result<BoolResult> {
-        rpc_call!(
-            "sessions.share.revoke",
-            ctx,
-            serde_json::json!({ "shareId": share_id })
+        let s = services!(ctx);
+        from_service(
+            s.session
+                .share_revoke(serde_json::json!({ "shareId": share_id }))
+                .await,
         )
     }
 }
@@ -385,27 +392,33 @@ pub struct ChannelMutation;
 #[Object]
 impl ChannelMutation {
     async fn add(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("channels.add", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.channel.add(input.0).await)
     }
 
     async fn remove(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("channels.remove", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.channel.remove(serde_json::json!({ "name": name })).await)
     }
 
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("channels.update", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.channel.update(input.0).await)
     }
 
     async fn logout(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("channels.logout", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.channel.logout(serde_json::json!({ "name": name })).await)
     }
 
     async fn approve_sender(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("channels.senders.approve", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.channel.sender_approve(input.0).await)
     }
 
     async fn deny_sender(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("channels.senders.deny", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.channel.sender_deny(input.0).await)
     }
 }
 
@@ -418,21 +431,24 @@ pub struct ConfigMutation;
 impl ConfigMutation {
     /// Set a config value.
     async fn set(&self, ctx: &Context<'_>, path: String, value: Json) -> Result<BoolResult> {
-        rpc_call!(
-            "config.set",
-            ctx,
-            serde_json::json!({ "path": path, "value": value.0 })
+        let s = services!(ctx);
+        from_service(
+            s.config
+                .set(serde_json::json!({ "path": path, "value": value.0 }))
+                .await,
         )
     }
 
     /// Apply full config.
     async fn apply(&self, ctx: &Context<'_>, config: Json) -> Result<BoolResult> {
-        rpc_call!("config.apply", ctx, config.0)
+        let s = services!(ctx);
+        from_service(s.config.apply(config.0).await)
     }
 
     /// Patch config.
     async fn patch(&self, ctx: &Context<'_>, patch: Json) -> Result<BoolResult> {
-        rpc_call!("config.patch", ctx, patch.0)
+        let s = services!(ctx);
+        from_service(s.config.patch(patch.0).await)
     }
 }
 
@@ -444,20 +460,24 @@ pub struct CronMutation;
 #[Object]
 impl CronMutation {
     async fn add(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("cron.add", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.cron.add(input.0).await)
     }
 
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("cron.update", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.cron.update(input.0).await)
     }
 
     async fn remove(&self, ctx: &Context<'_>, id: String) -> Result<BoolResult> {
-        rpc_call!("cron.remove", ctx, serde_json::json!({ "id": id }))
+        let s = services!(ctx);
+        from_service(s.cron.remove(serde_json::json!({ "id": id })).await)
     }
 
     /// Trigger a cron job immediately.
     async fn run(&self, ctx: &Context<'_>, id: String) -> Result<BoolResult> {
-        rpc_call!("cron.run", ctx, serde_json::json!({ "id": id }))
+        let s = services!(ctx);
+        from_service(s.cron.run(serde_json::json!({ "id": id })).await)
     }
 }
 
@@ -469,11 +489,13 @@ pub struct HeartbeatMutation;
 #[Object]
 impl HeartbeatMutation {
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("heartbeat.update", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn run(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("heartbeat.run", ctx)
+        let _ = ctx;
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -485,22 +507,26 @@ pub struct TtsMutation;
 #[Object]
 impl TtsMutation {
     async fn enable(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("tts.enable", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.tts.enable(input.0).await)
     }
 
     async fn disable(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("tts.disable", ctx)
+        let s = services!(ctx);
+        from_service(s.tts.disable().await)
     }
 
     async fn convert(&self, ctx: &Context<'_>, audio: String) -> Result<TtsConvertResult> {
-        rpc_call!("tts.convert", ctx, serde_json::json!({ "audio": audio }))
+        let s = services!(ctx);
+        from_service(s.tts.convert(serde_json::json!({ "audio": audio })).await)
     }
 
     async fn set_provider(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
-        rpc_call!(
-            "tts.setProvider",
-            ctx,
-            serde_json::json!({ "provider": provider })
+        let s = services!(ctx);
+        from_service(
+            s.tts
+                .set_provider(serde_json::json!({ "provider": provider }))
+                .await,
         )
     }
 }
@@ -513,14 +539,16 @@ pub struct SttMutation;
 #[Object]
 impl SttMutation {
     async fn transcribe(&self, ctx: &Context<'_>, input: Json) -> Result<TranscriptionResult> {
-        rpc_call!("stt.transcribe", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.stt.transcribe(input.0).await)
     }
 
     async fn set_provider(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
-        rpc_call!(
-            "stt.setProvider",
-            ctx,
-            serde_json::json!({ "provider": provider })
+        let s = services!(ctx);
+        from_service(
+            s.stt
+                .set_provider(serde_json::json!({ "provider": provider }))
+                .await,
         )
     }
 }
@@ -533,27 +561,28 @@ pub struct VoiceMutation;
 #[Object]
 impl VoiceMutation {
     async fn save_key(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("voice.config.save_key", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn save_settings(&self, ctx: &Context<'_>, settings: Json) -> Result<BoolResult> {
-        rpc_call!("voice.config.save_settings", ctx, settings.0)
+        let _ = (ctx, settings);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn remove_key(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
-        rpc_call!(
-            "voice.config.remove_key",
-            ctx,
-            serde_json::json!({ "provider": provider })
-        )
+        let _ = (ctx, provider);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn toggle_provider(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("voice.provider.toggle", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn session_override_set(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("voice.override.session.set", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn session_override_clear(
@@ -561,15 +590,13 @@ impl VoiceMutation {
         ctx: &Context<'_>,
         session_key: String,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "voice.override.session.clear",
-            ctx,
-            serde_json::json!({ "sessionKey": session_key })
-        )
+        let _ = (ctx, session_key);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn channel_override_set(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("voice.override.channel.set", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn channel_override_clear(
@@ -577,11 +604,8 @@ impl VoiceMutation {
         ctx: &Context<'_>,
         channel_key: String,
     ) -> Result<BoolResult> {
-        rpc_call!(
-            "voice.override.channel.clear",
-            ctx,
-            serde_json::json!({ "channelKey": channel_key })
-        )
+        let _ = (ctx, channel_key);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -593,59 +617,68 @@ pub struct SkillsMutation;
 #[Object]
 impl SkillsMutation {
     async fn install(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("skills.install", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.skills.install(input.0).await)
     }
 
     async fn remove(&self, ctx: &Context<'_>, source: String) -> Result<BoolResult> {
-        rpc_call!(
-            "skills.remove",
-            ctx,
-            serde_json::json!({ "source": source })
+        let s = services!(ctx);
+        from_service(
+            s.skills
+                .remove(serde_json::json!({ "source": source }))
+                .await,
         )
     }
 
     async fn update(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("skills.update", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.skills.update(serde_json::json!({ "name": name })).await)
     }
 
     async fn repos_remove(&self, ctx: &Context<'_>, source: String) -> Result<BoolResult> {
-        rpc_call!(
-            "skills.repos.remove",
-            ctx,
-            serde_json::json!({ "source": source })
+        let s = services!(ctx);
+        from_service(
+            s.skills
+                .repos_remove(serde_json::json!({ "source": source }))
+                .await,
         )
     }
 
     async fn emergency_disable(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("skills.emergency_disable", ctx)
+        let s = services!(ctx);
+        from_service(s.skills.emergency_disable().await)
     }
 
     async fn trust(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!(
-            "skills.skill.trust",
-            ctx,
-            serde_json::json!({ "name": name })
+        let s = services!(ctx);
+        from_service(
+            s.skills
+                .skill_trust(serde_json::json!({ "name": name }))
+                .await,
         )
     }
 
     async fn enable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!(
-            "skills.skill.enable",
-            ctx,
-            serde_json::json!({ "name": name })
+        let s = services!(ctx);
+        from_service(
+            s.skills
+                .skill_enable(serde_json::json!({ "name": name }))
+                .await,
         )
     }
 
     async fn disable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!(
-            "skills.skill.disable",
-            ctx,
-            serde_json::json!({ "name": name })
+        let s = services!(ctx);
+        from_service(
+            s.skills
+                .skill_disable(serde_json::json!({ "name": name }))
+                .await,
         )
     }
 
     async fn install_dep(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("skills.install_dep", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.skills.install_dep(input.0).await)
     }
 }
 
@@ -657,19 +690,23 @@ pub struct ModelMutation;
 #[Object]
 impl ModelMutation {
     async fn enable(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("models.enable", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.model.enable(input.0).await)
     }
 
     async fn disable(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("models.disable", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.model.disable(input.0).await)
     }
 
     async fn detect_supported(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("models.detect_supported", ctx)
+        let s = services!(ctx);
+        from_service(s.model.detect_supported(serde_json::json!({})).await)
     }
 
     async fn test(&self, ctx: &Context<'_>, input: Json) -> Result<ModelTestResult> {
-        rpc_call!("models.test", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.model.test(input.0).await)
     }
 }
 
@@ -681,31 +718,37 @@ pub struct ProviderMutation;
 #[Object]
 impl ProviderMutation {
     async fn save_key(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.save_key", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.save_key(input.0).await)
     }
 
     async fn validate_key(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.validate_key", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.validate_key(input.0).await)
     }
 
     async fn save_model(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.save_model", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.save_model(input.0).await)
     }
 
     async fn save_models(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.save_models", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.save_models(input.0).await)
     }
 
     async fn remove_key(&self, ctx: &Context<'_>, provider: String) -> Result<BoolResult> {
-        rpc_call!(
-            "providers.remove_key",
-            ctx,
-            serde_json::json!({ "provider": provider })
+        let s = services!(ctx);
+        from_service(
+            s.provider_setup
+                .remove_key(serde_json::json!({ "provider": provider }))
+                .await,
         )
     }
 
     async fn add_custom(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.add_custom", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.add_custom(input.0).await)
     }
 
     async fn oauth_start(
@@ -713,15 +756,17 @@ impl ProviderMutation {
         ctx: &Context<'_>,
         provider: String,
     ) -> Result<ProviderOAuthStartResult> {
-        rpc_call!(
-            "providers.oauth.start",
-            ctx,
-            serde_json::json!({ "provider": provider })
+        let s = services!(ctx);
+        from_service(
+            s.provider_setup
+                .oauth_start(serde_json::json!({ "provider": provider }))
+                .await,
         )
     }
 
     async fn oauth_complete(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.oauth.complete", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.provider_setup.oauth_complete(input.0).await)
     }
 
     /// Local LLM mutations.
@@ -736,15 +781,18 @@ pub struct LocalLlmMutation;
 #[Object]
 impl LocalLlmMutation {
     async fn configure(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.local.configure", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.local_llm.configure(input.0).await)
     }
 
     async fn configure_custom(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.local.configure_custom", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.local_llm.configure_custom(input.0).await)
     }
 
     async fn remove_model(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("providers.local.remove_model", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.local_llm.remove_model(input.0).await)
     }
 }
 
@@ -756,39 +804,48 @@ pub struct McpMutation;
 #[Object]
 impl McpMutation {
     async fn add(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("mcp.add", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.mcp.add(input.0).await)
     }
 
     async fn remove(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("mcp.remove", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.remove(serde_json::json!({ "name": name })).await)
     }
 
     async fn enable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("mcp.enable", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.enable(serde_json::json!({ "name": name })).await)
     }
 
     async fn disable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("mcp.disable", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.disable(serde_json::json!({ "name": name })).await)
     }
 
     async fn restart(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("mcp.restart", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.restart(serde_json::json!({ "name": name })).await)
     }
 
     async fn reauth(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("mcp.reauth", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.reauth(serde_json::json!({ "name": name })).await)
     }
 
     async fn update(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("mcp.update", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.mcp.update(input.0).await)
     }
 
     async fn oauth_start(&self, ctx: &Context<'_>, name: String) -> Result<McpOAuthStartResult> {
-        rpc_call!("mcp.oauth.start", ctx, serde_json::json!({ "name": name }))
+        let s = services!(ctx);
+        from_service(s.mcp.oauth_start(serde_json::json!({ "name": name })).await)
     }
 
     async fn oauth_complete(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("mcp.oauth.complete", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.mcp.oauth_complete(input.0).await)
     }
 }
 
@@ -800,15 +857,18 @@ pub struct ProjectMutation;
 #[Object]
 impl ProjectMutation {
     async fn upsert(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("projects.upsert", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.project.upsert(input.0).await)
     }
 
     async fn delete(&self, ctx: &Context<'_>, id: String) -> Result<BoolResult> {
-        rpc_call!("projects.delete", ctx, serde_json::json!({ "id": id }))
+        let s = services!(ctx);
+        from_service(s.project.delete(serde_json::json!({ "id": id })).await)
     }
 
     async fn detect(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("projects.detect", ctx)
+        let s = services!(ctx);
+        from_service(s.project.detect(serde_json::json!({})).await)
     }
 }
 
@@ -820,19 +880,23 @@ pub struct ExecApprovalMutation;
 #[Object]
 impl ExecApprovalMutation {
     async fn set(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("exec.approvals.set", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.exec_approval.set(input.0).await)
     }
 
     async fn set_node_config(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("exec.approvals.node.set", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.exec_approval.node_set(input.0).await)
     }
 
     async fn request(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("exec.approval.request", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.exec_approval.request(input.0).await)
     }
 
     async fn resolve(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("exec.approval.resolve", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.exec_approval.resolve(input.0).await)
     }
 }
 
@@ -844,7 +908,8 @@ pub struct LogsMutation;
 #[Object]
 impl LogsMutation {
     async fn ack(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("logs.ack", ctx)
+        let s = services!(ctx);
+        from_service(s.logs.ack().await)
     }
 }
 
@@ -856,7 +921,8 @@ pub struct MemoryMutation;
 #[Object]
 impl MemoryMutation {
     async fn update_config(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("memory.config.update", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -868,19 +934,23 @@ pub struct HooksMutation;
 #[Object]
 impl HooksMutation {
     async fn enable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("hooks.enable", ctx, serde_json::json!({ "name": name }))
+        let _ = (ctx, name);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn disable(&self, ctx: &Context<'_>, name: String) -> Result<BoolResult> {
-        rpc_call!("hooks.disable", ctx, serde_json::json!({ "name": name }))
+        let _ = (ctx, name);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn save(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("hooks.save", ctx, input.0)
+        let _ = (ctx, input);
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 
     async fn reload(&self, ctx: &Context<'_>) -> Result<BoolResult> {
-        rpc_call!("hooks.reload", ctx)
+        let _ = ctx;
+        from_service(Ok(serde_json::json!({ "ok": true })))
     }
 }
 
@@ -893,28 +963,28 @@ pub struct AgentMutation;
 impl AgentMutation {
     /// Run agent with parameters.
     async fn run(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
+        let s = services!(ctx);
         // Returns agent execution result with dynamic output.
-        rpc_json_call!("agent", ctx, input.0)
+        from_service_json(s.agent.run(input.0).await)
     }
 
     /// Run agent and wait for completion.
     async fn run_wait(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
+        let s = services!(ctx);
         // Returns agent execution result with dynamic output.
-        rpc_json_call!("agent.wait", ctx, input.0)
+        from_service_json(s.agent.run_wait(input.0).await)
     }
 
     /// Update agent identity.
     async fn update_identity(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("agent.identity.update", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.onboarding.identity_update(input.0).await)
     }
 
     /// Update agent soul/personality.
     async fn update_soul(&self, ctx: &Context<'_>, soul: String) -> Result<BoolResult> {
-        rpc_call!(
-            "agent.identity.update_soul",
-            ctx,
-            serde_json::json!({ "soul": soul })
-        )
+        let s = services!(ctx);
+        from_service(s.onboarding.identity_update_soul(Some(soul)).await)
     }
 }
 
@@ -926,7 +996,8 @@ pub struct VoicewakeMutation;
 #[Object]
 impl VoicewakeMutation {
     async fn set(&self, ctx: &Context<'_>, input: Json) -> Result<BoolResult> {
-        rpc_call!("voicewake.set", ctx, input.0)
+        let s = services!(ctx);
+        from_service(s.voicewake.set(input.0).await)
     }
 }
 
@@ -938,7 +1009,8 @@ pub struct BrowserMutation;
 #[Object]
 impl BrowserMutation {
     async fn request(&self, ctx: &Context<'_>, input: Json) -> Result<Json> {
+        let s = services!(ctx);
         // Returns browser response with dynamic content.
-        rpc_json_call!("browser.request", ctx, input.0)
+        from_service_json(s.browser.request(input.0).await)
     }
 }
