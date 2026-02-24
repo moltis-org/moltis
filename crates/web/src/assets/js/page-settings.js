@@ -745,6 +745,7 @@ function SecuritySection() {
 	var [pwMsg, setPwMsg] = useState(null);
 	var [pwErr, setPwErr] = useState(null);
 	var [pwSaving, setPwSaving] = useState(false);
+	var [pwAwaitingReauth, setPwAwaitingReauth] = useState(false);
 	var [pwRecoveryKey, setPwRecoveryKey] = useState(null);
 	var [pwRecoveryCopied, setPwRecoveryCopied] = useState(false);
 
@@ -772,19 +773,27 @@ function SecuritySection() {
 		window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 	}
 
+	function deferNextPasswordChangedRedirect() {
+		window.__moltisSuppressNextPasswordChangedRedirect = true;
+	}
+
+	function clearPasswordChangedRedirectDeferral() {
+		window.__moltisSuppressNextPasswordChangedRedirect = false;
+	}
+
 	// A credential added while localhost-bypass is active can immediately make the
 	// current session unauthenticated (no session cookie). Reload so middleware
 	// can route to /login in that transition.
-	function reloadIfAuthNowRequiresLogin() {
+	function reloadIfAuthNowRequiresLogin({ reload = true } = {}) {
 		return fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
 			.then((d) => {
 				var mustLogin = !!(d && d.auth_disabled === false && d.setup_required === false && d.authenticated === false);
-				if (mustLogin) {
+				if (mustLogin && reload) {
 					window.location.reload();
 					return true;
 				}
-				return false;
+				return mustLogin;
 			})
 			.catch(() => false);
 	}
@@ -838,6 +847,9 @@ function SecuritySection() {
 			return;
 		}
 		setPwSaving(true);
+		setPwAwaitingReauth(false);
+		var settingFirstPassword = !hasPassword;
+		if (settingFirstPassword) deferNextPasswordChangedRedirect();
 		var payload = { new_password: newPw };
 		if (hasPassword) payload.current_password = curPw;
 		fetch("/api/auth/password/change", {
@@ -848,13 +860,16 @@ function SecuritySection() {
 			.then((r) => {
 				if (!r.ok) {
 					return r.text().then((t) => {
+						clearPasswordChangedRedirectDeferral();
 						setPwErr(t);
 						setPwSaving(false);
+						setPwAwaitingReauth(false);
 						rerender();
 					});
 				}
 
 				return r.json().then((data) => {
+					var hasRecoveryKey = !!data.recovery_key;
 					setPwMsg(hasPassword ? "Password changed." : "Password set.");
 					setCurPw("");
 					setNewPw("");
@@ -862,20 +877,31 @@ function SecuritySection() {
 					setHasPassword(true);
 					setSetupComplete(true);
 					setAuthDisabled(false);
-					if (data.recovery_key) {
+					if (hasRecoveryKey) {
 						setPwRecoveryKey(data.recovery_key);
 						refreshGon();
 					}
-					return reloadIfAuthNowRequiresLogin().then((reloaded) => {
-						if (!reloaded) notifyAuthStatusChanged();
+					return reloadIfAuthNowRequiresLogin({ reload: !hasRecoveryKey }).then((requiresLoginOrReloaded) => {
+						if (hasRecoveryKey && requiresLoginOrReloaded) {
+							setPwAwaitingReauth(true);
+							setPwMsg("Password set. Save the recovery key, then continue to sign in.");
+							setPwSaving(false);
+							rerender();
+							return;
+						}
+						clearPasswordChangedRedirectDeferral();
+						setPwAwaitingReauth(false);
+						if (!requiresLoginOrReloaded) notifyAuthStatusChanged();
 						setPwSaving(false);
 						rerender();
 					});
 				});
 			})
 			.catch((err) => {
+				clearPasswordChangedRedirectDeferral();
 				setPwErr(err.message);
 				setPwSaving(false);
+				setPwAwaitingReauth(false);
 				rerender();
 			});
 	}
@@ -1172,6 +1198,10 @@ function SecuritySection() {
 							rerender();
 						});
 					}}>${pwRecoveryCopied ? "Copied!" : "Copy"}</button>
+					${pwAwaitingReauth ? html`<button type="button" class="provider-btn" onClick=${() => {
+						clearPasswordChangedRedirectDeferral();
+						window.location.assign("/login");
+					}}>Continue to sign in</button>` : null}
 				</div>
 				<div class="text-xs" style="color:var(--error);margin-top:8px;">
 					This key will not be shown again. You need it to unlock the vault if you forget your password.
