@@ -251,12 +251,15 @@ local-connection detection:
 - **Bare proxies** (no forwarding headers) can appear local — set
   `MOLTIS_BEHIND_PROXY=true` to force all connections to be treated as
   remote
-- The proxy must forward `Origin` and `Host` headers for WebSocket
-  CSWSH protection
+- The proxy must preserve the browser origin host for WebSocket CSWSH
+  protection (forward `Host`, or `X-Forwarded-Host` when rewriting `Host`)
 - TLS termination typically happens at the proxy
+- Passkeys are tied to the RP ID/host identity; host/domain changes usually
+  require registering new passkeys on the new host
 
 See [Security Architecture](security.md#reverse-proxy-deployments) for
-detailed proxy deployment guidance.
+detailed proxy deployment guidance, including a Nginx Proxy Manager
+header snippet and passkey migration guidance.
 
 ## Session Management
 
