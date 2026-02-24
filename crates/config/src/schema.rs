@@ -7,14 +7,13 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, creature, vibe).
+/// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
 }
 
 /// IANA timezone (e.g. `"Europe/Paris"`).
@@ -147,8 +146,7 @@ pub struct UserProfile {
 pub struct ResolvedIdentity {
     pub name: String,
     pub emoji: Option<String>,
-    pub creature: Option<String>,
-    pub vibe: Option<String>,
+    pub theme: Option<String>,
     pub soul: Option<String>,
     pub user_name: Option<String>,
 }
@@ -158,8 +156,7 @@ impl ResolvedIdentity {
         Self {
             name: cfg.identity.name.clone().unwrap_or_else(|| "moltis".into()),
             emoji: cfg.identity.emoji.clone(),
-            creature: cfg.identity.creature.clone(),
-            vibe: cfg.identity.vibe.clone(),
+            theme: cfg.identity.theme.clone(),
             soul: None,
             user_name: cfg.user.name.clone(),
         }
@@ -171,8 +168,7 @@ impl Default for ResolvedIdentity {
         Self {
             name: "moltis".into(),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
             soul: None,
             user_name: None,
         }
@@ -192,6 +188,7 @@ pub struct MoltisConfig {
     pub channels: ChannelsConfig,
     pub tls: TlsConfig,
     pub auth: AuthConfig,
+    pub graphql: GraphqlConfig,
     pub metrics: MetricsConfig,
     pub identity: AgentIdentity,
     pub user: UserProfile,
@@ -202,6 +199,11 @@ pub struct MoltisConfig {
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
     pub cron: CronConfig,
+    /// Environment variables injected into the Moltis process at startup.
+    /// Useful for API keys in Docker where you can't easily set env vars.
+    /// Process env vars take precedence (existing vars are not overwritten).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 /// Voice configuration (TTS and STT).
@@ -218,7 +220,8 @@ pub struct VoiceConfig {
 pub struct VoiceTtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
-    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
+    /// Active provider: "openai", "elevenlabs", "google", "piper", "coqui".
+    /// Empty string means auto-select the first configured provider.
     pub provider: String,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
@@ -237,8 +240,8 @@ pub struct VoiceTtsConfig {
 impl Default for VoiceTtsConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: "elevenlabs".into(),
+            enabled: true,
+            provider: String::new(),
             providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
@@ -354,8 +357,8 @@ impl Default for VoiceCoquiTtsConfig {
 pub struct VoiceSttConfig {
     /// Enable STT globally.
     pub enabled: bool,
-    /// Default provider.
-    pub provider: VoiceSttProvider,
+    /// Active provider. None means auto-select the first configured provider.
+    pub provider: Option<VoiceSttProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
     /// Whisper (OpenAI) settings.
@@ -381,8 +384,8 @@ pub struct VoiceSttConfig {
 impl Default for VoiceSttConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            provider: VoiceSttProvider::Whisper,
+            enabled: true,
+            provider: None,
             providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
@@ -633,10 +636,19 @@ pub struct ServerConfig {
     /// Enable WebSocket request/response logs (`ws:` entries).
     /// Useful for debugging RPC calls from the web UI.
     pub ws_request_logs: bool,
+    /// Maximum number of log entries kept in the in-memory ring buffer.
+    /// Older entries are persisted to disk and available via the web UI.
+    /// Defaults to 1000. Increase for busy servers, decrease for memory-constrained devices.
+    #[serde(default = "default_log_buffer_size")]
+    pub log_buffer_size: usize,
     /// Optional GitHub repository URL used by the update checker.
     ///
     /// When unset, Moltis falls back to the package repository metadata.
     pub update_repository_url: Option<String>,
+}
+
+fn default_log_buffer_size() -> usize {
+    1000
 }
 
 impl Default for ServerConfig {
@@ -646,6 +658,7 @@ impl Default for ServerConfig {
             port: 0, // Will be replaced with a random port when config is created
             http_request_logs: false,
             ws_request_logs: false,
+            log_buffer_size: default_log_buffer_size(),
             update_repository_url: None,
         }
     }
@@ -782,6 +795,9 @@ pub struct MemoryEmbeddingConfig {
     pub backend: Option<String>,
     /// Embedding provider: "local", "ollama", "openai", "custom", or None for auto-detect.
     pub provider: Option<String>,
+    /// Disable RAG embeddings and force keyword-only memory search.
+    #[serde(default)]
+    pub disable_rag: bool,
     /// Base URL for the embedding API (e.g. "http://localhost:11434/v1" for Ollama).
     pub base_url: Option<String>,
     /// Model name (e.g. "nomic-embed-text" for Ollama, "text-embedding-3-small" for OpenAI).
@@ -865,6 +881,20 @@ pub struct AuthConfig {
     pub disabled: bool,
 }
 
+/// Runtime GraphQL server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphqlConfig {
+    /// Whether GraphQL HTTP/WS handlers accept requests.
+    pub enabled: bool,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// Metrics and observability configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -875,9 +905,18 @@ pub struct MetricsConfig {
     /// Whether to expose the `/metrics` Prometheus endpoint.
     #[serde(default = "default_true")]
     pub prometheus_endpoint: bool,
+    /// Maximum number of in-memory history points for time-series charts.
+    /// Points are sampled every 10 seconds. Defaults to 360 (1 hour).
+    /// Historical data is persisted to SQLite regardless of this setting.
+    #[serde(default = "default_metrics_history_points")]
+    pub history_points: usize,
     /// Additional labels to add to all metrics.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+}
+
+fn default_metrics_history_points() -> usize {
+    360
 }
 
 impl Default for MetricsConfig {
@@ -885,6 +924,7 @@ impl Default for MetricsConfig {
         Self {
             enabled: true,
             prometheus_endpoint: true,
+            history_points: default_metrics_history_points(),
             labels: HashMap::new(),
         }
     }
@@ -947,6 +987,26 @@ pub struct McpServerEntry {
     /// URL for SSE transport. Required when `transport` is "sse".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Manual OAuth override for servers that don't support standard discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthOverrideEntry>,
+}
+
+/// Manual OAuth configuration override for an MCP server.
+///
+/// Used when the server doesn't implement RFC 9728/8414 discovery or
+/// when dynamic client registration is not available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthOverrideEntry {
+    /// The OAuth client ID.
+    pub client_id: String,
+    /// The authorization endpoint URL.
+    pub auth_url: String,
+    /// The token endpoint URL.
+    pub token_url: String,
+    /// OAuth scopes to request.
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 /// Channel configuration.
@@ -991,10 +1051,11 @@ impl Default for TlsConfig {
 }
 
 /// Chat configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
     /// How to handle messages that arrive while an agent run is active.
+    #[serde(default = "default_message_queue_mode")]
     pub message_queue_mode: MessageQueueMode,
     /// Preferred model IDs to show first in selectors (full or raw model IDs).
     pub priority_models: Vec<String>,
@@ -1003,6 +1064,20 @@ pub struct ChatConfig {
     /// live discovery), so this field is currently ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_models: Vec<String>,
+}
+
+fn default_message_queue_mode() -> MessageQueueMode {
+    MessageQueueMode::Followup
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            message_queue_mode: default_message_queue_mode(),
+            priority_models: Vec::new(),
+            allowed_models: Vec::new(),
+        }
+    }
 }
 
 /// Behaviour when `chat.send()` is called during an active run.
@@ -1023,10 +1098,14 @@ pub struct ToolsConfig {
     pub exec: ExecConfig,
     pub policy: ToolPolicyConfig,
     pub web: WebConfig,
+    pub maps: MapsConfig,
     pub browser: BrowserConfig,
     /// Maximum wall-clock seconds for an agent run (0 = no timeout). Default 600.
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
+    /// Maximum number of agent loop iterations before aborting. Default 25.
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: usize,
     /// Maximum bytes for a single tool result before truncation. Default 50KB.
     #[serde(default = "default_max_tool_result_bytes")]
     pub max_tool_result_bytes: usize,
@@ -1038,8 +1117,10 @@ impl Default for ToolsConfig {
             exec: ExecConfig::default(),
             policy: ToolPolicyConfig::default(),
             web: WebConfig::default(),
+            maps: MapsConfig::default(),
             browser: BrowserConfig::default(),
             agent_timeout_secs: default_agent_timeout_secs(),
+            agent_max_iterations: default_agent_max_iterations(),
             max_tool_result_bytes: default_max_tool_result_bytes(),
         }
     }
@@ -1049,8 +1130,32 @@ fn default_agent_timeout_secs() -> u64 {
     600
 }
 
+fn default_agent_max_iterations() -> usize {
+    25
+}
+
 fn default_max_tool_result_bytes() -> usize {
     50_000
+}
+
+/// Map tools configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MapsConfig {
+    /// Preferred map provider used by `show_map`.
+    pub provider: MapProvider,
+}
+
+/// Map provider selection for map links.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MapProvider {
+    #[default]
+    #[serde(rename = "google_maps")]
+    GoogleMaps,
+    #[serde(rename = "apple_maps")]
+    AppleMaps,
+    #[serde(rename = "openstreetmap")]
+    OpenStreetMap,
 }
 
 /// Web tools configuration (search, fetch).
@@ -1090,6 +1195,9 @@ pub struct WebSearchConfig {
     pub timeout_seconds: u64,
     /// In-memory cache TTL in minutes (0 to disable).
     pub cache_ttl_minutes: u64,
+    /// Enable DuckDuckGo HTML fallback when no provider API key is configured.
+    /// Disabled by default because it may trigger CAPTCHA challenges.
+    pub duckduckgo_fallback: bool,
     /// Perplexity-specific settings.
     pub perplexity: PerplexityConfig,
 }
@@ -1103,6 +1211,7 @@ impl Default for WebSearchConfig {
             max_results: 5,
             timeout_seconds: 30,
             cache_ttl_minutes: 15,
+            duckduckgo_fallback: false,
             perplexity: PerplexityConfig::default(),
         }
     }
@@ -1140,6 +1249,10 @@ pub struct WebFetchConfig {
     pub max_redirects: u8,
     /// Use readability extraction for HTML pages.
     pub readability: bool,
+    /// CIDR ranges exempt from SSRF blocking (e.g. `["172.22.0.0/16"]`).
+    /// Default: empty (all private IPs blocked).
+    #[serde(default)]
+    pub ssrf_allowlist: Vec<String>,
 }
 
 impl Default for WebFetchConfig {
@@ -1151,6 +1264,7 @@ impl Default for WebFetchConfig {
             cache_ttl_minutes: 15,
             max_redirects: 3,
             readability: true,
+            ssrf_allowlist: Vec::new(),
         }
     }
 }
@@ -1196,10 +1310,31 @@ pub struct BrowserConfig {
     /// Supports wildcards: "*.example.com" matches subdomains.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
+    /// Total system RAM threshold (MB) below which memory-saving Chrome flags
+    /// are injected automatically. Set to 0 to disable. Default: 2048.
+    #[serde(default = "default_low_memory_threshold_mb")]
+    pub low_memory_threshold_mb: u64,
+    /// Whether to persist the Chrome user profile across sessions.
+    /// When enabled, cookies, auth state, and local storage survive browser restarts.
+    /// Profile is stored at `data_dir()/browser/profile/` unless `profile_dir` overrides it.
+    #[serde(default = "default_persist_profile")]
+    pub persist_profile: bool,
+    /// Custom path for the persistent Chrome profile directory.
+    /// When set, `persist_profile` is implicitly true.
+    /// If not set and `persist_profile` is true, defaults to `data_dir()/browser/profile/`.
+    pub profile_dir: Option<String>,
 }
 
 fn default_sandbox_image() -> String {
     "browserless/chrome".to_string()
+}
+
+const fn default_low_memory_threshold_mb() -> u64 {
+    2048
+}
+
+const fn default_persist_profile() -> bool {
+    true
 }
 
 impl Default for BrowserConfig {
@@ -1219,6 +1354,9 @@ impl Default for BrowserConfig {
             chrome_args: Vec::new(),
             sandbox_image: default_sandbox_image(),
             allowed_domains: Vec::new(),
+            low_memory_threshold_mb: default_low_memory_threshold_mb(),
+            persist_profile: default_persist_profile(),
+            profile_dir: None,
         }
     }
 }
@@ -1689,6 +1827,37 @@ mod tests {
         let loc = GeoLocation::now(37.0, -122.0, Some("San Francisco".to_string()));
         assert_eq!(loc.place.as_deref(), Some("San Francisco"));
         assert!(loc.updated_at.is_some());
+    }
+
+    #[test]
+    fn env_section_parses() {
+        let toml = r#"
+[env]
+BRAVE_API_KEY = "test-key"
+OPENROUTER_API_KEY = "sk-or-test"
+"#;
+        let config: MoltisConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("BRAVE_API_KEY").unwrap(), "test-key");
+        assert_eq!(config.env.get("OPENROUTER_API_KEY").unwrap(), "sk-or-test");
+    }
+
+    #[test]
+    fn env_section_defaults_to_empty() {
+        let config: MoltisConfig = toml::from_str("").unwrap();
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn chat_config_default_queue_mode_is_followup() {
+        let cfg = ChatConfig::default();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
+    }
+
+    #[test]
+    fn chat_config_toml_missing_queue_mode_defaults_to_followup() {
+        let cfg: ChatConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.message_queue_mode, MessageQueueMode::Followup);
     }
 
     #[test]

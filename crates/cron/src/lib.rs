@@ -1,5 +1,5 @@
 //! Scheduled agent runs with cron expressions.
-//! Persistent storage at ~/.clawdbot/cron-jobs.json.
+//! Persistent storage at `<data_dir>/cron/jobs.json`.
 //! Isolated agent execution (no session), optional delivery to a channel.
 
 pub mod heartbeat;
@@ -10,6 +10,7 @@ pub mod store;
 pub mod store_file;
 pub mod store_memory;
 pub mod store_sqlite;
+pub mod system_events;
 pub mod types;
 
 /// Run database migrations for the cron crate.

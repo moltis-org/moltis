@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<script nonce="{{ nonce }}">!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
+<title>{{ page_title }}</title>
+<link rel="icon" type="image/png" sizes="96x96" href="{{ asset_prefix }}icons/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
+<meta name="build-ts" content="{{ build_ts }}">
+<script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
+<script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;var i=g&&g.identity;var e=i&&typeof i.emoji==="string"?i.emoji.trim():"";if(!e)return;var safe=e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");var svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="52">'+safe+"</text></svg>";var href="data:image/svg+xml,"+encodeURIComponent(svg);var links=Array.from(document.querySelectorAll('link[rel="icon"]'));if(links.length===0){var fallback=document.createElement("link");fallback.rel="icon";document.head.appendChild(fallback);links.push(fallback)}for(var n=0;n<links.length;n++){var link=links[n];link.type="image/svg+xml";link.removeAttribute("sizes");link.href=href}}()</script>
+<script nonce="{{ nonce }}" type="importmap">
+{
+  "imports": {
+    "preact": "{{ asset_prefix }}js/vendor/preact.mjs",
+    "preact/hooks": "{{ asset_prefix }}js/vendor/preact-hooks.mjs",
+    "@preact/signals": "{{ asset_prefix }}js/vendor/preact-signals.mjs",
+    "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs"
+  }
+}
+</script>
+<link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
+<link rel="stylesheet" href="{{ asset_prefix }}style.css">
+</head>
+<body>
+<div id="loginRoot" class="auth-page"></div>
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/login-app.js"></script>
+</body>
+</html>

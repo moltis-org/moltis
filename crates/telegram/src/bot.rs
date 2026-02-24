@@ -36,7 +36,7 @@ pub async fn start_polling(
     let client = teloxide::net::default_reqwest_settings()
         .timeout(std::time::Duration::from_secs(45))
         .build()?;
-    let bot = teloxide::Bot::with_client(config.token.expose_secret(), client);
+    let bot = Bot::with_client(config.token.expose_secret(), client);
 
     // Verify credentials and get bot username.
     let me = bot.get_me().await?;
@@ -51,6 +51,7 @@ pub async fn start_polling(
         BotCommand::new("sessions", "List and switch sessions"),
         BotCommand::new("model", "Switch provider/model"),
         BotCommand::new("sandbox", "Toggle sandbox and choose image"),
+        BotCommand::new("sh", "Enable shell command mode"),
         BotCommand::new("clear", "Clear session history"),
         BotCommand::new("compact", "Compact session (summarize)"),
         BotCommand::new("context", "Show session context info"),

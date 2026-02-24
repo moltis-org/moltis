@@ -108,6 +108,8 @@ pub async fn poll_for_token_with_headers(
             return Ok(OAuthTokens {
                 access_token: Secret::new(token),
                 refresh_token: body.refresh_token.map(Secret::new),
+                id_token: None,
+                account_id: None,
                 expires_at,
             });
         }
@@ -142,6 +144,7 @@ mod tests {
             auth_url,
             token_url,
             redirect_uri: String::new(),
+            resource: None,
             scopes: vec![],
             extra_auth_params: vec![],
             device_flow: true,

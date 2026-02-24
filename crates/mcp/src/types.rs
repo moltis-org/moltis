@@ -160,6 +160,48 @@ pub struct ToolsCallResult {
 /// MCP protocol version we implement.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
+// ── Transport Errors ──────────────────────────────────────────────────
+
+/// Typed manager errors for MCP lifecycle/auth flows.
+#[derive(Debug, thiserror::Error)]
+pub enum McpManagerError {
+    /// Server requires OAuth before it can be started.
+    #[error("MCP server '{server}' requires OAuth authentication")]
+    OAuthRequired { server: String },
+    /// OAuth callback state did not match any pending flow.
+    #[error("unknown or expired MCP OAuth state")]
+    OAuthStateNotFound,
+    /// Operation requires an SSE server.
+    #[error("MCP server '{server}' is not configured for SSE transport")]
+    NotSseTransport { server: String },
+    /// Operation requires an SSE URL.
+    #[error("MCP server '{server}' is missing an SSE URL")]
+    MissingSseUrl { server: String },
+    /// Server was not found in the MCP registry.
+    #[error("MCP server '{server}' not found in registry")]
+    ServerNotFound { server: String },
+}
+
+/// Typed transport errors for MCP SSE connections.
+///
+/// Used by `SseTransport` to distinguish recoverable auth errors (401)
+/// from other HTTP failures, enabling the auth retry flow.
+#[derive(Debug, thiserror::Error)]
+pub enum McpTransportError {
+    /// MCP server returned HTTP 401 Unauthorized.
+    #[error("MCP server returned HTTP 401 Unauthorized")]
+    Unauthorized {
+        /// The `WWW-Authenticate` header value, if present.
+        www_authenticate: Option<String>,
+    },
+    /// MCP server returned a non-success HTTP status.
+    #[error("MCP server returned HTTP {status}: {body}")]
+    HttpError { status: u16, body: String },
+    /// Any other transport error.
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

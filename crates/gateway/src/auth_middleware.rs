@@ -1,14 +1,16 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{ConnectInfo, FromRef, FromRequestParts, State},
+    extract::{ConnectInfo, FromRef, FromRequestParts},
     http::{HeaderMap, StatusCode, request::Parts},
-    middleware::Next,
-    response::{IntoResponse, Json},
 };
 
 #[cfg(feature = "web-ui")]
-use axum::response::Redirect;
+use axum::{
+    extract::State,
+    middleware::Next,
+    response::{IntoResponse, Json, Redirect},
+};
 
 use crate::{
     auth::{AuthIdentity, AuthMethod, CredentialStore},
@@ -123,7 +125,7 @@ pub async fn auth_gate(
                     method: AuthMethod::Loopback,
                 });
                 next.run(request).await
-            } else if path.starts_with("/api/") || path == "/ws" {
+            } else if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({
@@ -137,7 +139,7 @@ pub async fn auth_gate(
             }
         },
         AuthResult::Unauthorized => {
-            if path.starts_with("/api/") || path == "/ws" {
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(serde_json::json!({
@@ -252,5 +254,23 @@ mod tests {
         );
         assert_eq!(parse_cookie("other=def", "moltis_session"), None);
         assert_eq!(parse_cookie("", "moltis_session"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn terminal_ws_path_is_not_public() {
+        assert!(!is_public_path("/api/terminal/ws"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn chat_ws_path_is_not_public() {
+        assert!(!is_public_path("/ws/chat"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn graphql_paths_are_not_public() {
+        assert!(!is_public_path("/graphql"));
     }
 }

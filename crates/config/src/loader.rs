@@ -280,17 +280,18 @@ pub fn heartbeat_path() -> PathBuf {
     data_dir().join("HEARTBEAT.md")
 }
 
+/// Path to the workspace `MEMORY.md` file.
+pub fn memory_path() -> PathBuf {
+    data_dir().join("MEMORY.md")
+}
+
 /// Load identity values from `IDENTITY.md` frontmatter if present.
 pub fn load_identity() -> Option<AgentIdentity> {
     let path = identity_path();
     let content = std::fs::read_to_string(path).ok()?;
     let frontmatter = extract_yaml_frontmatter(&content)?;
     let identity = parse_identity_frontmatter(frontmatter);
-    if identity.name.is_none()
-        && identity.emoji.is_none()
-        && identity.creature.is_none()
-        && identity.vibe.is_none()
-    {
+    if identity.name.is_none() && identity.emoji.is_none() && identity.theme.is_none() {
         None
     } else {
         Some(identity)
@@ -416,6 +417,11 @@ pub fn load_heartbeat_md() -> Option<String> {
     load_workspace_markdown(heartbeat_path())
 }
 
+/// Load MEMORY.md from the workspace root (`data_dir`) if present and non-empty.
+pub fn load_memory_md() -> Option<String> {
+    load_workspace_markdown(memory_path())
+}
+
 /// Persist SOUL.md in the workspace root (`data_dir`).
 ///
 /// - `Some(non-empty)` writes `SOUL.md` with the given content
@@ -442,10 +448,8 @@ pub fn save_soul(soul: Option<&str>) -> anyhow::Result<PathBuf> {
 /// Persist identity values to `IDENTITY.md` using YAML frontmatter.
 pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     let path = identity_path();
-    let has_values = identity.name.is_some()
-        || identity.emoji.is_some()
-        || identity.creature.is_some()
-        || identity.vibe.is_some();
+    let has_values =
+        identity.name.is_some() || identity.emoji.is_some() || identity.theme.is_some();
 
     if !has_values {
         if path.exists() {
@@ -465,11 +469,8 @@ pub fn save_identity(identity: &AgentIdentity) -> anyhow::Result<PathBuf> {
     if let Some(emoji) = identity.emoji.as_deref() {
         yaml_lines.push(format!("emoji: {}", yaml_scalar(emoji)));
     }
-    if let Some(creature) = identity.creature.as_deref() {
-        yaml_lines.push(format!("creature: {}", yaml_scalar(creature)));
-    }
-    if let Some(vibe) = identity.vibe.as_deref() {
-        yaml_lines.push(format!("vibe: {}", yaml_scalar(vibe)));
+    if let Some(theme) = identity.theme.as_deref() {
+        yaml_lines.push(format!("theme: {}", yaml_scalar(theme)));
     }
     let yaml = yaml_lines.join("\n");
     let content = format!(
@@ -551,8 +552,8 @@ fn parse_identity_frontmatter(frontmatter: &str) -> AgentIdentity {
         match key {
             "name" => identity.name = Some(value.to_string()),
             "emoji" => identity.emoji = Some(value.to_string()),
-            "creature" => identity.creature = Some(value.to_string()),
-            "vibe" => identity.vibe = Some(value.to_string()),
+            // Accept "creature" and "vibe" as backward-compat aliases for "theme".
+            "theme" | "creature" | "vibe" => identity.theme = Some(value.to_string()),
             _ => {},
         }
     }
@@ -654,7 +655,12 @@ fn strip_leading_html_comments(content: &str) -> &str {
     }
 }
 
-fn home_dir() -> Option<PathBuf> {
+/// Returns the user's home directory (`$HOME` / `~`).
+///
+/// This is the **single call-site** for `directories::BaseDirs` — all other
+/// crates must call this via `moltis_config::home_dir()` instead of using the
+/// `directories` crate directly.
+pub fn home_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf())
 }
 
@@ -986,8 +992,8 @@ mod tests {
         _data_dir: Option<PathBuf>,
     }
 
-    static DATA_DIR_TEST_LOCK: std::sync::Mutex<TestDataDirState> =
-        std::sync::Mutex::new(TestDataDirState { _data_dir: None });
+    static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> =
+        Mutex::new(TestDataDirState { _data_dir: None });
 
     #[test]
     fn parse_env_value_bool() {
@@ -1054,6 +1060,13 @@ mod tests {
         let vars = vec![("MOLTIS_TOOLS__AGENT_TIMEOUT_SECS".into(), "120".into())];
         let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
         assert_eq!(config.tools.agent_timeout_secs, 120);
+    }
+
+    #[test]
+    fn apply_env_overrides_tools_agent_max_iterations() {
+        let vars = vec![("MOLTIS_TOOLS__AGENT_MAX_ITERATIONS".into(), "64".into())];
+        let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+        assert_eq!(config.tools.agent_max_iterations, 64);
     }
 
     #[test]
@@ -1150,6 +1163,18 @@ mod tests {
             raw.contains("port = 23456"),
             "generated template should include selected server port"
         );
+        assert!(
+            raw.contains("message_queue_mode = \"followup\""),
+            "generated template should set followup queue mode by default"
+        );
+        assert!(
+            raw.contains("\"followup\" - Queue messages, replay one-by-one after run"),
+            "generated template should document the followup queue option"
+        );
+        assert!(
+            raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
+            "generated template should document the collect queue option"
+        );
     }
 
     #[test]
@@ -1245,8 +1270,7 @@ name = "Rex"
         let identity = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: Some("🐶".to_string()),
-            creature: Some("dog".to_string()),
-            vibe: Some("chill".to_string()),
+            theme: Some("chill dog".to_string()),
         };
 
         let path = save_identity(&identity).expect("save identity");
@@ -1256,8 +1280,7 @@ name = "Rex"
         let loaded = load_identity().expect("load identity");
         assert_eq!(loaded.name.as_deref(), Some("Rex"));
         assert_eq!(loaded.emoji.as_deref(), Some("🐶"), "raw file:\n{raw}");
-        assert_eq!(loaded.creature.as_deref(), Some("dog"));
-        assert_eq!(loaded.vibe.as_deref(), Some("chill"));
+        assert_eq!(loaded.theme.as_deref(), Some("chill dog"));
 
         clear_data_dir();
     }
@@ -1271,8 +1294,7 @@ name = "Rex"
         let seeded = AgentIdentity {
             name: Some("Rex".to_string()),
             emoji: None,
-            creature: None,
-            vibe: None,
+            theme: None,
         };
         let path = save_identity(&seeded).expect("seed identity");
         assert!(path.exists());
@@ -1400,6 +1422,47 @@ name = "Rex"
 
         std::fs::write(dir.path().join("HEARTBEAT.md"), "\n# Heartbeat\n- ping\n").unwrap();
         assert_eq!(load_heartbeat_md().as_deref(), Some("# Heartbeat\n- ping"));
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_reads_trimmed_content() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        std::fs::write(
+            dir.path().join("MEMORY.md"),
+            "\n## User Facts\n- Lives in Paris\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_memory_md().as_deref(),
+            Some("## User Facts\n- Lives in Paris")
+        );
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn load_memory_md_returns_none_when_missing() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(load_memory_md(), None);
+
+        clear_data_dir();
+    }
+
+    #[test]
+    fn memory_path_is_under_data_dir() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        set_data_dir(dir.path().to_path_buf());
+
+        assert_eq!(memory_path(), dir.path().join("MEMORY.md"));
 
         clear_data_dir();
     }

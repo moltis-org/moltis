@@ -39,17 +39,14 @@ Enable providers in `moltis.toml`:
 
 ```toml
 [providers]
-default = "openai-codex"
+offered = ["openai-codex", "github-copilot", "local-llm"]
 
-[providers.openai-codex]
+[providers.local-llm]
 enabled = true
+models = ["qwen2.5-coder-7b-q4_k_m"]
 
-[providers.github-copilot]
-enabled = true
-
-[providers.local]
-enabled = true
-model = "qwen2.5-coder-7b-q4_k_m"
+[chat]
+priority_models = ["gpt-5.2"]
 ```
 
 ## Provider Setup
@@ -86,7 +83,8 @@ Local LLM runs models directly on your machine.
 
 - **Per session**: Use the model selector in the chat UI.
 - **Per message**: Use `/model <name>` in chat.
-- **Global default**: Set `[providers].default` and `[agent].model` in `moltis.toml`.
+- **Global defaults**: Use `[providers].offered`, provider `models = [...]`, and
+  `[chat].priority_models` in `moltis.toml`.
 
 ## Troubleshooting
 

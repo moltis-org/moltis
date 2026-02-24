@@ -1,0 +1,52 @@
+# Moltis Docker Compose example for Coolify (Hetzner/VPS friendly)
+#
+# Deploy this as a "Service Stack" in Coolify.
+#
+# Why this differs from local docker-compose:
+# - Uses --no-tls because Coolify terminates TLS at the proxy.
+# - Uses SERVICE_FQDN_* magic env var for Coolify routing.
+# - Mounts docker.sock so Moltis sandboxed exec tools can launch containers.
+# - Runs as root to avoid docker.sock group-id mismatches across hosts.
+#
+# Required in Coolify UI:
+# - MOLTIS_PASSWORD (initial auth password)
+# - SERVICE_FQDN_MOLTIS_13131 (your domain, e.g. https://moltis.example.com)
+#
+# If you do not mount docker.sock, Moltis will still run, but sandboxed command
+# execution falls back to no container isolation.
+
+services:
+  moltis:
+    image: ghcr.io/moltis-org/moltis:latest
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "13131"
+      - --no-tls
+    environment:
+      - SERVICE_FQDN_MOLTIS_13131=${SERVICE_FQDN_MOLTIS_13131:?}
+      - MOLTIS_PASSWORD=${MOLTIS_PASSWORD:?}
+      - MOLTIS_NO_TLS=true
+      - MOLTIS_BEHIND_PROXY=true
+      - MOLTIS_DEPLOY_PLATFORM=coolify
+      - MOLTIS_CONFIG_DIR=/data/config
+      - MOLTIS_DATA_DIR=/data
+    volumes:
+      - type: volume
+        source: moltis-data
+        target: /data
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -Ssf http://localhost:13131/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  moltis-data: {}

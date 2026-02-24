@@ -24,7 +24,7 @@ use crate::{
     snapshot::{
         extract_snapshot, find_element_by_ref, focus_element_by_ref, scroll_element_into_view,
     },
-    types::{BrowserAction, BrowserConfig, BrowserRequest, BrowserResponse},
+    types::{BrowserAction, BrowserConfig, BrowserPreference, BrowserRequest, BrowserResponse},
 };
 
 /// Extract session_id or return an error for actions that require an existing session.
@@ -100,6 +100,7 @@ impl BrowserManager {
         info!(
             action = %request.action,
             session_id = request.session_id.as_deref().unwrap_or("(new)"),
+            browser = ?request.browser,
             execution_mode = mode,
             sandbox_image = %self.config.sandbox_image,
             "executing browser action"
@@ -110,7 +111,12 @@ impl BrowserManager {
 
         match timeout(
             timeout_duration,
-            self.execute_action(request.session_id.as_deref(), request.action, sandbox),
+            self.execute_action(
+                request.session_id.as_deref(),
+                request.action,
+                sandbox,
+                request.browser,
+            ),
         )
         .await
         {
@@ -156,23 +162,46 @@ impl BrowserManager {
         }
     }
 
+    /// Clean up a session whose CDP connection has died and return an
+    /// actionable error the agent can act on.
+    async fn cleanup_stale_session(&self, session_id: &str, action: &str) -> BrowserError {
+        warn!(
+            session_id,
+            action, "browser connection dead, closing stale session"
+        );
+        let _ = self.pool.close_session(session_id).await;
+        BrowserError::ConnectionClosed(format!(
+            "Browser session {session_id} lost its connection during {action}. \
+             Please navigate to the page again to get a fresh session."
+        ))
+    }
+
     /// Execute a browser action.
     async fn execute_action(
         &self,
         session_id: Option<&str>,
         action: BrowserAction,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        match action {
-            BrowserAction::Navigate { url } => self.navigate(session_id, &url, sandbox).await,
+        // Navigate has its own retry-with-fresh-session logic, so handle it
+        // separately to avoid double-cleanup.
+        if let BrowserAction::Navigate { ref url } = action {
+            return self.navigate(session_id, url, sandbox, browser).await;
+        }
+
+        let action_name = action.to_string();
+
+        let result = match action {
+            BrowserAction::Navigate { .. } => unreachable!(),
             BrowserAction::Screenshot {
                 full_page,
                 highlight_ref,
             } => {
-                self.screenshot(session_id, full_page, highlight_ref, sandbox)
+                self.screenshot(session_id, full_page, highlight_ref, sandbox, browser)
                     .await
             },
-            BrowserAction::Snapshot => self.snapshot(session_id, sandbox).await,
+            BrowserAction::Snapshot => self.snapshot(session_id, sandbox, browser).await,
             BrowserAction::Click { ref_ } => self.click(session_id, ref_, sandbox).await,
             BrowserAction::Type { ref_, text } => {
                 self.type_text(session_id, ref_, &text, sandbox).await
@@ -195,6 +224,15 @@ impl BrowserManager {
             BrowserAction::Forward => self.go_forward(session_id, sandbox).await,
             BrowserAction::Refresh => self.refresh(session_id, sandbox).await,
             BrowserAction::Close => self.close(session_id, sandbox).await,
+        };
+
+        // Detect stale connections for all non-Navigate actions
+        match result {
+            Err(ref e) if e.is_connection_error() => {
+                let sid = session_id.unwrap_or("unknown");
+                Err(self.cleanup_stale_session(sid, &action_name).await)
+            },
+            other => other,
         }
     }
 
@@ -204,6 +242,7 @@ impl BrowserManager {
         session_id: Option<&str>,
         url: &str,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
         // Validate URL before navigation
         validate_url(url)?;
@@ -216,7 +255,10 @@ impl BrowserManager {
             )));
         }
 
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
         #[cfg(feature = "metrics")]
@@ -224,15 +266,15 @@ impl BrowserManager {
 
         // Try navigation, retry with fresh session if connection is dead
         if let Err(e) = page.goto(url).await {
-            let err_str = e.to_string();
-            if err_str.contains("AlreadyClosed") || err_str.contains("ConnectionClosed") {
+            let nav_err = BrowserError::NavigationFailed(e.to_string());
+            if nav_err.is_connection_error() {
                 warn!(
                     session_id = sid,
                     "browser connection dead, closing session and retrying"
                 );
                 let _ = self.pool.close_session(&sid).await;
                 // Retry with a fresh session (use same sandbox mode)
-                let new_sid = self.pool.get_or_create(None, sandbox).await?;
+                let new_sid = self.pool.get_or_create(None, sandbox, browser).await?;
                 let new_page = self.pool.get_page(&new_sid).await?;
                 new_page
                     .goto(url)
@@ -251,7 +293,7 @@ impl BrowserManager {
                     BrowserResponse::success(new_sid, 0, sandbox).with_url(current_url),
                 ));
             }
-            return Err(BrowserError::NavigationFailed(err_str));
+            return Err(nav_err);
         }
 
         // Wait for network idle
@@ -280,8 +322,12 @@ impl BrowserManager {
         full_page: bool,
         highlight_ref: Option<u32>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
         // Optionally highlight an element before screenshot
@@ -347,33 +393,21 @@ impl BrowserManager {
     }
 
     /// Get a DOM snapshot with element references.
+    ///
+    /// Stale-connection errors are detected centrally in `execute_action()`.
     async fn snapshot(
         &self,
         session_id: Option<&str>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), BrowserError> {
-        let sid = self.pool.get_or_create(session_id, sandbox).await?;
+        let sid = self
+            .pool
+            .get_or_create(session_id, sandbox, browser)
+            .await?;
         let page = self.pool.get_page(&sid).await?;
 
-        // Try snapshot, retry with fresh session if connection is dead
-        let snapshot = match extract_snapshot(&page).await {
-            Ok(s) => s,
-            Err(e) => {
-                let err_str = e.to_string();
-                if err_str.contains("AlreadyClosed") || err_str.contains("ConnectionClosed") {
-                    warn!(
-                        session_id = sid,
-                        "browser connection dead, closing session and retrying"
-                    );
-                    let _ = self.pool.close_session(&sid).await;
-                    // For snapshot we need an existing page, so return error
-                    return Err(BrowserError::ConnectionClosed(
-                        "Browser connection closed. Please navigate to a page first.".to_string(),
-                    ));
-                }
-                return Err(e);
-            },
-        };
+        let snapshot = extract_snapshot(&page).await?;
 
         debug!(
             session_id = sid,
@@ -842,7 +876,7 @@ fn validate_url(url: &str) -> Result<(), BrowserError> {
 /// Truncate a URL for error messages (to avoid huge garbage URLs in logs).
 fn truncate_url(url: &str) -> String {
     if url.len() > 100 {
-        format!("{}...", &url[..100])
+        format!("{}...", &url[..url.floor_char_boundary(100)])
     } else {
         url.to_string()
     }
@@ -906,6 +940,16 @@ mod tests {
         assert!(validate_url("://missing.scheme").is_err());
     }
 
+    #[test]
+    fn test_truncate_url_handles_multibyte_boundary() {
+        let url = format!("https://{}л{}", "a".repeat(91), "tail");
+        let truncated = truncate_url(&url);
+        let prefix = truncated.strip_suffix("...").unwrap_or("");
+        assert_eq!(prefix.len(), 99);
+        assert!(!prefix.contains('л'));
+        assert!(prefix.ends_with('a'));
+    }
+
     #[tokio::test]
     async fn manager_close_session_nonexistent_is_noop() {
         let manager = BrowserManager::default();
@@ -925,5 +969,21 @@ mod tests {
         let manager = BrowserManager::default();
         manager.shutdown().await;
         assert_eq!(manager.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_stale_session_returns_connection_closed() {
+        let manager = BrowserManager::default();
+        let err = manager.cleanup_stale_session("sess-42", "screenshot").await;
+        assert!(
+            err.is_connection_error(),
+            "cleanup_stale_session must return a connection error"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("sess-42"), "error should mention session id");
+        assert!(
+            msg.contains("screenshot"),
+            "error should mention the action"
+        );
     }
 }

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+
+<!-- PWA Meta Tags -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="mobile-web-app-capable" content="yes">
+
+<!-- iOS PWA Meta Tags -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="moltis">
+<link rel="apple-touch-icon" href="{{ asset_prefix }}icons/apple-touch-icon.png">
+<script nonce="{{ nonce }}">!function(){var t=localStorage.getItem("moltis-theme")||"system";if(t==="system")t=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t);document.documentElement.style.background=t==="dark"?"#0f1115":"#fafafa";document.documentElement.style.color=t==="dark"?"#e0e0e0":"#222"}()</script>
+<title>{{ share_site_name }}</title>
+<meta name="description" content="{{ share_description }}">
+<meta property="og:title" content="{{ share_title }}">
+<meta property="og:description" content="{{ share_description }}">
+<meta property="og:site_name" content="{{ share_site_name }}">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="{{ share_image_url }}">
+<meta property="og:image:secure_url" content="{{ share_image_url }}">
+<meta property="og:image:width" content="2400">
+<meta property="og:image:height" content="1260">
+<meta property="og:image:alt" content="{{ share_image_alt }}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ share_image_url }}">
+<meta name="twitter:image:alt" content="{{ share_image_alt }}">
+<meta name="twitter:title" content="{{ share_title }}">
+<meta name="twitter:description" content="{{ share_description }}">
+<link rel="icon" type="image/png" sizes="96x96" href="{{ asset_prefix }}icons/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
+<meta name="build-ts" content="{{ build_ts }}">
+<script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
+<script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;var i=g&&g.identity;var e=i&&typeof i.emoji==="string"?i.emoji.trim():"";if(!e)return;var safe=e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");var svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="52">'+safe+"</text></svg>";var href="data:image/svg+xml,"+encodeURIComponent(svg);var links=Array.from(document.querySelectorAll('link[rel="icon"]'));if(links.length===0){var fallback=document.createElement("link");fallback.rel="icon";document.head.appendChild(fallback);links.push(fallback)}for(var n=0;n<links.length;n++){var link=links[n];link.type="image/svg+xml";link.removeAttribute("sizes");link.href=href}}()</script>
+<script nonce="{{ nonce }}" type="importmap">
+{
+  "imports": {
+    "preact": "{{ asset_prefix }}js/vendor/preact.mjs",
+    "preact/hooks": "{{ asset_prefix }}js/vendor/preact-hooks.mjs",
+    "@preact/signals": "{{ asset_prefix }}js/vendor/preact-signals.mjs",
+    "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
+    "luxon": "{{ asset_prefix }}js/vendor/luxon.mjs",
+    "uplot": "{{ asset_prefix }}js/vendor/uplot.mjs",
+    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs",
+    "@xterm/xterm": "{{ asset_prefix }}js/vendor/xterm.mjs",
+    "@xterm/addon-fit": "{{ asset_prefix }}js/vendor/xterm-addon-fit.mjs"
+  }
+}
+</script>
+<link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/layout.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/chat.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/mobile.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/vendor/xterm.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/uplot.css">
+<link rel="stylesheet" href="{{ asset_prefix }}style.css">
+<link rel="modulepreload" href="{{ asset_prefix }}js/app.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/pwa.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/pwa-install.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/mobile.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/state.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/theme.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/helpers.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/events.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/router.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/websocket.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/sessions.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/session-search.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/models.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/projects.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/project-combo.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/providers.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/chat-ui.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/icons.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/sandbox.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/nav-counts.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/logs-alert.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-chat.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-crons.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-projects.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-providers.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-channels.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-logs.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-skills.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-mcp.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-hooks.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-settings.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-images.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/emoji-picker.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-hooks.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-signals.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/htm-preact.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/luxon.mjs">
+<link rel="modulepreload" href="{{ asset_prefix }}js/time-format.js">
+</head>
+<body>
+
+<!-- Git branch banner (shown when running on a non-main branch) -->
+<div id="branchBanner" class="branch-banner" style="display:none">
+  <span class="icon icon-md icon-link"></span>
+  <span>Running on: <strong id="branchName"></strong></span>
+</div>
+
+<!-- Top bar -->
+<header class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
+  <a href="{{ routes.chats }}" id="titleLink" class="text-base font-medium tracking-wide text-[var(--text-strong)] no-underline cursor-pointer"><span id="titleEmoji"></span><span id="titleName">moltis</span></a>
+  <script nonce="{{ nonce }}">!function(){var g=window.__MOLTIS__;if(!g||!g.identity)return;var i=g.identity;var e=document.getElementById("titleEmoji");var n=document.getElementById("titleName");if(e&&i.emoji)e.textContent=i.emoji+" ";if(n&&i.name)n.textContent=i.name;var a=(i&&i.name&&String(i.name).trim())||"moltis";document.title=a}()</script>
+  <span class="status-dot" id="statusDot"></span>
+  <span class="text-xs text-[var(--muted)]" id="statusText">disconnected</span>
+  <div class="flex-1"></div>
+
+  <span id="memoryInfo" class="text-xs text-[var(--muted)]" title="Process memory · System free memory"></span>
+
+  <button id="mobileMenuBtn" class="burger-btn" title="Menu" aria-label="Open menu">
+    <span class="icon icon-md icon-burger-mobile"></span>
+  </button>
+
+  <div class="header-actions">
+    <button id="settingsBtn" class="header-link-btn" title="Settings">
+      <span class="icon icon-settings"></span>
+      <span class="header-link-label">Settings</span>
+    </button>
+    <a
+      href="https://github.com/moltis-org/moltis/issues/new"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="header-link-btn"
+      title="Report an issue"
+    >
+      <span class="icon icon-link"></span>
+      <span class="header-link-label">Report issue</span>
+    </a>
+  </div>
+
+  <!-- Theme toggle -->
+  <div class="theme-toggle" id="themeToggle">
+    <button class="theme-btn" data-theme-val="light" title="Light theme">
+      <span class="icon icon-sun"></span>
+    </button>
+    <button class="theme-btn" data-theme-val="system" title="System theme">
+      <span class="icon icon-monitor"></span>
+    </button>
+    <button class="theme-btn" data-theme-val="dark" title="Dark theme">
+      <span class="icon icon-moon"></span>
+    </button>
+  </div>
+
+  <!-- Logout button (shown by JS only when auth is active) -->
+  <button id="logoutBtn" class="logout-btn" title="Sign out" style="display:none">
+    <span class="icon icon-logout"></span>
+  </button>
+
+</header>
+
+<div id="mobileMenuOverlay" class="mobile-menu-overlay"></div>
+<div id="mobileMenuPanel" class="mobile-menu-panel">
+  <button id="mobileMenuSessionsBtn" type="button" class="mobile-menu-item">
+    <span class="icon icon-chat-dots"></span>
+    <span>Sessions</span>
+  </button>
+  <button id="mobileMenuSettingsBtn" type="button" class="mobile-menu-item">
+    <span class="icon icon-settings"></span>
+    <span>Settings</span>
+  </button>
+  <button id="mobileMenuLogoutBtn" type="button" class="mobile-menu-item mobile-menu-item-danger" style="display:none">
+    <span class="icon icon-logout"></span>
+    <span>Sign out</span>
+  </button>
+</div>
+
+<!-- Auth disabled warning banner (shown by JS when auth is removed) -->
+<div id="authDisabledBanner" class="auth-disabled-banner" style="display:none">
+  <span>Authentication is disabled. Anyone with network access can control moltis and your computer.</span>
+  <a href="{{ routes.security }}" class="auth-disabled-setup">Set up authentication</a>
+</div>
+
+<!-- Update available banner (shown when a newer GitHub release exists) -->
+<div id="updateBanner" class="info-banner" style="display:none">
+  <span>
+    An update is available
+    <strong id="updateLatestVersion"></strong>
+  </span>
+  <a id="updateReleaseLink" href="https://github.com/moltis-org/moltis/releases/latest" target="_blank" rel="noopener noreferrer" class="auth-disabled-setup">View release</a>
+  <button id="updateDismissBtn" type="button" class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer">Dismiss</button>
+</div>
+
+<!-- PWA Install Banner (shown on mobile when not installed) -->
+<div id="installBanner" class="hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--surface)] border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg flex-col gap-3 md:hidden">
+  <div class="flex items-start gap-3">
+    <img src="{{ asset_prefix }}icons/icon-72.png" alt="moltis" class="w-12 h-12 rounded-lg shrink-0">
+    <div data-instructions class="flex-1 min-w-0"></div>
+  </div>
+  <div class="flex gap-2 justify-end">
+    <button data-install-btn class="provider-btn" style="display:none">Install</button>
+    <button data-dismiss-btn class="provider-btn provider-btn-secondary">Not now</button>
+  </div>
+</div>
+
+<!-- Overlays for mobile panels -->
+<div id="sessionsOverlay" class="sessions-overlay"></div>
+
+<!-- Main layout -->
+<div class="flex flex-1 min-h-0 overflow-hidden">
+  <!-- Sessions sidebar -->
+  <div class="w-[240px] border-r border-[var(--border)] flex flex-col bg-[var(--surface)] shrink-0 hidden" id="sessionsPanel">
+    <!-- Project selector -->
+    <div id="projectSelectWrapper" class="px-3 py-2 border-b border-[var(--border)] hidden">
+      <div id="projectFilterCombo" class="model-combo">
+        <button id="projectFilterBtn" class="model-combo-btn" type="button" style="width:100%;max-width:none;justify-content:space-between">
+          <span id="projectFilterLabel">All sessions</span>
+          <span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
+        </button>
+        <div id="projectFilterDropdown" class="model-dropdown hidden" style="width:100%">
+          <input id="projectFilterSearch" type="text" placeholder="Search projects…" class="model-search-input" autocomplete="off" />
+          <div id="projectFilterList" class="model-dropdown-list"></div>
+        </div>
+      </div>
+    </div>
+    <div class="px-3 py-2 border-b border-[var(--border)] relative">
+      <div class="flex items-center gap-1">
+        <input id="sessionSearch" type="text" placeholder="Search sessions…"
+               class="flex-1 min-w-0 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
+        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
+        <button id="clearAllSessionsBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-0.5 rounded hover:text-[var(--error,#e55)] hover:border-[var(--error,#e55)] transition-colors cursor-pointer bg-transparent hidden" title="Clear all sessions">Clear</button>
+      </div>
+      <div id="searchResults" class="hidden"></div>
+    </div>
+    <div class="flex-1 overflow-y-auto" id="sessionList"></div>
+  </div>
+
+  <!-- Page content (swapped by router) -->
+  <div id="pageContent" class="flex-1 flex flex-col min-w-0 overflow-hidden"></div>
+</div>
+
+<!-- Mobile sessions toggle FAB -->
+<button id="sessionsToggle" class="sessions-toggle-btn" title="Toggle sessions">
+  <span class="icon icon-xl icon-chat-dots"></span>
+</button>
+
+<!-- Modals (created on demand by modals.js) -->
+<div id="modalRoot"></div>
+
+<!-- Tailscale section hidden elements (toggled by page-settings.js) -->
+<div id="ts-installed-bar" style="display:none">
+  <div class="info-bar">
+    <span class="info-field">
+      <span class="status-dot connected"></span>
+      <span class="info-label">Installed</span>
+      <span data-info-version class="info-version"></span>
+    </span>
+    <span data-ts-tailnet-wrap class="info-field" style="display:none">
+      <span class="info-label">Tailnet:</span>
+      <span data-ts-tailnet class="info-value-strong"></span>
+    </span>
+    <span data-ts-account-wrap class="info-field" style="display:none">
+      <span class="info-label">Account:</span>
+      <span data-ts-account class="info-value"></span>
+    </span>
+    <span data-ts-ip-wrap class="info-field" style="display:none">
+      <span class="info-label">IP:</span>
+      <span data-ts-ip class="info-value-mono"></span>
+    </span>
+  </div>
+</div>
+
+<div id="ts-not-installed" style="display:none">
+  <div class="info-bar" style="justify-content:center;flex-direction:column;gap:12px;text-align:center">
+    <p style="font-size:.875rem;color:var(--text);margin:0">
+      The <code style="font-family:var(--font-mono);font-size:.875rem">tailscale</code> CLI was not found on this machine.
+    </p>
+    <div>
+      <a href="https://tailscale.com/download" target="_blank" rel="noopener"
+        class="provider-btn" style="display:inline-block;text-decoration:none">
+        Install Tailscale
+      </a>
+      <button data-ts-recheck class="provider-btn provider-btn-secondary" style="margin-left:8px">
+        Re-check
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="ts-error" class="settings-alert-error whitespace-pre-line max-w-form" style="display:none">
+  <span class="icon icon-lg icon-warn-triangle shrink-0 mt-0.5"></span>
+  <span data-ts-error-text class="whitespace-pre-line"></span>
+</div>
+
+<div id="ts-not-running" class="alert-warning-text max-w-form" style="display:none">
+  <span class="alert-label-warn">Warning:</span>
+  Tailscale is not running. Start it with <code class="font-mono">tailscale up</code> or open the Tailscale app.
+</div>
+
+<div id="ts-mode-section" class="max-w-form" style="display:none">
+  <h3 class="text-sm font-medium text-[var(--text-strong)] mb-2">Mode</h3>
+  <div data-ts-mode-btns class="flex gap-2"></div>
+  <div data-ts-configuring class="text-xs text-[var(--muted)] mt-1.5" style="display:none"></div>
+</div>
+
+<div id="ts-hostname" class="max-w-form" style="display:none">
+  <h3 class="text-sm font-medium text-[var(--text-strong)] mb-1">Hostname</h3>
+  <a data-ts-hostname-link href="#" target="_blank" rel="noopener" class="font-mono text-sm text-[var(--text)] no-underline pointer-events-none">
+    <span data-ts-hostname-value></span>
+  </a>
+</div>
+
+<div id="ts-url" class="max-w-form" style="display:none">
+  <h3 class="text-sm font-medium text-[var(--text-strong)] mb-1">URL</h3>
+  <div class="font-mono text-sm">
+    <a data-ts-url-link href="#" target="_blank" rel="noopener" class="text-[var(--accent)] no-underline"></a>
+  </div>
+</div>
+
+<div id="ts-funnel-warning" class="alert-warning-text max-w-form" style="display:none">
+  <span class="alert-label-warn">Warning:</span>
+  Funnel exposes your gateway to the public internet. Make sure password authentication is configured.
+</div>
+
+<div id="ts-funnel-security-warning" class="alert-warning-text max-w-form" style="display:none">
+  <span class="alert-label-warn">Warning:</span>
+  Enabling Funnel exposes moltis to the public internet. This code has not been security-audited. Use at your own risk.
+</div>
+<div id="ts-funnel-auth-btn" style="display:none">
+  <a href="{{ routes.security }}" class="provider-btn">Set up authentication</a>
+</div>
+
+<!-- Voice provider setup instructions (toggled by page-settings.js) -->
+<div id="voice-whisper-cli-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">brew install whisper-cpp</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "whisper-cli"
+
+[voice.stt.whisper_cli]
+model_path = "~/.moltis/models/ggml-base.en.bin"</code>
+  Download models from <a href="https://huggingface.co/ggerganov/whisper.cpp/tree/main" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">Hugging Face</a>.
+</div>
+
+<div id="voice-sherpa-onnx-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  See <a href="https://k2-fsa.github.io/sherpa/onnx/install.html" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">sherpa-onnx documentation</a> for installation.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "sherpa-onnx"
+
+[voice.stt.sherpa_onnx]
+model_dir = "~/.moltis/models/sherpa-onnx"</code>
+</div>
+
+<div id="voice-piper-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install piper-tts</code>
+  Or download from <a href="https://github.com/rhasspy/piper/releases" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">GitHub releases</a>.<br /><br />
+  <strong>Download a voice model:</strong><br />
+  Browse voices at <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">piper-samples</a> and download the .onnx file.<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "piper"
+
+[voice.tts.piper]
+model_path = "~/.moltis/models/en_US-lessac-medium.onnx"</code>
+</div>
+
+<div id="voice-coqui-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <strong>Installation:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">pip install TTS</code>
+  <br />
+  <strong>Start the server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">tts-server --model_name tts_models/en/ljspeech/tacotron2-DDC</code>
+  Or use Docker:<br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded">docker run -p 5002:5002 ghcr.io/coqui-ai/tts</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.tts]
+provider = "coqui"
+
+[voice.tts.coqui]
+endpoint = "http://localhost:5002"</code>
+  <br />
+  Browse available models: <a href="https://github.com/coqui-ai/TTS#available-models" target="_blank" rel="noopener" class="hover:underline text-[var(--accent)]">coqui-ai/TTS</a>
+</div>
+
+<div id="voice-voxtral-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  <div data-voxtral-requirements></div>
+  <strong>Requirements:</strong> Linux, Python 3.10+, CUDA GPU with 10GB+ VRAM<br /><br />
+  <strong>Setup:</strong><br />
+  1. Install vLLM: <code class="font-mono text-xs">pip install "vllm[audio]"</code><br />
+  2. Start the server:<br />
+  <code class="font-mono text-xs block my-1 ml-3 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">vllm serve mistralai/Voxtral-Mini-3B-2507 \
+  --tokenizer_mode mistral \
+  --config_format mistral \
+  --load_format mistral</code>
+  3. The model downloads automatically on first run (~3GB)<br /><br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "voxtral-local"
+
+[voice.stt.voxtral_local]
+endpoint = "http://localhost:8000"</code>
+  <br />
+  <strong>Languages:</strong> English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish, Norwegian, Danish, Finnish, Arabic
+</div>
+
+<div id="voice-voxtral-requirements-ok" class="text-xs p-2 rounded-md mb-3 border border-[var(--accent)]" style="display:none;background:color-mix(in srgb, var(--accent) 10%, transparent);">
+  <div class="font-medium text-[var(--accent)]">✓ System requirements met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+</div>
+
+<div id="voice-voxtral-requirements-fail" class="text-xs p-2 rounded-md mb-3 border border-[var(--warning,#f59e0b)]" style="display:none;background:color-mix(in srgb, var(--warning, #f59e0b) 10%, transparent);">
+  <div class="font-medium" style="color:var(--warning,#f59e0b)">⚠ System requirements not met</div>
+  <div class="text-[var(--muted)] mt-1">
+    <strong>Detected:</strong> <span data-voxtral-detected></span>
+  </div>
+  <ul data-voxtral-reasons class="text-[var(--muted)] mt-1.5 pl-4 m-0"></ul>
+</div>
+
+<!-- Templates -->
+<template id="tpl-thinking-dots">
+  <span class="thinking-dots"><span></span><span></span><span></span></span>
+</template>
+
+
+<template id="tpl-exec-card">
+  <div class="msg exec-card running">
+    <div class="exec-prompt">
+      <span class="exec-prompt-char">$</span>
+      <span data-cmd></span>
+    </div>
+    <div class="exec-status">running…</div>
+  </div>
+</template>
+
+<template id="tpl-approval-card">
+  <div class="msg approval-card">
+    <div class="approval-label">Command requires approval:</div>
+    <code class="approval-cmd"></code>
+    <div class="approval-btns">
+      <button class="approval-btn approval-allow">Allow</button>
+      <button class="approval-btn approval-deny">Deny</button>
+    </div>
+    <div class="approval-countdown"></div>
+  </div>
+</template>
+
+<template id="tpl-session-item">
+  <div class="session-item">
+    <div class="session-info">
+      <div class="session-label">
+        <span class="session-icon"></span>
+        <span data-label-text></span>
+        <span class="session-actions"></span>
+      </div>
+      <div class="session-meta"></div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-install-hint">
+  <div class="install-hint">
+    <div data-install-label>Install with any of:</div>
+    <div data-install-commands class="flex flex-col gap-1 mt-1"></div>
+  </div>
+</template>
+
+<template id="tpl-install-cmd">
+  <code data-cmd></code>
+</template>
+
+<template id="tpl-model-notice">
+  <div class="ctx-card" style="max-width:400px">
+    <div class="ctx-header">
+      <span class="icon icon-warn-triangle-light" style="color:var(--warning,#eab308)"></span>
+      <span class="ctx-header-title">Chat-only mode</span>
+    </div>
+    <div class="ctx-section">
+      <div class="ctx-row">
+        <span class="ctx-label">Model</span>
+        <span class="ctx-value" data-model-name></span>
+      </div>
+      <div class="ctx-row">
+        <span class="ctx-label">LLM</span>
+        <span class="ctx-value" data-provider></span>
+      </div>
+      <div class="ctx-disabled" style="margin-top:8px">
+        Tools disabled — file operations, shell commands, and memory search are not available.
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-welcome-card">
+  <div id="welcomeCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
+    <div data-welcome-emoji class="text-4xl mb-4"></div>
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">
+      <span data-welcome-greeting></span>
+    </h2>
+    <p class="text-sm text-[var(--muted)] mb-6">
+      I'm <span data-welcome-bot-name class="font-medium text-[var(--text)]"></span>. How can I help?
+    </p>
+    <ul class="text-left text-sm text-[var(--muted)] flex flex-col gap-3 w-full">
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <span class="icon icon-chat-bubble"></span>
+        </span>
+        <span>Chat with multiple LLM providers and models</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <span class="icon icon-terminal-cmd"></span>
+        </span>
+        <span>Run commands in a sandboxed environment</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <span class="icon icon-search"></span>
+        </span>
+        <span>Browse the web and fetch content</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <span class="icon icon-file"></span>
+        </span>
+        <span>Remember context across sessions with long-term memory</span>
+      </li>
+      <li class="flex items-start gap-3">
+        <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">
+          <span class="icon icon-layers"></span>
+        </span>
+        <span>Extend with MCP tools, skills, and plugins</span>
+      </li>
+    </ul>
+    <div class="mt-6 text-xs text-[var(--muted)]">
+      Type a message or use <kbd class="px-1.5 py-0.5 bg-[var(--surface2)] border border-[var(--border)] rounded text-[var(--text)] text-xs font-mono">/</kbd> for commands
+    </div>
+  </div>
+</template>
+
+<template id="tpl-no-providers-card">
+  <div id="noProvidersCard" class="my-auto self-center flex flex-col items-center text-center px-6 py-10 max-w-md">
+    <h2 class="text-lg font-medium text-[var(--text)] mb-1">No LLMs Connected</h2>
+    <p class="text-sm text-[var(--muted)] mb-6">
+      You have not connected any LLM providers yet. Add one to start chatting.
+    </p>
+    <a href="{{ routes.providers }}" class="provider-btn">Go to LLMs</a>
+  </div>
+</template>
+
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/app.js"></script>
+</body>
+</html>

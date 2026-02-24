@@ -17,7 +17,11 @@ use {
     tracing::{debug, info, warn},
 };
 
-use crate::{container::BrowserContainer, error::BrowserError, types::BrowserConfig};
+use crate::{
+    container::BrowserContainer,
+    error::BrowserError,
+    types::{BrowserConfig, BrowserPreference},
+};
 
 /// Get current system memory usage as a percentage (0-100).
 fn get_memory_usage_percent() -> u8 {
@@ -32,6 +36,22 @@ fn get_memory_usage_percent() -> u8 {
     let used = sys.used_memory();
     let percent = (used as f64 / total as f64 * 100.0) as u8;
     percent.min(100)
+}
+
+/// Returns memory-saving Chrome flags when `total_mb` is below `threshold_mb`.
+///
+/// Returns an empty slice when the threshold is 0 (disabled) or when the system
+/// has enough memory.
+#[must_use]
+pub(crate) fn low_memory_chrome_args(total_mb: u64, threshold_mb: u64) -> &'static [&'static str] {
+    if threshold_mb == 0 || total_mb >= threshold_mb {
+        return &[];
+    }
+    &[
+        "--single-process",
+        "--renderer-process-limit=1",
+        "--js-flags=--max-old-space-size=128",
+    ]
 }
 
 /// A pooled browser instance with one or more pages.
@@ -76,6 +96,7 @@ impl BrowserPool {
         &self,
         session_id: Option<&str>,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<String, BrowserError> {
         // Treat empty string as None (generate new session ID)
         let session_id = session_id.filter(|s| !s.is_empty());
@@ -129,7 +150,7 @@ impl BrowserPool {
             .map(String::from)
             .unwrap_or_else(generate_session_id);
 
-        let instance = self.launch_browser(&sid, sandbox).await?;
+        let instance = self.launch_browser(&sid, sandbox, browser).await?;
         let instance = Arc::new(Mutex::new(instance));
 
         {
@@ -291,11 +312,12 @@ impl BrowserPool {
         &self,
         session_id: &str,
         sandbox: bool,
+        browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, BrowserError> {
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
-            self.launch_host_browser(session_id).await
+            self.launch_host_browser(session_id, browser).await
         }
     }
 
@@ -320,12 +342,26 @@ impl BrowserPool {
             BrowserError::LaunchFailed(format!("failed to ensure browser image: {e}"))
         })?;
 
+        // Resolve and create profile directory on host if needed
+        let profile_dir = self.config.resolved_profile_dir();
+        if let Some(ref dir) = profile_dir
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            warn!(
+                path = %dir.display(),
+                error = %e,
+                "failed to create browser profile directory for container"
+            );
+        }
+
         // Start the container
         let container = BrowserContainer::start(
             &self.config.sandbox_image,
             &self.config.container_prefix,
             self.config.viewport_width,
             self.config.viewport_height,
+            self.config.low_memory_threshold_mb,
+            profile_dir.as_deref(),
         )
         .map_err(|e| {
             BrowserError::LaunchFailed(format!("failed to start browser container: {e}"))
@@ -387,15 +423,61 @@ impl BrowserPool {
     }
 
     /// Launch a browser on the host (non-sandboxed mode).
-    async fn launch_host_browser(&self, session_id: &str) -> Result<BrowserInstance, BrowserError> {
-        // Check if Chrome/Chromium is available before attempting to launch
-        let detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
-        if !detection.found {
-            return Err(BrowserError::LaunchFailed(format!(
-                "Chrome/Chromium not found. {}",
-                detection.install_hint
-            )));
+    async fn launch_host_browser(
+        &self,
+        session_id: &str,
+        browser: Option<BrowserPreference>,
+    ) -> Result<BrowserInstance, BrowserError> {
+        let requested_browser = browser.unwrap_or_default();
+
+        // Detect all installed browser candidates.
+        let mut detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
+        let mut install_attempt: Option<crate::detect::AutoInstallResult> = None;
+
+        // Auto-install is always on: if none are installed, try to install one.
+        if detection.browsers.is_empty() {
+            let result = crate::detect::auto_install_browser(requested_browser).await;
+            if result.attempted && result.installed {
+                info!(details = %result.details, "auto-installed browser on host");
+            } else if result.attempted {
+                warn!(details = %result.details, "browser auto-install failed");
+            } else {
+                warn!(
+                    details = %result.details,
+                    "browser auto-install skipped (installer unavailable)"
+                );
+            }
+            install_attempt = Some(result);
+            detection = crate::detect::detect_browser(self.config.chrome_path.as_deref());
         }
+
+        if detection.browsers.is_empty() {
+            let mut message = format!("No compatible browser found. {}", detection.install_hint);
+            if let Some(attempt) = install_attempt
+                && attempt.attempted
+            {
+                message.push_str("\n\nAuto-install attempt:\n");
+                message.push_str(&attempt.details);
+            }
+            return Err(BrowserError::LaunchFailed(message));
+        }
+
+        let selected =
+            match crate::detect::pick_browser(&detection.browsers, Some(requested_browser)) {
+                Some(browser) => browser,
+                None => {
+                    let installed = crate::detect::installed_browser_labels(&detection.browsers);
+                    let installed_list = if installed.is_empty() {
+                        "none".to_string()
+                    } else {
+                        installed.join(", ")
+                    };
+                    return Err(BrowserError::LaunchFailed(format!(
+                        "requested browser '{}' is not installed. Installed browsers: {}",
+                        requested_browser, installed_list
+                    )));
+                },
+            };
 
         let mut builder = CdpBrowserConfig::builder();
 
@@ -429,13 +511,27 @@ impl BrowserPool {
         if let Some(ref ua) = self.config.user_agent {
             builder = builder.arg(format!("--user-agent={ua}"));
         }
-
-        if let Some(ref path) = self.config.chrome_path {
-            builder = builder.chrome_executable(path);
-        }
+        builder = builder.chrome_executable(selected.path.clone());
 
         for arg in &self.config.chrome_args {
             builder = builder.arg(arg);
+        }
+
+        // Set persistent profile directory if configured
+        if let Some(ref profile_path) = self.config.resolved_profile_dir() {
+            if let Err(e) = std::fs::create_dir_all(profile_path) {
+                warn!(
+                    path = %profile_path.display(),
+                    error = %e,
+                    "failed to create browser profile directory, falling back to ephemeral"
+                );
+            } else {
+                info!(
+                    path = %profile_path.display(),
+                    "using persistent browser profile"
+                );
+                builder = builder.user_data_dir(profile_path);
+            }
         }
 
         // Additional security/sandbox args for headless
@@ -446,6 +542,24 @@ impl BrowserPool {
             .arg("--no-sandbox")
             .arg("--disable-setuid-sandbox");
 
+        // Auto-inject low-memory flags on constrained systems
+        if self.config.low_memory_threshold_mb > 0 {
+            let mut sys = System::new();
+            sys.refresh_memory();
+            let total_mb = sys.total_memory() / (1024 * 1024);
+            let extra = low_memory_chrome_args(total_mb, self.config.low_memory_threshold_mb);
+            if !extra.is_empty() {
+                info!(
+                    total_mb,
+                    threshold = self.config.low_memory_threshold_mb,
+                    "low memory detected, adding constrained Chrome flags"
+                );
+                for arg in extra {
+                    builder = builder.arg(*arg);
+                }
+            }
+        }
+
         let config = builder.build().map_err(|e| {
             BrowserError::LaunchFailed(format!("failed to build browser config: {e}"))
         })?;
@@ -455,6 +569,13 @@ impl BrowserPool {
             let install_hint = crate::detect::install_instructions();
             BrowserError::LaunchFailed(format!("browser launch failed: {e}\n\n{install_hint}"))
         })?;
+
+        info!(
+            session_id,
+            browser = %selected.kind,
+            path = %selected.path.display(),
+            "launched host browser executable"
+        );
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
@@ -547,5 +668,25 @@ mod tests {
     fn drop_empty_pool_does_not_panic() {
         let pool = BrowserPool::new(test_config());
         drop(pool);
+    }
+
+    #[test]
+    fn low_memory_args_injected_below_threshold() {
+        let args = low_memory_chrome_args(1024, 2048);
+        assert_eq!(args.len(), 3);
+        assert!(args.contains(&"--single-process"));
+        assert!(args.contains(&"--renderer-process-limit=1"));
+        assert!(args.contains(&"--js-flags=--max-old-space-size=128"));
+    }
+
+    #[test]
+    fn low_memory_args_empty_at_or_above_threshold() {
+        assert!(low_memory_chrome_args(2048, 2048).is_empty());
+        assert!(low_memory_chrome_args(4096, 2048).is_empty());
+    }
+
+    #[test]
+    fn low_memory_args_disabled_when_threshold_zero() {
+        assert!(low_memory_chrome_args(512, 0).is_empty());
     }
 }

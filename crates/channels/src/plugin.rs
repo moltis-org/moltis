@@ -97,11 +97,8 @@ pub trait ChannelEventSink: Send + Sync {
 
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
-    async fn dispatch_command(
-        &self,
-        command: &str,
-        reply_to: ChannelReplyTarget,
-    ) -> anyhow::Result<String>;
+    async fn dispatch_command(&self, command: &str, reply_to: ChannelReplyTarget)
+    -> Result<String>;
 
     /// Request disabling a channel account due to a runtime error.
     ///
@@ -119,6 +116,20 @@ pub trait ChannelEventSink: Send + Sync {
         _account_id: &str,
         _identifier: &str,
     ) {
+    }
+
+    /// Save voice audio bytes to the session's media directory.
+    ///
+    /// Returns the saved filename on success, or `None` if saving is not
+    /// available or fails. The gateway implementation resolves the session
+    /// key from the reply target and delegates to `SessionStore::save_media`.
+    async fn save_channel_voice(
+        &self,
+        _audio_data: &[u8],
+        _filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<String> {
+        None
     }
 
     /// Transcribe voice audio to text using the configured STT provider.
@@ -177,6 +188,9 @@ pub struct ChannelMessageMeta {
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Filename of saved voice audio (set by `save_channel_voice`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_filename: Option<String>,
 }
 
 /// Inbound channel message media kind.
@@ -275,6 +289,19 @@ pub trait ChannelOutbound: Send + Sync {
         let _ = suffix_html;
         self.send_text(account_id, to, text, reply_to).await
     }
+    /// Send pre-formatted HTML without markdown conversion.
+    ///
+    /// Used for content that is already valid Telegram HTML (e.g. the activity
+    /// logbook with `<blockquote>` tags).  Default falls back to `send_text`.
+    async fn send_html(
+        &self,
+        account_id: &str,
+        to: &str,
+        html: &str,
+        reply_to: Option<&str>,
+    ) -> Result<()> {
+        self.send_text(account_id, to, html, reply_to).await
+    }
     /// Send a text message without notification (silent). Falls back to send_text by default.
     async fn send_text_silent(
         &self,
@@ -342,7 +369,18 @@ pub type StreamSender = mpsc::Sender<StreamEvent>;
 #[async_trait]
 pub trait ChannelStreamOutbound: Send + Sync {
     /// Send a streaming response that updates a message in place.
-    async fn send_stream(&self, account_id: &str, to: &str, stream: StreamReceiver) -> Result<()>;
+    async fn send_stream(
+        &self,
+        account_id: &str,
+        to: &str,
+        reply_to: Option<&str>,
+        stream: StreamReceiver,
+    ) -> Result<()>;
+
+    /// Whether streaming is enabled for this account.
+    async fn is_stream_enabled(&self, _account_id: &str) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -367,7 +405,7 @@ mod tests {
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
-        ) -> anyhow::Result<String> {
+        ) -> Result<String> {
             Ok(String::new())
         }
 

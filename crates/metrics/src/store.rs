@@ -6,7 +6,8 @@
 use {
     anyhow::Result,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, path::Path},
+    sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    std::{collections::HashMap, path::Path, str::FromStr},
 };
 
 /// Per-provider token metrics for a single time point.
@@ -92,8 +93,11 @@ impl SqliteMetricsStore {
     ///
     /// Opens or creates the database at the given path.
     pub async fn new(path: &Path) -> Result<Self> {
-        let db_url = format!("sqlite:{}?mode=rwc", path.display());
-        let pool = sqlx::SqlitePool::connect(&db_url).await?;
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))?
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
+        let pool = sqlx::SqlitePool::connect_with(options).await?;
 
         // Run migrations
         Self::migrate(&pool).await?;

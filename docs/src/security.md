@@ -48,6 +48,30 @@ approval_mode = "always"  # always require approval
 **Recommendation**: Keep `approval_mode = "smart"` (the default) for most use
 cases. Only use `"never"` in fully automated, sandboxed environments.
 
+### Built-in Dangerous Command Blocklist
+
+Even with `approval_mode = "never"` or `security_level = "full"`, Moltis
+maintains a safety floor: a hardcoded set of regex patterns for the most
+critical destructive commands (e.g. `rm -rf /`, `git reset --hard`,
+`DROP TABLE`, `mkfs`, `terraform destroy`). Matching commands always require
+approval regardless of configuration.
+
+Users can override specific patterns by adding matching entries to their
+`allowlist` in `moltis.toml`. The blocklist only applies to host execution;
+sandboxed commands are already isolated.
+
+### Destructive Command Guard (dcg)
+
+For broader coverage beyond the built-in blocklist, install the
+[Destructive Command Guard](https://github.com/Dicklesworthstone/destructive_command_guard)
+(dcg) as a hook. dcg adds 49+ pattern categories including heredoc/inline-script
+scanning, database, cloud, and infrastructure patterns.
+
+See [Hooks: Destructive Command Guard](hooks.md#recommended-destructive-command-guard-dcg)
+for setup instructions.
+
+dcg complements (does not replace) sandbox isolation and the approval system.
+
 ## Sandbox Isolation
 
 Commands execute inside isolated containers (Docker or Apple Container) by
@@ -252,6 +276,18 @@ The `web_fetch` tool resolves DNS and blocks requests to private IP ranges
 (loopback, RFC 1918, link-local, CGNAT). This prevents server-side request
 forgery attacks.
 
+To allow access to trusted private networks (e.g. Docker sibling containers),
+add their CIDR ranges to `ssrf_allowlist`:
+
+```toml
+[tools.web.fetch]
+ssrf_allowlist = ["172.22.0.0/16"]
+```
+
+**Warning:** Only add networks you trust. The allowlist bypasses SSRF protection
+for the listed ranges. Never add cloud metadata ranges (`169.254.169.254/32`)
+unless you understand the risk.
+
 ## Authentication
 
 Moltis uses a unified auth gate that applies a single `check_auth()`
@@ -287,7 +323,7 @@ allowed.
 | `POST /api/auth/login` | 5 requests per 60 seconds |
 | Other `/api/auth/*` | 120 requests per 60 seconds |
 | Other `/api/*` | 180 requests per 60 seconds |
-| `/ws` upgrade | 30 requests per 60 seconds |
+| `/ws/chat` upgrade | 30 requests per 60 seconds |
 
 ### When Limits Are Hit
 

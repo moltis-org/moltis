@@ -63,11 +63,15 @@ impl BrowserContainer {
     /// Start a new browser container using the auto-detected backend.
     ///
     /// Returns a container instance with the host port for CDP connections.
+    /// When `profile_dir` is `Some`, the host directory is mounted into the
+    /// container so that browser profile data persists across sessions.
     pub fn start(
         image: &str,
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
+        profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         let backend = detect_backend()?;
         Self::start_with_backend(
@@ -76,6 +80,8 @@ impl BrowserContainer {
             container_prefix,
             viewport_width,
             viewport_height,
+            low_memory_threshold_mb,
+            profile_dir,
         )
     }
 
@@ -86,6 +92,8 @@ impl BrowserContainer {
         container_prefix: &str,
         viewport_width: u32,
         viewport_height: u32,
+        low_memory_threshold_mb: u64,
+        profile_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         if !backend.is_available() {
             bail!(
@@ -111,6 +119,8 @@ impl BrowserContainer {
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
+                profile_dir,
             )?,
             #[cfg(target_os = "macos")]
             ContainerBackend::AppleContainer => start_apple_container(
@@ -119,6 +129,8 @@ impl BrowserContainer {
                 host_port,
                 viewport_width,
                 viewport_height,
+                low_memory_threshold_mb,
+                profile_dir,
             )?,
         };
 
@@ -223,6 +235,45 @@ impl Drop for BrowserContainer {
     }
 }
 
+/// Path inside the container where the browser profile is mounted.
+const CONTAINER_PROFILE_PATH: &str = "/data/browser-profile";
+
+/// Build the `DEFAULT_LAUNCH_ARGS` env-var value for containerised Chrome.
+///
+/// Always includes `--window-size`; appends low-memory flags when the host
+/// system RAM is below the given threshold. Adds `--user-data-dir` when a
+/// container-side profile path is provided.
+fn build_container_launch_args(
+    viewport_width: u32,
+    viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    container_profile_dir: Option<&str>,
+) -> String {
+    use crate::pool::low_memory_chrome_args;
+
+    let mut args = vec![format!("--window-size={viewport_width},{viewport_height}")];
+
+    if let Some(profile_dir) = container_profile_dir {
+        args.push(format!("--user-data-dir={profile_dir}"));
+    }
+
+    if low_memory_threshold_mb > 0 {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total_mb = sys.total_memory() / (1024 * 1024);
+        for flag in low_memory_chrome_args(total_mb, low_memory_threshold_mb) {
+            args.push((*flag).to_string());
+        }
+    }
+
+    let joined = args
+        .iter()
+        .map(|a| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("DEFAULT_LAUNCH_ARGS=[{joined}]")
+}
+
 /// Start a Docker container for the browser.
 fn start_docker_container(
     image: &str,
@@ -230,30 +281,50 @@ fn start_docker_container(
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
 
+    let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
+    let launch_args = build_container_launch_args(
+        viewport_width,
+        viewport_height,
+        low_memory_threshold_mb,
+        container_profile_dir,
+    );
+
+    let mut docker_args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "-p".to_string(),
+        format!("{}:3000", host_port),
+        "-e".to_string(),
+        launch_args,
+        "-e".to_string(),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "-e".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+        "--shm-size=2gb".to_string(),
+    ];
+
+    // Mount the profile directory if persistence is enabled
+    if let Some(host_path) = profile_dir {
+        docker_args.push("-v".to_string());
+        docker_args.push(format!(
+            "{}:{}:rw",
+            host_path.display(),
+            CONTAINER_PROFILE_PATH
+        ));
+    }
+
+    docker_args.push(image.to_string());
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",   // Detached
-            "--rm", // Auto-remove on stop
-            "--name",
-            &container_name,
-            "-p",
-            &format!("{}:3000", host_port), // Map CDP port
-            "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
-            "-e",
-            "MAX_CONCURRENT_SESSIONS=1", // One session per container
-            "-e",
-            "PREBOOT_CHROME=true", // Pre-launch Chrome for faster first connection
-            "--shm-size=2gb",      // Chrome needs shared memory
-            image,
-        ])
+        .args(&docker_args)
         .output()
         .context("failed to run docker command")?;
 
@@ -277,29 +348,48 @@ fn start_apple_container(
     host_port: u16,
     viewport_width: u32,
     viewport_height: u32,
+    low_memory_threshold_mb: u64,
+    profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
 
-    // Apple Container uses different syntax for port mapping and env vars
+    let container_profile_dir = profile_dir.map(|_| CONTAINER_PROFILE_PATH);
+    let launch_args = build_container_launch_args(
+        viewport_width,
+        viewport_height,
+        low_memory_threshold_mb,
+        container_profile_dir,
+    );
+
+    let mut container_args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "-p".to_string(),
+        format!("{}:3000", host_port),
+        "-e".to_string(),
+        launch_args,
+        "-e".to_string(),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "-e".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+    ];
+
+    // Mount the profile directory if persistence is enabled
+    if let Some(host_path) = profile_dir {
+        container_args.push("-v".to_string());
+        container_args.push(format!(
+            "{}:{}",
+            host_path.display(),
+            CONTAINER_PROFILE_PATH
+        ));
+    }
+
+    container_args.push(image.to_string());
+
     let output = Command::new("container")
-        .args([
-            "run",
-            "-d",
-            "--name",
-            &container_name,
-            "-p",
-            &format!("{}:3000", host_port),
-            "-e",
-            &format!(
-                "DEFAULT_LAUNCH_ARGS=[\"--window-size={},{}\"]",
-                viewport_width, viewport_height
-            ),
-            "-e",
-            "MAX_CONCURRENT_SESSIONS=1",
-            "-e",
-            "PREBOOT_CHROME=true",
-            image,
-        ])
+        .args(&container_args)
         .output()
         .context("failed to run container command")?;
 
@@ -760,5 +850,24 @@ mod tests {
         } else {
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn test_build_container_launch_args_without_low_memory() {
+        let args = build_container_launch_args(1920, 1080, 0, None);
+        assert_eq!(args, r#"DEFAULT_LAUNCH_ARGS=["--window-size=1920,1080"]"#);
+    }
+
+    #[test]
+    fn test_build_container_launch_args_with_profile_dir() {
+        let args = build_container_launch_args(1920, 1080, 0, Some("/data/browser-profile"));
+        assert!(args.contains("--user-data-dir=/data/browser-profile"));
+        assert!(args.contains("--window-size=1920,1080"));
+    }
+
+    #[test]
+    fn test_build_container_launch_args_without_profile_dir() {
+        let args = build_container_launch_args(1920, 1080, 0, None);
+        assert!(!args.contains("--user-data-dir"));
     }
 }

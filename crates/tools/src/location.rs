@@ -154,7 +154,7 @@ struct PlaceName {
 /// Returns `None` on any failure (network, parse, timeout) so the caller can
 /// fall back to raw coordinates.
 async fn reverse_geocode(lat: f64, lon: f64) -> Option<PlaceName> {
-    reverse_geocode_with_client(&reqwest::Client::new(), lat, lon).await
+    reverse_geocode_with_client(crate::shared_http_client(), lat, lon).await
 }
 
 /// Inner implementation that accepts a `reqwest::Client` for testability.
