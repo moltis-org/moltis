@@ -6,6 +6,7 @@
 pub mod anthropic;
 pub mod openai;
 pub mod openai_compat;
+pub mod ws_pool;
 
 #[cfg(feature = "provider-genai")]
 pub mod genai_provider;

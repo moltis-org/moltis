@@ -322,6 +322,20 @@ fn models_endpoint(base_url: &str) -> String {
     )
 }
 
+/// Resolve the output index from a Responses API WebSocket streaming event.
+///
+/// The Responses API includes `output_index` on most events. Falls back to
+/// `item_index` / `index` for robustness, then to `fallback`.
+fn ws_output_index(event: &serde_json::Value, fallback: usize) -> usize {
+    event
+        .get("output_index")
+        .or_else(|| event.get("item_index"))
+        .or_else(|| event.get("index"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|i| i as usize)
+        .unwrap_or(fallback)
+}
+
 async fn fetch_models_from_api(
     api_key: secrecy::Secret<String>,
     base_url: String,
@@ -743,94 +757,62 @@ impl OpenAiProvider {
         tools: Vec<serde_json::Value>,
         fallback_to_sse: bool,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        Box::pin(async_stream::stream! {
-            let fallback_messages = messages.clone();
-            let fallback_tools = tools.clone();
-
+        // Synchronous pre-flight: URL, request, auth header, pool key.
+        // Fail fast and fall back to SSE before entering the async generator,
+        // which avoids cloning messages/tools for the four sync-check paths.
+        let (request, pool_key) = match (|| -> anyhow::Result<_> {
             if !self.is_openai_platform_base_url() {
-                let msg = format!(
-                    "websocket mode is only supported for api.openai.com base_url (got {})",
+                anyhow::bail!(
+                    "websocket mode is only supported for api.openai.com (got {})",
                     self.base_url
                 );
-                if fallback_to_sse {
-                    debug!(error = %msg, "openai websocket transport unavailable, falling back to sse");
-                    let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                    while let Some(event) = sse.next().await {
-                        yield event;
-                    }
-                    return;
-                }
-                yield StreamEvent::Error(msg);
-                return;
             }
-
-            let ws_url = match self.responses_websocket_url() {
-                Ok(url) => url,
-                Err(err) => {
-                    if fallback_to_sse {
-                        debug!(error = %err, "failed to build websocket url, falling back to sse");
-                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                        while let Some(event) = sse.next().await {
-                            yield event;
-                        }
-                        return;
-                    }
-                    yield StreamEvent::Error(err.to_string());
-                    return;
-                }
-            };
-
-            let mut request = match ws_url.as_str().into_client_request() {
-                Ok(request) => request,
-                Err(err) => {
-                    if fallback_to_sse {
-                        debug!(error = %err, "failed to build websocket request, falling back to sse");
-                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                        while let Some(event) = sse.next().await {
-                            yield event;
-                        }
-                        return;
-                    }
-                    yield StreamEvent::Error(err.to_string());
-                    return;
-                }
-            };
-
-            let auth_value = format!("Bearer {}", self.api_key.expose_secret());
-            let auth_header = match HeaderValue::from_str(&auth_value) {
-                Ok(header) => header,
-                Err(err) => {
-                    if fallback_to_sse {
-                        debug!(error = %err, "invalid Authorization header for websocket request, falling back to sse");
-                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                        while let Some(event) = sse.next().await {
-                            yield event;
-                        }
-                        return;
-                    }
-                    yield StreamEvent::Error(err.to_string());
-                    return;
-                }
-            };
-            request.headers_mut().insert("Authorization", auth_header);
-            request.headers_mut().insert(
-                "OpenAI-Beta",
-                HeaderValue::from_static("responses=v1"),
+            let ws_url = self.responses_websocket_url()?;
+            let pk = super::ws_pool::PoolKey::new(&ws_url, &self.api_key);
+            let mut req = ws_url
+                .as_str()
+                .into_client_request()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let auth = format!("Bearer {}", self.api_key.expose_secret());
+            req.headers_mut().insert(
+                "Authorization",
+                HeaderValue::from_str(&auth).map_err(|e| anyhow::anyhow!("{e}"))?,
             );
+            req.headers_mut()
+                .insert("OpenAI-Beta", HeaderValue::from_static("responses=v1"));
+            Ok((req, pk))
+        })() {
+            Ok(r) => r,
+            Err(err) => {
+                if fallback_to_sse {
+                    debug!(error = %err, "websocket setup failed, falling back to sse");
+                    return self.stream_with_tools_sse(messages, tools);
+                }
+                return Box::pin(async_stream::stream! {
+                    yield StreamEvent::Error(err.to_string());
+                });
+            },
+        };
 
-            let (mut ws_stream, _) = match tokio_tungstenite::connect_async(request).await {
-                Ok(conn) => conn,
-                Err(err) => {
-                    if fallback_to_sse {
-                        debug!(error = %err, "openai websocket connection failed, falling back to sse");
-                        let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                        while let Some(event) = sse.next().await {
-                            yield event;
+        Box::pin(async_stream::stream! {
+            // Try the pool first; fall back to a fresh connection.
+            let (mut ws_stream, created_at) = if let Some(pooled) = super::ws_pool::shared_ws_pool().checkout(&pool_key).await {
+                pooled
+            } else {
+                match tokio_tungstenite::connect_async(request).await {
+                    Ok((ws, _)) => (ws, std::time::Instant::now()),
+                    Err(err) => {
+                        if fallback_to_sse {
+                            debug!(error = %err, "websocket connect failed, falling back to sse");
+                            let mut sse = self.stream_with_tools_sse(messages, tools);
+                            while let Some(event) = sse.next().await {
+                                yield event;
+                            }
+                        } else {
+                            yield StreamEvent::Error(err.to_string());
                         }
                         return;
                     }
-                    yield StreamEvent::Error(err.to_string());
-                    return;
                 }
             };
 
@@ -865,15 +847,7 @@ impl OpenAiProvider {
                 .send(Message::Text(create_event.to_string().into()))
                 .await
             {
-                if fallback_to_sse {
-                    debug!(error = %err, "failed to send websocket create event, falling back to sse");
-                    let mut sse = self.stream_with_tools_sse(fallback_messages, fallback_tools);
-                    while let Some(event) = sse.next().await {
-                        yield event;
-                    }
-                    return;
-                }
-                yield StreamEvent::Error(err.to_string());
+                yield StreamEvent::Error(format!("websocket send failed: {err}"));
                 return;
             }
 
@@ -882,65 +856,31 @@ impl OpenAiProvider {
             let mut current_tool_index: usize = 0;
             let mut tool_calls: HashMap<usize, (String, String)> = HashMap::new();
             let mut completed_tool_calls: HashSet<usize> = HashSet::new();
+            let mut clean_completion = false;
 
             while let Some(frame) = ws_stream.next().await {
-                let message = match frame {
-                    Ok(m) => m,
+                let text = match frame {
+                    Ok(Message::Text(t)) => t.to_string(),
+                    Ok(Message::Binary(b)) => String::from_utf8_lossy(&b).into_owned(),
+                    Ok(Message::Ping(p)) => {
+                        if let Err(err) = ws_stream.send(Message::Pong(p)).await {
+                            yield StreamEvent::Error(err.to_string());
+                            return;
+                        }
+                        continue;
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => continue,
                     Err(err) => {
                         yield StreamEvent::Error(err.to_string());
                         return;
                     }
                 };
 
-                let payload = match message {
-                    Message::Text(text) => Some(text.to_string()),
-                    Message::Binary(bytes) => {
-                        Some(String::from_utf8_lossy(&bytes).to_string())
-                    }
-                    Message::Ping(payload) => {
-                        if let Err(err) = ws_stream.send(Message::Pong(payload)).await {
-                            yield StreamEvent::Error(err.to_string());
-                            return;
-                        }
-                        None
-                    }
-                    Message::Pong(_) => None,
-                    Message::Close(_) => break,
-                    _ => None,
-                };
-
-                let Some(payload) = payload else {
-                    continue;
-                };
-
-                let Ok(evt) = serde_json::from_str::<serde_json::Value>(&payload) else {
+                let Ok(evt) = serde_json::from_str::<serde_json::Value>(&text) else {
                     continue;
                 };
                 trace!(event = %evt, "openai websocket event");
-
-                let resolve_tool_index =
-                    |event: &serde_json::Value,
-                     current_index: usize,
-                     known_calls: &HashMap<usize, (String, String)>|
-                     -> usize {
-                        for key in ["output_index", "item_index", "index"] {
-                            if let Some(index) = event.get(key).and_then(serde_json::Value::as_u64) {
-                                return index as usize;
-                            }
-                        }
-                        if let Some(call_id) = event.get("call_id").and_then(serde_json::Value::as_str)
-                            && let Some(index) = known_calls.iter().find_map(|(idx, (id, _))| {
-                                if id == call_id {
-                                    Some(*idx)
-                                } else {
-                                    None
-                                }
-                            })
-                        {
-                            return index;
-                        }
-                        current_index.saturating_sub(1)
-                    };
 
                 match evt["type"].as_str().unwrap_or("") {
                     "response.output_text.delta" => {
@@ -954,7 +894,7 @@ impl OpenAiProvider {
                         if evt["item"]["type"].as_str() == Some("function_call") {
                             let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
                             let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                            let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                            let index = ws_output_index(&evt, current_tool_index);
                             current_tool_index = current_tool_index.max(index + 1);
                             tool_calls.insert(index, (id.clone(), name.clone()));
                             yield StreamEvent::ToolCallStart { id, name, index };
@@ -964,7 +904,7 @@ impl OpenAiProvider {
                         if let Some(delta) = evt["delta"].as_str()
                             && !delta.is_empty()
                         {
-                            let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                            let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
                             yield StreamEvent::ToolCallArgumentsDelta {
                                 index,
                                 delta: delta.to_string(),
@@ -972,7 +912,7 @@ impl OpenAiProvider {
                         }
                     }
                     "response.function_call_arguments.done" => {
-                        let index = resolve_tool_index(&evt, current_tool_index, &tool_calls);
+                        let index = ws_output_index(&evt, current_tool_index.saturating_sub(1));
                         if completed_tool_calls.insert(index) {
                             yield StreamEvent::ToolCallComplete { index };
                         }
@@ -990,12 +930,8 @@ impl OpenAiProvider {
                                 yield StreamEvent::ToolCallComplete { index };
                             }
                         }
-                        yield StreamEvent::Done(Usage {
-                            input_tokens,
-                            output_tokens,
-                            ..Default::default()
-                        });
-                        return;
+                        clean_completion = true;
+                        break;
                     }
                     "error" | "response.failed" => {
                         let msg = evt["error"]["message"]
@@ -1010,13 +946,24 @@ impl OpenAiProvider {
                 }
             }
 
-            let mut pending: Vec<usize> = tool_calls.keys().copied().collect();
-            pending.sort_unstable();
-            for index in pending {
-                if completed_tool_calls.insert(index) {
-                    yield StreamEvent::ToolCallComplete { index };
+            // Emit any remaining tool-call completions (fallback for broken streams).
+            if !clean_completion {
+                let mut pending: Vec<usize> = tool_calls.keys().copied().collect();
+                pending.sort_unstable();
+                for index in pending {
+                    if completed_tool_calls.insert(index) {
+                        yield StreamEvent::ToolCallComplete { index };
+                    }
                 }
             }
+
+            // Return healthy connections to the pool; drop on error / close.
+            if clean_completion {
+                super::ws_pool::shared_ws_pool()
+                    .return_conn(pool_key, ws_stream, created_at)
+                    .await;
+            }
+
             yield StreamEvent::Done(Usage {
                 input_tokens,
                 output_tokens,
