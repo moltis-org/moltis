@@ -9,7 +9,602 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Vault UI**: recovery key display during onboarding password setup, vault status/unlock controls in Settings > Security, encrypted/plaintext badges on environment variables
+- **Encryption-at-rest vault** (`vault` feature, default on) — environment variables are encrypted with XChaCha20-Poly1305 AEAD using Argon2id-derived keys. Vault is initialized on first password setup and auto-unsealed on login. Recovery key provided at initialization for emergency access. API: `/api/auth/vault/status`, `/api/auth/vault/unlock`, `/api/auth/vault/recovery`
+- `send_image` tool for sending local image files (PNG, JPEG, GIF, WebP) to channel targets like Telegram, with optional caption support
+- GraphQL API at `/graphql` (GET serves GraphiQL playground and WebSocket subscriptions, POST handles queries/mutations) exposing all RPC methods as typed operations
+- New `moltis-graphql` crate with queries, mutations, subscriptions, custom `Json` scalar, and `ServiceCaller` trait abstraction
+- New `moltis-providers` crate that owns provider integrations and model registry/catalog logic (OpenAI, Anthropic, OpenAI-compatible, OpenAI Codex, GitHub Copilot, Kimi Code, local GGUF, local LLM)
+- `graphql` feature flag (default on) in gateway and CLI crates for compile-time opt-out
+- Settings > GraphQL page embedding GraphiQL playground at `/settings/graphql`
+- Gateway startup now seeds a built-in `dcg-guard` hook in `~/.moltis/hooks/dcg-guard/` (manifest + handler), so destructive command guarding is available out of the box once `dcg` is installed
 ### Changed
+
+- **Crate restructure**: gateway crate reduced from ~42K to ~29K lines by extracting `moltis-chat` (chat engine, agent orchestration), `moltis-auth` (password + passkey auth), `moltis-tls` (TLS/HTTPS termination), `moltis-service-traits` (shared service interfaces), and moving share rendering into `moltis-web`
+- Provider wiring now routes through `moltis-providers` instead of `moltis-agents::providers`, and local LLM feature flags (`local-llm`, `local-llm-cuda`, `local-llm-metal`) now resolve via `moltis-providers`
+- Voice now auto-selects the first configured TTS/STT provider when no explicit
+  provider is set.
+- Default voice template/settings now favor OpenAI TTS and Whisper STT in
+  onboarding-ready configs.
+- Updated the `dcg-guard` example hook docs and handler behavior to gracefully no-op when `dcg` is missing, instead of hard-failing
+- Automatic model/provider selection now prefers subscription-backed providers (OpenAI Codex, GitHub Copilot) ahead of API-key providers, while still honoring explicit model priorities
+- GraphQL gateway now builds its schema once at startup and reuses it for HTTP and WebSocket requests
+- GraphQL resolvers now share common RPC helper macros and use typed response objects for `node.describe`, `voice.config`, `voice.voxtral_requirements`, `skills.security_status`, `skills.security_scan`, and `memory.config`
+- GraphQL `logs.ack` mutation now matches backend behavior and no longer takes an `ids` argument
+- Agent Identity emoji picker now includes 🐰 🐹 🦀 🦞 🦝 🦭 🧠 🧭 options
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Channel image delivery now parses the actual MIME type from data URIs instead of hardcoding `image/png`
+- OpenAI TTS and Whisper STT now correctly reuse OpenAI credentials from
+  voice config, `OPENAI_API_KEY`, or the LLM OpenAI provider config.
+- Voice provider parsing now accepts `openai-tts` and `google-tts` aliases
+  sent by the web UI.
+- Chat welcome card is now hidden as soon as the thinking indicator appears.
+- Onboarding summary loading state now keeps modal sizing stable with a
+  centered spinner.
+- Onboarding voice provider rows now use a dedicated `needs-key` badge class and styling, with E2E coverage to verify the badge pill rendering
+- OpenAI Codex OAuth token handling now preserves account context across refreshes and resolves `ChatGPT-Account-Id` from additional JWT/auth.json shapes to avoid auth failures with Max-style OAuth flows
+- Onboarding/provider setup now surfaces subscription OAuth providers (OpenAI Codex, GitHub Copilot) as configured when local OAuth tokens are present, even if they are omitted from `providers.offered`
+- GraphQL WebSocket upgrade detection now accepts clients that provide `Upgrade`/`Sec-WebSocket-Key` without `Connection: upgrade`
+- GraphQL channel and memory status bridges now return schema-compatible shapes for `channels.status`, `channels.list`, and `memory.status`
+- Provider errors with `insufficient_quota` now surface as explicit quota/billing failures (with the upstream message) instead of generic retrying/rate-limit behavior
+- Linux `aarch64` builds now skip `jemalloc` to prevent startup aborts on 16 KiB page-size kernels (for example Raspberry Pi 5 Debian images)
+- Gateway startup now blocks the common reverse-proxy TLS mismatch (`MOLTIS_BEHIND_PROXY=true` with Moltis TLS enabled) and explains using `--no-tls`; HTTPS-upstream proxy setups can explicitly opt in with `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`
+- WebSocket same-origin checks now accept proxy deployments that rewrite `Host` by using `X-Forwarded-Host` in proxy mode, and treat implicit `:443`/`:80` as equivalent to default ports
+### Security
+
+## [0.9.10] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.9] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.8] - 2026-02-21
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.7] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.6] - 2026-02-20
+
+
+### Added
+
+- Cron jobs can now deliver agent turn output to Telegram channels via the `deliver`, `channel`, and `to` payload fields
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Accessing `http://` on the HTTPS port now returns a 301 redirect to `https://` instead of a garbled TLS handshake page
+- SQLite metrics store now uses WAL journal mode and `synchronous=NORMAL` to fix slow INSERT times (1-3s) on Docker/WSL2
+
+### Security
+
+## [0.9.5] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Skip jemalloc on Windows (platform-specific dependency gate)
+
+### Security
+
+## [0.9.4] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.3] - 2026-02-20
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.2] - 2026-02-20
+
+
+### Added
+
+- Event-driven heartbeat wake system: cron jobs can now trigger immediate
+  heartbeat runs via a `wakeMode` field (`"now"` or `"nextHeartbeat"`).
+- System events queue: in-memory bounded buffer that collects events (exec
+  completions, cron triggers) and drains them into the heartbeat prompt so the
+  agent sees what happened while it was idle.
+- Exec completion callback: command executions automatically enqueue a summary
+  event and wake the heartbeat, giving the agent real-time awareness of
+  background task results.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.9.1] - 2026-02-19
+
+
+### Added
+
+- `lightweight` feature profile for memory-constrained devices (Raspberry Pi, etc.)
+  with only essential features: `jemalloc`, `tls`, `web-ui`.
+- jemalloc allocator behind `jemalloc` feature flag for lower memory fragmentation.
+- Configurable `history_points` (metrics) and `log_buffer_size` (server) settings
+  to tune in-memory buffer sizes.
+- Persistent browser profiles: cookies, auth state, and local storage now persist
+  across sessions by default. Disable with `persist_profile = false` in
+  `[tools.browser]`, or set a custom path with `profile_dir`. (#162)
+- Added `examples/docker-compose.coolify.yml` plus Docker/cloud deploy docs for
+  self-hosted Coolify (e.g. Hetzner), including reverse-proxy defaults and
+  Docker socket mount guidance for sandboxed exec support.
+- Markdown and ANSI table rendering in chat messages.
+- Provider-aware `show_map` links for multi-provider map display.
+- Session history caching with visual switch loader for faster session
+  transitions.
+
+### Changed
+
+- MetricsHistory default reduced from 60,480 to 360 points (~170x less memory).
+- LogBuffer default reduced from 10,000 to 1,000 entries.
+- Shared `reqwest::Client` singleton in `moltis-agents` and `moltis-tools` replaces
+  per-call client creation, saving connection pools and TLS session caches.
+- WebSocket client channels changed from unbounded to bounded (512), adding
+  backpressure for slow consumers.
+- Release profile: `panic = "abort"` and `codegen-units = 1` for smaller binaries.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Onboarding identity save now captures browser timezone and persists it to
+  `USER.md` via `user_timezone`, so first-run profile setup records the user's
+  timezone alongside their name.
+- Runtime prompt host metadata now prefers user/browser timezone over server
+  local fallback and includes an explicit `today=YYYY-MM-DD` field so models
+  can reliably reason about the user's current date.
+- Skills installation now supports Claude marketplace repos that define skills
+  directly via `.claude-plugin/marketplace.json` `plugins[].skills[]` paths
+  (for example `anthropics/skills`), including loading `SKILL.md` entries under
+  `skills/*` and exposing them through the existing plugin-skill workflow.
+- Web search no longer falls back to DuckDuckGo by default when search API keys
+  are missing, avoiding repeated CAPTCHA failures; fallback is now opt-in via
+  `tools.web.search.duckduckgo_fallback = true`.
+- Terminal: force tmux window resize on client viewport change to prevent
+  stale dimensions after reconnect.
+- Browser: profile persistence now works correctly on Apple Container
+  (macOS containerized sandbox).
+- Browser: centralized stale CDP connection detection prevents ghost browser
+  sessions from accumulating. (#172)
+- Gateway: deduplicate voice replies on Telegram channels to prevent echo
+  loops. (#173)
+- Cron job editor: fix modal default validation and form reset when switching
+  schedule type. (#181)
+- MCP: strip internal metadata from tool call arguments before forwarding to
+  MCP servers.
+- Web search: load runtime env keys and improve Brave search response
+  parsing robustness.
+- Prompt: clarify sandbox vs `data_dir` path semantics in system prompts.
+- Gateway: align `show_map` listing ratings to the right for consistent
+  layout.
+
+### Security
+
+## [0.9.0] - 2026-02-17
+
+
+### Added
+
+- Settings > Cron job editor now supports per-job LLM model selection and
+  execution target selection (`host` or `sandbox`), including optional
+  sandbox image override when sandbox execution is selected.
+
+### Changed
+
+- Configuration documentation examples now match the current schema
+  (`[server]`, `[identity]`, `[tools]`, `[hooks.hooks]`,
+  `[mcp.servers.<name>]`, and `[channels.telegram.<account>]`), including
+  updated provider and local-LLM snippets.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Agent loop iteration limit is now configurable via
+  `tools.agent_max_iterations` in `moltis.toml` (default `25`) instead of
+  being hardcoded at runtime.
+
+### Security
+
+## [0.8.38] - 2026-02-17
+
+
+### Added
+
+- `show_map` now supports multi-point maps via `points[]`, rendering all
+  destinations in one screenshot with auto-fit zoom/centering, while keeping
+  legacy single-point fields for backward compatibility.
+- Telegram channel reply streaming via edit-in-place updates, with per-account
+  `stream_mode` gating so `off` keeps the classic final-message delivery path.
+- Telegram per-account `stream_notify_on_complete` option to send a final
+  non-silent completion message after edit-in-place streaming finishes.
+- Telegram per-account `stream_min_initial_chars` option (default `30`) to
+  delay the first streamed message until enough text has accumulated.
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.37] - 2026-02-17
+
+
+### Added
+
+- Settings > Terminal now includes tmux window tabs for the managed
+  `moltis-host-terminal` session, plus a `+ Tab` action to create new tmux
+  windows from the UI.
+- New terminal window APIs: `GET /api/terminal/windows` and
+  `POST /api/terminal/windows` to list and create host tmux windows.
+- Host terminal websocket now supports `?window=<id|index>` targeting and
+  returns `activeWindowId` in the ready payload.
+
+### Changed
+
+- Web chat now supports `/sh` command mode: entering `/sh` toggles a dedicated
+  command input state, command sends are automatically prefixed with `/sh`,
+  and the token bar shows effective execution route (`sandboxed` vs `host`)
+  plus prompt symbol (`#` for root, `$` for non-root).
+- Settings > Terminal now polls tmux windows and updates tabs automatically,
+  so windows created inside tmux (for example `Ctrl-b c`) appear in the web UI.
+- Host terminal tmux integration now uses a dedicated tmux socket and applies
+  a Moltis-friendly profile (status off, mouse off, stable window naming).
+- Settings > Terminal subtitle now omits the prompt symbol hint so it does not
+  show stale `$`/`#` information after privilege changes inside the shell.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- Apple Container sandbox startup now pins `--workdir /tmp`, bootstraps
+  `/home/sandbox` before `sleep infinity`, and uses explicit exec workdirs to
+  avoid `WORKDIR` chdir failures when image metadata directories are missing.
+- Cron tool job creation/update now accepts common shorthand schedule/payload
+  shapes (including cron expression strings) and normalizes them before
+  validation, reducing model-side schema mismatch failures.
+- Force-exec fallback now triggers only for explicit `/sh ...` input (including
+  `/sh@bot ...`), preventing casual chat messages like `hey` from being treated
+  as shell commands while still allowing normal model-driven exec tool use.
+- Tool-mode system prompt guidance is now conversation-first and documents the
+  `/sh` explicit shell prefix.
+- Chat auto-compaction now uses estimated next-request prompt tokens (current
+  context pressure) instead of cumulative session token totals, and chat context
+  UI now separates cumulative usage from current/estimated request context.
+- Settings > Terminal tab switching now uses in-band tmux window switching over
+  the active websocket, reducing redraw/cursor corruption when switching
+  between tmux windows (including fullscreen apps like `vim`).
+- Host terminal tmux attach now resets window sizing to auto (`resize-window -A`)
+  to prevent stale oversized window dimensions across reconnects.
+- Settings > Terminal tmux window polling now continues after tab switches, so
+  windows closed with `Ctrl-D` are removed from the tab strip automatically.
+- Settings > Terminal now recovers from stale `?window=` reconnect targets
+  after a tmux window is closed, attaching to the current window instead of
+  getting stuck in a reconnect loop.
+- Settings > Terminal host PTY output is now transported as raw bytes
+  (base64-encoded over websocket) instead of UTF-8-decoded text, fixing
+  rendering/control-sequence corruption in full-screen terminal apps like `vim`.
+- Settings > Terminal now force-syncs terminal size on connect/window switch so
+  newly created tmux windows attach at full viewport size instead of a smaller
+  default geometry.
+- Settings > Terminal now ignores OSC color/palette mutation sequences from
+  full-screen apps to avoid invisible-text redraw glitches when switching tmux
+  tabs (notably seen with `vim`).
+- Settings > Terminal now re-sends forced resize updates during a short
+  post-connect settle window, fixing initial page-reload cases where tmux
+  windows stayed at stale dimensions until a manual tab switch.
+
+### Security
+
+## [0.8.36] - 2026-02-16
+
+
+### Added
+
+- OAuth 2.1 support for remote MCP servers — automatic discovery (RFC 9728/8414), dynamic client registration (RFC 7591), PKCE authorization code flow, and Bearer token injection with 401 retry
+- `McpOAuthOverride` config option for servers that don't implement standard OAuth discovery
+- `mcp.reauth` RPC method to manually trigger re-authentication for a server
+- Persistent storage of dynamic client registrations at `~/.config/moltis/mcp_oauth_registrations.json`
+- **SSRF allowlist**: `tools.web.fetch.ssrf_allowlist` config field to exempt trusted
+  CIDR ranges from SSRF blocking, enabling Docker inter-container networking.
+- Memory config: add `memory.disable_rag` to force keyword-only memory search while keeping markdown indexing and memory tools enabled
+- Generic OpenAI-compatible provider support: connect any OpenAI-compatible endpoint via the provider setup UI, with domain-derived naming (`custom-` prefix), model auto-discovery, and full model selection
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Telegram queued replies**: route channel reply targets per queued message so
+  `chat.message_queue_mode = "followup"` delivers replies one-by-one instead of
+  collapsing queued channel replies into a single batch delivery.
+- **Queue mode default**: make one-by-one replay (`followup`) explicit as the
+  `ChatConfig` default, with config-level tests to prevent regressions.
+- MCP OAuth dynamic registration now uses the exact loopback callback URI selected for the current auth flow, improving compatibility with providers that require strict redirect URI matching (for example Linear).
+- MCP manager now applies `[mcp.servers.<name>.oauth]` override settings when building the OAuth provider for SSE servers.
+- Streamable HTTP MCP transport now persists and reuses `Mcp-Session-Id`, parses `text/event-stream` responses, and sends best-effort `DELETE` on shutdown to close server sessions.
+- MCP docs/config examples now use the current table-based config shape and `/mcp` endpoint examples for remote servers.
+- Memory embeddings endpoint composition now avoids duplicated path segments like `/v1/v1/embeddings` and accepts base URLs ending in host-only, `/v1`, versioned paths (for example `/v4`), or `/embeddings`
+### Security
+
+## [0.8.35] - 2026-02-15
+
+
+### Added
+
+- Add memory target routing guidance to `memory_save` prompt hint — core facts go to MEMORY.md, everything else to `memory/<topic>.md` to keep context lean
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.34] - 2026-02-15
+
+
+### Added
+
+- Add explicit `memory_save` hint in system prompt so weaker models (MiniMax, etc.) call the tool when asked to remember something
+- Add anchor text after memory content so models don't ignore known facts when `memory_search` returns empty
+- Add `zai` to default offered providers in config template
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.8.33] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **CI**: remove unnecessary `std::path::` qualification in gateway server flagged
+  by nightly clippy.
+
+### Security
+
+## [0.8.32] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **CI**: gate macOS-only sandbox helper functions with `#[cfg]` to fix dead-code
+  errors on Linux CI.
+
+### Security
+
+## [0.8.31] - 2026-02-15
+
+
+### Added
+
+- **Sandbox toggle notification**: when the sandbox is enabled or disabled
+  mid-session, a system message is injected into the conversation history so
+  the LLM knows the execution environment changed. A chat notice also appears
+  in the UI immediately.
+
+- **Config `[env]` section**: environment variables defined in `[env]` in
+  `moltis.toml` are injected into the Moltis process at startup. This makes
+  API keys (Brave, OpenRouter, etc.) available to features that read from
+  `std::env::var()`. Process env vars (`docker -e`, host env) take precedence.
+  Closes #107.
+- **Browser auto-detection and install**: automatically detect all installed
+  Chromium-family browsers (Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc)
+  and auto-install via the system package manager when none is found. Requests
+  can specify a preferred browser (`"browser": "brave"`) or let the system
+  pick the first available one.
+- **Z.AI provider**: add Z.AI (Zhipu) as an OpenAI-compatible provider with
+  static model catalog (GLM-5, GLM-4.7, GLM-4.6, GLM-4.5 series) and dynamic
+  model discovery via `/models` endpoint. Supports tool calling, streaming,
+  vision (GLM-4.6V/4.5V), and reasoning content.
+- **Running Containers panel**: the Settings > Sandboxes page now shows a
+  "Running Containers" section listing all moltis-managed containers with
+  live state (running/stopped/exited), backend type (Apple Container/Docker),
+  resource info, and Stop/Delete actions. Includes disk usage display
+  (container/image counts, sizes, reclaimable space) and a "Clean All"
+  button to stop and remove all stale containers at once.
+- **Startup container GC**: the gateway now automatically removes orphaned
+  session containers on startup, preventing disk space accumulation from
+  crashed or interrupted sessions.
+- **Download full context as JSONL**: the full context panel now has a
+  "Download" button that exports the conversation (including raw LLM
+  responses) as a timestamped `.jsonl` file.
+- **Sandbox images in cached images list**: the Settings > Images page
+  now merges sandbox-built images into the cached images list so all
+  container images are visible in one place.
+
+### Changed
+
+- **Sandbox image identity**: image tags now use SHA-256 instead of
+  `DefaultHasher` for deterministic, cross-run hashing of base image +
+  packages.
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+- **Thinking indicator lost on reload**: reloading the page while the model
+  was generating no longer loses the "thinking" dots. The backend now includes
+  `replying` state in `sessions.list` and `sessions.switch` RPC responses so
+  the frontend can restore the indicator after a full page reload.
+- **Thinking text restored after reload**: reloading the page during extended
+  thinking (reasoning) now restores the accumulated thinking text instead of
+  showing only bouncing dots. The backend tracks thinking text per session and
+  returns it in the `sessions.switch` response.
+- **Apple Container recovery**: simplify container recovery to a single flat
+  retry loop (3 attempts max, down from up to 24). Name rotation now only
+  triggers on `AlreadyExists` errors, preventing orphan containers. Added
+  `notFound` error matching so exec readiness probes retry correctly.
+  Diagnostic info (running container count, service health, container logs)
+  is now included in failure messages. Detect stale Virtualization.framework
+  state (`NSPOSIXErrorDomain EINVAL`) and automatically restart the daemon
+  (`container system stop && container system start`) before retrying; bail
+  with a clear remediation message only if automatic restart fails.
+  Exec-level recovery retries reduced from 3 to 1.
+- **Ghost Apple Containers**: failed container deletions are now tracked
+  in a zombie set and filtered from list output, preventing stale entries
+  from reappearing in the Running Containers panel.
+- **Container action errors preserved**: failed delete/clean/restart
+  operations now surface the original error message to the UI instead of
+  silently swallowing it.
+- **Usage parsing across OpenAI-compatible providers**: token counts now
+  handle Anthropic-style (`input_tokens`/`output_tokens`), camelCase
+  variants, cache token fields, and multiple response nesting structures
+  across diverse providers.
+- **Think tag whitespace**: leading whitespace after `</think>` close
+  tags is now stripped, preventing extra blank lines in streamed output.
+- **Token bar visible at zero**: the token usage bar no longer disappears
+  when all counts are zero; it stays visible as a baseline indicator.
+
+### Security
+
+## [0.8.30] - 2026-02-15
+
+
+### Added
+
+### Changed
+
+- **Assistant reasoning persistence**: conversation reasoning is now persisted
+  in assistant messages and shared snapshots so resumed sessions retain
+  reasoning context instead of dropping it after refresh/share operations.
 
 ### Deprecated
 
@@ -163,7 +758,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
-
 - **Multi-select preferred models per provider**: The LLMs page now has a
   "Preferred Models" button per provider that opens a multi-select modal.
   Selected models are pinned at the top of the session model dropdown.
@@ -208,6 +802,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Instead, the backend exposes a `keyOptional` field on provider
   metadata, making the UI provider-agnostic.
 
+### Fixed
+
+- **Settings UI env vars now available process-wide**: environment variables
+  set via Settings > Environment were previously only injected into sandbox
+  commands. They are now also injected into the Moltis process at startup,
+  making them available to web search, embeddings, and provider API calls.
 ## [0.8.14] - 2026-02-11
 
 ### Security

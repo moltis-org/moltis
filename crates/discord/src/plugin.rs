@@ -5,7 +5,6 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     secrecy::ExposeSecret,
     serenity::all::{Client, Http},
@@ -13,7 +12,7 @@ use {
 };
 
 use moltis_channels::{
-    ChannelEventSink,
+    ChannelEventSink, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
     plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
 };
@@ -63,7 +62,7 @@ impl DiscordPlugin {
     }
 
     /// Get a shared reference to the outbound sender (for use outside the plugin).
-    pub fn shared_outbound(&self) -> Arc<dyn moltis_channels::ChannelOutbound> {
+    pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
         Arc::new(DiscordOutbound {
             accounts: Arc::clone(&self.accounts),
         })
@@ -100,11 +99,15 @@ impl ChannelPlugin for DiscordPlugin {
         "Discord"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let discord_config: DiscordAccountConfig = serde_json::from_value(config)?;
 
         if discord_config.token.expose_secret().is_empty() {
-            return Err(anyhow::anyhow!("discord bot token is required"));
+            return Err(ChannelError::invalid_input("discord bot token is required"));
         }
 
         info!(account_id, "starting discord account");
@@ -194,7 +197,7 @@ impl ChannelPlugin for DiscordPlugin {
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let cancel = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.cancel.clone())
@@ -223,7 +226,7 @@ impl ChannelPlugin for DiscordPlugin {
 
 #[async_trait]
 impl ChannelStatus for DiscordPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
         // Return cached result if fresh enough
         if let Ok(cache) = self.probe_cache.read()
             && let Some((snap, ts)) = cache.get(account_id)

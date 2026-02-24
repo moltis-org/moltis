@@ -19,7 +19,8 @@ use {
 };
 
 use crate::{
-    services::{ServiceResult, SessionService, TtsService},
+    services::{ServiceError, ServiceResult, SessionService, TtsService},
+    session_types::{PatchParams, VoiceGenerateParams, VoiceTarget, parse_params},
     share_store::{
         ShareSnapshot, ShareStore, ShareVisibility, SharedImageAsset, SharedImageSet,
         SharedMapLinks, SharedMessage, SharedMessageRole,
@@ -57,10 +58,19 @@ fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
         .enumerate()
         .filter_map(|(idx, mut msg)| {
             if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-                let keep = msg
+                let has_content = msg
                     .get("content")
                     .and_then(|v| v.as_str())
                     .is_some_and(|s| !s.trim().is_empty());
+                let has_reasoning = msg
+                    .get("reasoning")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let has_audio = msg
+                    .get("audio")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty());
+                let keep = has_content || has_reasoning || has_audio;
                 if !keep {
                     return None;
                 }
@@ -100,6 +110,18 @@ fn message_text(msg: &Value) -> Option<String> {
     }
 }
 
+fn sanitize_tts_text(text: &str) -> String {
+    #[cfg(feature = "voice")]
+    {
+        moltis_voice::tts::sanitize_text_for_tts(text).to_string()
+    }
+
+    #[cfg(not(feature = "voice"))]
+    {
+        text.to_string()
+    }
+}
+
 /// Truncate a string to `max` chars, appending "…" if truncated.
 fn truncate_preview(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -107,11 +129,6 @@ fn truncate_preview(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..s.floor_char_boundary(max)])
     }
-}
-
-/// Extract preview from a single message (used for first-message preview in chat).
-pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
-    message_text(msg).map(|t| truncate_preview(&t, 200))
 }
 
 /// Build a preview by combining user and assistant messages until we
@@ -169,6 +186,12 @@ fn message_text_for_share(msg: &Value) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
     let trimmed = joined.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn message_reasoning_for_share(msg: &Value) -> Option<String> {
+    let reasoning = msg.get("reasoning").and_then(|v| v.as_str())?;
+    let trimmed = reasoning.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
@@ -638,6 +661,13 @@ async fn to_shared_message(
         },
         SharedMessageRole::System | SharedMessageRole::Notice => String::new(),
     };
+    let reasoning = match role {
+        SharedMessageRole::Assistant => message_reasoning_for_share(msg),
+        SharedMessageRole::User
+        | SharedMessageRole::ToolResult
+        | SharedMessageRole::System
+        | SharedMessageRole::Notice => None,
+    };
     let audio_data_url = match role {
         SharedMessageRole::User | SharedMessageRole::Assistant => {
             message_audio_data_url_for_share(msg, session_key, store).await
@@ -698,7 +728,12 @@ async fn to_shared_message(
         | SharedMessageRole::Notice => None,
     };
 
-    if content.is_empty() && audio_data_url.is_none() && image.is_none() && map_links.is_none() {
+    if content.is_empty()
+        && reasoning.is_none()
+        && audio_data_url.is_none()
+        && image.is_none()
+        && map_links.is_none()
+    {
         return None;
     }
     let created_at = value_u64(msg, "created_at");
@@ -720,6 +755,7 @@ async fn to_shared_message(
     Some(SharedMessage {
         role,
         content,
+        reasoning,
         audio_data_url,
         image,
         image_data_url: None,
@@ -864,7 +900,7 @@ impl SessionService for LiveSessionService {
             .store
             .read_last_n(key, limit)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         Ok(serde_json::json!({ "messages": filter_ui_history(messages) }))
     }
 
@@ -878,8 +914,8 @@ impl SessionService for LiveSessionService {
             .metadata
             .upsert(key, None)
             .await
-            .map_err(|e| e.to_string())?;
-        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
+        let history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         // Recompute preview from combined messages every time resolve runs,
         // so sessions get the latest multi-message preview algorithm.
@@ -924,64 +960,38 @@ impl SessionService for LiveSessionService {
     }
 
     async fn patch(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let label = params
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let model = params
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let p: PatchParams = parse_params(params)?;
+        let key = &p.key;
 
         let entry = self
             .metadata
             .get(key)
             .await
             .ok_or_else(|| format!("session '{key}' not found"))?;
-        if label.is_some() {
+        if p.label.is_some() {
             if entry.channel_binding.is_some() {
-                return Err("cannot rename a channel-bound session".to_string());
+                return Err("cannot rename a channel-bound session".into());
             }
-            let _ = self.metadata.upsert(key, label).await;
+            let _ = self.metadata.upsert(key, p.label).await;
         }
-        if model.is_some() {
-            self.metadata.set_model(key, model).await;
+        if p.model.is_some() {
+            self.metadata.set_model(key, p.model).await;
         }
-        if params.get("project_id").is_some() {
-            let project_id = params
-                .get("project_id")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(project_id_opt) = p.project_id {
+            let project_id = project_id_opt.filter(|s| !s.is_empty());
             self.metadata.set_project_id(key, project_id).await;
         }
-        // Update worktree_branch if provided.
-        if params.get("worktree_branch").is_some() {
-            let worktree_branch = params
-                .get("worktree_branch")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(worktree_branch_opt) = p.worktree_branch {
+            let worktree_branch = worktree_branch_opt.filter(|s| !s.is_empty());
             self.metadata
                 .set_worktree_branch(key, worktree_branch)
                 .await;
         }
-
-        // Update sandbox_image if provided.
-        if params.get("sandbox_image").is_some() {
-            let sandbox_image = params
-                .get("sandbox_image")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(String::from);
+        if let Some(sandbox_image_opt) = p.sandbox_image {
+            let sandbox_image = sandbox_image_opt.filter(|s| !s.is_empty());
             self.metadata
                 .set_sandbox_image(key, sandbox_image.clone())
                 .await;
-            // Push image override to sandbox router.
             if let Some(ref router) = self.sandbox_router {
                 if let Some(ref img) = sandbox_image {
                     router.set_image_override(key, img.clone()).await;
@@ -990,25 +1000,39 @@ impl SessionService for LiveSessionService {
                 }
             }
         }
-
-        // Update mcp_disabled if provided.
-        if params.get("mcp_disabled").is_some() {
-            let mcp_disabled = params.get("mcp_disabled").and_then(|v| v.as_bool());
+        if let Some(mcp_disabled) = p.mcp_disabled {
             self.metadata.set_mcp_disabled(key, mcp_disabled).await;
         }
-
-        // Update sandbox_enabled if provided.
-        if params.get("sandbox_enabled").is_some() {
-            let sandbox_enabled = params.get("sandbox_enabled").and_then(|v| v.as_bool());
+        if let Some(sandbox_enabled_opt) = p.sandbox_enabled {
+            let old_sandbox = entry.sandbox_enabled;
             self.metadata
-                .set_sandbox_enabled(key, sandbox_enabled)
+                .set_sandbox_enabled(key, sandbox_enabled_opt)
                 .await;
-            // Push override to sandbox router.
             if let Some(ref router) = self.sandbox_router {
-                if let Some(enabled) = sandbox_enabled {
+                if let Some(enabled) = sandbox_enabled_opt {
                     router.set_override(key, enabled).await;
                 } else {
                     router.remove_override(key).await;
+                }
+            }
+            // Notify the LLM when sandbox state actually changes.
+            if old_sandbox != sandbox_enabled_opt {
+                let notification = if sandbox_enabled_opt == Some(false) {
+                    "Sandbox has been disabled for this session. The `exec` tool now runs \
+                     commands directly on the host machine. Previous command outputs in this \
+                     conversation may have come from a sandboxed Linux container with a \
+                     different OS, filesystem, and environment."
+                } else if sandbox_enabled_opt == Some(true) {
+                    "Sandbox has been enabled for this session. The `exec` tool will now run \
+                     commands inside a sandboxed container. The container has a different \
+                     filesystem and environment than the host machine."
+                } else {
+                    "Sandbox override has been cleared for this session. The `exec` tool will \
+                     use the global sandbox setting."
+                };
+                let msg = PersistedMessage::system(notification);
+                if let Err(e) = self.store.append_typed(key, &msg).await {
+                    warn!(session = key, error = %e, "failed to append sandbox state notification");
                 }
             }
         }
@@ -1032,60 +1056,38 @@ impl SessionService for LiveSessionService {
     }
 
     async fn voice_generate(&self, params: Value) -> ServiceResult {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| "missing 'key' parameter".to_string())?;
-        let run_id = params
-            .get("runId")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-        let requested_index = params
-            .get("messageIndex")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-            .or_else(|| {
-                params
-                    .get("historyIndex")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize)
-            });
-        if requested_index.is_none() && run_id.is_none() {
-            return Err("missing 'messageIndex' or 'runId' parameter".to_string());
-        }
+        let p: VoiceGenerateParams = parse_params(params)?;
+        let key = &p.key;
+        let target = p.target().map_err(ServiceError::message)?;
 
         let tts = self
             .tts_service
             .as_ref()
             .ok_or_else(|| "session voice generation is not configured".to_string())?;
 
-        let mut history = self.store.read(key).await.map_err(|e| e.to_string())?;
+        let mut history = self.store.read(key).await.map_err(ServiceError::message)?;
         if history.is_empty() {
-            return Err(format!("session '{key}' has no messages"));
+            return Err(format!("session '{key}' has no messages").into());
         }
 
-        let mut target_index = requested_index;
-        if target_index.is_none()
-            && let Some(run_id) = run_id
-        {
-            target_index = history.iter().rposition(|msg| {
-                msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
-                    && msg.get("run_id").and_then(|v| v.as_str()) == Some(run_id)
-            });
-        }
-        let target_index =
-            target_index.ok_or_else(|| "target assistant message not found".to_string())?;
-        let target = history
+        let target_index = match &target {
+            VoiceTarget::ByRunId(id) => history
+                .iter()
+                .rposition(|msg| {
+                    msg.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                        && msg.get("run_id").and_then(|v| v.as_str()) == Some(id)
+                })
+                .ok_or_else(|| "target assistant message not found".to_string())?,
+            VoiceTarget::ByMessageIndex(idx) => *idx,
+        };
+        let target_msg = history
             .get(target_index)
             .ok_or_else(|| format!("message index {target_index} is out of range"))?;
-        if target.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-            return Err("target message is not an assistant response".to_string());
+        if target_msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            return Err("target message is not an assistant response".into());
         }
 
-        if let Some(existing_audio) = target.get("audio").and_then(|v| v.as_str())
+        if let Some(existing_audio) = target_msg.get("audio").and_then(|v| v.as_str())
             && !existing_audio.trim().is_empty()
             && let Some(filename) = media_filename(existing_audio)
             && self.store.read_media(key, filename).await.is_ok()
@@ -1098,13 +1100,11 @@ impl SessionService for LiveSessionService {
             }));
         }
 
-        let text = message_text(target)
+        let text = message_text(target_msg)
             .ok_or_else(|| "assistant message has no text content to synthesize".to_string())?;
-        let sanitized = moltis_voice::tts::sanitize_text_for_tts(&text)
-            .trim()
-            .to_string();
+        let sanitized = sanitize_tts_text(&text).trim().to_string();
         if sanitized.is_empty() {
-            return Err("assistant message has no speakable text for TTS".to_string());
+            return Err("assistant message has no speakable text for TTS".into());
         }
 
         let status_value = tts
@@ -1112,9 +1112,9 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| format!("failed to check TTS status: {e}"))?;
         let status: TtsStatusPayload = serde_json::from_value(status_value)
-            .map_err(|_| "invalid TTS status payload".to_string())?;
+            .map_err(|_| ServiceError::message("invalid TTS status payload"))?;
         if !status.enabled {
-            return Err("TTS is disabled or provider is not configured".to_string());
+            return Err("TTS is disabled or provider is not configured".into());
         }
         if let Some(max_text_length) = status.max_text_length
             && sanitized.len() > max_text_length
@@ -1123,7 +1123,8 @@ impl SessionService for LiveSessionService {
                 "text exceeds max length ({} > {})",
                 sanitized.len(),
                 max_text_length
-            ));
+            )
+            .into());
         }
 
         let convert_value = tts
@@ -1134,17 +1135,19 @@ impl SessionService for LiveSessionService {
             .await
             .map_err(|e| format!("TTS convert failed: {e}"))?;
         let convert: TtsConvertPayload = serde_json::from_value(convert_value)
-            .map_err(|_| "invalid TTS convert payload".to_string())?;
+            .map_err(|_| ServiceError::message("invalid TTS convert payload"))?;
         let audio_bytes = general_purpose::STANDARD
             .decode(convert.audio.trim())
-            .map_err(|_| "invalid base64 audio payload returned by TTS provider".to_string())?;
+            .map_err(|_| {
+                ServiceError::message("invalid base64 audio payload returned by TTS provider")
+            })?;
 
         let filename = format!("voice-msg-{target_index}.ogg");
         let audio_path = self
             .store
             .save_media(key, &filename, &audio_bytes)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let target_mut = history
             .get_mut(target_index)
@@ -1158,7 +1161,7 @@ impl SessionService for LiveSessionService {
         self.store
             .replace_history(key, history)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         self.metadata.touch(key, message_count).await;
 
         Ok(serde_json::json!({
@@ -1191,7 +1194,7 @@ impl SessionService for LiveSessionService {
             .get(key)
             .await
             .ok_or_else(|| format!("session '{key}' not found"))?;
-        let history = self.store.read(key).await.map_err(|e| e.to_string())?;
+        let history = self.store.read(key).await.map_err(ServiceError::message)?;
 
         let snapshot = ShareSnapshot {
             session_key: key.to_string(),
@@ -1211,7 +1214,7 @@ impl SessionService for LiveSessionService {
                 shared_messages
             },
         };
-        let snapshot_json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+        let snapshot_json = serde_json::to_string(&snapshot)?;
 
         let created = share_store
             .create_or_replace(
@@ -1221,7 +1224,7 @@ impl SessionService for LiveSessionService {
                 snapshot.cutoff_message_count,
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         // Persist a UI-only notice in the source session so users can see
         // the exact cutoff marker without affecting future LLM context.
@@ -1242,7 +1245,7 @@ impl SessionService for LiveSessionService {
                 "failed to persist share boundary notice; revoking share"
             );
             let _ = share_store.revoke(&created.share.id).await;
-            return Err(format!("failed to persist share boundary notice: {e}"));
+            return Err(format!("failed to persist share boundary notice: {e}").into());
         }
         match self.store.count(key).await {
             Ok(message_count) => {
@@ -1280,7 +1283,7 @@ impl SessionService for LiveSessionService {
         let shares = share_store
             .list_for_session(key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let items: Vec<Value> = shares
             .into_iter()
@@ -1310,7 +1313,16 @@ impl SessionService for LiveSessionService {
             .as_ref()
             .ok_or_else(|| "session share store not configured".to_string())?;
 
-        let revoked = share_store.revoke(id).await.map_err(|e| e.to_string())?;
+        let revoked = share_store
+            .revoke(id)
+            .await
+            .map_err(ServiceError::message)?;
+
+        // Remove pre-rendered static files.
+        let shares_dir = moltis_config::data_dir().join("shares");
+        let _ = std::fs::remove_file(shares_dir.join(format!("{id}.html")));
+        let _ = std::fs::remove_file(shares_dir.join(format!("{id}-og.svg")));
+
         Ok(serde_json::json!({ "revoked": revoked }))
     }
 
@@ -1320,7 +1332,7 @@ impl SessionService for LiveSessionService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
-        self.store.clear(key).await.map_err(|e| e.to_string())?;
+        self.store.clear(key).await.map_err(ServiceError::message)?;
         self.metadata.touch(key, 0).await;
         self.metadata.set_preview(key, None).await;
 
@@ -1334,7 +1346,7 @@ impl SessionService for LiveSessionService {
             .ok_or_else(|| "missing 'key' parameter".to_string())?;
 
         if key == "main" {
-            return Err("cannot delete the main session".to_string());
+            return Err("cannot delete the main session".into());
         }
 
         let force = params
@@ -1359,8 +1371,7 @@ impl SessionService for LiveSessionService {
                     moltis_projects::WorktreeManager::has_uncommitted_changes(&wt_dir).await
             {
                 return Err(
-                    "worktree has uncommitted changes; use force: true to delete anyway"
-                        .to_string(),
+                    "worktree has uncommitted changes; use force: true to delete anyway".into(),
                 );
             }
 
@@ -1379,7 +1390,7 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        self.store.clear(key).await.map_err(|e| e.to_string())?;
+        self.store.clear(key).await.map_err(ServiceError::message)?;
 
         // Clean up sandbox resources for this session.
         if let Some(ref router) = self.sandbox_router
@@ -1407,7 +1418,7 @@ impl SessionService for LiveSessionService {
             }
         }
 
-        Ok(serde_json::json!({}))
+        Ok(serde_json::json!({ "ok": true }))
     }
 
     async fn compact(&self, _params: Value) -> ServiceResult {
@@ -1428,7 +1439,7 @@ impl SessionService for LiveSessionService {
             .store
             .read(parent_key)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         let msg_count = messages.len();
 
         let fork_point = params
@@ -1438,9 +1449,7 @@ impl SessionService for LiveSessionService {
             .unwrap_or(msg_count);
 
         if fork_point > msg_count {
-            return Err(format!(
-                "forkPoint {fork_point} exceeds message count {msg_count}"
-            ));
+            return Err(format!("forkPoint {fork_point} exceeds message count {msg_count}").into());
         }
 
         let new_key = format!("session:{}", uuid::Uuid::new_v4());
@@ -1449,13 +1458,13 @@ impl SessionService for LiveSessionService {
         self.store
             .replace_history(&new_key, forked_messages)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let _entry = self
             .metadata
             .upsert(&new_key, label)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.metadata.touch(&new_key, fork_point as u32).await;
 
@@ -1540,7 +1549,7 @@ impl SessionService for LiveSessionService {
             .store
             .search(query, max)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let enriched: Vec<Value> = {
             let mut out = Vec::with_capacity(results.len());
@@ -1659,6 +1668,17 @@ mod tests {
         assert_eq!(filtered.len(), 3);
     }
 
+    #[test]
+    fn filter_ui_history_keeps_reasoning_only_assistant() {
+        let messages = vec![
+            serde_json::json!({"role": "assistant", "content": "", "reasoning": "internal plan"}),
+        ];
+        let filtered = filter_ui_history(messages);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["role"], "assistant");
+        assert_eq!(filtered[0]["reasoning"], "internal plan");
+    }
+
     // --- Preview extraction tests ---
 
     #[test]
@@ -1704,13 +1724,6 @@ mod tests {
         assert!(result.ends_with('…'));
         // 200 'a' chars + the '…' char
         assert!(result.len() <= 204); // 200 bytes + up to 3 for '…'
-    }
-
-    #[test]
-    fn extract_preview_from_value_basic() {
-        let msg = serde_json::json!({"role": "user", "content": "tell me a joke"});
-        let result = extract_preview_from_value(&msg);
-        assert_eq!(result, Some("tell me a joke".to_string()));
     }
 
     #[test]
@@ -1812,7 +1825,7 @@ mod tests {
     #[tokio::test]
     async fn message_audio_data_url_for_share_reads_media_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let bytes = b"OggSfake".to_vec();
         store
             .save_media("main", "voice.ogg", &bytes)
@@ -1837,7 +1850,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_skips_system_and_notice_roles() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
 
         let system_msg = serde_json::json!({
             "role": "system",
@@ -1872,7 +1885,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_user_audio_without_text() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         store
             .save_media("main", "voice-input.webm", b"RIFFfake")
             .await
@@ -1902,7 +1915,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_assistant_audio() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         store
             .save_media("main", "voice-output.ogg", b"OggSfake")
             .await
@@ -1930,9 +1943,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn to_shared_message_includes_assistant_reasoning_without_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().to_path_buf());
+        let assistant_msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning": "step one\nstep two",
+        });
+
+        let shared = to_shared_message(&assistant_msg, "main", &store)
+            .await
+            .expect("shared message");
+
+        assert!(matches!(shared.role, SharedMessageRole::Assistant));
+        assert!(shared.content.is_empty());
+        assert_eq!(shared.reasoning.as_deref(), Some("step one\nstep two"));
+        assert!(shared.audio_data_url.is_none());
+    }
+
+    #[tokio::test]
     async fn to_shared_message_includes_tool_result_screenshot_and_map_links() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tiny_png = general_purpose::STANDARD
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+tmXcAAAAASUVORK5CYII=")
             .unwrap();
@@ -2032,7 +2065,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_includes_exec_command_for_tool_result() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",
@@ -2061,7 +2094,7 @@ mod tests {
     #[tokio::test]
     async fn to_shared_message_redacts_exec_command_and_output_secrets() {
         let dir = tempfile::tempdir().unwrap();
-        let store = moltis_sessions::store::SessionStore::new(dir.path().to_path_buf());
+        let store = SessionStore::new(dir.path().to_path_buf());
         let tool_msg = serde_json::json!({
             "role": "tool_result",
             "tool_name": "exec",
@@ -2120,46 +2153,44 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::services::TtsService for MockTtsService {
-        async fn status(&self) -> crate::services::ServiceResult {
+    impl TtsService for MockTtsService {
+        async fn status(&self) -> ServiceResult {
             Ok(self.status_payload.clone())
         }
 
-        async fn providers(&self) -> crate::services::ServiceResult {
+        async fn providers(&self) -> ServiceResult {
             Ok(serde_json::json!([]))
         }
 
-        async fn enable(&self, _params: Value) -> crate::services::ServiceResult {
-            Err("mock".to_string())
+        async fn enable(&self, _params: Value) -> ServiceResult {
+            Err("mock".into())
         }
 
-        async fn disable(&self) -> crate::services::ServiceResult {
+        async fn disable(&self) -> ServiceResult {
             Ok(serde_json::json!({}))
         }
 
-        async fn convert(&self, _params: Value) -> crate::services::ServiceResult {
+        async fn convert(&self, _params: Value) -> ServiceResult {
             self.convert_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(ref error) = self.convert_error {
-                return Err(error.clone());
+                return Err(error.clone().into());
             }
             self.convert_payload
                 .clone()
-                .ok_or_else(|| "mock missing convert payload".to_string())
+                .ok_or_else(|| ServiceError::message("mock missing convert payload"))
         }
 
-        async fn set_provider(&self, _params: Value) -> crate::services::ServiceResult {
-            Err("mock".to_string())
+        async fn set_provider(&self, _params: Value) -> ServiceResult {
+            Err("mock".into())
         }
     }
 
     #[tokio::test]
     async fn voice_generate_reuses_existing_audio_without_tts_convert() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
         let existing_path = store
             .save_media("main", "voice-msg-1.ogg", b"OggSreuse")
             .await
@@ -2190,7 +2221,7 @@ mod tests {
             "convert should not be called",
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let result = service
             .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 1 }))
@@ -2205,11 +2236,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_creates_and_persists_audio() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         store
             .append(
@@ -2238,7 +2267,7 @@ mod tests {
             })),
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let result = service
             .voice_generate(serde_json::json!({ "key": "main", "runId": "run-generate" }))
@@ -2264,11 +2293,9 @@ mod tests {
     #[tokio::test]
     async fn voice_generate_rejects_non_assistant_target() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         store
             .append(
@@ -2283,13 +2310,71 @@ mod tests {
             None,
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
-            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn crate::services::TtsService>);
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
 
         let error = service
             .voice_generate(serde_json::json!({ "key": "main", "messageIndex": 0 }))
             .await
             .expect_err("should reject non-assistant target");
-        assert!(error.contains("not an assistant"));
+        assert!(error.to_string().contains("not an assistant"));
+    }
+
+    #[tokio::test]
+    async fn voice_generate_prefers_run_id_over_non_assistant_message_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        let existing_path = store
+            .save_media("main", "voice-msg-2.ogg", b"OggSreuse")
+            .await
+            .expect("save media");
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "tool_result", "content": "tool output" }),
+            )
+            .await
+            .expect("append tool_result");
+        store
+            .append(
+                "main",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "assistant answer",
+                    "audio": existing_path,
+                    "run_id": "run-target",
+                }),
+            )
+            .await
+            .expect("append assistant");
+
+        let mock_tts = Arc::new(MockTtsService::with_convert_error(
+            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            "convert should not be called",
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
+
+        let result = service
+            .voice_generate(
+                serde_json::json!({ "key": "main", "runId": "run-target", "messageIndex": 1 }),
+            )
+            .await
+            .expect("voice generate");
+
+        assert_eq!(result["reused"], true);
+        assert_eq!(result["messageIndex"], 2);
+        assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-2.ogg"));
+        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
     // --- Browser service integration tests ---
@@ -2315,7 +2400,7 @@ mod tests {
 
     #[async_trait]
     impl crate::services::BrowserService for MockBrowserService {
-        async fn request(&self, _p: serde_json::Value) -> crate::services::ServiceResult {
+        async fn request(&self, _p: Value) -> ServiceResult {
             Err("mock".into())
         }
 
@@ -2326,20 +2411,18 @@ mod tests {
 
     async fn sqlite_pool() -> sqlx::SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        moltis_sessions::metadata::SqliteSessionMetadata::init(&pool)
-            .await
-            .unwrap();
+        // Projects table must exist before sessions (FK constraint).
+        moltis_projects::run_migrations(&pool).await.unwrap();
+        SqliteSessionMetadata::init(&pool).await.unwrap();
         pool
     }
 
     #[tokio::test]
     async fn with_browser_service_builder() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -2351,11 +2434,9 @@ mod tests {
     #[tokio::test]
     async fn clear_all_calls_browser_close_all() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         let mock = Arc::new(MockBrowserService::new());
         let svc = LiveSessionService::new(store, metadata)
@@ -2369,16 +2450,113 @@ mod tests {
     #[tokio::test]
     async fn clear_all_without_browser_service() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(moltis_sessions::store::SessionStore::new(
-            dir.path().to_path_buf(),
-        ));
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
-        let metadata = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(pool));
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
 
         // No browser_service wired.
         let svc = LiveSessionService::new(store, metadata);
 
         let result = svc.clear_all().await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_toggle_appends_system_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox — should append a system notification.
+        let result = svc
+            .patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await;
+        assert!(result.is_ok());
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 1, "should have one system notification");
+        assert_eq!(msgs[0]["role"], "system");
+        let content = msgs[0]["content"].as_str().unwrap();
+        assert!(
+            content.contains("enabled"),
+            "notification should mention enabled"
+        );
+
+        // Disable sandbox — should append another notification.
+        let result = svc
+            .patch(serde_json::json!({ "key": "main", "sandboxEnabled": false }))
+            .await;
+        assert!(result.is_ok());
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 2, "should have two system notifications");
+        assert_eq!(msgs[1]["role"], "system");
+        let content = msgs[1]["content"].as_str().unwrap();
+        assert!(
+            content.contains("disabled"),
+            "notification should mention disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_no_change_skips_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox first.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+
+        // Patch again with the same value — no new notification.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 1, "no duplicate notification for same value");
+    }
+
+    #[tokio::test]
+    async fn patch_sandbox_null_clears_override_with_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("main", Some("Test".to_string()))
+            .await
+            .unwrap();
+
+        let svc = LiveSessionService::new(Arc::clone(&store), Arc::clone(&metadata));
+
+        // Enable sandbox first.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": true }))
+            .await
+            .unwrap();
+
+        // Clear override with null.
+        svc.patch(serde_json::json!({ "key": "main", "sandboxEnabled": null }))
+            .await
+            .unwrap();
+        let msgs = store.read("main").await.unwrap();
+        assert_eq!(msgs.len(), 2, "clearing override should add notification");
+        let content = msgs[1]["content"].as_str().unwrap();
+        assert!(
+            content.contains("cleared"),
+            "notification should mention cleared"
+        );
     }
 }

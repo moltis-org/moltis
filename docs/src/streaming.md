@@ -120,7 +120,14 @@ Event types broadcast to the UI:
 | `ToolCallEnd` | `tool_call_end` |
 | `Iteration(n)` | `iteration` |
 
-### 6. Frontend (`crates/gateway/src/assets/js/`)
+### 6. Web Crate (`crates/web/`)
+
+The `moltis-web` crate owns the browser-facing layer: HTML templates, static
+assets (JS, CSS, icons), and the axum routes that serve them. It injects its
+routes into the gateway via the `RouteEnhancer` composition pattern, keeping
+web UI concerns separate from API and agent logic in the gateway.
+
+### 7. Frontend (`crates/web/src/assets/js/`)
 
 The JavaScript frontend handles streaming via WebSocket:
 
@@ -157,10 +164,10 @@ function handleChatDelta(p, isActive, isChatPage) {
                                                                RunnerEvent
                                                                       │
                                                                       ▼
-┌──────────────┐   WebSocket  ┌──────────────┐    Callback     ┌──────────────┐
-│   Browser    │◀─────────────│   Gateway    │◀────────────────│   Callback   │
-│              │              │              │                 │   (on_event) │
-└──────────────┘              └──────────────┘                 └──────────────┘
+┌──────────────┐   WebSocket  ┌──────────────┐   Routes/WS   ┌──────────────┐    Callback     ┌──────────────┐
+│   Browser    │◀─────────────│  Web Crate   │◀──────────────│   Gateway    │◀────────────────│   Callback   │
+│              │              │  (moltis-web)│               │              │                 │   (on_event) │
+└──────────────┘              └──────────────┘               └──────────────┘                 └──────────────┘
 ```
 
 ## Adding Streaming to New Providers

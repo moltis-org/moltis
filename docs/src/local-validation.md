@@ -49,7 +49,7 @@ checks in the PR.
   not already available.
 - `zizmor` is advisory in local runs and does not block lint/test execution.
 - Test output is suppressed unless tests fail.
-- `local/e2e` auto-runs `npm ci` only when `crates/gateway/ui/node_modules`
+- `local/e2e` auto-runs `npm ci` only when `crates/web/ui/node_modules`
   is missing, then runs `npm run e2e:install` and `npm run e2e`. Override with
   `LOCAL_VALIDATE_E2E_CMD`.
 

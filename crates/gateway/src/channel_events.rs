@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use {
-    anyhow::{Result, anyhow},
     async_trait::async_trait,
     moltis_tools::image_cache::ImageBuilder,
     tracing::{debug, error, info, warn},
@@ -10,6 +9,7 @@ use {
 use {
     moltis_channels::{
         ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
+        Error as ChannelError, Result as ChannelResult,
     },
     moltis_sessions::metadata::SqliteSessionMetadata,
 };
@@ -45,6 +45,38 @@ async fn resolve_channel_session(
         return key;
     }
     default_channel_session_key(target)
+}
+
+fn slash_command_name(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix('/')?;
+    let cmd = rest.split_whitespace().next().unwrap_or("");
+    if cmd.is_empty() {
+        None
+    } else {
+        Some(cmd)
+    }
+}
+
+fn is_channel_control_command_name(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help" | "sh"
+    )
+}
+
+fn rewrite_for_shell_mode(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(cmd) = slash_command_name(trimmed)
+        && is_channel_control_command_name(cmd)
+    {
+        return None;
+    }
+
+    Some(format!("/sh {trimmed}"))
 }
 
 /// Broadcasts channel events over the gateway WebSocket.
@@ -92,6 +124,11 @@ impl ChannelEventSink for GatewayChannelEventSink {
             } else {
                 default_channel_session_key(&reply_to)
             };
+            let effective_text = if state.is_channel_command_mode_enabled(&session_key).await {
+                rewrite_for_shell_mode(text).unwrap_or_else(|| text.to_string())
+            } else {
+                text.to_string()
+            };
 
             // Broadcast a "chat" event so the web UI shows the user message
             // in real-time (like typing from the UI).
@@ -113,12 +150,6 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 ..Default::default()
             })
             .await;
-
-            // Register the reply target so the chat "final" broadcast can
-            // route the response back to the originating channel.
-            state
-                .push_channel_reply(&session_key, reply_to.clone())
-                .await;
 
             // Persist channel binding so web UI messages on this session
             // can be echoed back to the channel.
@@ -149,10 +180,18 @@ impl ChannelEventSink for GatewayChannelEventSink {
 
             let chat = state.chat().await;
             let mut params = serde_json::json!({
-                "text": text,
+                "text": effective_text,
                 "channel": &meta,
                 "_session_key": &session_key,
+                // Defer reply-target registration until chat.send() actually
+                // starts executing this message (after semaphore acquire).
+                "_channel_reply_target": &reply_to,
             });
+            // Thread saved voice audio filename so chat.rs persists the audio path.
+            if let Some(ref audio_filename) = meta.audio_filename {
+                params["_audio_filename"] = serde_json::json!(audio_filename);
+            }
+
             // Forward the channel's default model to chat.send() if configured.
             // If no channel model is set, check if the session already has a model.
             // If neither exists, assign the first registered model so the session
@@ -375,11 +414,39 @@ impl ChannelEventSink for GatewayChannelEventSink {
         }
     }
 
-    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> Result<String> {
+    async fn save_channel_voice(
+        &self,
+        audio_data: &[u8],
+        filename: &str,
+        reply_to: &ChannelReplyTarget,
+    ) -> Option<String> {
+        let state = self.state.get()?;
+        let session_key = if let Some(ref sm) = state.services.session_metadata {
+            resolve_channel_session(reply_to, sm).await
+        } else {
+            default_channel_session_key(reply_to)
+        };
+        let store = state.services.session_store.as_ref()?;
+        match store.save_media(&session_key, filename, audio_data).await {
+            Ok(_) => {
+                debug!(
+                    session_key,
+                    filename, "saved channel voice audio to session media"
+                );
+                Some(filename.to_string())
+            },
+            Err(e) => {
+                warn!(session_key, filename, error = %e, "failed to save channel voice audio");
+                None
+            },
+        }
+    }
+
+    async fn transcribe_voice(&self, audio_data: &[u8], format: &str) -> ChannelResult<String> {
         let state = self
             .state
             .get()
-            .ok_or_else(|| anyhow!("gateway not ready"))?;
+            .ok_or_else(|| ChannelError::unavailable("gateway not ready"))?;
 
         let result = state
             .services
@@ -392,12 +459,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 None,
             )
             .await
-            .map_err(|e| anyhow!("transcription failed: {}", e))?;
+            .map_err(|e| ChannelError::unavailable(format!("transcription failed: {e}")))?;
 
         let text = result
             .get("text")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("transcription result missing text"))?;
+            .ok_or_else(|| ChannelError::invalid_input("transcription result missing text"))?;
 
         Ok(text.to_string())
     }
@@ -547,11 +614,6 @@ impl ChannelEventSink for GatewayChannelEventSink {
         })
         .await;
 
-        // Register the reply target
-        state
-            .push_channel_reply(&session_key, reply_to.clone())
-            .await;
-
         // Persist channel binding (ensure session row exists first —
         // set_channel_binding is an UPDATE so the row must already be present).
         if let Ok(binding_json) = serde_json::to_string(&reply_to)
@@ -581,6 +643,9 @@ impl ChannelEventSink for GatewayChannelEventSink {
             "content": content_parts,
             "channel": &meta,
             "_session_key": &session_key,
+            // Defer reply-target registration until chat.send() actually
+            // starts executing this message (after semaphore acquire).
+            "_channel_reply_target": &reply_to,
         });
 
         // Forward the channel's default model if configured
@@ -694,16 +759,16 @@ impl ChannelEventSink for GatewayChannelEventSink {
         &self,
         command: &str,
         reply_to: ChannelReplyTarget,
-    ) -> anyhow::Result<String> {
+    ) -> ChannelResult<String> {
         let state = self
             .state
             .get()
-            .ok_or_else(|| anyhow!("gateway not ready"))?;
+            .ok_or_else(|| ChannelError::unavailable("gateway not ready"))?;
         let session_metadata = state
             .services
             .session_metadata
             .as_ref()
-            .ok_or_else(|| anyhow!("session metadata not available"))?;
+            .ok_or_else(|| ChannelError::unavailable("session metadata not available"))?;
         let session_key = resolve_channel_session(&reply_to, session_metadata).await;
         let chat = state.chat().await;
 
@@ -716,7 +781,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 // Create a new session with a fresh UUID key.
                 let new_key = format!("session:{}", uuid::Uuid::new_v4());
                 let binding_json = serde_json::to_string(&reply_to)
-                    .map_err(|e| anyhow!("failed to serialize binding: {e}"))?;
+                    .map_err(|e| ChannelError::external("serialize channel binding", e))?;
 
                 // Sequential label: count existing sessions for this chat.
                 let existing = session_metadata
@@ -732,7 +797,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 session_metadata
                     .upsert(&new_key, Some(format!("Telegram {n}")))
                     .await
-                    .map_err(|e| anyhow!("failed to create session: {e}"))?;
+                    .map_err(|e| ChannelError::external("create channel session", e))?;
                 session_metadata
                     .set_channel_binding(&new_key, Some(binding_json.clone()))
                     .await;
@@ -844,17 +909,24 @@ impl ChannelEventSink for GatewayChannelEventSink {
             },
             "clear" => {
                 let params = serde_json::json!({ "_session_key": &session_key });
-                chat.clear(params).await.map_err(|e| anyhow!("{e}"))?;
+                chat.clear(params)
+                    .await
+                    .map_err(ChannelError::unavailable)?;
                 Ok("Session cleared.".to_string())
             },
             "compact" => {
                 let params = serde_json::json!({ "_session_key": &session_key });
-                chat.compact(params).await.map_err(|e| anyhow!("{e}"))?;
+                chat.compact(params)
+                    .await
+                    .map_err(ChannelError::unavailable)?;
                 Ok("Session compacted.".to_string())
             },
             "context" => {
                 let params = serde_json::json!({ "_session_key": &session_key });
-                let res = chat.context(params).await.map_err(|e| anyhow!("{e}"))?;
+                let res = chat
+                    .context(params)
+                    .await
+                    .map_err(ChannelError::unavailable)?;
 
                 let session_info = res.get("session").cloned().unwrap_or_default();
                 let msg_count = session_info
@@ -950,9 +1022,12 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     // Switch mode.
                     let n: usize = args
                         .parse()
-                        .map_err(|_| anyhow!("usage: /sessions [number]"))?;
+                        .map_err(|_| ChannelError::invalid_input("usage: /sessions [number]"))?;
                     if n == 0 || n > sessions.len() {
-                        return Err(anyhow!("invalid session number. Use 1–{}.", sessions.len()));
+                        return Err(ChannelError::invalid_input(format!(
+                            "invalid session number. Use 1–{}.",
+                            sessions.len()
+                        )));
                     }
                     let target_session = &sessions[n - 1];
 
@@ -998,10 +1073,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     .model
                     .list()
                     .await
-                    .map_err(|e| anyhow!("{e}"))?;
+                    .map_err(ChannelError::unavailable)?;
                 let models = models_val
                     .as_array()
-                    .ok_or_else(|| anyhow!("bad model list"))?;
+                    .ok_or_else(|| ChannelError::invalid_input("bad model list"))?;
 
                 let current_model = {
                     let entry = session_metadata.get(&session_key).await;
@@ -1060,15 +1135,18 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     // Switch mode — arg is a 1-based global index.
                     let n: usize = args
                         .parse()
-                        .map_err(|_| anyhow!("usage: /model [number]"))?;
+                        .map_err(|_| ChannelError::invalid_input("usage: /model [number]"))?;
                     if n == 0 || n > models.len() {
-                        return Err(anyhow!("invalid model number. Use 1–{}.", models.len()));
+                        return Err(ChannelError::invalid_input(format!(
+                            "invalid model number. Use 1–{}.",
+                            models.len()
+                        )));
                     }
                     let chosen = &models[n - 1];
                     let model_id = chosen
                         .get("id")
                         .and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow!("model has no id"))?;
+                        .ok_or_else(|| ChannelError::invalid_input("model has no id"))?;
                     let display = chosen
                         .get("displayName")
                         .and_then(|v| v.as_str())
@@ -1082,7 +1160,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                             "model": model_id,
                         }))
                         .await
-                        .map_err(|e| anyhow!("{e}"))?;
+                        .map_err(ChannelError::unavailable)?;
                     let version = patch_res
                         .get("version")
                         .and_then(|v| v.as_u64())
@@ -1175,7 +1253,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                             "sandbox_enabled": new_val,
                         }))
                         .await
-                        .map_err(|e| anyhow!("{e}"))?;
+                        .map_err(ChannelError::unavailable)?;
                     let version = patch_res
                         .get("version")
                         .and_then(|v| v.as_u64())
@@ -1201,9 +1279,9 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     };
                     Ok(format!("Sandbox {label}."))
                 } else if let Some(rest) = args.strip_prefix("image ") {
-                    let n: usize = rest
-                        .parse()
-                        .map_err(|_| anyhow!("usage: /sandbox image [number]"))?;
+                    let n: usize = rest.parse().map_err(|_| {
+                        ChannelError::invalid_input("usage: /sandbox image [number]")
+                    })?;
 
                     let default_img = moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string();
                     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
@@ -1214,7 +1292,10 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     }
 
                     if n == 0 || n > images.len() {
-                        return Err(anyhow!("invalid image number. Use 1–{}.", images.len()));
+                        return Err(ChannelError::invalid_input(format!(
+                            "invalid image number. Use 1–{}.",
+                            images.len()
+                        )));
                     }
                     let chosen = &images[n - 1];
 
@@ -1232,7 +1313,7 @@ impl ChannelEventSink for GatewayChannelEventSink {
                             "sandbox_image": patch_value,
                         }))
                         .await
-                        .map_err(|e| anyhow!("{e}"))?;
+                        .map_err(ChannelError::unavailable)?;
                     let version = patch_res
                         .get("version")
                         .and_then(|v| v.as_u64())
@@ -1255,10 +1336,53 @@ impl ChannelEventSink for GatewayChannelEventSink {
 
                     Ok(format!("Image set to: {chosen}"))
                 } else {
-                    Err(anyhow!("usage: /sandbox [on|off|image N]"))
+                    Err(ChannelError::invalid_input(
+                        "usage: /sandbox [on|off|image N]",
+                    ))
                 }
             },
-            _ => Err(anyhow!("unknown command: /{cmd}")),
+            "sh" => {
+                let route = if let Some(ref router) = state.sandbox_router {
+                    if router.is_sandboxed(&session_key).await {
+                        "sandboxed"
+                    } else {
+                        "host"
+                    }
+                } else {
+                    "host"
+                };
+
+                match args {
+                    "" | "on" => {
+                        state.set_channel_command_mode(&session_key, true).await;
+                        Ok(format!(
+                            "Command mode enabled ({route}). Send commands as plain messages. Use /sh off (or /sh exit) to leave."
+                        ))
+                    },
+                    "off" | "exit" => {
+                        state.set_channel_command_mode(&session_key, false).await;
+                        Ok("Command mode disabled. Back to normal chat mode.".to_string())
+                    },
+                    "status" => {
+                        let enabled = state.is_channel_command_mode_enabled(&session_key).await;
+                        if enabled {
+                            Ok(format!(
+                                "Command mode is enabled ({route}). Use /sh off (or /sh exit) to leave."
+                            ))
+                        } else {
+                            Ok(format!(
+                                "Command mode is disabled ({route}). Use /sh to enable."
+                            ))
+                        }
+                    },
+                    _ => Err(ChannelError::invalid_input(
+                        "usage: /sh [on|off|exit|status]",
+                    )),
+                }
+            },
+            _ => Err(ChannelError::invalid_input(format!(
+                "unknown command: /{cmd}"
+            ))),
         }
     }
 }
@@ -1360,5 +1484,19 @@ mod tests {
         assert_eq!(json["kind"], "inbound_message");
         assert!(json["username"].is_null());
         assert_eq!(json["access_granted"], false);
+    }
+
+    #[test]
+    fn shell_mode_rewrite_plain_text() {
+        assert_eq!(
+            rewrite_for_shell_mode("uname -a").as_deref(),
+            Some("/sh uname -a")
+        );
+    }
+
+    #[test]
+    fn shell_mode_rewrite_skips_control_commands() {
+        assert!(rewrite_for_shell_mode("/context").is_none());
+        assert!(rewrite_for_shell_mode("/sh uname -a").is_none());
     }
 }

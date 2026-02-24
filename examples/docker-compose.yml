@@ -37,3 +37,10 @@ services:
       #
       # For Podman rootful, use:
       # - /run/podman/podman.sock:/var/run/docker.sock
+    healthcheck:
+      test: curl -Ssf http://localhost:13131/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+

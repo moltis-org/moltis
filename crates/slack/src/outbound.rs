@@ -1,10 +1,11 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use {anyhow::Result, async_trait::async_trait, slack_morphism::prelude::*, tracing::debug};
+use {async_trait::async_trait, slack_morphism::prelude::*, tracing::debug};
 
 use {
-    moltis_channels::plugin::{
-        ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver,
+    moltis_channels::{
+        Error as ChannelError, Result as ChannelResult,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
     },
     moltis_common::types::ReplyPayload,
 };
@@ -23,14 +24,14 @@ impl SlackOutbound {
     fn get_client(
         &self,
         account_id: &str,
-    ) -> Result<(
+    ) -> ChannelResult<(
         Arc<SlackClient<SlackClientHyperConnector<SlackHyperHttpsConnector>>>,
         SlackApiToken,
     )> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts
             .get(account_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown account: {account_id}"))?;
+            .ok_or_else(|| ChannelError::unknown_account(account_id))?;
 
         let token = SlackApiToken::new(
             secrecy::ExposeSecret::expose_secret(&state.config.bot_token).into(),
@@ -63,7 +64,7 @@ impl ChannelOutbound for SlackOutbound {
         to: &str,
         text: &str,
         _reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let (client, token) = self.get_client(account_id)?;
         let channel_id: SlackChannelId = to.into();
         let thread_ts = self.get_thread_ts(account_id, to);
@@ -81,13 +82,16 @@ impl ChannelOutbound for SlackOutbound {
                 req = req.with_thread_ts(ts.clone().into());
             }
 
-            session.chat_post_message(&req).await?;
+            session
+                .chat_post_message(&req)
+                .await
+                .channel_context("slack chat.postMessage")?;
         }
 
         Ok(())
     }
 
-    async fn send_typing(&self, _account_id: &str, _to: &str) -> Result<()> {
+    async fn send_typing(&self, _account_id: &str, _to: &str) -> ChannelResult<()> {
         // Slack doesn't have a typing indicator API for bots
         Ok(())
     }
@@ -98,7 +102,7 @@ impl ChannelOutbound for SlackOutbound {
         to: &str,
         payload: &ReplyPayload,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         // For now, just send the text content. Media upload requires file upload API.
         if !payload.text.is_empty() {
             self.send_text(account_id, to, &payload.text, reply_to)
@@ -114,11 +118,14 @@ impl ChannelStreamOutbound for SlackOutbound {
         &self,
         account_id: &str,
         to: &str,
+        reply_to: Option<&str>,
         mut stream: StreamReceiver,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let (client, token) = self.get_client(account_id)?;
         let channel_id: SlackChannelId = to.into();
-        let thread_ts = self.get_thread_ts(account_id, to);
+        let thread_ts = reply_to
+            .map(ToString::to_string)
+            .or_else(|| self.get_thread_ts(account_id, to));
         let throttle_ms = self.get_throttle_ms(account_id);
 
         let session = client.open_session(&token);
@@ -131,7 +138,10 @@ impl ChannelStreamOutbound for SlackOutbound {
             req = req.with_thread_ts(ts.clone().into());
         }
 
-        let response = session.chat_post_message(&req).await?;
+        let response = session
+            .chat_post_message(&req)
+            .await
+            .channel_context("slack chat.postMessage (stream placeholder)")?;
         let message_ts = response.ts;
 
         let mut accumulated = String::new();
@@ -195,7 +205,10 @@ impl ChannelStreamOutbound for SlackOutbound {
                     req = req.with_thread_ts(ts.clone().into());
                 }
 
-                session.chat_post_message(&req).await?;
+                session
+                    .chat_post_message(&req)
+                    .await
+                    .channel_context("slack chat.postMessage (stream chunk)")?;
             }
         }
 
@@ -203,4 +216,15 @@ impl ChannelStreamOutbound for SlackOutbound {
     }
 }
 
-use std::sync::Arc;
+trait ChannelContext<T> {
+    fn channel_context(self, context: &'static str) -> ChannelResult<T>;
+}
+
+impl<T, E> ChannelContext<T> for Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn channel_context(self, context: &'static str) -> ChannelResult<T> {
+        self.map_err(|e| ChannelError::external(context, e))
+    }
+}

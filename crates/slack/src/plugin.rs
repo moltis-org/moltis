@@ -5,14 +5,13 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     secrecy::ExposeSecret,
     tracing::{info, warn},
 };
 
 use moltis_channels::{
-    ChannelEventSink,
+    ChannelEventSink, Error as ChannelError, Result as ChannelResult,
     message_log::MessageLog,
     plugin::{ChannelHealthSnapshot, ChannelOutbound, ChannelPlugin, ChannelStatus},
 };
@@ -57,7 +56,7 @@ impl SlackPlugin {
     }
 
     /// Get a shared reference to the outbound sender (for use outside the plugin).
-    pub fn shared_outbound(&self) -> Arc<dyn moltis_channels::ChannelOutbound> {
+    pub fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
         Arc::new(SlackOutbound {
             accounts: Arc::clone(&self.accounts),
         })
@@ -94,16 +93,20 @@ impl ChannelPlugin for SlackPlugin {
         "Slack"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let slack_config: SlackAccountConfig = serde_json::from_value(config)?;
 
         if slack_config.bot_token.expose_secret().is_empty() {
-            return Err(anyhow::anyhow!("slack bot token is required"));
+            return Err(ChannelError::invalid_input("slack bot token is required"));
         }
 
         if slack_config.app_token.expose_secret().is_empty() {
-            return Err(anyhow::anyhow!(
-                "slack app token is required for socket mode"
+            return Err(ChannelError::invalid_input(
+                "slack app token is required for socket mode",
             ));
         }
 
@@ -121,7 +124,7 @@ impl ChannelPlugin for SlackPlugin {
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let cancel = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             accounts.get(account_id).map(|s| s.cancel.clone())
@@ -150,7 +153,7 @@ impl ChannelPlugin for SlackPlugin {
 
 #[async_trait]
 impl ChannelStatus for SlackPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
         // Return cached result if fresh enough
         if let Ok(cache) = self.probe_cache.read()
             && let Some((snap, ts)) = cache.get(account_id)

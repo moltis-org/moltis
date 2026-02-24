@@ -4,7 +4,6 @@ name              = "moltis-slack"
 version.workspace = true
 
 [dependencies]
-anyhow            = { workspace = true }
 async-trait       = "0.1"
 moltis-auto-reply = { workspace = true }
 moltis-channels   = { workspace = true }

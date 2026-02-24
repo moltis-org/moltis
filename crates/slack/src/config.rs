@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn default_config() {
         let cfg = SlackAccountConfig::default();
-        assert_eq!(cfg.dm_policy, DmPolicy::Open);
+        assert_eq!(cfg.dm_policy, DmPolicy::Allowlist);
         assert_eq!(cfg.channel_policy, GroupPolicy::Open);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);

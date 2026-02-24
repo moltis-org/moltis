@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -48,12 +48,17 @@ impl MetricsHistory {
     pub fn iter(&self) -> impl Iterator<Item = &MetricsHistoryPoint> {
         self.points.iter()
     }
+
+    /// Return the configured maximum capacity.
+    pub fn capacity(&self) -> usize {
+        self.max_points
+    }
 }
 
 #[cfg(feature = "metrics")]
 impl Default for MetricsHistory {
     fn default() -> Self {
-        Self::new(60480) // 7 days at 10-second intervals
+        Self::new(360) // 1 hour at 10-second intervals
     }
 }
 
@@ -95,8 +100,8 @@ pub struct TtsRuntimeOverride {
 pub struct ConnectedClient {
     pub conn_id: String,
     pub connect_params: ConnectParams,
-    /// Channel for sending serialized frames to this client's write loop.
-    pub sender: mpsc::UnboundedSender<String>,
+    /// Bounded channel for sending serialized frames to this client's write loop.
+    pub sender: mpsc::Sender<String>,
     pub connected_at: Instant,
     pub last_activity: Instant,
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
@@ -130,8 +135,11 @@ impl ConnectedClient {
     }
 
     /// Send a serialized JSON frame to this client.
+    ///
+    /// Uses `try_send` to avoid blocking; drops the frame if the client's
+    /// outbound buffer is full (slow consumer protection).
     pub fn send(&self, frame: &str) -> bool {
-        self.sender.send(frame.to_string()).is_ok()
+        self.sender.try_send(frame.to_string()).is_ok()
     }
 
     /// Touch the activity timestamp.
@@ -283,12 +291,14 @@ pub struct GatewayInner {
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,
     /// LLM provider registry for lightweight generation (e.g. TTS phrases).
-    pub llm_providers: Option<Arc<tokio::sync::RwLock<moltis_agents::providers::ProviderRegistry>>>,
+    pub llm_providers: Option<Arc<RwLock<moltis_providers::ProviderRegistry>>>,
     /// Cached user geolocation from browser Geolocation API, persisted to `USER.md`.
     pub cached_location: Option<moltis_config::GeoLocation>,
     /// Per-session buffer for channel status messages (tool use, model selection).
     /// Drained when the final response is delivered to the channel.
     pub channel_status_log: HashMap<String, Vec<String>>,
+    /// Sessions currently in channel command mode (/sh passthrough).
+    pub channel_command_mode_sessions: HashSet<String>,
 }
 
 impl GatewayInner {
@@ -319,6 +329,7 @@ impl GatewayInner {
             llm_providers: None,
             cached_location: moltis_config::load_user().and_then(|u| u.location),
             channel_status_log: HashMap::new(),
+            channel_command_mode_sessions: HashSet::new(),
         }
     }
 
@@ -372,17 +383,28 @@ pub struct GatewayState {
     pub tls_active: bool,
     /// Whether WebSocket request/response logging is enabled.
     pub ws_request_logs: bool,
+    /// Runtime GraphQL availability toggle.
+    #[cfg(feature = "graphql")]
+    pub graphql_enabled: AtomicBool,
+    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
+    #[cfg(feature = "graphql")]
+    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
     /// `MOLTIS_DEPLOY_PLATFORM`. `None` when running locally.
     pub deploy_platform: Option<String>,
     /// The port the gateway is bound to.
     pub port: u16,
+    /// Monotonic process start timestamp used for uptime calculations.
+    pub started_at: Instant,
     /// Metrics handle for Prometheus export (None if metrics disabled).
     #[cfg(feature = "metrics")]
     pub metrics_handle: Option<MetricsHandle>,
     /// Persistent metrics store (SQLite or other backend).
     #[cfg(feature = "metrics")]
     pub metrics_store: Option<Arc<dyn MetricsStore>>,
+    /// Encryption-at-rest vault for environment variables.
+    #[cfg(feature = "vault")]
+    pub vault: Option<Arc<moltis_vault::Vault>>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     /// Monotonically increasing sequence counter for broadcast events.
@@ -414,6 +436,8 @@ impl GatewayState {
             None,
             #[cfg(feature = "metrics")]
             None,
+            #[cfg(feature = "vault")]
+            None,
         )
     }
 
@@ -433,6 +457,7 @@ impl GatewayState {
         deploy_platform: Option<String>,
         #[cfg(feature = "metrics")] metrics_handle: Option<MetricsHandle>,
         #[cfg(feature = "metrics")] metrics_store: Option<Arc<dyn MetricsStore>>,
+        #[cfg(feature = "vault")] vault: Option<Arc<moltis_vault::Vault>>,
     ) -> Arc<Self> {
         let hostname = hostname::get()
             .ok()
@@ -453,14 +478,29 @@ impl GatewayState {
             ws_request_logs,
             deploy_platform,
             port,
+            started_at: Instant::now(),
+            #[cfg(feature = "graphql")]
+            graphql_enabled: AtomicBool::new(true),
             #[cfg(feature = "metrics")]
             metrics_handle,
             #[cfg(feature = "metrics")]
             metrics_store,
+            #[cfg(feature = "vault")]
+            vault,
             seq: AtomicU64::new(0),
             tts_phrase_counter: AtomicUsize::new(0),
+            #[cfg(feature = "graphql")]
+            graphql_broadcast: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
+    }
+
+    /// Process uptime in milliseconds since this gateway state was created.
+    pub fn uptime_ms(&self) -> u64 {
+        self.started_at.elapsed().as_millis() as u64
     }
 
     /// Set a late-bound chat service (for circular init).
@@ -498,6 +538,16 @@ impl GatewayState {
 
     pub fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn is_graphql_enabled(&self) -> bool {
+        self.graphql_enabled.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "graphql")]
+    pub fn set_graphql_enabled(&self, enabled: bool) {
+        self.graphql_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Register a new client connection.
@@ -597,6 +647,27 @@ impl GatewayState {
             .unwrap_or_default()
     }
 
+    /// Enable or disable /sh command mode for a channel session.
+    pub async fn set_channel_command_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner
+                .channel_command_mode_sessions
+                .insert(session_key.to_string());
+        } else {
+            inner.channel_command_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether /sh command mode is enabled for a channel session.
+    pub async fn is_channel_command_mode_enabled(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .channel_command_mode_sessions
+            .contains(session_key)
+    }
+
     /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
         let mut inner = self.inner.write().await;
@@ -671,8 +742,8 @@ mod tests {
         )
     }
 
-    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::UnboundedReceiver<String>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn mock_client(conn_id: &str) -> (ConnectedClient, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel(512);
         let client = ConnectedClient {
             conn_id: conn_id.to_string(),
             connect_params: ConnectParams {

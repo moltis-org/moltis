@@ -1,15 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     serenity::all::{ChannelId, CreateMessage, EditMessage, Http, MessageId},
     tracing::debug,
 };
 
 use {
-    moltis_channels::plugin::{
-        ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver,
+    moltis_channels::{
+        Error as ChannelError, Result as ChannelResult,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
     },
     moltis_common::types::ReplyPayload,
 };
@@ -25,12 +25,12 @@ pub struct DiscordOutbound {
 }
 
 impl DiscordOutbound {
-    fn get_http(&self, account_id: &str) -> Result<Arc<Http>> {
+    fn get_http(&self, account_id: &str) -> ChannelResult<Arc<Http>> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
             .map(|s| s.http.clone())
-            .ok_or_else(|| anyhow::anyhow!("unknown account: {account_id}"))
+            .ok_or_else(|| ChannelError::unknown_account(account_id))
     }
 
     fn get_pending_reply(&self, account_id: &str, channel_id: &str) -> Option<u64> {
@@ -57,7 +57,7 @@ impl ChannelOutbound for DiscordOutbound {
         to: &str,
         text: &str,
         _reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let http = self.get_http(account_id)?;
         let channel_id: u64 = to.parse()?;
         let channel = ChannelId::new(channel_id);
@@ -75,16 +75,22 @@ impl ChannelOutbound for DiscordOutbound {
                 builder = builder.reference_message((channel, MessageId::new(msg_id)));
             }
 
-            channel.send_message(&http, builder).await?;
+            channel
+                .send_message(&http, builder)
+                .await
+                .channel_context("discord send message")?;
         }
 
         Ok(())
     }
 
-    async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
+    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
         let http = self.get_http(account_id)?;
         let channel_id: u64 = to.parse()?;
-        ChannelId::new(channel_id).broadcast_typing(&http).await?;
+        ChannelId::new(channel_id)
+            .broadcast_typing(&http)
+            .await
+            .channel_context("discord send typing")?;
         Ok(())
     }
 
@@ -94,7 +100,7 @@ impl ChannelOutbound for DiscordOutbound {
         to: &str,
         payload: &ReplyPayload,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         // For now, just send the text content. Media requires attachment API.
         if !payload.text.is_empty() {
             self.send_text(account_id, to, &payload.text, reply_to)
@@ -110,8 +116,9 @@ impl ChannelStreamOutbound for DiscordOutbound {
         &self,
         account_id: &str,
         to: &str,
+        reply_to: Option<&str>,
         mut stream: StreamReceiver,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let http = self.get_http(account_id)?;
         let channel_id: u64 = to.parse()?;
         let channel = ChannelId::new(channel_id);
@@ -121,13 +128,18 @@ impl ChannelStreamOutbound for DiscordOutbound {
         let _ = channel.broadcast_typing(&http).await;
 
         // Send initial placeholder
-        let reply_to = self.get_pending_reply(account_id, to);
+        let reply_to = reply_to
+            .and_then(|value| value.parse().ok())
+            .or_else(|| self.get_pending_reply(account_id, to));
         let mut builder = CreateMessage::new().content("...");
         if let Some(msg_id) = reply_to {
             builder = builder.reference_message((channel, MessageId::new(msg_id)));
         }
 
-        let initial_msg = channel.send_message(&http, builder).await?;
+        let initial_msg = channel
+            .send_message(&http, builder)
+            .await
+            .channel_context("discord send stream placeholder")?;
         let message_id = initial_msg.id;
 
         let mut accumulated = String::new();
@@ -174,11 +186,25 @@ impl ChannelStreamOutbound for DiscordOutbound {
                 for chunk in chunks {
                     channel
                         .send_message(&http, CreateMessage::new().content(&chunk))
-                        .await?;
+                        .await
+                        .channel_context("discord send stream chunk")?;
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+trait ChannelContext<T> {
+    fn channel_context(self, context: &'static str) -> ChannelResult<T>;
+}
+
+impl<T, E> ChannelContext<T> for Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn channel_context(self, context: &'static str) -> ChannelResult<T> {
+        self.map_err(|e| ChannelError::external(context, e))
     }
 }

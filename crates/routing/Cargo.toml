@@ -4,12 +4,12 @@ name              = "moltis-routing"
 version.workspace = true
 
 [dependencies]
-anyhow          = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }
 moltis-sessions = { workspace = true }
 serde_json      = { workspace = true }
+thiserror       = { workspace = true }
 tracing         = { workspace = true }
 
 [features]

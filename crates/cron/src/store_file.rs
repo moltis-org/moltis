@@ -2,13 +2,10 @@
 
 use std::path::PathBuf;
 
-use {
-    anyhow::{Context, Result},
-    async_trait::async_trait,
-    tokio::fs,
-};
+use {async_trait::async_trait, tokio::fs};
 
 use crate::{
+    Error, Result,
     store::CronStore,
     types::{CronJob, CronRunRecord},
 };
@@ -27,10 +24,9 @@ impl FileStore {
         }
     }
 
-    /// Create a store using the default `~/.clawdbot/cron/` layout.
+    /// Create a store using the default `<data_dir>/cron/` layout.
     pub fn default_path() -> Result<Self> {
-        let home = dirs_next::home_dir().context("cannot determine home directory")?;
-        let base = home.join(".clawdbot").join("cron");
+        let base = moltis_config::data_dir().join("cron");
         Ok(Self::new(base.join("jobs.json"), base.join("runs")))
     }
 
@@ -72,8 +68,8 @@ impl CronStore for FileStore {
             return Ok(Vec::new());
         }
         let data = fs::read_to_string(&self.jobs_path).await?;
-        let jobs: Vec<CronJob> =
-            serde_json::from_str(&data).context("failed to parse jobs.json")?;
+        let jobs: Vec<CronJob> = serde_json::from_str(&data)
+            .map_err(|source| Error::external("failed to parse jobs.json", source))?;
         Ok(jobs)
     }
 
@@ -93,7 +89,7 @@ impl CronStore for FileStore {
         let before = jobs.len();
         jobs.retain(|j| j.id != id);
         if jobs.len() == before {
-            anyhow::bail!("job not found: {id}");
+            return Err(Error::job_not_found(id));
         }
         self.atomic_write_jobs(&jobs).await
     }
@@ -103,7 +99,7 @@ impl CronStore for FileStore {
         let pos = jobs
             .iter()
             .position(|j| j.id == job.id)
-            .ok_or_else(|| anyhow::anyhow!("job not found: {}", job.id))?;
+            .ok_or_else(|| Error::job_not_found(job.id.clone()))?;
         jobs[pos] = job.clone();
         self.atomic_write_jobs(&jobs).await
     }
@@ -161,6 +157,7 @@ mod tests {
             session_target: SessionTarget::Main,
             state: CronJobState::default(),
             sandbox: CronSandboxConfig::default(),
+            wake_mode: CronWakeMode::default(),
             system: false,
             created_at_ms: 1000,
             updated_at_ms: 1000,

@@ -1,6 +1,13 @@
-use {anyhow::Result, async_trait::async_trait, sqlx::SqlitePool};
+use {async_trait::async_trait, sqlx::SqlitePool};
 
-use moltis_channels::store::{ChannelStore, StoredChannel};
+use moltis_channels::{
+    Error as ChannelError, Result as ChannelResult,
+    store::{ChannelStore, StoredChannel},
+};
+
+fn channel_db_error(context: &'static str, source: sqlx::Error) -> ChannelError {
+    ChannelError::external(context, source)
+}
 
 /// Internal row type for sqlx mapping.
 #[derive(sqlx::FromRow)]
@@ -13,9 +20,9 @@ struct ChannelRow {
 }
 
 impl TryFrom<ChannelRow> for StoredChannel {
-    type Error = anyhow::Error;
+    type Error = ChannelError;
 
-    fn try_from(r: ChannelRow) -> Result<Self> {
+    fn try_from(r: ChannelRow) -> ChannelResult<Self> {
         Ok(Self {
             account_id: r.account_id,
             channel_type: r.channel_type,
@@ -41,7 +48,7 @@ impl SqliteChannelStore {
     /// **Deprecated**: Schema is now managed by sqlx migrations.
     /// This method is retained for tests that use in-memory databases.
     #[doc(hidden)]
-    pub async fn init(pool: &SqlitePool) -> Result<()> {
+    pub async fn init(pool: &SqlitePool) -> ChannelResult<()> {
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS channels (
                 account_id   TEXT    PRIMARY KEY,
@@ -52,30 +59,33 @@ impl SqliteChannelStore {
             )"#,
         )
         .execute(pool)
-        .await?;
+        .await
+        .map_err(|e| channel_db_error("init channels table", e))?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl ChannelStore for SqliteChannelStore {
-    async fn list(&self) -> Result<Vec<StoredChannel>> {
+    async fn list(&self) -> ChannelResult<Vec<StoredChannel>> {
         let rows =
             sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels ORDER BY updated_at DESC")
                 .fetch_all(&self.pool)
-                .await?;
+                .await
+                .map_err(|e| channel_db_error("list channels", e))?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
-    async fn get(&self, account_id: &str) -> Result<Option<StoredChannel>> {
+    async fn get(&self, account_id: &str) -> ChannelResult<Option<StoredChannel>> {
         let row = sqlx::query_as::<_, ChannelRow>("SELECT * FROM channels WHERE account_id = ?")
             .bind(account_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| channel_db_error("get channel", e))?;
         row.map(TryInto::try_into).transpose()
     }
 
-    async fn upsert(&self, channel: StoredChannel) -> Result<()> {
+    async fn upsert(&self, channel: StoredChannel) -> ChannelResult<()> {
         let config_json = serde_json::to_string(&channel.config)?;
         sqlx::query(
             r#"INSERT INTO channels (account_id, channel_type, config, created_at, updated_at)
@@ -91,15 +101,17 @@ impl ChannelStore for SqliteChannelStore {
         .bind(channel.created_at)
         .bind(channel.updated_at)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| channel_db_error("upsert channel", e))?;
         Ok(())
     }
 
-    async fn delete(&self, account_id: &str) -> Result<()> {
+    async fn delete(&self, account_id: &str) -> ChannelResult<()> {
         sqlx::query("DELETE FROM channels WHERE account_id = ?")
             .bind(account_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| channel_db_error("delete channel", e))?;
         Ok(())
     }
 }

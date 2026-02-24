@@ -8,6 +8,7 @@
 
 - [Quickstart](quickstart.md)
 - [Installation](installation.md)
+- [Comparison](comparison.md)
 - [Configuration](configuration.md)
 - [Local Validation](local-validation.md)
 - [End-to-End Testing](e2e-testing.md)
@@ -26,8 +27,10 @@
 - [Sandbox](sandbox.md)
 - [Voice](voice.md)
 - [Browser Automation](browser-automation.md)
+- [GraphQL API](graphql.md)
 - [Session State](session-state.md)
 - [Session Branching](session-branching.md)
+- [Scheduling (Cron Jobs)](scheduling.md)
 - [Skill Self-Extension](skill-tools.md)
 - [Mobile PWA](mobile-pwa.md)
 
@@ -36,6 +39,7 @@
 # Security
 
 - [Authentication](authentication.md)
+- [Encryption at Rest (Vault)](vault.md)
 - [Security Architecture](security.md)
 - [Third-Party Skills Security](skills-security.md)
 

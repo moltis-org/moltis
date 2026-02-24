@@ -305,7 +305,7 @@ mod tests {
             _language: Option<&str>,
             _prompt: Option<&str>,
         ) -> ServiceResult {
-            Err("STT not available in agent mode".to_string())
+            Err("STT not available in agent mode".into())
         }
 
         async fn set_provider(&self, _params: Value) -> ServiceResult {

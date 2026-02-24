@@ -11,9 +11,16 @@ pub struct PromptHostRuntimeContext {
     pub os: Option<String>,
     pub arch: Option<String>,
     pub shell: Option<String>,
+    /// Current datetime string for prompt context, localized when timezone is known.
+    pub time: Option<String>,
+    /// Current date string (`YYYY-MM-DD`) for prompt context.
+    pub today: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub session_key: Option<String>,
+    /// Persistent Moltis workspace root (`data_dir`), e.g. `~/.moltis`
+    /// or `/home/moltis/.moltis` in containerized deploys.
+    pub data_dir: Option<String>,
     pub sudo_non_interactive: Option<bool>,
     pub sudo_status: Option<String>,
     pub timezone: Option<String>,
@@ -31,7 +38,11 @@ pub struct PromptSandboxRuntimeContext {
     pub backend: Option<String>,
     pub scope: Option<String>,
     pub image: Option<String>,
+    /// Sandbox HOME directory used for `~` and relative paths in `exec`.
+    pub home: Option<String>,
     pub workspace_mount: Option<String>,
+    /// Mounted workspace/data path inside sandbox when available.
+    pub workspace_path: Option<String>,
     pub no_network: Option<bool>,
     /// Per-session override for sandbox enablement.
     pub session_override: Option<bool>,
@@ -52,7 +63,10 @@ pub struct PromptRuntimeContext {
 /// misses.
 pub const VOICE_REPLY_SUFFIX: &str = "\n\n\
 ## Voice Reply Mode\n\n\
-The user will hear your response as spoken audio. Write for speech, not for reading:\n\
+The user is speaking to you via voice messages. Their messages are transcribed from \
+speech-to-text, so treat this as a spoken conversation. You will hear their words as \
+text, and your response will be converted to spoken audio for them.\n\n\
+Write for speech, not for reading:\n\
 - Use natural, conversational sentences. No bullet lists, numbered lists, or headings.\n\
 - NEVER include raw URLs. Instead describe the resource by name \
 (e.g. \"the Rust documentation website\" instead of \"https://doc.rust-lang.org\").\n\
@@ -146,8 +160,53 @@ pub fn build_system_prompt_minimal_runtime(
 }
 
 /// Maximum number of characters from `MEMORY.md` injected into the system
-/// prompt. Matches OpenClaw's `bootstrapMaxChars`.
-const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 20_000;
+/// prompt to keep the context window manageable.
+const MEMORY_BOOTSTRAP_MAX_CHARS: usize = 8_000;
+/// Maximum number of characters from project context files (`CLAUDE.md`,
+/// project docs, etc.) injected into the prompt.
+const PROJECT_CONTEXT_MAX_CHARS: usize = 8_000;
+/// Maximum number of characters from each workspace file (`AGENTS.md`,
+/// `TOOLS.md`) injected into the prompt.
+const WORKSPACE_FILE_MAX_CHARS: usize = 6_000;
+const EXEC_ROUTING_GUIDANCE: &str = "Execution routing:\n\
+- `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
+- When sandbox is disabled, `exec` runs on the host and may require approval.\n\
+- In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
+- Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
+- `Host: sudo_non_interactive=true` means non-interactive sudo is available.\n\
+- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n\n";
+const TOOL_CALL_GUIDANCE: &str = concat!(
+    "## How to call tools\n\n",
+    "For a tool call, output ONLY this JSON block:\n\n",
+    "```tool_call\n",
+    "{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n",
+    "```\n\n",
+    "No text before or after the block. After execution, continue normally.\n\n",
+);
+const TOOL_GUIDELINES: &str = concat!(
+    "## Guidelines\n\n",
+    "- Start with a normal conversational response. Do not call tools for greetings, small talk, ",
+    "or questions you can answer directly.\n",
+    "- Use the calc tool for arithmetic and expressions.\n",
+    "- Use the exec tool for shell/system tasks.\n",
+    "- If the user starts a message with `/sh `, run it with `exec` exactly as written.\n",
+    "- Use the browser tool when the user asks to visit/read/interact with web pages.\n",
+    "- Before tool calls, briefly state what you are about to do.\n",
+    "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
+    "- Be careful with destructive operations, confirm with the user first.\n",
+    "- Do not express surprise about sandbox vs host execution. Route changes are normal.\n",
+    "- Do not suggest disabling sandbox unless the user explicitly asks for host execution or ",
+    "the task cannot be completed in sandbox.\n",
+    "- The UI already shows raw tool output (stdout/stderr/exit). Summarize outcomes instead.\n\n",
+    "## Silent Replies\n\n",
+    "When you have nothing meaningful to add after a tool call, return an empty response.\n",
+);
+const MINIMAL_GUIDELINES: &str = concat!(
+    "## Guidelines\n\n",
+    "- Be helpful, accurate, and concise.\n",
+    "- If you don't know something, say so rather than making things up.\n",
+    "- For coding questions, provide clear explanations with examples.\n",
+);
 
 /// Internal: build system prompt with full control over what's included.
 fn build_system_prompt_full(
@@ -167,240 +226,325 @@ fn build_system_prompt_full(
     let tool_schemas = if include_tools {
         tools.list_schemas()
     } else {
-        vec![]
+        Vec::new()
     };
-
-    let base_intro = if include_tools {
-        "You are a helpful assistant with access to tools for executing shell commands.\n\n"
+    let mut prompt = String::from(if include_tools {
+        "You are a helpful assistant. You can use tools when needed.\n\n"
     } else {
         "You are a helpful assistant. Answer questions clearly and concisely.\n\n"
-    };
-    let mut prompt = String::from(base_intro);
+    });
 
-    // Inject agent identity and user name right after the opening line.
+    append_identity_and_user_sections(&mut prompt, identity, user, soul_text);
+    append_project_context(&mut prompt, project_context);
+    append_runtime_section(&mut prompt, runtime_context, include_tools);
+    append_skills_section(&mut prompt, include_tools, skills);
+    append_workspace_files_section(&mut prompt, agents_text, tools_text);
+    append_memory_section(&mut prompt, memory_text, &tool_schemas);
+    append_available_tools_section(&mut prompt, native_tools, &tool_schemas);
+    append_tool_call_guidance(&mut prompt, native_tools, &tool_schemas);
+    append_guidelines_section(&mut prompt, include_tools);
+    append_runtime_datetime_tail(&mut prompt, runtime_context);
+
+    prompt
+}
+
+fn append_identity_and_user_sections(
+    prompt: &mut String,
+    identity: Option<&AgentIdentity>,
+    user: Option<&UserProfile>,
+    soul_text: Option<&str>,
+) {
     if let Some(id) = identity {
         let mut parts = Vec::new();
-        if let (Some(name), Some(emoji)) = (&id.name, &id.emoji) {
-            parts.push(format!("Your name is {name} {emoji}."));
-        } else if let Some(name) = &id.name {
-            parts.push(format!("Your name is {name}."));
+        match (id.name.as_deref(), id.emoji.as_deref()) {
+            (Some(name), Some(emoji)) => parts.push(format!("Your name is {name} {emoji}.")),
+            (Some(name), None) => parts.push(format!("Your name is {name}.")),
+            _ => {},
         }
-        if let Some(creature) = &id.creature {
-            parts.push(format!("You are a {creature}."));
-        }
-        if let Some(vibe) = &id.vibe {
-            parts.push(format!("Your vibe: {vibe}."));
+        if let Some(theme) = id.theme.as_deref() {
+            parts.push(format!("Your theme: {theme}."));
         }
         if !parts.is_empty() {
             prompt.push_str(&parts.join(" "));
             prompt.push('\n');
         }
-        let soul = soul_text.unwrap_or(DEFAULT_SOUL);
         prompt.push_str("\n## Soul\n\n");
-        prompt.push_str(soul);
+        prompt.push_str(soul_text.unwrap_or(DEFAULT_SOUL));
         prompt.push('\n');
     }
-    if let Some(u) = user
-        && let Some(name) = &u.name
-    {
+
+    if let Some(name) = user.and_then(|profile| profile.name.as_deref()) {
         prompt.push_str(&format!("The user's name is {name}.\n"));
     }
     if identity.is_some() || user.is_some() {
         prompt.push('\n');
     }
+}
 
-    // Inject project context (CLAUDE.md, AGENTS.md, etc.) early so the LLM
-    // sees project-specific instructions before tool schemas.
-    if let Some(ctx) = project_context {
-        prompt.push_str(ctx);
+fn append_project_context(prompt: &mut String, project_context: Option<&str>) {
+    if let Some(context) = project_context {
+        append_truncated_text_block(
+            prompt,
+            context,
+            PROJECT_CONTEXT_MAX_CHARS,
+            "\n*(Project context truncated for prompt size; use tools/files for full details.)*\n",
+        );
         prompt.push('\n');
     }
+}
 
-    if let Some(runtime) = runtime_context {
-        let host_line = format_host_runtime_line(&runtime.host);
-        let sandbox_line = runtime.sandbox.as_ref().map(format_sandbox_runtime_line);
-        if host_line.is_some() || sandbox_line.is_some() {
-            prompt.push_str("## Runtime\n\n");
-            if let Some(line) = host_line {
-                prompt.push_str(&line);
-                prompt.push('\n');
-            }
-            if let Some(line) = sandbox_line {
-                prompt.push_str(&line);
-                prompt.push('\n');
-            }
-            if include_tools {
-                prompt.push_str(
-                    "Execution routing:\n\
-- `exec` runs inside sandbox when `Sandbox(exec): enabled=true`.\n\
-- When sandbox is disabled, `exec` runs on the host and may require approval.\n\
-- `Host: sudo_non_interactive=true` means non-interactive sudo is available for host installs; otherwise ask the user before host package installation.\n\
-- If sandbox is missing required tools/packages and host installation is needed, ask the user before requesting host install or changing sandbox mode.\n\n",
-                );
-            } else {
-                prompt.push('\n');
-            }
-        }
+fn append_runtime_section(
+    prompt: &mut String,
+    runtime_context: Option<&PromptRuntimeContext>,
+    include_tools: bool,
+) {
+    let Some(runtime) = runtime_context else {
+        return;
+    };
+
+    let host_line = format_host_runtime_line(&runtime.host);
+    let sandbox_line = runtime.sandbox.as_ref().map(format_sandbox_runtime_line);
+    if host_line.is_none() && sandbox_line.is_none() {
+        return;
     }
 
-    // Inject available skills so the LLM knows what skills can be activated.
-    // Skip for minimal prompts since skills require tool calling.
+    prompt.push_str("## Runtime\n\n");
+    if let Some(line) = host_line {
+        prompt.push_str(&line);
+        prompt.push('\n');
+    }
+    if let Some(line) = sandbox_line {
+        prompt.push_str(&line);
+        prompt.push('\n');
+    }
+    if include_tools {
+        prompt.push_str(EXEC_ROUTING_GUIDANCE);
+    } else {
+        prompt.push('\n');
+    }
+}
+
+fn append_skills_section(prompt: &mut String, include_tools: bool, skills: &[SkillMetadata]) {
     if include_tools && !skills.is_empty() {
         prompt.push_str(&moltis_skills::prompt_gen::generate_skills_prompt(skills));
     }
+}
 
-    let has_workspace_files = agents_text.is_some() || tools_text.is_some();
-    if has_workspace_files {
-        prompt.push_str("## Workspace Files\n\n");
-        if let Some(agents_md) = agents_text {
-            prompt.push_str("### AGENTS.md (workspace)\n\n");
-            prompt.push_str(agents_md);
-            prompt.push_str("\n\n");
-        }
-        if let Some(tools_md) = tools_text {
-            prompt.push_str("### TOOLS.md (workspace)\n\n");
-            prompt.push_str(tools_md);
-            prompt.push_str("\n\n");
-        }
+fn append_workspace_files_section(
+    prompt: &mut String,
+    agents_text: Option<&str>,
+    tools_text: Option<&str>,
+) {
+    if agents_text.is_none() && tools_text.is_none() {
+        return;
     }
 
-    // Inject long-term memory content and/or search hints.
-    let has_memory_search = tool_schemas
+    prompt.push_str("## Workspace Files\n\n");
+    if let Some(agents_md) = agents_text {
+        prompt.push_str("### AGENTS.md (workspace)\n\n");
+        append_truncated_text_block(
+            prompt,
+            agents_md,
+            WORKSPACE_FILE_MAX_CHARS,
+            "\n*(AGENTS.md truncated for prompt size.)*\n",
+        );
+        prompt.push_str("\n\n");
+    }
+    if let Some(tools_md) = tools_text {
+        prompt.push_str("### TOOLS.md (workspace)\n\n");
+        append_truncated_text_block(
+            prompt,
+            tools_md,
+            WORKSPACE_FILE_MAX_CHARS,
+            "\n*(TOOLS.md truncated for prompt size.)*\n",
+        );
+        prompt.push_str("\n\n");
+    }
+}
+
+fn append_memory_section(
+    prompt: &mut String,
+    memory_text: Option<&str>,
+    tool_schemas: &[serde_json::Value],
+) {
+    let has_memory_search = has_tool_schema(tool_schemas, "memory_search");
+    let has_memory_save = has_tool_schema(tool_schemas, "memory_save");
+    let memory_content = memory_text.filter(|text| !text.is_empty());
+    if memory_content.is_none() && !has_memory_search && !has_memory_save {
+        return;
+    }
+
+    prompt.push_str("## Long-Term Memory\n\n");
+    if let Some(text) = memory_content {
+        append_truncated_text_block(
+            prompt,
+            text,
+            MEMORY_BOOTSTRAP_MAX_CHARS,
+            "\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n",
+        );
+        prompt.push_str(concat!(
+            "\n\n**The information above is what you already know about the user. ",
+            "Always include it in your answers.** ",
+            "Even if a tool search returns no additional results, ",
+            "this section still contains valid, current facts.\n",
+        ));
+    }
+    if has_memory_search {
+        prompt.push_str(concat!(
+            "\nYou also have `memory_search` to find additional details from ",
+            "`memory/*.md` files and past session history beyond what is shown above. ",
+            "**Always search memory before claiming you don't know something.** ",
+            "The long-term memory system holds user facts, past decisions, project context, ",
+            "and anything previously stored.\n",
+        ));
+    }
+    if has_memory_save {
+        prompt.push_str(concat!(
+            "\n**When the user asks you to remember, save, or note something, ",
+            "you MUST call `memory_save` to persist it.** ",
+            "Do not just acknowledge verbally — without calling the tool, ",
+            "the information will be lost after the session.\n",
+            "\nChoose the right target to keep context lean:\n",
+            "- **MEMORY.md** — only core identity facts (name, age, location, ",
+            "language, key preferences). This is loaded into every conversation, ",
+            "so keep it short.\n",
+            "- **memory/&lt;topic&gt;.md** — everything else (detailed notes, project ",
+            "context, decisions, session summaries). These are only retrieved via ",
+            "`memory_search` and do not consume prompt space.\n",
+        ));
+    }
+    prompt.push('\n');
+}
+
+fn has_tool_schema(tool_schemas: &[serde_json::Value], tool_name: &str) -> bool {
+    tool_schemas
         .iter()
-        .any(|s| s["name"].as_str() == Some("memory_search"));
-    let memory_content = memory_text.filter(|t| !t.is_empty());
-    if memory_content.is_some() || has_memory_search {
-        prompt.push_str("## Long-Term Memory\n\n");
-        if let Some(text) = memory_content {
-            // Truncate to the bootstrap limit to keep the context window manageable.
-            let truncated = truncate_prompt_text(text, MEMORY_BOOTSTRAP_MAX_CHARS);
-            prompt.push_str(&truncated);
-            if text.len() > MEMORY_BOOTSTRAP_MAX_CHARS {
-                prompt.push_str(
-                    "\n\n*(MEMORY.md truncated — use `memory_search` for full content)*\n",
-                );
+        .any(|schema| schema["name"].as_str() == Some(tool_name))
+}
+
+fn append_available_tools_section(
+    prompt: &mut String,
+    native_tools: bool,
+    tool_schemas: &[serde_json::Value],
+) {
+    if tool_schemas.is_empty() {
+        return;
+    }
+
+    prompt.push_str("## Available Tools\n\n");
+    if native_tools {
+        // Native tool-calling providers already receive full schemas via API.
+        // Keep this section compact so we don't duplicate large JSON payloads.
+        for schema in tool_schemas {
+            let name = schema["name"].as_str().unwrap_or("unknown");
+            let desc = schema["description"].as_str().unwrap_or("");
+            let compact_desc = truncate_prompt_text(desc, 160);
+            if compact_desc.is_empty() {
+                prompt.push_str(&format!("- `{name}`\n"));
+            } else {
+                prompt.push_str(&format!("- `{name}`: {compact_desc}\n"));
             }
-            prompt.push('\n');
-        }
-        if has_memory_search {
-            prompt.push_str(concat!(
-                "\nYou also have `memory_search` to find additional details from ",
-                "`memory/*.md` files and past session history beyond what is shown above. ",
-                "**Always search memory before claiming you don't know something.** ",
-                "The long-term memory system holds user facts, past decisions, project context, ",
-                "and anything previously stored.\n",
-            ));
         }
         prompt.push('\n');
+        return;
     }
 
-    if !tool_schemas.is_empty() {
-        prompt.push_str("## Available Tools\n\n");
-        if native_tools {
-            // Native tool-calling providers already receive full schemas via API.
-            // Keep this section compact so we don't duplicate large JSON payloads.
-            for schema in &tool_schemas {
-                let name = schema["name"].as_str().unwrap_or("unknown");
-                let desc = schema["description"].as_str().unwrap_or("");
-                let compact_desc = truncate_prompt_text(desc, 160);
-                if compact_desc.is_empty() {
-                    prompt.push_str(&format!("- `{name}`\n"));
-                } else {
-                    prompt.push_str(&format!("- `{name}`: {compact_desc}\n"));
-                }
-            }
-            prompt.push('\n');
-        } else {
-            for schema in &tool_schemas {
-                let name = schema["name"].as_str().unwrap_or("unknown");
-                let desc = schema["description"].as_str().unwrap_or("");
-                let params = &schema["parameters"];
-                prompt.push_str(&format!(
-                    "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
-                    serde_json::to_string_pretty(params).unwrap_or_default()
-                ));
-            }
-        }
+    for schema in tool_schemas {
+        let name = schema["name"].as_str().unwrap_or("unknown");
+        let desc = schema["description"].as_str().unwrap_or("");
+        let params = &schema["parameters"];
+        prompt.push_str(&format!(
+            "### {name}\n{desc}\n\nParameters:\n```json\n{}\n```\n\n",
+            serde_json::to_string(params).unwrap_or_default()
+        ));
     }
+}
 
+fn append_tool_call_guidance(
+    prompt: &mut String,
+    native_tools: bool,
+    tool_schemas: &[serde_json::Value],
+) {
     if !native_tools && !tool_schemas.is_empty() {
-        prompt.push_str(concat!(
-            "## How to call tools\n\n",
-            "To call a tool, output ONLY a JSON block with this exact format (no other text before it):\n\n",
-            "```tool_call\n",
-            "{\"tool\": \"<tool_name>\", \"arguments\": {<arguments>}}\n",
-            "```\n\n",
-            "You MUST output the tool call block as the ENTIRE response — do not add any text before or after it.\n",
-            "After the tool executes, you will receive the result and can then respond to the user.\n\n",
-        ));
+        prompt.push_str(TOOL_CALL_GUIDANCE);
     }
+}
 
-    if include_tools {
-        prompt.push_str(concat!(
-            "## Guidelines\n\n",
-            "- Use the exec tool to run shell commands when the user asks you to perform tasks ",
-            "that require system interaction (file operations, running programs, checking status, etc.).\n",
-            "- Use the browser tool to open URLs and interact with web pages. Call it when the user ",
-            "asks to visit a website, check a page, read web content, or perform any web browsing task.\n",
-            "- Always explain what you're doing before executing commands or opening pages.\n",
-            "- If a command or browser action fails, analyze the error and suggest fixes.\n",
-            "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
-            "- Be careful with destructive operations — confirm with the user first.\n",
-            "- IMPORTANT: The user's UI already displays tool execution results (stdout, stderr, exit code) ",
-            "in a dedicated panel. Do NOT repeat or echo raw tool output in your response. Instead, ",
-            "summarize what happened, highlight key findings, or explain errors. ",
-            "Simply parroting the output wastes the user's time.\n\n",
-            "## Silent Replies\n\n",
-            "When you have nothing meaningful to add after a tool call — the output ",
-            "speaks for itself — do NOT produce any text. Simply return an empty response.\n",
-            "The user's UI already shows tool results, so there is no need to repeat or ",
-            "acknowledge them. Stay silent when the output answers the user's question.\n",
-        ));
+fn append_guidelines_section(prompt: &mut String, include_tools: bool) {
+    prompt.push_str(if include_tools {
+        TOOL_GUIDELINES
     } else {
-        prompt.push_str(concat!(
-            "## Guidelines\n\n",
-            "- Be helpful, accurate, and concise.\n",
-            "- If you don't know something, say so rather than making things up.\n",
-            "- For coding questions, provide clear explanations with examples.\n",
-        ));
+        MINIMAL_GUIDELINES
+    });
+}
+
+fn append_runtime_datetime_tail(
+    prompt: &mut String,
+    runtime_context: Option<&PromptRuntimeContext>,
+) {
+    let Some(runtime) = runtime_context else {
+        return;
+    };
+
+    if let Some(time) = runtime
+        .host
+        .time
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\nThe current user datetime is ");
+        prompt.push_str(time);
+        prompt.push_str(".\n");
+        return;
     }
 
-    prompt
+    if let Some(today) = runtime
+        .host
+        .today
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        prompt.push_str("\nThe current user date is ");
+        prompt.push_str(today);
+        prompt.push_str(".\n");
+    }
+}
+
+fn push_non_empty_runtime_field(parts: &mut Vec<String>, key: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        parts.push(format!("{key}={value}"));
+    }
 }
 
 fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Option<String> {
-    fn push_str(parts: &mut Vec<String>, key: &str, val: Option<&str>) {
-        if let Some(v) = val.filter(|s| !s.is_empty()) {
-            parts.push(format!("{key}={v}"));
-        }
-    }
-
     let mut parts = Vec::new();
-    push_str(&mut parts, "host", host.host.as_deref());
-    push_str(&mut parts, "os", host.os.as_deref());
-    push_str(&mut parts, "arch", host.arch.as_deref());
-    push_str(&mut parts, "shell", host.shell.as_deref());
-    push_str(&mut parts, "provider", host.provider.as_deref());
-    push_str(&mut parts, "model", host.model.as_deref());
-    push_str(&mut parts, "session", host.session_key.as_deref());
-    if let Some(v) = host.sudo_non_interactive {
-        parts.push(format!("sudo_non_interactive={v}"));
+    for (key, value) in [
+        ("host", host.host.as_deref()),
+        ("os", host.os.as_deref()),
+        ("arch", host.arch.as_deref()),
+        ("shell", host.shell.as_deref()),
+        ("today", host.today.as_deref()),
+        ("provider", host.provider.as_deref()),
+        ("model", host.model.as_deref()),
+        ("session", host.session_key.as_deref()),
+        ("data_dir", host.data_dir.as_deref()),
+    ] {
+        push_non_empty_runtime_field(&mut parts, key, value);
     }
-    push_str(&mut parts, "sudo_status", host.sudo_status.as_deref());
-    push_str(&mut parts, "timezone", host.timezone.as_deref());
-    push_str(
-        &mut parts,
-        "accept_language",
-        host.accept_language.as_deref(),
-    );
-    push_str(&mut parts, "remote_ip", host.remote_ip.as_deref());
-    push_str(&mut parts, "location", host.location.as_deref());
+    if let Some(sudo_non_interactive) = host.sudo_non_interactive {
+        parts.push(format!("sudo_non_interactive={sudo_non_interactive}"));
+    }
+    for (key, value) in [
+        ("sudo_status", host.sudo_status.as_deref()),
+        ("timezone", host.timezone.as_deref()),
+        ("accept_language", host.accept_language.as_deref()),
+        ("remote_ip", host.remote_ip.as_deref()),
+        ("location", host.location.as_deref()),
+    ] {
+        push_non_empty_runtime_field(&mut parts, key, value);
+    }
 
-    if parts.is_empty() {
-        None
-    } else {
-        Some(format!("Host: {}", parts.join(" | ")))
-    }
+    (!parts.is_empty()).then(|| format!("Host: {}", parts.join(" | ")))
 }
 
 fn truncate_prompt_text(text: &str, max_chars: usize) -> String {
@@ -416,46 +560,43 @@ fn truncate_prompt_text(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn append_truncated_text_block(
+    prompt: &mut String,
+    text: &str,
+    max_chars: usize,
+    truncated_notice: &str,
+) {
+    let truncated = truncate_prompt_text(text, max_chars);
+    prompt.push_str(&truncated);
+    if text.chars().count() > max_chars {
+        prompt.push_str(truncated_notice);
+    }
+}
+
 fn format_sandbox_runtime_line(sandbox: &PromptSandboxRuntimeContext) -> String {
     let mut parts = vec![format!("enabled={}", sandbox.exec_sandboxed)];
 
-    if let Some(v) = sandbox.mode.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("mode={v}"));
+    for (key, value) in [
+        ("mode", sandbox.mode.as_deref()),
+        ("backend", sandbox.backend.as_deref()),
+        ("scope", sandbox.scope.as_deref()),
+        ("image", sandbox.image.as_deref()),
+        ("home", sandbox.home.as_deref()),
+        ("workspace_mount", sandbox.workspace_mount.as_deref()),
+        ("workspace_path", sandbox.workspace_path.as_deref()),
+    ] {
+        push_non_empty_runtime_field(&mut parts, key, value);
     }
-    if let Some(v) = sandbox.backend.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("backend={v}"));
+    if let Some(no_network) = sandbox.no_network {
+        let network_state = if no_network {
+            "disabled"
+        } else {
+            "enabled"
+        };
+        parts.push(format!("network={network_state}"));
     }
-    if let Some(v) = sandbox.scope.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("scope={v}"));
-    }
-    if let Some(v) = sandbox.image.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("image={v}"));
-    }
-    if let Some(v) = sandbox.workspace_mount.as_deref()
-        && !v.is_empty()
-    {
-        parts.push(format!("workspace_mount={v}"));
-    }
-    if let Some(v) = sandbox.no_network {
-        parts.push(format!(
-            "network={}",
-            if v {
-                "disabled"
-            } else {
-                "enabled"
-            }
-        ));
-    }
-    if let Some(v) = sandbox.session_override {
-        parts.push(format!("session_override={v}"));
+    if let Some(session_override) = sandbox.session_override {
+        parts.push(format!("session_override={session_override}"));
     }
 
     format!("Sandbox(exec): {}", parts.join(" | "))
@@ -578,8 +719,7 @@ mod tests {
         let identity = AgentIdentity {
             name: Some("Momo".into()),
             emoji: Some("🦜".into()),
-            creature: Some("parrot".into()),
-            vibe: Some("cheerful and curious".into()),
+            theme: Some("cheerful parrot".into()),
         };
         let user = UserProfile {
             name: Some("Alice".into()),
@@ -600,8 +740,7 @@ mod tests {
             None,
         );
         assert!(prompt.contains("Your name is Momo 🦜."));
-        assert!(prompt.contains("You are a parrot."));
-        assert!(prompt.contains("Your vibe: cheerful and curious."));
+        assert!(prompt.contains("Your theme: cheerful parrot."));
         assert!(prompt.contains("The user's name is Alice."));
         // Default soul should be injected when soul is None.
         assert!(prompt.contains("## Soul"));
@@ -686,9 +825,12 @@ mod tests {
                 os: Some("macos".into()),
                 arch: Some("aarch64".into()),
                 shell: Some("zsh".into()),
+                time: Some("2026-02-17 16:18:00 CET".into()),
+                today: Some("2026-02-17".into()),
                 provider: Some("openai".into()),
                 model: Some("gpt-5".into()),
                 session_key: Some("main".into()),
+                data_dir: Some("/home/moltis/.moltis".into()),
                 sudo_non_interactive: Some(true),
                 sudo_status: Some("passwordless".into()),
                 timezone: Some("Europe/Paris".into()),
@@ -702,7 +844,9 @@ mod tests {
                 backend: Some("docker".into()),
                 scope: Some("session".into()),
                 image: Some("moltis-sandbox:abc123".into()),
+                home: Some("/home/sandbox".into()),
                 workspace_mount: Some("ro".into()),
+                workspace_path: Some("/home/moltis/.moltis".into()),
                 no_network: Some(true),
                 session_override: Some(true),
             }),
@@ -724,8 +868,12 @@ mod tests {
 
         assert!(prompt.contains("## Runtime"));
         assert!(prompt.contains("Host: host=moltis-devbox"));
+        assert!(!prompt.contains("time=2026-02-17 16:18:00 CET"));
+        assert!(prompt.contains("today=2026-02-17"));
+        assert!(prompt.contains("The current user datetime is 2026-02-17 16:18:00 CET."));
         assert!(prompt.contains("provider=openai"));
         assert!(prompt.contains("model=gpt-5"));
+        assert!(prompt.contains("data_dir=/home/moltis/.moltis"));
         assert!(prompt.contains("sudo_non_interactive=true"));
         assert!(prompt.contains("sudo_status=passwordless"));
         assert!(prompt.contains("timezone=Europe/Paris"));
@@ -733,8 +881,12 @@ mod tests {
         assert!(prompt.contains("remote_ip=203.0.113.42"));
         assert!(prompt.contains("Sandbox(exec): enabled=true"));
         assert!(prompt.contains("backend=docker"));
+        assert!(prompt.contains("home=/home/sandbox"));
+        assert!(prompt.contains("workspace_path=/home/moltis/.moltis"));
         assert!(prompt.contains("network=disabled"));
         assert!(prompt.contains("Execution routing:"));
+        assert!(prompt.contains("`~` and relative paths resolve under"));
+        assert!(prompt.contains("Sandbox/host routing changes are expected runtime behavior"));
     }
 
     #[test]
@@ -831,6 +983,10 @@ mod tests {
         let prompt = build_system_prompt(&tools, true, None);
         assert!(prompt.contains("## Silent Replies"));
         assert!(prompt.contains("empty response"));
+        assert!(prompt.contains("Do not call tools for greetings"));
+        assert!(prompt.contains("`/sh `"));
+        assert!(prompt.contains("run it with `exec` exactly as written"));
+        assert!(prompt.contains("Do not express surprise about sandbox vs host execution"));
         assert!(!prompt.contains("__SILENT__"));
     }
 
@@ -861,6 +1017,9 @@ mod tests {
         assert!(prompt.contains("## Long-Term Memory"));
         assert!(prompt.contains("Lives in Paris"));
         assert!(prompt.contains("Speaks French"));
+        // Memory content should include the "already know" hint so models
+        // don't ignore it when tool searches return empty.
+        assert!(prompt.contains("information above is what you already know"));
     }
 
     #[test]
@@ -923,5 +1082,184 @@ mod tests {
         assert!(prompt.contains("Important fact"));
         // Minimal prompts have no tools, so no memory_search hint
         assert!(!prompt.contains("memory_search"));
+    }
+
+    /// Helper to create a [`ToolRegistry`] with one or more named stub tools.
+    fn registry_with_tools(names: &[&'static str]) -> ToolRegistry {
+        struct NamedStub(&'static str);
+        #[async_trait::async_trait]
+        impl crate::tool_registry::AgentTool for NamedStub {
+            fn name(&self) -> &str {
+                self.0
+            }
+
+            fn description(&self) -> &str {
+                "stub"
+            }
+
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({"type": "object", "properties": {}})
+            }
+
+            async fn execute(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+                Ok(serde_json::json!({}))
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        for name in names {
+            reg.register(Box::new(NamedStub(name)));
+        }
+        reg
+    }
+
+    #[test]
+    fn test_memory_save_hint_injected_when_tool_registered() {
+        let tools = registry_with_tools(&["memory_save"]);
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("MUST call `memory_save`"));
+    }
+
+    #[test]
+    fn test_memory_save_hint_absent_without_tool() {
+        let tools = ToolRegistry::new();
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(!prompt.contains("memory_save"));
+    }
+
+    #[test]
+    fn test_memory_search_and_save_hints_both_present() {
+        let tools = registry_with_tools(&["memory_search", "memory_save"]);
+        let memory = "## User Facts\n- Likes coffee";
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(memory),
+        );
+        assert!(prompt.contains("## Long-Term Memory"));
+        assert!(prompt.contains("Likes coffee"));
+        assert!(prompt.contains("memory_search"));
+        assert!(prompt.contains("MUST call `memory_save`"));
+    }
+
+    #[test]
+    fn test_datetime_tail_appended_at_end_when_runtime_time_present() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                time: Some("2026-02-17 16:18:00 CET".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        let expected = "The current user datetime is 2026-02-17 16:18:00 CET.";
+        assert!(prompt.contains(expected));
+        assert!(prompt.trim_end().ends_with(expected));
+    }
+
+    #[test]
+    fn test_datetime_tail_falls_back_to_today_when_time_missing() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext {
+                today: Some("2026-02-17".into()),
+                ..Default::default()
+            },
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(prompt.contains("The current user date is 2026-02-17."));
+        assert!(
+            prompt
+                .trim_end()
+                .ends_with("The current user date is 2026-02-17.")
+        );
+    }
+
+    #[test]
+    fn test_datetime_tail_not_injected_without_time_or_date() {
+        let tools = ToolRegistry::new();
+        let runtime = PromptRuntimeContext {
+            host: PromptHostRuntimeContext::default(),
+            sandbox: None,
+        };
+
+        let prompt = build_system_prompt_with_session_runtime(
+            &tools,
+            true,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&runtime),
+            None,
+        );
+
+        assert!(!prompt.contains("The current user datetime is "));
+        assert!(!prompt.contains("The current user date is "));
     }
 }

@@ -6,10 +6,11 @@ use std::{
 };
 
 use {
-    anyhow::{Context, Result},
     serde::{Deserialize, Serialize},
     tracing::{debug, info},
 };
+
+use crate::error::{Context, Result};
 
 /// Transport type for MCP server connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -18,6 +19,16 @@ pub enum TransportType {
     #[default]
     Stdio,
     Sse,
+}
+
+/// Manual OAuth override for MCP servers that don't support standard discovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpOAuthConfig {
+    pub client_id: String,
+    pub auth_url: String,
+    pub token_url: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 /// Configuration for a single MCP server.
@@ -36,6 +47,9 @@ pub struct McpServerConfig {
     /// URL for SSE transport. Required when `transport` is `Sse`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Manual OAuth override (skip discovery/dynamic registration).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthConfig>,
 }
 
 fn default_true() -> bool {
@@ -51,6 +65,7 @@ impl Default for McpServerConfig {
             enabled: true,
             transport: TransportType::default(),
             url: None,
+            oauth: None,
         }
     }
 }

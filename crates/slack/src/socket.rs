@@ -6,14 +6,14 @@
 use std::sync::Arc;
 
 use {
-    anyhow::Result,
     secrecy::ExposeSecret,
     slack_morphism::prelude::*,
     tracing::{debug, error, info, warn},
 };
 
 use moltis_channels::{
-    ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget, ChannelType,
+    ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget, ChannelType, Error as ChannelError,
+    Result as ChannelResult,
     gating::{DmPolicy, GroupPolicy, MentionMode, is_allowed},
     message_log::{MessageLog, MessageLogEntry},
     plugin::ChannelEvent,
@@ -44,13 +44,18 @@ pub async fn start_socket_mode(
     accounts: AccountStateMap,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
-) -> Result<()> {
-    let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new()?));
+) -> ChannelResult<()> {
+    let connector = SlackClientHyperConnector::new()
+        .map_err(|e| ChannelError::external("create slack hyper connector", e))?;
+    let client = Arc::new(SlackClient::new(connector));
 
     // Get bot info
     let token = SlackApiToken::new(config.bot_token.expose_secret().into());
     let session = client.open_session(&token);
-    let auth_test = session.auth_test().await?;
+    let auth_test = session
+        .auth_test()
+        .await
+        .map_err(|e| ChannelError::external("slack auth.test", e))?;
     let bot_user_id = Some(auth_test.user_id.to_string());
 
     info!(
@@ -125,7 +130,7 @@ async fn run_socket_listener(
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
     cancel: tokio_util::sync::CancellationToken,
-) -> Result<()> {
+) -> ChannelResult<()> {
     let app_token = SlackApiToken::new(config.app_token.expose_secret().into());
 
     // Create shared state for callbacks
@@ -170,15 +175,17 @@ async fn run_socket_listener(
 }
 
 /// Handle push events (messages, etc.)
+type CallbackResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 async fn handle_push_events(
     event: SlackPushEventCallback,
     _client: Arc<SlackHyperClient>,
     states: SlackClientEventsUserState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> CallbackResult<()> {
     let guard = states.read().await;
     let state = guard
         .get_user_state::<SocketModeState>()
-        .ok_or("missing socket mode state")?;
+        .ok_or_else(|| std::io::Error::other("missing socket mode state"))?;
 
     if let Err(e) = handle_push_event_inner(state, event).await {
         warn!(
@@ -196,11 +203,11 @@ async fn handle_command_events(
     event: SlackCommandEvent,
     _client: Arc<SlackHyperClient>,
     states: SlackClientEventsUserState,
-) -> Result<SlackCommandEventResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> CallbackResult<SlackCommandEventResponse> {
     let guard = states.read().await;
     let state = guard
         .get_user_state::<SocketModeState>()
-        .ok_or("missing socket mode state")?;
+        .ok_or_else(|| std::io::Error::other("missing socket mode state"))?;
 
     debug!(
         account_id = %state.account_id,
@@ -236,7 +243,7 @@ async fn handle_interaction_events(
     _event: SlackInteractionEvent,
     _client: Arc<SlackHyperClient>,
     states: SlackClientEventsUserState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> CallbackResult<()> {
     let guard = states.read().await;
     if let Some(state) = guard.get_user_state::<SocketModeState>() {
         debug!(account_id = %state.account_id, "received interaction event");
@@ -247,7 +254,7 @@ async fn handle_interaction_events(
 async fn handle_push_event_inner(
     state: &SocketModeState,
     event: SlackPushEventCallback,
-) -> Result<()> {
+) -> ChannelResult<()> {
     match &event.event {
         SlackEventCallbackBody::Message(msg) => {
             handle_message_event(state, msg).await?;
@@ -259,7 +266,10 @@ async fn handle_push_event_inner(
     Ok(())
 }
 
-async fn handle_message_event(state: &SocketModeState, event: &SlackMessageEvent) -> Result<()> {
+async fn handle_message_event(
+    state: &SocketModeState,
+    event: &SlackMessageEvent,
+) -> ChannelResult<()> {
     // Skip bot messages to prevent loops
     if event.sender.bot_id.is_some() {
         return Ok(());
@@ -385,6 +395,7 @@ async fn handle_message_event(state: &SocketModeState, event: &SlackMessageEvent
         username: user_id,
         message_kind: None,
         model: state.config.model.clone(),
+        audio_filename: None,
     };
 
     // Dispatch to chat

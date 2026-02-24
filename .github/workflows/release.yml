@@ -44,7 +44,7 @@ jobs:
       - uses: biomejs/setup-biome@29711cbb52afee00eb13aeb30636592f9edc0088 # v2.7.0
         with:
           version: "2.3.13"
-      - run: biome ci crates/gateway/src/assets/js/
+      - run: biome ci crates/web/src/assets/js/
 
   fmt:
     needs: zizmor
@@ -144,15 +144,15 @@ jobs:
           package-manager-cache: false
 
       - name: Install npm dependencies
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npm ci
 
       - name: Install Playwright browsers
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        working-directory: crates/gateway/ui
+        working-directory: crates/web/ui
         env:
           CI: "true"
         run: npx playwright test
@@ -163,8 +163,8 @@ jobs:
         with:
           name: e2e-test-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            crates/gateway/ui/playwright-report/
-            crates/gateway/ui/test-results/
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -901,6 +901,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check if this is the highest release tag
+        id: check_latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT="${GITHUB_REF#refs/tags/v}"
+          LATEST=$(gh api "repos/${{ github.repository }}/tags" --paginate --jq '.[].name' \
+            | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1)
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping floating tags: ${CURRENT} is not the highest version (${LATEST} is)"
+          fi
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
@@ -908,9 +925,9 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.check_latest.outputs.is_latest }}
             type=sha
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest,enable=${{ steps.check_latest.outputs.is_latest }}
 
       - name: Create multi-arch manifest and push
         env:

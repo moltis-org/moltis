@@ -268,6 +268,7 @@ impl EventHandler for DiscordHandler {
             username: Some(msg.author.name.clone()),
             message_kind: None,
             model: self.config.model.clone(),
+            audio_filename: None,
         };
 
         // Dispatch to chat

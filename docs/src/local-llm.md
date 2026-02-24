@@ -65,32 +65,35 @@ in the UI.
 
 ### Via Configuration File
 
-Add to `~/.moltis/moltis.toml`:
+Add to `~/.config/moltis/moltis.toml`:
 
 ```toml
-[providers.local]
-model = "qwen2.5-coder-7b-q4_k_m"
+[providers.local-llm]
+models = ["qwen2.5-coder-7b-q4_k_m"]
 ```
 
 For custom GGUF files:
 
-```toml
-[providers.local]
-model = "my-custom-model"
-model_path = "/path/to/model.gguf"
+```json
+{
+  "models": [
+    {
+      "model_id": "my-custom-model",
+      "model_path": "/path/to/model.gguf",
+      "gpu_layers": 99,
+      "backend": "GGUF"
+    }
+  ]
+}
 ```
+
+Save this as `~/.config/moltis/local-llm.json` (the same file managed by the
+Settings UI).
 
 ## Model Storage
 
 Downloaded models are cached in `~/.cache/moltis/models/` by default. This
 directory can grow large (several GB per model).
-
-To change the cache location:
-
-```toml
-[providers.local]
-cache_dir = "/custom/models/path"
-```
 
 ## HuggingFace Integration
 
@@ -122,9 +125,16 @@ MLX models are available from [mlx-community](https://huggingface.co/mlx-communi
 Metal acceleration is enabled by default on macOS. The number of GPU layers
 can be configured:
 
-```toml
-[providers.local]
-gpu_layers = 99  # Offload all layers to GPU
+```json
+{
+  "models": [
+    {
+      "model_id": "qwen2.5-coder-7b-q4_k_m",
+      "gpu_layers": 99,
+      "backend": "GGUF"
+    }
+  ]
+}
 ```
 
 ### CUDA (NVIDIA)
@@ -176,7 +186,7 @@ possible.
 
 - Enable GPU acceleration (Metal on macOS, CUDA on Linux)
 - Try a smaller/more quantized model
-- Reduce context size in config
+- Reduce prompt/context length
 
 ### Out of memory
 

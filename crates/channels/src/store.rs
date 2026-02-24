@@ -1,4 +1,6 @@
-use {anyhow::Result, async_trait::async_trait, serde::Serialize};
+use {async_trait::async_trait, serde::Serialize};
+
+use crate::Result;
 
 /// A persisted channel configuration.
 #[derive(Debug, Clone, Serialize)]
