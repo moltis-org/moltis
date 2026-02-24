@@ -6,8 +6,8 @@ tokens, etc.) are encrypted with **XChaCha20-Poly1305** AEAD using keys
 derived from your password via **Argon2id**.
 
 The vault is enabled by default (the `vault` cargo feature) and requires
-no configuration. It initializes automatically when you set your password
-during setup.
+no configuration. It initializes automatically when you set your first
+password (during setup or later in **Settings > Authentication**).
 
 ## Key Hierarchy
 
@@ -70,14 +70,14 @@ unwrap the DEK).
 
 The vault integrates transparently with the authentication flow:
 
-### First-time setup (`POST /api/auth/setup`)
+### First password set (`POST /api/auth/setup` or first `POST /api/auth/password/change`)
 
-When a password is set during initial setup:
+When the first password is set (during onboarding or later in Settings):
 
 1. `vault.initialize(password)` generates a random DEK and recovery key
 2. The DEK is wrapped with a KEK derived from the password
 3. A second copy of the DEK is wrapped with the recovery KEK
-4. The response includes a `recovery_key` field (shown once)
+4. The response includes a `recovery_key` field (shown once, then not returned again)
 5. Any existing plaintext env vars are migrated to encrypted
 
 ### Login (`POST /api/auth/login`)
@@ -87,12 +87,14 @@ After successful password verification:
 1. `vault.unseal(password)` derives the KEK and unwraps the DEK into memory
 2. Unencrypted env vars are migrated to encrypted (if any remain)
 
-### Password change (`POST /api/auth/password/change`)
+### Password change after initialization (`POST /api/auth/password/change`)
 
-After the credential store updates the password:
+When a password already exists and is rotated:
 
 1. `vault.change_password(old, new)` re-wraps the DEK with a new KEK
    derived from the new password
+
+No new recovery key is generated during normal password rotation.
 
 ### Server restart
 
@@ -101,8 +103,8 @@ until the user logs in, which triggers unseal.
 
 ## Recovery Key
 
-At initialization, a human-readable recovery key is generated and returned
-in the setup response. It looks like:
+At vault initialization, a human-readable recovery key is generated and
+returned in the API response that performed initialization. It looks like:
 
 ```
 ABCD-EFGH-JKLM-NPQR-STUV-WXYZ-2345-6789
@@ -112,9 +114,10 @@ The alphabet excludes ambiguous characters (`I`, `O`, `0`, `1`) to avoid
 transcription errors. The key is case-insensitive.
 
 ```admonish warning
-The recovery key is shown **exactly once** during setup. Store it in a
-safe place (password manager, printed copy in a safe, etc.). If you lose
-both your password and recovery key, encrypted data cannot be recovered.
+The recovery key is shown **exactly once** when the vault is initialized.
+Store it in a safe place (password manager, printed copy in a safe, etc.).
+If you lose both your password and recovery key, encrypted data cannot be
+recovered.
 ```
 
 Use the recovery key to unseal the vault when you've forgotten your
@@ -201,6 +204,15 @@ const vaultStatus = gon.get("vault_status");
 
 Live updates are available via `gon.onChange("vault_status", callback)`.
 
+### Locked-vault banners
+
+When `vault_status` is `sealed`, the UI shows an info banner:
+
+- In the main app shell (`index.html`): a banner linking to
+  **Settings > Encryption** for manual unlock.
+- On the login page (`/login`): a banner that explains the vault is locked
+  and will unlock after successful sign-in.
+
 ### Onboarding and localhost
 
 The onboarding wizard's Security step explains that setting a password
@@ -223,6 +235,11 @@ interstitial screen with:
 - A warning that the key will not be shown again
 - A **Continue** button to proceed to the next onboarding step
 
+In **Settings > Authentication**, setting a password for the first time
+also returns a `recovery_key`. The page keeps the user on Settings long
+enough to copy it, then shows a **Continue to sign in** action when the
+new password makes authentication mandatory.
+
 Passkey-only setup does not trigger vault initialization (no password to
 derive a KEK from), so the recovery key screen is never shown in that flow.
 
@@ -239,10 +256,10 @@ on restart and unlocks on login.
 | **Sealed** | Amber ("Locked") | Log in or unlock below to access your encrypted keys. |
 | **Uninitialized** | Gray ("Off") | Set a password in Authentication settings to start encrypting your stored keys. |
 
-When the vault is **sealed**, a form appears with a toggle between
-**Password** and **Recovery key** unlock modes. Submitting the form
-calls `POST /api/auth/vault/unlock` or `POST /api/auth/vault/recovery`
-respectively, then refreshes gon data to update the status badge.
+When the vault is **sealed**, both unlock forms are shown in the same
+panel (password and recovery key, separated by an "or" divider). Submitting
+calls `POST /api/auth/vault/unlock` or `POST /api/auth/vault/recovery`,
+then refreshes gon data to update the status badge.
 
 ### Encrypted badges on environment variables
 

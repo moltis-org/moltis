@@ -256,9 +256,10 @@ Sensitive data in the SQLite database (environment variables containing
 API keys, tokens, etc.) is encrypted at rest using XChaCha20-Poly1305.
 The encryption key is derived from the user's password via Argon2id.
 
-The vault initializes during first-time setup, unseals automatically on
-login, and re-seals on server restart. A recovery key is provided at
-initialization for emergency access.
+The vault initializes when a first password is set (during setup or later
+in Settings > Authentication), unseals automatically on login, and
+re-seals on server restart. A recovery key is provided at initialization
+for emergency access.
 
 When the vault is sealed, a middleware layer blocks API requests with
 `423 Locked` to prevent serving stale data.
