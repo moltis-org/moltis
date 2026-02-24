@@ -131,6 +131,8 @@ Key points:
 
 - Set `MOLTIS_PASSWORD` in the Coolify UI before first deploy.
 - Set `SERVICE_FQDN_MOLTIS_13131` to your app domain.
+- Keep Moltis in `--no-tls` mode behind Coolify's reverse proxy. If requests
+  are redirected to `:13131`, check that TLS is disabled in Moltis.
 - Keep `/var/run/docker.sock:/var/run/docker.sock` mounted if you want sandbox
   isolation for exec tools.
 

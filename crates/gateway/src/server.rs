@@ -858,6 +858,25 @@ fn env_var_or_unset(name: &str) -> String {
         .unwrap_or_else(|| "<unset>".to_string())
 }
 
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn validate_proxy_tls_configuration(
+    behind_proxy: bool,
+    tls_enabled: bool,
+    allow_tls_behind_proxy: bool,
+) -> anyhow::Result<()> {
+    if behind_proxy && tls_enabled && !allow_tls_behind_proxy {
+        anyhow::bail!(
+            "MOLTIS_BEHIND_PROXY=true with Moltis TLS enabled is usually a proxy misconfiguration. Run with --no-tls (or MOLTIS_NO_TLS=true). If your proxy upstream is HTTPS/TCP passthrough by design, set MOLTIS_ALLOW_TLS_BEHIND_PROXY=true."
+        );
+    }
+    Ok(())
+}
+
 fn log_path_diagnostics(kind: &str, path: &FsPath) {
     match std::fs::metadata(path) {
         Ok(metadata) => {
@@ -1045,6 +1064,22 @@ pub async fn start_gateway(
     // CLI --no-tls / MOLTIS_NO_TLS overrides config file TLS setting.
     if no_tls {
         config.tls.enabled = false;
+    }
+    let behind_proxy = env_flag_enabled("MOLTIS_BEHIND_PROXY");
+    let allow_tls_behind_proxy = env_flag_enabled("MOLTIS_ALLOW_TLS_BEHIND_PROXY");
+    #[cfg(feature = "tls")]
+    let tls_enabled_for_gateway = config.tls.enabled;
+    #[cfg(not(feature = "tls"))]
+    let tls_enabled_for_gateway = false;
+    validate_proxy_tls_configuration(
+        behind_proxy,
+        tls_enabled_for_gateway,
+        allow_tls_behind_proxy,
+    )?;
+    if behind_proxy && tls_enabled_for_gateway && allow_tls_behind_proxy {
+        warn!(
+            "MOLTIS_ALLOW_TLS_BEHIND_PROXY=true is set; ensure your proxy uses HTTPS upstream or TLS passthrough to avoid redirect loops"
+        );
     }
 
     let base_provider_config = config.providers.clone();
@@ -2483,11 +2518,6 @@ pub async fn start_gateway(
 
     let is_localhost =
         matches!(bind, "127.0.0.1" | "::1" | "localhost") || bind.ends_with(".localhost");
-    #[cfg(feature = "tls")]
-    let tls_active_for_state = config.tls.enabled;
-    #[cfg(not(feature = "tls"))]
-    let tls_active_for_state = false;
-
     // Initialize metrics system.
     #[cfg(feature = "metrics")]
     let metrics_handle = {
@@ -2532,10 +2562,6 @@ pub async fn start_gateway(
         }
     };
 
-    let behind_proxy = std::env::var("MOLTIS_BEHIND_PROXY")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
     // Keep a reference to the browser service for periodic cleanup and shutdown.
     let browser_for_lifecycle = Arc::clone(&services.browser);
 
@@ -2546,7 +2572,7 @@ pub async fn start_gateway(
         Some(Arc::clone(&credential_store)),
         is_localhost,
         behind_proxy,
-        tls_active_for_state,
+        tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
         port,
@@ -2917,10 +2943,7 @@ pub async fn start_gateway(
     let addr: SocketAddr = format!("{bind}:{port}").parse()?;
 
     // Resolve TLS configuration (only when compiled with the `tls` feature).
-    #[cfg(feature = "tls")]
-    let tls_active = config.tls.enabled;
-    #[cfg(not(feature = "tls"))]
-    let tls_active = false;
+    let tls_active = tls_enabled_for_gateway;
 
     #[cfg(feature = "tls")]
     let mut ca_cert_path: Option<PathBuf> = None;
@@ -3695,12 +3718,14 @@ async fn ws_upgrade_handler(
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
     {
-        let host = headers
-            .get(axum::http::header::HOST)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !is_same_origin(origin, host) {
-            tracing::warn!(origin, host, remote = %addr, "rejected cross-origin WebSocket upgrade");
+        let host = websocket_origin_host(&headers, state.gateway.behind_proxy).unwrap_or_default();
+        if !is_same_origin(origin, &host) {
+            tracing::warn!(
+                origin,
+                host = %host,
+                remote = %addr,
+                "rejected cross-origin WebSocket upgrade"
+            );
             return (
                 StatusCode::FORBIDDEN,
                 "cross-origin WebSocket connections are not allowed",
@@ -3736,6 +3761,26 @@ async fn ws_upgrade_handler(
         )
     })
     .into_response()
+}
+
+fn websocket_origin_host(headers: &axum::http::HeaderMap, behind_proxy: bool) -> Option<String> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned);
+    if !behind_proxy {
+        return host;
+    }
+    headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or(host)
 }
 
 /// Dedicated host terminal WebSocket stream (`Settings > Terminal`).
@@ -3862,6 +3907,19 @@ fn startup_setup_code_lines(code: &str) -> Vec<String> {
 /// header.  Accepts `localhost`, `127.0.0.1`, and `[::1]` interchangeably
 /// so that `http://localhost:8080` matches a Host of `127.0.0.1:8080`.
 fn is_same_origin(origin: &str, host: &str) -> bool {
+    fn default_port_for_scheme(scheme: &str) -> Option<&'static str> {
+        match scheme {
+            "http" | "ws" => Some("80"),
+            "https" | "wss" => Some("443"),
+            _ => None,
+        }
+    }
+
+    let origin_scheme = origin
+        .split("://")
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     // Origin is a full URL (e.g. "https://localhost:8080"), Host is just
     // "host:port" or "host".
     let origin_host = origin
@@ -3891,8 +3949,8 @@ fn is_same_origin(origin: &str, host: &str) -> bool {
         }
     }
 
-    let origin_port = get_port(origin_host);
-    let host_port = get_port(host);
+    let origin_port = get_port(origin_host).or_else(|| default_port_for_scheme(&origin_scheme));
+    let host_port = get_port(host).or_else(|| default_port_for_scheme(&origin_scheme));
 
     let oh = strip_port(origin_host);
     let hh = strip_port(host);
@@ -4757,6 +4815,14 @@ mod tests {
     }
 
     #[test]
+    fn same_origin_treats_default_ports_as_equivalent() {
+        assert!(is_same_origin("https://example.com", "example.com:443"));
+        assert!(is_same_origin("https://example.com:443", "example.com"));
+        assert!(is_same_origin("http://example.com", "example.com:80"));
+        assert!(is_same_origin("http://example.com:80", "example.com"));
+    }
+
+    #[test]
     fn same_origin_localhost_variants() {
         // localhost ↔ 127.0.0.1
         assert!(is_same_origin("http://localhost:8080", "127.0.0.1:8080"));
@@ -4815,6 +4881,31 @@ mod tests {
             "https://app.moltis.localhost:8080",
             "localhost:8080"
         ));
+    }
+
+    #[test]
+    fn websocket_origin_host_prefers_forwarded_host_when_behind_proxy() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(axum::http::header::HOST, "127.0.0.1:13131".parse().unwrap());
+        headers.insert("x-forwarded-host", "chat.example.com".parse().unwrap());
+        assert_eq!(
+            websocket_origin_host(&headers, true).as_deref(),
+            Some("chat.example.com")
+        );
+    }
+
+    #[test]
+    fn websocket_origin_host_uses_host_without_proxy_mode() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::HOST,
+            "gateway.example.com:8443".parse().unwrap(),
+        );
+        headers.insert("x-forwarded-host", "chat.example.com".parse().unwrap());
+        assert_eq!(
+            websocket_origin_host(&headers, false).as_deref(),
+            Some("gateway.example.com:8443")
+        );
     }
 
     #[test]
@@ -4886,6 +4977,25 @@ mod tests {
             "enter this code to set your password or register a passkey",
             "",
         ]);
+    }
+
+    #[test]
+    fn proxy_tls_validation_rejects_common_misconfiguration() {
+        let err = validate_proxy_tls_configuration(true, true, false)
+            .expect_err("behind proxy with TLS should fail without explicit override");
+        let message = err.to_string();
+        assert!(message.contains("MOLTIS_BEHIND_PROXY=true"));
+        assert!(message.contains("--no-tls"));
+    }
+
+    #[test]
+    fn proxy_tls_validation_allows_proxy_mode_when_tls_is_disabled() {
+        assert!(validate_proxy_tls_configuration(true, false, false).is_ok());
+    }
+
+    #[test]
+    fn proxy_tls_validation_allows_explicit_tls_override() {
+        assert!(validate_proxy_tls_configuration(true, true, true).is_ok());
     }
 
     #[test]
