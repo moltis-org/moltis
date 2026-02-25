@@ -392,9 +392,8 @@ impl std::fmt::Display for WorkspaceMount {
 }
 
 /// Persistence mode for `/home/sandbox` in container backends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[derive(Default)]
 pub enum HomePersistence {
     Off,
     Session,

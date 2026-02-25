@@ -79,8 +79,9 @@ container image. These overrides persist across gateway restarts.
 
 ## Home persistence
 
-Sandbox homes are ephemeral by default. To persist files under `/home/sandbox`
-(for example CLI auth/config files), enable `home_persistence`:
+By default, `/home/sandbox` is persisted in a shared host folder so that CLI
+auth/config files survive container recreation. You can change this with
+`home_persistence`:
 
 ```toml
 [tools.exec.sandbox]
