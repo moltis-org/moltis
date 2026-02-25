@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 
 use moltis_config::{AgentIdentity, MoltisConfig, UserProfile};
 
-use crate::state::{WizardState, WizardStep};
+use crate::{
+    Context, Result,
+    state::{WizardState, WizardStep},
+};
 
 /// Live onboarding service backed by a `WizardState` and config persistence.
 pub struct LiveOnboardingService {
@@ -23,8 +26,9 @@ impl LiveOnboardingService {
     }
 
     /// Save config to the service's config path.
-    fn save(&self, config: &MoltisConfig) -> anyhow::Result<()> {
-        moltis_config::loader::save_config_to_path(&self.config_path, config)?;
+    fn save(&self, config: &MoltisConfig) -> Result<()> {
+        moltis_config::loader::save_config_to_path(&self.config_path, config)
+            .context("failed to save onboarding config")?;
         Ok(())
     }
 
@@ -85,9 +89,9 @@ impl LiveOnboardingService {
     }
 
     /// Advance the wizard with user input.
-    pub fn wizard_next(&self, input: &str) -> Result<Value, String> {
+    pub fn wizard_next(&self, input: &str) -> Result<Value> {
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let ws = guard.as_mut().ok_or("no active wizard session")?;
+        let ws = guard.as_mut().context("no active wizard session")?;
         ws.advance(input);
 
         if ws.is_done() {
@@ -99,14 +103,9 @@ impl LiveOnboardingService {
             };
             config.identity = ws.identity.clone();
             config.user = ws.user.clone();
-            self.save(&config)
-                .map_err(|e| format!("failed to save config: {e}"))?;
-            if let Err(e) = moltis_config::save_identity(&ws.identity) {
-                return Err(format!("failed to save IDENTITY.md: {e}"));
-            }
-            if let Err(e) = moltis_config::save_user(&ws.user) {
-                return Err(format!("failed to save USER.md: {e}"));
-            }
+            self.save(&config).context("failed to save config")?;
+            moltis_config::save_identity(&ws.identity).context("failed to save IDENTITY.md")?;
+            moltis_config::save_user(&ws.user).context("failed to save USER.md")?;
             self.mark_onboarded();
 
             let resp = json!({
@@ -116,7 +115,8 @@ impl LiveOnboardingService {
                 "identity": {
                     "name": config.identity.name,
                     "emoji": config.identity.emoji,
-                    "theme": config.identity.theme,
+                    "creature": config.identity.creature,
+                    "vibe": config.identity.vibe,
                 },
                 "user": {
                     "name": config.user.name,
@@ -156,7 +156,7 @@ impl LiveOnboardingService {
     ///
     /// Accepts: `{name?, emoji?, theme?, soul?, user_name?, user_timezone?}`
     /// Also accepts `"creature"` and `"vibe"` as backward-compat aliases for `"theme"`.
-    pub fn identity_update(&self, params: Value) -> anyhow::Result<Value> {
+    pub fn identity_update(&self, params: Value) -> Result<Value> {
         let mut config = if self.config_path.exists() {
             moltis_config::loader::load_config(&self.config_path).unwrap_or_default()
         } else {
@@ -199,12 +199,11 @@ impl LiveOnboardingService {
         if let Some(v) = str_field(&params, "emoji") {
             identity.emoji = v;
         }
-        // Accept "theme" directly, or "creature"/"vibe" as backward-compat aliases.
-        if let Some(v) = str_field(&params, "theme")
-            .or_else(|| str_field(&params, "creature"))
-            .or_else(|| str_field(&params, "vibe"))
-        {
-            identity.theme = v;
+        if let Some(v) = str_field(&params, "creature") {
+            identity.creature = v;
+        }
+        if let Some(v) = str_field(&params, "vibe") {
+            identity.vibe = v;
         }
         if let Some(v) = params.get("soul") {
             let soul = if v.is_null() {
@@ -212,7 +211,7 @@ impl LiveOnboardingService {
             } else {
                 v.as_str().map(|s| s.to_string())
             };
-            moltis_config::save_soul(soul.as_deref())?;
+            moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
         }
         if let Some(v) = str_field(&params, "user_name") {
             user.name = v;
@@ -227,8 +226,8 @@ impl LiveOnboardingService {
         config.user = user.clone();
 
         self.save(&config)?;
-        moltis_config::save_identity(&identity)?;
-        moltis_config::save_user(&user)?;
+        moltis_config::save_identity(&identity).context("failed to save identity")?;
+        moltis_config::save_user(&user).context("failed to save user")?;
 
         // Mark onboarding complete once both names are present.
         if identity.name.is_some() && user.name.is_some() {
@@ -238,7 +237,8 @@ impl LiveOnboardingService {
         Ok(json!({
             "name": identity.name,
             "emoji": identity.emoji,
-            "theme": identity.theme,
+            "creature": identity.creature,
+            "vibe": identity.vibe,
             "soul": moltis_config::load_soul(),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
@@ -246,8 +246,8 @@ impl LiveOnboardingService {
     }
 
     /// Update SOUL.md in the workspace root.
-    pub fn identity_update_soul(&self, soul: Option<String>) -> anyhow::Result<Value> {
-        moltis_config::save_soul(soul.as_deref())?;
+    pub fn identity_update_soul(&self, soul: Option<String>) -> Result<Value> {
+        moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
         Ok(json!({}))
     }
 
@@ -264,8 +264,11 @@ impl LiveOnboardingService {
                 if let Some(emoji) = file_identity.emoji {
                     id.emoji = Some(emoji);
                 }
-                if let Some(theme) = file_identity.theme {
-                    id.theme = Some(theme);
+                if let Some(creature) = file_identity.creature {
+                    id.creature = Some(creature);
+                }
+                if let Some(vibe) = file_identity.vibe {
+                    id.vibe = Some(vibe);
                 }
             }
             if let Some(file_user) = moltis_config::load_user()
@@ -282,7 +285,8 @@ impl LiveOnboardingService {
                 id.name = name;
             }
             id.emoji = file_identity.emoji;
-            id.theme = file_identity.theme;
+            id.creature = file_identity.creature;
+            id.vibe = file_identity.vibe;
         }
         if let Some(file_user) = moltis_config::load_user() {
             id.user_name = file_user.name;
@@ -304,8 +308,11 @@ fn merge_identity(dst: &mut AgentIdentity, src: &AgentIdentity) {
     if src.emoji.is_some() {
         dst.emoji = src.emoji.clone();
     }
-    if src.theme.is_some() {
-        dst.theme = src.theme.clone();
+    if src.creature.is_some() {
+        dst.creature = src.creature.clone();
+    }
+    if src.vibe.is_some() {
+        dst.vibe = src.vibe.clone();
     }
 }
 
@@ -338,7 +345,7 @@ fn current_value(ws: &WizardState) -> Option<&str> {
         UserName => ws.user.name.as_deref(),
         AgentName => ws.identity.name.as_deref(),
         AgentEmoji => ws.identity.emoji.as_deref(),
-        AgentTheme => ws.identity.theme.as_deref(),
+        AgentVibe => ws.identity.vibe.as_deref(),
         _ => None,
     }
 }
@@ -451,7 +458,7 @@ mod tests {
             .identity_update(json!({
                 "name": "Rex",
                 "emoji": "\u{1f436}",
-                "theme": "chill dog",
+                "vibe": "chill dog",
                 "user_name": "Alice",
                 "user_timezone": "America/New_York",
             }))
@@ -460,18 +467,18 @@ mod tests {
         assert_eq!(res["user_name"], "Alice");
         assert_eq!(res["user_timezone"], "America/New_York");
 
-        // Partial update: only change theme
+        // Partial update: only change vibe
         let res = svc
-            .identity_update(json!({ "theme": "playful pup" }))
+            .identity_update(json!({ "vibe": "playful pup" }))
             .unwrap();
         assert_eq!(res["name"], "Rex");
-        assert_eq!(res["theme"], "playful pup");
+        assert_eq!(res["vibe"], "playful pup");
         assert_eq!(res["emoji"], "\u{1f436}");
 
         // Verify identity_get reflects updates
         let id = svc.identity_get();
         assert_eq!(id.name, "Rex");
-        assert_eq!(id.theme.as_deref(), Some("playful pup"));
+        assert_eq!(id.vibe.as_deref(), Some("playful pup"));
         assert_eq!(id.user_name.as_deref(), Some("Alice"));
         let user = moltis_config::load_user().expect("load user");
         assert_eq!(

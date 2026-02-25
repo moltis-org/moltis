@@ -4,8 +4,8 @@
 // Preact component reading sessionStore.activeSession.
 
 import { html } from "htm/preact";
-import { useCallback, useRef, useState } from "preact/hooks";
-import { sendRpc } from "../helpers.js";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { parseAgentsListPayload, sendRpc } from "../helpers.js";
 import {
 	clearActiveSession,
 	fetchSessions,
@@ -54,6 +54,9 @@ export function SessionHeader() {
 	var [renaming, setRenaming] = useState(false);
 	var [clearing, setClearing] = useState(false);
 	var [stopping, setStopping] = useState(false);
+	var [switchingAgent, setSwitchingAgent] = useState(false);
+	var [agentOptions, setAgentOptions] = useState([]);
+	var [defaultAgentId, setDefaultAgentId] = useState("main");
 	var inputRef = useRef(null);
 
 	var fullName = session ? session.label || session.key : currentKey;
@@ -66,6 +69,20 @@ export function SessionHeader() {
 	var isCron = currentKey.startsWith("cron:");
 	var canRename = !(isMain || isChannel || isCron);
 	var canStop = !isCron && replying;
+	var currentAgentId = session?.agent_id || defaultAgentId || "main";
+
+	useEffect(() => {
+		var cancelled = false;
+		sendRpc("agents.list", {}).then((res) => {
+			if (cancelled || !res?.ok) return;
+			var parsed = parseAgentsListPayload(res.payload);
+			setDefaultAgentId(parsed.defaultId);
+			setAgentOptions(parsed.agents);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [currentKey]);
 
 	var startRename = useCallback(() => {
 		if (!canRename) return;
@@ -196,8 +213,72 @@ export function SessionHeader() {
 		});
 	}, [shareSnapshot]);
 
+	var onAgentChange = useCallback(
+		(event) => {
+			var nextAgentId = event.target.value;
+			if (!nextAgentId || nextAgentId === currentAgentId || switchingAgent) {
+				return;
+			}
+			setSwitchingAgent(true);
+			sendRpc("agents.set_session", {
+				session_key: currentKey,
+				agent_id: nextAgentId,
+			})
+				.then((res) => {
+					if (!res?.ok) {
+						showToast(res?.error?.message || "Failed to switch agent", "error");
+						return;
+					}
+					if (session) {
+						session.agent_id = nextAgentId;
+						session.dataVersion.value++;
+					}
+					fetchSessions();
+				})
+				.finally(() => {
+					setSwitchingAgent(false);
+				});
+		},
+		[currentAgentId, currentKey, session, switchingAgent],
+	);
+
+	var agentSelectValue = currentAgentId;
+	var hasCurrentAgentOption = agentOptions.some((agent) => agent.id === agentSelectValue);
+	var selectDisabled = switchingAgent || agentOptions.length === 0;
+
 	return html`
 		<div class="flex items-center gap-2">
+			${
+				!isCron &&
+				html`
+				<select
+					class="chat-session-btn"
+					value=${agentSelectValue}
+					onChange=${onAgentChange}
+					disabled=${selectDisabled}
+					title="Session agent"
+					style="max-width:180px;text-overflow:ellipsis;"
+				>
+					${
+						!hasCurrentAgentOption &&
+						html`
+						<option value=${agentSelectValue}>
+							${switchingAgent ? "Switching…" : `agent:${agentSelectValue}`}
+						</option>
+					`
+					}
+					${agentOptions.map((agent) => {
+						var prefix = agent.emoji ? `${agent.emoji} ` : "";
+						var suffix = agent.id === defaultAgentId ? " (default)" : "";
+						return html`
+							<option key=${agent.id} value=${agent.id}>
+								${`${prefix}${agent.name}${suffix}`}
+							</option>
+						`;
+					})}
+				</select>
+			`
+			}
 			${
 				renaming
 					? html`<input

@@ -54,6 +54,7 @@ moltis-tailscale      = { optional = true, workspace = true }
 moltis-telegram       = { workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
+moltis-vault          = { optional = true, workspace = true }
 moltis-voice          = { optional = true, workspace = true }
 p256                  = { features = ["ecdsa"], optional = true, workspace = true }
 portable-pty          = { optional = true, workspace = true }
@@ -90,6 +91,7 @@ which                 = { optional = true, workspace = true }
 
 [features]
 default = [
+  "agent",
   "file-watcher",
   "graphql",
   "local-llm",
@@ -99,9 +101,11 @@ default = [
   "qmd",
   "tailscale",
   "tls",
+  "vault",
   "voice",
   "web-ui",
 ]
+agent = []
 file-watcher = ["moltis-memory/file-watcher", "moltis-skills/file-watcher"]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]
@@ -129,6 +133,7 @@ tls = [
   "dep:tokio-rustls",
   "dep:tower",
 ]
+vault = ["dep:moltis-vault", "moltis-auth/vault"]
 voice = ["dep:moltis-voice"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 

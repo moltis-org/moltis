@@ -8,7 +8,7 @@ use {
     serde_json::{Value, json},
 };
 
-use crate::services::ServiceResult;
+use crate::services::{ServiceError, ServiceResult};
 
 #[cfg(feature = "voice")]
 use {
@@ -207,11 +207,15 @@ impl LiveTtsService {
     }
 
     /// Parse provider from JSON params, falling back to config/auto-select.
-    fn resolve_from_params(params: &Value, config_provider: &str) -> Result<TtsProviderId, String> {
+    fn resolve_from_params(
+        params: &Value,
+        config_provider: &str,
+    ) -> Result<TtsProviderId, ServiceError> {
         match params.get("provider").and_then(|v| v.as_str()) {
-            Some(s) => TtsProviderId::parse(s).ok_or_else(|| format!("unknown TTS provider '{s}'")),
+            Some(s) => TtsProviderId::parse(s)
+                .ok_or_else(|| ServiceError::message(format!("unknown TTS provider '{s}'"))),
             None => Self::resolve_provider(config_provider)
-                .ok_or_else(|| "no TTS provider configured".to_string()),
+                .ok_or_else(|| ServiceError::message("no TTS provider configured")),
         }
     }
 }
@@ -254,7 +258,7 @@ impl TtsService for LiveTtsService {
         let provider_id = Self::resolve_from_params(&params, &config.provider)?;
 
         if Self::create_provider(provider_id).is_none() {
-            return Err(format!("provider '{}' not configured", provider_id));
+            return Err(format!("provider '{}' not configured", provider_id).into());
         }
 
         // Update config file
@@ -288,7 +292,7 @@ impl TtsService for LiveTtsService {
 
         if !config.enabled {
             warn!("TTS convert called but TTS is not enabled");
-            return Err("TTS is not enabled".to_string());
+            return Err("TTS is not enabled".into());
         }
 
         let text = params
@@ -301,7 +305,8 @@ impl TtsService for LiveTtsService {
                 "text exceeds max length ({} > {})",
                 text.len(),
                 config.max_text_length
-            ));
+            )
+            .into());
         }
 
         let provider_id = Self::resolve_from_params(&params, &config.provider)?;
@@ -387,7 +392,7 @@ impl TtsService for LiveTtsService {
             .ok_or_else(|| format!("unknown TTS provider '{}'", provider_str))?;
 
         if Self::create_provider(provider_id).is_none() {
-            return Err(format!("provider '{}' not configured", provider_id));
+            return Err(format!("provider '{}' not configured", provider_id).into());
         }
 
         moltis_config::update_config(|cfg| {
@@ -753,7 +758,7 @@ impl SttService for LiveSttService {
             .ok_or_else(|| format!("unknown STT provider '{}'", provider_str))?;
 
         if Self::create_provider(provider_id).is_none() {
-            return Err(format!("provider '{}' not configured", provider_id));
+            return Err(format!("provider '{}' not configured", provider_id).into());
         }
 
         // Update config file
@@ -954,6 +959,6 @@ mod tests {
             .transcribe_bytes(bytes::Bytes::from_static(b"fake"), "mp3", None, None, None)
             .await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "STT not available");
+        assert_eq!(result.unwrap_err().to_string(), "STT not available");
     }
 }

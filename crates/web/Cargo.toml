@@ -5,7 +5,6 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
-anyhow         = { workspace = true }
 askama         = { workspace = true }
 axum           = { workspace = true }
 axum-extra     = { features = ["cookie"], workspace = true }
@@ -24,6 +23,7 @@ portable-pty   = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 sysinfo        = { workspace = true }
+thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tokio-util     = { workspace = true }
 tracing        = { workspace = true }
@@ -32,10 +32,12 @@ which          = { workspace = true }
 
 [features]
 default            = []
+agent              = ["moltis-gateway/agent"]
 graphql            = []
 metrics            = ["moltis-gateway/metrics"]
 push-notifications = ["moltis-gateway/push-notifications"]
 tailscale          = ["moltis-gateway/tailscale"]
+vault              = ["moltis-gateway/vault"]
 voice              = []
 
 [lints]

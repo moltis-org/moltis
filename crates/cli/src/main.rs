@@ -1,4 +1,8 @@
-#[cfg(all(feature = "jemalloc", not(target_os = "windows")))]
+#[cfg(all(
+    feature = "jemalloc",
+    not(target_os = "windows"),
+    not(all(target_os = "linux", target_arch = "aarch64"))
+))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -390,7 +394,10 @@ async fn main() -> anyhow::Result<()> {
             println!("{result}");
             Ok(())
         },
-        Some(Commands::Onboard) => moltis_onboarding::wizard::run_onboarding().await,
+        Some(Commands::Onboard) => {
+            moltis_onboarding::wizard::run_onboarding().await?;
+            Ok(())
+        },
         Some(Commands::Channels { action }) => channel_commands::handle_channels(action).await,
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,

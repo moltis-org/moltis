@@ -11,7 +11,6 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use {
-    anyhow::{Context, Result, bail},
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
     serde_json::Value,
@@ -19,7 +18,10 @@ use {
     tracing::{debug, warn},
 };
 
-use crate::hooks::{HookAction, HookEvent, HookHandler, HookPayload, ShellHookConfig};
+use {
+    crate::hooks::{HookAction, HookEvent, HookHandler, HookPayload, ShellHookConfig},
+    moltis_common::{Error as HookError, Result as HookResult},
+};
 
 /// Response format expected from shell hooks on stdout.
 #[derive(Debug, Deserialize, Serialize)]
@@ -84,9 +86,10 @@ impl HookHandler for ShellHookHandler {
         &self.subscribed_events
     }
 
-    async fn handle(&self, _event: HookEvent, payload: &HookPayload) -> Result<HookAction> {
-        let payload_json =
-            serde_json::to_string(payload).context("failed to serialize hook payload")?;
+    async fn handle(&self, _event: HookEvent, payload: &HookPayload) -> HookResult<HookAction> {
+        let payload_json = serde_json::to_string(payload).map_err(|source| {
+            HookError::message(format!("failed to serialize hook payload: {source}"))
+        })?;
 
         debug!(
             hook = %self.hook_name,
@@ -107,28 +110,39 @@ impl HookHandler for ShellHookHandler {
             cmd.current_dir(dir);
         }
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("failed to spawn hook command: {}", self.command))?;
+        let mut child = cmd.spawn().map_err(|source| {
+            HookError::message(format!(
+                "failed to spawn hook command '{}': {source}",
+                self.command
+            ))
+        })?;
 
         // Write payload to stdin (ignore broken pipe if child doesn't read it).
         if let Some(mut stdin) = child.stdin.take()
             && let Err(e) = stdin.write_all(payload_json.as_bytes()).await
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
-            return Err(e.into());
+            return Err(HookError::message(format!(
+                "failed writing payload to hook '{}': {e}",
+                self.hook_name
+            )));
         }
 
         // Wait with timeout.
         let output = tokio::time::timeout(self.timeout, child.wait_with_output())
             .await
-            .with_context(|| {
-                format!(
+            .map_err(|_| {
+                HookError::message(format!(
                     "hook '{}' timed out after {:?}",
                     self.hook_name, self.timeout
-                )
+                ))
             })?
-            .with_context(|| format!("hook '{}' failed to complete", self.hook_name))?;
+            .map_err(|source| {
+                HookError::message(format!(
+                    "hook '{}' failed to complete: {source}",
+                    self.hook_name
+                ))
+            })?;
 
         let exit_code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -151,12 +165,12 @@ impl HookHandler for ShellHookHandler {
         }
 
         if exit_code != 0 {
-            bail!(
+            return Err(HookError::message(format!(
                 "hook '{}' exited with code {}: {}",
                 self.hook_name,
                 exit_code,
                 stderr.trim()
-            );
+            )));
         }
 
         // Exit 0 — check for modify response on stdout.

@@ -8,9 +8,9 @@ default = ["metrics"]
 metrics = ["dep:moltis-metrics"]
 
 [dependencies]
-anyhow         = { workspace = true }
 async-trait    = { workspace = true }
 futures        = { workspace = true }
+moltis-common  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 moltis-oauth   = { workspace = true }
 reqwest        = { workspace = true }

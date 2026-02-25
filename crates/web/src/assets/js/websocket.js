@@ -1071,6 +1071,11 @@ function handleLocationRequest(payload) {
 }
 
 function handleAuthCredentialsChanged(payload) {
+	if (payload?.reason === "password_changed" && window.__moltisSuppressNextPasswordChangedRedirect === true) {
+		window.__moltisSuppressNextPasswordChangedRedirect = false;
+		console.info("Deferring redirect for password_changed to show recovery key first");
+		return;
+	}
 	console.warn("Auth credentials changed:", payload.reason);
 	window.location.href = "/login";
 }

@@ -67,7 +67,7 @@ impl ExecApprovalService for LiveExecApprovalService {
         let decision = match decision_str {
             "approved" => ApprovalDecision::Approved,
             "denied" => ApprovalDecision::Denied,
-            _ => return Err(format!("invalid decision: {decision_str}")),
+            _ => return Err(format!("invalid decision: {decision_str}").into()),
         };
 
         let command = params.get("command").and_then(|v| v.as_str());

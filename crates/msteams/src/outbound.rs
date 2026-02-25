@@ -1,8 +1,9 @@
-use {anyhow::Result, async_trait::async_trait, secrecy::ExposeSecret, tracing::debug};
+use {async_trait::async_trait, secrecy::ExposeSecret, tracing::debug};
 
 use {
-    moltis_channels::plugin::{
-        ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver,
+    moltis_channels::{
+        Error as ChannelError, Result as ChannelResult,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
     },
     moltis_common::types::ReplyPayload,
 };
@@ -22,20 +23,24 @@ struct AccountSnapshot {
 }
 
 impl MsTeamsOutbound {
-    fn account_snapshot(&self, account_id: &str, conversation_id: &str) -> Result<AccountSnapshot> {
+    fn account_snapshot(
+        &self,
+        account_id: &str,
+        conversation_id: &str,
+    ) -> ChannelResult<AccountSnapshot> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         let state = accounts
             .get(account_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown Teams account: {account_id}"))?;
+            .ok_or_else(|| ChannelError::unknown_account(account_id))?;
         let service_url = {
             let service_urls = state.service_urls.read().unwrap_or_else(|e| e.into_inner());
             service_urls
                 .get(conversation_id)
                 .cloned()
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
+                    ChannelError::unavailable(format!(
                         "missing Teams service URL for account '{account_id}' and conversation '{conversation_id}'"
-                    )
+                    ))
                 })?
         };
 
@@ -52,10 +57,11 @@ impl MsTeamsOutbound {
         account_id: &str,
         conversation_id: &str,
         activity: serde_json::Value,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let snapshot = self.account_snapshot(account_id, conversation_id)?;
-        let token =
-            get_access_token(&snapshot.http, &snapshot.config, &snapshot.token_cache).await?;
+        let token = get_access_token(&snapshot.http, &snapshot.config, &snapshot.token_cache)
+            .await
+            .map_err(|e| ChannelError::unavailable(format!("Teams token acquisition: {e}")))?;
 
         let url = format!(
             "{}/v3/conversations/{}/activities",
@@ -68,11 +74,18 @@ impl MsTeamsOutbound {
             .bearer_auth(token.expose_secret())
             .json(&activity)
             .send()
-            .await?;
+            .await
+            .map_err(|e| ChannelError::external("Teams HTTP send", e))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Teams send failed ({status}): {body}");
+            return Err(ChannelError::external(
+                "Teams send failed",
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{status}: {body}"),
+                ),
+            ));
         }
         Ok(())
     }
@@ -86,7 +99,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         to: &str,
         text: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let mut payload = serde_json::json!({
             "type": "message",
             "text": text,
@@ -108,7 +121,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         to: &str,
         payload: &ReplyPayload,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let mut text = payload.text.clone();
         if let Some(media) = payload.media.as_ref() {
             if !text.is_empty() {
@@ -125,7 +138,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         self.send_text(account_id, to, &text, reply_to).await
     }
 
-    async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
+    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
         self.send_activity(account_id, to, serde_json::json!({ "type": "typing" }))
             .await
     }
@@ -137,7 +150,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         text: &str,
         suffix_html: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let mut merged = text.to_string();
         if !suffix_html.is_empty() {
             merged.push_str("\n\n");
@@ -152,7 +165,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         to: &str,
         html: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.send_text(account_id, to, html, reply_to).await
     }
 
@@ -164,7 +177,7 @@ impl ChannelOutbound for MsTeamsOutbound {
         longitude: f64,
         title: Option<&str>,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let mut text = String::new();
         if let Some(title) = title {
             text.push_str(title);
@@ -185,7 +198,7 @@ impl ChannelStreamOutbound for MsTeamsOutbound {
         to: &str,
         reply_to: Option<&str>,
         mut stream: StreamReceiver,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         let mut text = String::new();
         while let Some(event) = stream.recv().await {
             match event {

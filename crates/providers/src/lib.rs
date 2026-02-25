@@ -4,8 +4,10 @@
 #![cfg_attr(feature = "local-llm", allow(unsafe_code))]
 
 pub mod anthropic;
+pub mod error;
 pub mod openai;
 pub mod openai_compat;
+pub mod ws_pool;
 
 #[cfg(feature = "provider-genai")]
 pub mod genai_provider;
@@ -34,7 +36,11 @@ use std::{
     sync::Arc,
 };
 
-use {moltis_config::schema::ProvidersConfig, secrecy::ExposeSecret, tokio_stream::Stream};
+use {
+    moltis_config::schema::{ProviderStreamTransport, ProvidersConfig},
+    secrecy::ExposeSecret,
+    tokio_stream::Stream,
+};
 
 use moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent};
 
@@ -701,7 +707,7 @@ trait DynamicModelDiscovery {
     fn should_fetch_models(&self, config: &ProvidersConfig) -> bool;
     fn available_models(&self) -> Vec<DiscoveredModel>;
     fn live_models(&self) -> anyhow::Result<Vec<DiscoveredModel>>;
-    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider>;
+    fn build_provider(&self, model_id: String, config: &ProvidersConfig) -> Arc<dyn LlmProvider>;
     fn display_name(&self, model_id: &str, discovered: &str) -> String;
 }
 
@@ -734,8 +740,15 @@ impl DynamicModelDiscovery for OpenAiCodexDiscovery {
         openai_codex::live_models()
     }
 
-    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider> {
-        Arc::new(openai_codex::OpenAiCodexProvider::new(model_id))
+    fn build_provider(&self, model_id: String, config: &ProvidersConfig) -> Arc<dyn LlmProvider> {
+        let stream_transport = config
+            .get(self.provider_name())
+            .map(|entry| entry.stream_transport)
+            .unwrap_or(ProviderStreamTransport::Sse);
+        Arc::new(openai_codex::OpenAiCodexProvider::new_with_transport(
+            model_id,
+            stream_transport,
+        ))
     }
 
     fn display_name(&self, _model_id: &str, discovered: &str) -> String {
@@ -772,7 +785,7 @@ impl DynamicModelDiscovery for GitHubCopilotDiscovery {
         github_copilot::live_models()
     }
 
-    fn build_provider(&self, model_id: String) -> Arc<dyn LlmProvider> {
+    fn build_provider(&self, model_id: String, _config: &ProvidersConfig) -> Arc<dyn LlmProvider> {
         Arc::new(github_copilot::GitHubCopilotProvider::new(model_id))
     }
 
@@ -870,7 +883,7 @@ impl ProviderRegistry {
             if self.has_provider_model(source.provider_name(), &model.id) {
                 continue;
             }
-            let provider = source.build_provider(model.id.clone());
+            let provider = source.build_provider(model.id.clone(), config);
             self.register(
                 ModelInfo {
                     id: model.id.clone(),
@@ -924,7 +937,7 @@ impl ProviderRegistry {
                         display_name: source.display_name(&model.id, &model.display_name),
                         created_at: model.created_at,
                     },
-                    source.build_provider(model.id),
+                    source.build_provider(model.id, config),
                 )
             })
             .collect();
@@ -1441,6 +1454,10 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get("openai").and_then(|e| e.alias.clone());
             let provider_label = alias.clone().unwrap_or_else(|| "openai".into());
+            let stream_transport = config
+                .get("openai")
+                .map(|entry| entry.stream_transport)
+                .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, "openai");
             let discovered = if should_fetch_models(config, "openai") {
                 openai::available_models(&key, &base_url)
@@ -1455,12 +1472,15 @@ impl ProviderRegistry {
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                    key.clone(),
-                    model_id.clone(),
-                    base_url.clone(),
-                    provider_label.clone(),
-                ));
+                let provider = Arc::new(
+                    openai::OpenAiProvider::new_with_name(
+                        key.clone(),
+                        model_id.clone(),
+                        base_url.clone(),
+                        provider_label.clone(),
+                    )
+                    .with_stream_transport(stream_transport),
+                );
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -1506,6 +1526,10 @@ impl ProviderRegistry {
             // Get alias if configured (for metrics differentiation).
             let alias = config.get(def.config_name).and_then(|e| e.alias.clone());
             let provider_label = alias.unwrap_or_else(|| def.config_name.into());
+            let stream_transport = config
+                .get(def.config_name)
+                .map(|entry| entry.stream_transport)
+                .unwrap_or(ProviderStreamTransport::Sse);
             let preferred = configured_models_for_provider(config, def.config_name);
             if def.config_name == "ollama" {
                 let has_explicit_entry = config.get("ollama").is_some();
@@ -1577,12 +1601,15 @@ impl ProviderRegistry {
                 if self.has_provider_model(&provider_label, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                    key.clone(),
-                    model_id.clone(),
-                    base_url.clone(),
-                    provider_label.clone(),
-                ));
+                let provider = Arc::new(
+                    openai::OpenAiProvider::new_with_name(
+                        key.clone(),
+                        model_id.clone(),
+                        base_url.clone(),
+                        provider_label.clone(),
+                    )
+                    .with_stream_transport(stream_transport),
+                );
                 self.register(
                     ModelInfo {
                         id: model_id,
@@ -1650,12 +1677,15 @@ impl ProviderRegistry {
                 if self.has_provider_model(name, &model_id) {
                     continue;
                 }
-                let provider = Arc::new(openai::OpenAiProvider::new_with_name(
-                    api_key.clone(),
-                    model_id.clone(),
-                    base_url.clone(),
-                    name.clone(),
-                ));
+                let provider = Arc::new(
+                    openai::OpenAiProvider::new_with_name(
+                        api_key.clone(),
+                        model_id.clone(),
+                        base_url.clone(),
+                        name.clone(),
+                    )
+                    .with_stream_transport(entry.stream_transport),
+                );
                 self.register(
                     ModelInfo {
                         id: model_id,

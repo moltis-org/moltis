@@ -16,6 +16,8 @@ use {
     tracing::{debug, info, warn},
 };
 
+pub mod error;
+
 use {
     moltis_config::schema::ProvidersConfig,
     moltis_oauth::{
@@ -24,7 +26,7 @@ use {
     moltis_providers::{ProviderRegistry, raw_model_id},
 };
 
-use moltis_service_traits::{ProviderSetupService, ServiceResult};
+use moltis_service_traits::{ProviderSetupService, ServiceError, ServiceResult};
 
 /// Callback for publishing events to connected clients.
 ///
@@ -252,7 +254,7 @@ impl KeyStore {
     fn save_all_configs_to_path(
         path: &PathBuf,
         configs: &HashMap<String, ProviderConfig>,
-    ) -> Result<(), String> {
+    ) -> error::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
                 warn!(
@@ -260,12 +262,12 @@ impl KeyStore {
                     error = %error,
                     "failed to create provider key store directory"
                 );
-                error.to_string()
+                error::Error::external("failed to create provider key store directory", error)
             })?;
         }
         let data = serde_json::to_string_pretty(configs).map_err(|error| {
             warn!(error = %error, "failed to serialize provider key store");
-            error.to_string()
+            error
         })?;
 
         // Write atomically via temp file + rename so readers never observe
@@ -281,7 +283,7 @@ impl KeyStore {
                 error = %error,
                 "failed to write provider key store temp file"
             );
-            error.to_string()
+            error::Error::external("failed to write provider key store temp file", error)
         })?;
         #[cfg(unix)]
         {
@@ -296,7 +298,7 @@ impl KeyStore {
                 error = %error,
                 "failed to atomically replace provider key store"
             );
-            error.to_string()
+            error::Error::external("failed to atomically replace provider key store", error)
         })?;
 
         Ok(())
@@ -324,7 +326,7 @@ impl KeyStore {
     }
 
     /// Remove a provider's configuration.
-    fn remove(&self, provider: &str) -> Result<(), String> {
+    fn remove(&self, provider: &str) -> error::Result<()> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
         configs.remove(provider);
@@ -333,7 +335,7 @@ impl KeyStore {
 
     /// Save a provider's API key (simple interface, used in tests).
     #[cfg_attr(not(test), allow(dead_code))]
-    fn save(&self, provider: &str, api_key: &str) -> Result<(), String> {
+    fn save(&self, provider: &str, api_key: &str) -> error::Result<()> {
         self.save_config(
             provider,
             Some(api_key.to_string()),
@@ -349,7 +351,7 @@ impl KeyStore {
         api_key: Option<String>,
         base_url: Option<String>,
         models: Option<Vec<String>>,
-    ) -> Result<(), String> {
+    ) -> error::Result<()> {
         self.save_config_with_display_name(provider, api_key, base_url, models, None)
     }
 
@@ -361,7 +363,7 @@ impl KeyStore {
         base_url: Option<String>,
         models: Option<Vec<String>>,
         display_name: Option<String>,
-    ) -> Result<(), String> {
+    ) -> error::Result<()> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
         let entry = configs.entry(provider.to_string()).or_default();
@@ -647,23 +649,26 @@ struct OllamaTagsResponse {
     models: Vec<OllamaTagsModel>,
 }
 
-async fn discover_ollama_models(base_url: &str) -> Result<Vec<String>, String> {
+async fn discover_ollama_models(base_url: &str) -> error::Result<Vec<String>> {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
-    let response = reqwest::Client::new().get(&url).send().await.map_err(|e| {
-        format!("Failed to connect to Ollama at {base_url}. Ensure Ollama is running. ({e})")
-    })?;
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|source| {
+            error::Error::external("failed to query Ollama model discovery endpoint", source)
+        })?;
 
     if !response.status().is_success() {
-        return Err(format!(
+        return Err(error::Error::message(format!(
             "Ollama model discovery failed at {url} (HTTP {}).",
-            response.status()
-        ));
+            response.status(),
+        )));
     }
 
-    let payload: OllamaTagsResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Invalid JSON from Ollama model discovery endpoint: {e}"))?;
+    let payload: OllamaTagsResponse = response.json().await.map_err(|source| {
+        error::Error::external("invalid JSON from Ollama model discovery endpoint", source)
+    })?;
 
     let mut models: Vec<String> = payload
         .models
@@ -690,11 +695,34 @@ fn ollama_models_payload(models: &[String]) -> Vec<Value> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthType {
+    ApiKey,
+    Oauth,
+    Local,
+}
+
+impl AuthType {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api-key",
+            Self::Oauth => "oauth",
+            Self::Local => "local",
+        }
+    }
+}
+
+impl std::fmt::Display for AuthType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
 /// Known provider definitions used to populate the "available providers" list.
 struct KnownProvider {
     name: &'static str,
     display_name: &'static str,
-    auth_type: &'static str,
+    auth_type: AuthType,
     env_key: Option<&'static str>,
     /// Default base URL for this provider (for OpenAI-compatible providers).
     default_base_url: Option<&'static str>,
@@ -710,7 +738,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "anthropic",
             display_name: "Anthropic",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("ANTHROPIC_API_KEY"),
             default_base_url: Some("https://api.anthropic.com"),
             requires_model: false,
@@ -719,7 +747,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "openai",
             display_name: "OpenAI",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("OPENAI_API_KEY"),
             default_base_url: Some("https://api.openai.com/v1"),
             requires_model: false,
@@ -728,7 +756,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "gemini",
             display_name: "Google Gemini",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("GEMINI_API_KEY"),
             default_base_url: Some("https://generativelanguage.googleapis.com/v1beta"),
             requires_model: false,
@@ -737,7 +765,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "groq",
             display_name: "Groq",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("GROQ_API_KEY"),
             default_base_url: Some("https://api.groq.com/openai/v1"),
             requires_model: false,
@@ -746,7 +774,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "xai",
             display_name: "xAI (Grok)",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("XAI_API_KEY"),
             default_base_url: Some("https://api.x.ai/v1"),
             requires_model: false,
@@ -755,7 +783,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "deepseek",
             display_name: "DeepSeek",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("DEEPSEEK_API_KEY"),
             default_base_url: Some("https://api.deepseek.com"),
             requires_model: false,
@@ -764,7 +792,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "mistral",
             display_name: "Mistral",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("MISTRAL_API_KEY"),
             default_base_url: Some("https://api.mistral.ai/v1"),
             requires_model: false,
@@ -773,7 +801,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "openrouter",
             display_name: "OpenRouter",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("OPENROUTER_API_KEY"),
             default_base_url: Some("https://openrouter.ai/api/v1"),
             requires_model: false,
@@ -782,7 +810,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "cerebras",
             display_name: "Cerebras",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("CEREBRAS_API_KEY"),
             default_base_url: Some("https://api.cerebras.ai/v1"),
             requires_model: false,
@@ -791,7 +819,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "minimax",
             display_name: "MiniMax",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("MINIMAX_API_KEY"),
             default_base_url: Some("https://api.minimax.io/v1"),
             requires_model: false,
@@ -800,7 +828,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "moonshot",
             display_name: "Moonshot",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("MOONSHOT_API_KEY"),
             default_base_url: Some("https://api.moonshot.cn/v1"),
             requires_model: false,
@@ -809,7 +837,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "zai",
             display_name: "Z.AI",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("Z_API_KEY"),
             default_base_url: Some("https://api.z.ai/api/paas/v4"),
             requires_model: false,
@@ -818,7 +846,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "venice",
             display_name: "Venice",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("VENICE_API_KEY"),
             default_base_url: Some("https://api.venice.ai/api/v1"),
             requires_model: true,
@@ -827,7 +855,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "ollama",
             display_name: "Ollama",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("OLLAMA_API_KEY"),
             default_base_url: Some("http://localhost:11434"),
             requires_model: false,
@@ -836,7 +864,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "openai-codex",
             display_name: "OpenAI Codex",
-            auth_type: "oauth",
+            auth_type: AuthType::Oauth,
             env_key: None,
             default_base_url: None,
             requires_model: false,
@@ -845,7 +873,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "github-copilot",
             display_name: "GitHub Copilot",
-            auth_type: "oauth",
+            auth_type: AuthType::Oauth,
             env_key: None,
             default_base_url: None,
             requires_model: false,
@@ -854,7 +882,7 @@ fn known_providers() -> Vec<KnownProvider> {
         KnownProvider {
             name: "kimi-code",
             display_name: "Kimi Code",
-            auth_type: "api-key",
+            auth_type: AuthType::ApiKey,
             env_key: Some("KIMI_API_KEY"),
             default_base_url: Some("https://api.kimi.com/coding/v1"),
             requires_model: false,
@@ -869,7 +897,7 @@ fn known_providers() -> Vec<KnownProvider> {
         p.push(KnownProvider {
             name: "local-llm",
             display_name: "Local LLM (Offline)",
-            auth_type: "local",
+            auth_type: AuthType::Local,
             env_key: None,
             default_base_url: None,
             requires_model: true,
@@ -993,7 +1021,7 @@ pub fn import_detected_oauth_tokens(
     }
 }
 
-fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> Result<(), String> {
+fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> ServiceResult<()> {
     moltis_config::update_config(|cfg| {
         let entry = cfg
             .providers
@@ -1002,8 +1030,8 @@ fn set_provider_enabled_in_config(provider: &str, enabled: bool) -> Result<(), S
             .or_default();
         entry.enabled = enabled;
     })
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(ServiceError::message)?;
+    Ok(())
 }
 
 fn normalize_provider_name(value: &str) -> String {
@@ -1076,7 +1104,7 @@ pub fn detect_auto_provider_sources_with_overrides(
 
     for provider in known_providers().into_iter().filter(|p| {
         if is_cloud {
-            return p.auth_type != "local" && p.name != "ollama";
+            return p.auth_type != AuthType::Local && p.name != "ollama";
         }
         true
     }) {
@@ -1121,12 +1149,12 @@ pub fn detect_auto_provider_sources_with_overrides(
             sources.push(format!("file:{}", path.display()));
         }
 
-        if (provider.auth_type == "oauth" || provider.name == "kimi-code")
+        if (provider.auth_type == AuthType::Oauth || provider.name == "kimi-code")
             && token_store.load(provider.name).is_some()
         {
             sources.push(format!("file:{}", oauth_tokens_path.display()));
         }
-        if (provider.auth_type == "oauth" || provider.name == "kimi-code")
+        if (provider.auth_type == AuthType::Oauth || provider.name == "kimi-code")
             && home_token_store
                 .as_ref()
                 .is_some_and(|(store, _)| store.load(provider.name).is_some())
@@ -1408,7 +1436,7 @@ impl LiveProviderSetupService {
             return true;
         }
         // For OAuth providers, check token store
-        if provider.auth_type == "oauth" || provider.name == "kimi-code" {
+        if provider.auth_type == AuthType::Oauth || provider.name == "kimi-code" {
             if self.token_store.load(provider.name).is_some() {
                 return true;
             }
@@ -1431,7 +1459,7 @@ impl LiveProviderSetupService {
         }
         // For local providers, check if model is configured in local_llm config
         #[cfg(feature = "local-llm")]
-        if provider.auth_type == "local" && provider.name == "local-llm" {
+        if provider.auth_type == AuthType::Local && provider.name == "local-llm" {
             // Check if local-llm model config file exists
             if let Some(config_dir) = moltis_config::config_dir() {
                 let config_path = config_dir.join("local-llm.json");
@@ -1456,7 +1484,7 @@ impl LiveProviderSetupService {
             extra_headers.as_ref(),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(ServiceError::message)?;
 
         let user_code = device_resp.user_code.clone();
         let verification_uri = device_resp.verification_uri.clone();
@@ -1613,7 +1641,8 @@ impl ProviderSetupService for LiveProviderSetupService {
             .enumerate()
             .filter_map(|(known_idx, provider)| {
                 // Hide local-only providers on cloud deployments.
-                if is_cloud && (provider.auth_type == "local" || provider.name == "ollama") {
+                if is_cloud && (provider.auth_type == AuthType::Local || provider.name == "ollama")
+                {
                     return None;
                 }
 
@@ -1640,7 +1669,7 @@ impl ProviderSetupService for LiveProviderSetupService {
                     serde_json::json!({
                         "name": provider.name,
                         "displayName": provider.display_name,
-                        "authType": provider.auth_type,
+                        "authType": provider.auth_type.as_str(),
                         "configured": configured,
                         "defaultBaseUrl": provider.default_base_url,
                         "baseUrl": base_url,
@@ -1752,16 +1781,20 @@ impl ProviderSetupService for LiveProviderSetupService {
             let provider = known
                 .iter()
                 .find(|p| {
-                    p.name == provider_name && (p.auth_type == "api-key" || p.auth_type == "local")
+                    p.name == provider_name
+                        && (p.auth_type == AuthType::ApiKey || p.auth_type == AuthType::Local)
                 })
                 .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
 
             // API key is required for api-key providers (except Ollama which is optional)
-            if provider.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
-                return Err("missing 'apiKey' parameter".to_string());
+            if provider.auth_type == AuthType::ApiKey
+                && provider_name != "ollama"
+                && api_key.is_none()
+            {
+                return Err("missing 'apiKey' parameter".into());
             }
         } else if api_key.is_none() {
-            return Err("missing 'apiKey' parameter".to_string());
+            return Err("missing 'apiKey' parameter".into());
         }
 
         let normalized_base_url = if provider_name == "ollama" {
@@ -1783,22 +1816,20 @@ impl ProviderSetupService for LiveProviderSetupService {
         );
 
         // Persist full config to disk
-        self.key_store
-            .save_config(
-                provider_name,
-                api_key.map(String::from),
-                normalized_base_url,
-                (!models.is_empty()).then_some(models),
-            )
-            .map_err(|error| {
-                warn!(
-                    provider = provider_name,
-                    key_store_path = %key_store_path.display(),
-                    error = %error,
-                    "failed to persist provider config"
-                );
-                error
-            })?;
+        if let Err(error) = self.key_store.save_config(
+            provider_name,
+            api_key.map(String::from),
+            normalized_base_url,
+            (!models.is_empty()).then_some(models),
+        ) {
+            warn!(
+                provider = provider_name,
+                key_store_path = %key_store_path.display(),
+                error = %error,
+                "failed to persist provider config"
+            );
+            return Err(ServiceError::message(error));
+        }
         set_provider_enabled_in_config(provider_name, true)?;
         self.set_provider_enabled_in_memory(provider_name, true);
 
@@ -1875,7 +1906,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         let port = callback_port(&oauth_config);
         let oauth_config_for_pending = oauth_config.clone();
         let flow = OAuthFlow::new(oauth_config);
-        let auth_req = flow.start().map_err(|e| e.to_string())?;
+        let auth_req = flow.start().map_err(ServiceError::message)?;
 
         let auth_url = auth_req.url.clone();
         let verifier = auth_req.pkce.verifier.clone();
@@ -1979,11 +2010,11 @@ impl ProviderSetupService for LiveProviderSetupService {
         let tokens = flow
             .exchange(&code, &pending.verifier)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         self.token_store
             .save(&pending.provider_name, &tokens)
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
         set_provider_enabled_in_config(&pending.provider_name, true)?;
         self.set_provider_enabled_in_memory(&pending.provider_name, true);
 
@@ -2015,7 +2046,9 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         if is_custom_provider(provider_name) {
             // Custom provider: remove key store entry + disable.
-            self.key_store.remove(provider_name)?;
+            self.key_store
+                .remove(provider_name)
+                .map_err(ServiceError::message)?;
             set_provider_enabled_in_config(provider_name, false)?;
             self.set_provider_enabled_in_memory(provider_name, false);
         } else {
@@ -2026,12 +2059,14 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
 
             // Remove persisted API key
-            if known.auth_type == "api-key" {
-                self.key_store.remove(provider_name)?;
+            if known.auth_type == AuthType::ApiKey {
+                self.key_store
+                    .remove(provider_name)
+                    .map_err(ServiceError::message)?;
             }
 
             // Remove OAuth tokens
-            if known.auth_type == "oauth" || provider_name == "kimi-code" {
+            if known.auth_type == AuthType::Oauth || provider_name == "kimi-code" {
                 let _ = self.token_store.delete(provider_name);
             }
 
@@ -2042,7 +2077,7 @@ impl ProviderSetupService for LiveProviderSetupService {
 
             // Remove local-llm config
             #[cfg(feature = "local-llm")]
-            if known.auth_type == "local"
+            if known.auth_type == AuthType::Local
                 && provider_name == "local-llm"
                 && let Some(config_dir) = moltis_config::config_dir()
             {
@@ -2107,8 +2142,9 @@ impl ProviderSetupService for LiveProviderSetupService {
                 .find(|p| p.name == provider_name)
                 .ok_or_else(|| format!("unknown provider: {provider_name}"))?;
             // API key is required for api-key providers (except Ollama).
-            if info.auth_type == "api-key" && provider_name != "ollama" && api_key.is_none() {
-                return Err("missing 'apiKey' parameter".to_string());
+            if info.auth_type == AuthType::ApiKey && provider_name != "ollama" && api_key.is_none()
+            {
+                return Err("missing 'apiKey' parameter".into());
             }
             Some(KnownProvider {
                 name: info.name,
@@ -2122,10 +2158,10 @@ impl ProviderSetupService for LiveProviderSetupService {
         };
 
         if is_custom && api_key.is_none() {
-            return Err("missing 'apiKey' parameter".to_string());
+            return Err("missing 'apiKey' parameter".into());
         }
         if is_custom && base_url.filter(|s| !s.trim().is_empty()).is_none() {
-            return Err("missing 'baseUrl' parameter".to_string());
+            return Err("missing 'baseUrl' parameter".into());
         }
 
         let selected_model = preferred_models.first().map(String::as_str);
@@ -2156,6 +2192,7 @@ impl ProviderSetupService for LiveProviderSetupService {
             let discovered_models = match discover_ollama_models(&ollama_api_base).await {
                 Ok(models) => models,
                 Err(error) => {
+                    let error = error.to_string();
                     self.emit_validation_progress(
                         &validation_provider_name,
                         request_id.as_deref(),
@@ -2550,7 +2587,7 @@ impl ProviderSetupService for LiveProviderSetupService {
         if !is_custom_provider(provider_name) {
             let known = known_providers();
             if !known.iter().any(|p| p.name == provider_name) {
-                return Err(format!("unknown provider: {provider_name}"));
+                return Err(format!("unknown provider: {provider_name}").into());
             }
         }
 
@@ -2562,7 +2599,8 @@ impl ProviderSetupService for LiveProviderSetupService {
         }
 
         self.key_store
-            .save_config(provider_name, None, None, Some(models))?;
+            .save_config(provider_name, None, None, Some(models))
+            .map_err(ServiceError::message)?;
 
         // Update the cross-provider priority list so the dropdown puts
         // the chosen model at the top immediately.
@@ -2604,12 +2642,13 @@ impl ProviderSetupService for LiveProviderSetupService {
         if !is_custom_provider(provider_name) {
             let known = known_providers();
             if !known.iter().any(|p| p.name == provider_name) {
-                return Err(format!("unknown provider: {provider_name}"));
+                return Err(format!("unknown provider: {provider_name}").into());
             }
         }
 
         self.key_store
-            .save_config(provider_name, None, None, Some(models.clone()))?;
+            .save_config(provider_name, None, None, Some(models.clone()))
+            .map_err(ServiceError::message)?;
 
         // Update the cross-provider priority list.
         if let Some(ref priority) = self.priority_models {
@@ -2663,13 +2702,15 @@ impl ProviderSetupService for LiveProviderSetupService {
 
         let models = model.map(|m| vec![m.to_string()]);
 
-        self.key_store.save_config_with_display_name(
-            &provider_name,
-            Some(api_key.to_string()),
-            Some(base_url.to_string()),
-            models,
-            Some(display_name.clone()),
-        )?;
+        self.key_store
+            .save_config_with_display_name(
+                &provider_name,
+                Some(api_key.to_string()),
+                Some(base_url.to_string()),
+                models,
+                Some(display_name.clone()),
+            )
+            .map_err(ServiceError::message)?;
 
         set_provider_enabled_in_config(&provider_name, true)?;
         self.set_provider_enabled_in_memory(&provider_name, true);
@@ -2711,7 +2752,9 @@ mod tests {
     fn known_providers_have_valid_auth_types() {
         for p in known_providers() {
             assert!(
-                p.auth_type == "api-key" || p.auth_type == "oauth" || p.auth_type == "local",
+                p.auth_type == AuthType::ApiKey
+                    || p.auth_type == AuthType::Oauth
+                    || p.auth_type == AuthType::Local,
                 "invalid auth type for {}: {}",
                 p.name,
                 p.auth_type
@@ -2722,7 +2765,7 @@ mod tests {
     #[test]
     fn api_key_providers_have_env_key() {
         for p in known_providers() {
-            if p.auth_type == "api-key" {
+            if p.auth_type == AuthType::ApiKey {
                 assert!(
                     p.env_key.is_some(),
                     "api-key provider {} missing env_key",
@@ -2735,7 +2778,7 @@ mod tests {
     #[test]
     fn oauth_providers_have_no_env_key() {
         for p in known_providers() {
-            if p.auth_type == "oauth" {
+            if p.auth_type == AuthType::Oauth {
                 assert!(
                     p.env_key.is_none(),
                     "oauth provider {} should not have env_key",
@@ -2748,7 +2791,7 @@ mod tests {
     #[test]
     fn local_providers_have_no_env_key() {
         for p in known_providers() {
-            if p.auth_type == "local" {
+            if p.auth_type == AuthType::Local {
                 assert!(
                     p.env_key.is_none(),
                     "local provider {} should not have env_key",
@@ -3610,7 +3653,7 @@ mod tests {
             .iter()
             .find(|p| p.name == "github-copilot")
             .expect("github-copilot not in known_providers");
-        assert_eq!(copilot.auth_type, "oauth");
+        assert_eq!(copilot.auth_type, AuthType::Oauth);
         assert!(copilot.env_key.is_none());
     }
 
@@ -3634,7 +3677,7 @@ mod tests {
                 .find(|p| p.name == name)
                 .unwrap_or_else(|| panic!("missing provider: {name}"));
             assert_eq!(provider.env_key, Some(env_key), "wrong env_key for {name}");
-            assert_eq!(provider.auth_type, "api-key");
+            assert_eq!(provider.auth_type, AuthType::ApiKey);
         }
     }
 
@@ -3662,7 +3705,7 @@ mod tests {
             // but we can verify the provider name is recognized.
             let known = providers
                 .iter()
-                .find(|p| p.name == name && p.auth_type == "api-key");
+                .find(|p| p.name == name && p.auth_type == AuthType::ApiKey);
             assert!(
                 known.is_some(),
                 "{name} should be a recognized api-key provider"
@@ -3796,7 +3839,7 @@ mod tests {
             .validate_key(serde_json::json!({"provider": "nonexistent", "apiKey": "sk-test"}))
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unknown provider"));
+        assert!(result.unwrap_err().to_string().contains("unknown provider"));
     }
 
     #[tokio::test]
@@ -3807,7 +3850,12 @@ mod tests {
         let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
         let result = svc.validate_key(serde_json::json!({})).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'provider'"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing 'provider'")
+        );
     }
 
     #[tokio::test]
@@ -3820,7 +3868,7 @@ mod tests {
             .validate_key(serde_json::json!({"provider": "anthropic"}))
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'apiKey'"));
+        assert!(result.unwrap_err().to_string().contains("missing 'apiKey'"));
     }
 
     #[tokio::test]

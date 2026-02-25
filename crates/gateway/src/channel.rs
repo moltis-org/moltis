@@ -19,7 +19,7 @@ use {
     moltis_telegram::TelegramPlugin,
 };
 
-use crate::services::{ChannelService, ServiceResult};
+use crate::services::{ChannelService, ServiceError, ServiceResult};
 
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
@@ -435,7 +435,7 @@ impl ChannelService for LiveChannelService {
             .message_log
             .unique_senders(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(ServiceError::message)?;
 
         let allowlist = self.read_allowlist(channel_type, account_id).await;
 
@@ -500,7 +500,7 @@ impl ChannelService for LiveChannelService {
             .store
             .get(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
             .ok_or_else(|| {
                 format!(
                     "channel '{}' ({}) not found in store",
@@ -576,7 +576,7 @@ impl ChannelService for LiveChannelService {
             .store
             .get(channel_type.as_str(), account_id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(ServiceError::message)?
             .ok_or_else(|| {
                 format!(
                     "channel '{}' ({}) not found in store",

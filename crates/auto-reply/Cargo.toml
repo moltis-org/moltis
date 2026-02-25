@@ -4,7 +4,6 @@ name              = "moltis-auto-reply"
 version.workspace = true
 
 [dependencies]
-anyhow          = { workspace = true }
 moltis-agents   = { workspace = true }
 moltis-common   = { workspace = true }
 moltis-metrics  = { optional = true, workspace = true }

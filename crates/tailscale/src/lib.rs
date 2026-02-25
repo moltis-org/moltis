@@ -4,6 +4,10 @@
 //! - **Serve**: exposes the gateway over HTTPS within the tailnet.
 //! - **Funnel**: exposes the gateway to the public internet via Tailscale.
 
+pub mod error;
+
+pub use error::{Error, Result};
+
 use std::net::IpAddr;
 
 use {
@@ -40,16 +44,16 @@ impl std::fmt::Display for TailscaleMode {
 }
 
 impl std::str::FromStr for TailscaleMode {
-    type Err = anyhow::Error;
+    type Err = Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "off" => Ok(Self::Off),
             "serve" => Ok(Self::Serve),
             "funnel" => Ok(Self::Funnel),
-            other => {
-                anyhow::bail!("unknown tailscale mode: '{other}' (expected off, serve, or funnel)")
-            },
+            other => Err(Error::message(format!(
+                "unknown tailscale mode: '{other}' (expected off, serve, or funnel)"
+            ))),
         }
     }
 }
@@ -73,17 +77,17 @@ pub struct TailscaleStatus {
 #[async_trait]
 pub trait TailscaleManager: Send + Sync {
     /// Get current tailscale status.
-    async fn status(&self) -> anyhow::Result<TailscaleStatus>;
+    async fn status(&self) -> Result<TailscaleStatus>;
     /// Enable tailscale serve proxying to the given port.
     /// When `tls` is true, uses `https+insecure://` to connect to a local TLS server.
-    async fn enable_serve(&self, port: u16, tls: bool) -> anyhow::Result<()>;
+    async fn enable_serve(&self, port: u16, tls: bool) -> Result<()>;
     /// Enable tailscale funnel proxying to the given port.
     /// When `tls` is true, uses `https+insecure://` to connect to a local TLS server.
-    async fn enable_funnel(&self, port: u16, tls: bool) -> anyhow::Result<()>;
+    async fn enable_funnel(&self, port: u16, tls: bool) -> Result<()>;
     /// Disable serve/funnel (reset).
-    async fn disable(&self) -> anyhow::Result<()>;
+    async fn disable(&self) -> Result<()>;
     /// Get the tailscale hostname for this machine.
-    async fn hostname(&self) -> anyhow::Result<Option<String>>;
+    async fn hostname(&self) -> Result<Option<String>>;
 }
 
 // ── CLI-based implementation ─────────────────────────────────────────────────
@@ -97,14 +101,14 @@ impl CliTailscaleManager {
         Self
     }
 
-    async fn run_command(args: &[&str]) -> anyhow::Result<std::process::Output> {
+    async fn run_command(args: &[&str]) -> Result<std::process::Output> {
         Self::run_command_timeout(args, std::time::Duration::from_secs(10)).await
     }
 
     async fn run_command_timeout(
         args: &[&str],
         timeout: std::time::Duration,
-    ) -> anyhow::Result<std::process::Output> {
+    ) -> Result<std::process::Output> {
         use tokio::io::AsyncReadExt;
 
         let cmd_str = format!("tailscale {}", args.join(" "));
@@ -115,16 +119,16 @@ impl CliTailscaleManager {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("failed to run tailscale CLI: {e}"))?;
+            .map_err(|e| Error::message(format!("failed to run tailscale CLI: {e}")))?;
 
         let mut stdout_handle = child
             .stdout
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture tailscale stdout"))?;
+            .ok_or_else(|| Error::message("failed to capture tailscale stdout"))?;
         let mut stderr_handle = child
             .stderr
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture tailscale stderr"))?;
+            .ok_or_else(|| Error::message("failed to capture tailscale stderr"))?;
 
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
@@ -141,7 +145,8 @@ impl CliTailscaleManager {
                     // Process exited — drain remaining output.
                     let _ = stdout_handle.read_to_end(&mut stdout_buf).await;
                     let _ = stderr_handle.read_to_end(&mut stderr_buf).await;
-                    let status = status.map_err(|e| anyhow::anyhow!("failed to run tailscale CLI: {e}"))?;
+                    let status = status
+                        .map_err(|e| Error::message(format!("failed to run tailscale CLI: {e}")))?;
                     if !status.success() {
                         let stderr_str = String::from_utf8_lossy(&stderr_buf);
                         tracing::debug!(
@@ -186,7 +191,8 @@ impl CliTailscaleManager {
                         status = child.wait() => {
                             let _ = stdout_handle.read_to_end(&mut stdout_buf).await;
                             let _ = stderr_handle.read_to_end(&mut stderr_buf).await;
-                            let status = status.map_err(|e| anyhow::anyhow!("tailscale CLI: {e}"))?;
+                            let status = status
+                                .map_err(|e| Error::message(format!("tailscale CLI: {e}")))?;
                             return Ok(std::process::Output {
                                 status,
                                 stdout: stdout_buf,
@@ -236,14 +242,14 @@ impl CliTailscaleManager {
         } else {
             combined
         };
-        anyhow::bail!("{msg}");
+        Err(Error::message(msg))
     }
 
-    async fn parse_status_json() -> anyhow::Result<serde_json::Value> {
+    async fn parse_status_json() -> Result<serde_json::Value> {
         let output = Self::run_command(&["status", "--json"]).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("tailscale status failed: {stderr}");
+            return Err(Error::message(format!("tailscale status failed: {stderr}")));
         }
         let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         Ok(value)
@@ -252,7 +258,7 @@ impl CliTailscaleManager {
 
 #[async_trait]
 impl TailscaleManager for CliTailscaleManager {
-    async fn status(&self) -> anyhow::Result<TailscaleStatus> {
+    async fn status(&self) -> Result<TailscaleStatus> {
         // Check if the tailscale CLI is installed.
         let installed = tokio::process::Command::new("tailscale")
             .arg("version")
@@ -347,7 +353,7 @@ impl TailscaleManager for CliTailscaleManager {
         })
     }
 
-    async fn enable_serve(&self, port: u16, tls: bool) -> anyhow::Result<()> {
+    async fn enable_serve(&self, port: u16, tls: bool) -> Result<()> {
         // First reset any existing serve/funnel.
         info!("resetting tailscale serve before enabling");
         let _ = Self::run_command(&["serve", "reset"]).await;
@@ -357,14 +363,14 @@ impl TailscaleManager for CliTailscaleManager {
         let output = Self::run_command(&["serve", "--bg", "--yes", &target]).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("tailscale serve failed: {stderr}");
+            return Err(Error::message(format!("tailscale serve failed: {stderr}")));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         info!(port, stdout = %stdout.trim(), "tailscale serve enabled");
         Ok(())
     }
 
-    async fn enable_funnel(&self, port: u16, tls: bool) -> anyhow::Result<()> {
+    async fn enable_funnel(&self, port: u16, tls: bool) -> Result<()> {
         // First reset any existing serve/funnel.
         info!("resetting tailscale funnel before enabling");
         let _ = Self::run_command(&["funnel", "reset"]).await;
@@ -374,14 +380,14 @@ impl TailscaleManager for CliTailscaleManager {
         let output = Self::run_command(&["funnel", "--bg", "--yes", &target]).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("tailscale funnel failed: {stderr}");
+            return Err(Error::message(format!("tailscale funnel failed: {stderr}")));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         info!(port, stdout = %stdout.trim(), "tailscale funnel enabled");
         Ok(())
     }
 
-    async fn disable(&self) -> anyhow::Result<()> {
+    async fn disable(&self) -> Result<()> {
         let serve_out = Self::run_command(&["serve", "reset"]).await?;
         if !serve_out.status.success() {
             let stderr = String::from_utf8_lossy(&serve_out.stderr);
@@ -396,7 +402,7 @@ impl TailscaleManager for CliTailscaleManager {
         Ok(())
     }
 
-    async fn hostname(&self) -> anyhow::Result<Option<String>> {
+    async fn hostname(&self) -> Result<Option<String>> {
         match Self::parse_status_json().await {
             Ok(val) => {
                 // The JSON has a "Self" object with "DNSName" field.
@@ -454,23 +460,22 @@ pub fn validate_tailscale_config(
     mode: TailscaleMode,
     bind_addr: &str,
     auth_setup_complete: bool,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if mode == TailscaleMode::Off {
         return Ok(());
     }
 
     if !is_loopback_addr(bind_addr) {
-        anyhow::bail!(
+        return Err(Error::message(format!(
             "tailscale {} requires the gateway to bind to a loopback address (127.0.0.1, ::1, or localhost), but got '{bind_addr}'",
             mode
-        );
+        )));
     }
 
     if mode == TailscaleMode::Funnel && !auth_setup_complete {
-        anyhow::bail!(
-            "tailscale funnel requires password authentication to be configured. \
-             Set a password first (via setup code or MOLTIS_PASSWORD) before enabling funnel."
-        );
+        return Err(Error::message(
+            "tailscale funnel requires password authentication to be configured. Set a password first (via setup code or MOLTIS_PASSWORD) before enabling funnel.",
+        ));
     }
 
     Ok(())

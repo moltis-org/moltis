@@ -2,10 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use {
-    anyhow::{Context, Result},
-    tracing::{debug, info, warn},
-};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "metrics")]
 use std::time::Instant;
@@ -15,6 +12,7 @@ use moltis_metrics::{counter, gauge, histogram, labels, mcp as mcp_metrics};
 
 use crate::{
     auth::SharedAuthProvider,
+    error::{Context, Error, Result},
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
     transport::StdioTransport,
@@ -173,11 +171,10 @@ impl McpClient {
 
     fn ensure_ready(&self) -> Result<()> {
         if self.state != McpClientState::Ready {
-            anyhow::bail!(
+            return Err(Error::message(format!(
                 "MCP client for '{}' is not ready (state: {:?})",
-                self.server_name,
-                self.state
-            );
+                self.server_name, self.state
+            )));
         }
         Ok(())
     }

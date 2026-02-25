@@ -7,13 +7,14 @@ use {
     serde::{Deserialize, Serialize},
 };
 
-/// Agent identity (name, emoji, theme).
+/// Agent identity (name, emoji, creature, vibe).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
     pub emoji: Option<String>,
-    pub theme: Option<String>,
+    pub creature: Option<String>,
+    pub vibe: Option<String>,
 }
 
 /// IANA timezone (e.g. `"Europe/Paris"`).
@@ -22,6 +23,12 @@ pub struct AgentIdentity {
 /// compatible with the YAML frontmatter in `USER.md`.
 #[derive(Debug, Clone)]
 pub struct Timezone(pub chrono_tz::Tz);
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown IANA timezone: {value}")]
+pub struct TimezoneParseError {
+    value: String,
+}
 
 impl Timezone {
     /// The IANA name, e.g. `"Europe/Paris"`.
@@ -44,12 +51,14 @@ impl std::fmt::Display for Timezone {
 }
 
 impl std::str::FromStr for Timezone {
-    type Err = String;
+    type Err = TimezoneParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.parse::<chrono_tz::Tz>()
             .map(Self)
-            .map_err(|_| format!("unknown IANA timezone: {s}"))
+            .map_err(|_| TimezoneParseError {
+                value: s.to_string(),
+            })
     }
 }
 
@@ -68,9 +77,7 @@ impl Serialize for Timezone {
 impl<'de> Deserialize<'de> for Timezone {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        s.parse::<chrono_tz::Tz>()
-            .map(Self)
-            .map_err(serde::de::Error::custom)
+        s.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -146,7 +153,8 @@ pub struct UserProfile {
 pub struct ResolvedIdentity {
     pub name: String,
     pub emoji: Option<String>,
-    pub theme: Option<String>,
+    pub creature: Option<String>,
+    pub vibe: Option<String>,
     pub soul: Option<String>,
     pub user_name: Option<String>,
 }
@@ -156,7 +164,8 @@ impl ResolvedIdentity {
         Self {
             name: cfg.identity.name.clone().unwrap_or_else(|| "moltis".into()),
             emoji: cfg.identity.emoji.clone(),
-            theme: cfg.identity.theme.clone(),
+            creature: cfg.identity.creature.clone(),
+            vibe: cfg.identity.vibe.clone(),
             soul: None,
             user_name: cfg.user.name.clone(),
         }
@@ -168,7 +177,8 @@ impl Default for ResolvedIdentity {
         Self {
             name: "moltis".into(),
             emoji: None,
-            theme: None,
+            creature: None,
+            vibe: None,
             soul: None,
             user_name: None,
         }
@@ -1422,6 +1432,16 @@ pub struct ResourceLimitsConfig {
     pub pids_max: Option<u32>,
 }
 
+/// Persistence strategy for `/home/sandbox` in sandbox containers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum HomePersistenceConfig {
+    Off,
+    Session,
+    #[default]
+    Shared,
+}
+
 /// Sandbox configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1429,6 +1449,8 @@ pub struct SandboxConfig {
     pub mode: String,
     pub scope: String,
     pub workspace_mount: String,
+    /// Persistence strategy for `/home/sandbox`: off, session, or shared.
+    pub home_persistence: HomePersistenceConfig,
     pub image: Option<String>,
     pub container_prefix: Option<String>,
     pub no_network: bool,
@@ -1466,6 +1488,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "npm",
         "ruby",
         "ruby-dev",
+        "golang-go",
         // Build toolchain & native deps
         "build-essential",
         "clang",
@@ -1604,6 +1627,7 @@ impl Default for SandboxConfig {
             mode: "all".into(),
             scope: "session".into(),
             workspace_mount: "ro".into(),
+            home_persistence: HomePersistenceConfig::default(),
             image: None,
             container_prefix: None,
             no_network: true,
@@ -1657,6 +1681,19 @@ pub struct ProvidersConfig {
     pub local_models: Vec<String>,
 }
 
+/// Streaming transport for provider response streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderStreamTransport {
+    /// Use HTTP + SSE streaming (current default).
+    #[default]
+    Sse,
+    /// Use WebSocket mode when supported by the provider API.
+    Websocket,
+    /// Try WebSocket first, then fall back to SSE on transport/setup failure.
+    Auto,
+}
+
 /// Configuration for a single LLM provider.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1684,6 +1721,12 @@ pub struct ProviderEntry {
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub fetch_models: bool,
 
+    /// Streaming transport for this provider (`sse`, `websocket`, `auto`).
+    ///
+    /// Defaults to `sse` for compatibility.
+    #[serde(default, skip_serializing_if = "is_default_provider_stream_transport")]
+    pub stream_transport: ProviderStreamTransport,
+
     /// Optional alias for this provider instance.
     ///
     /// When set, this alias is used in metrics labels instead of the provider name.
@@ -1701,6 +1744,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("base_url", &self.base_url)
             .field("models", &self.models)
             .field("fetch_models", &self.fetch_models)
+            .field("stream_transport", &self.stream_transport)
             .field("alias", &self.alias)
             .finish()
     }
@@ -1714,6 +1758,7 @@ impl Default for ProviderEntry {
             base_url: None,
             models: Vec::new(),
             fetch_models: true,
+            stream_transport: ProviderStreamTransport::Sse,
             alias: None,
         }
     }
@@ -1741,6 +1786,10 @@ where
 
 const fn is_true(value: &bool) -> bool {
     *value
+}
+
+const fn is_default_provider_stream_transport(value: &ProviderStreamTransport) -> bool {
+    matches!(value, ProviderStreamTransport::Sse)
 }
 
 impl ProvidersConfig {
@@ -1953,6 +2002,7 @@ OPENROUTER_API_KEY = "sk-or-test"
         assert!(entry.models.is_empty());
     }
 
+
     #[test]
     fn channels_config_defaults_to_telegram_offered() {
         let config = ChannelsConfig::default();
@@ -1973,5 +2023,12 @@ OPENROUTER_API_KEY = "sk-or-test"
             "telegram".to_string(),
             "msteams".to_string()
         ]);
+    }
+
+    #[test]
+    fn sandbox_defaults_include_go_runtime() {
+        let sandbox = SandboxConfig::default();
+        assert!(sandbox.packages.iter().any(|pkg| pkg == "golang-go"));
+        assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
     }
 }

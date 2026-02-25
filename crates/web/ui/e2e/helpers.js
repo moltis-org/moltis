@@ -93,9 +93,33 @@ async function navigateAndWait(page, path) {
  * Waits for URL to change and content to mount.
  */
 async function createSession(page) {
-	const currentUrl = page.url();
+	const previousActiveKey = await page.evaluate(() => {
+		return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
+	});
+
 	await page.locator("#newSessionBtn").click();
-	await page.waitForURL((url) => url.href !== currentUrl, { timeout: 10_000 });
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					return window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
+				}),
+			{ timeout: 20_000 },
+		)
+		.not.toBe(previousActiveKey);
+
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const key = window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "";
+					if (!key) return false;
+					return window.location.pathname === `/chats/${key.replace(/:/g, "/")}`;
+				}),
+			{ timeout: 20_000 },
+		)
+		.toBe(true);
+
 	await expectPageContentMounted(page);
 	await expect
 		.poll(
@@ -103,18 +127,13 @@ async function createSession(page) {
 				page.evaluate(() => {
 					const store = window.__moltis_stores?.sessionStore;
 					if (!store) return false;
-
-					const pathname = window.location.pathname || "";
-					if (!pathname.startsWith("/chats/")) return false;
-					const expectedKey = decodeURIComponent(pathname.slice("/chats/".length)).replace(/\//g, ":");
-
 					const activeKey = store.activeSessionKey?.value || "";
-					if (activeKey !== expectedKey) return false;
+					if (!activeKey) return false;
 
 					const activeSession = store.getByKey ? store.getByKey(activeKey) : store.activeSession?.value;
 					return Boolean(activeSession && activeSession.key === activeKey);
 				}),
-			{ timeout: 10_000 },
+			{ timeout: 20_000 },
 		)
 		.toBe(true);
 }

@@ -9,7 +9,6 @@ use std::sync::{
 };
 
 use {
-    anyhow::{Context, Result, bail},
     reqwest::Client,
     secrecy::ExposeSecret,
     tokio::sync::RwLock,
@@ -18,6 +17,7 @@ use {
 
 use crate::{
     auth::SharedAuthProvider,
+    error::{Context, Error, Result},
     traits::McpTransport,
     types::{
         JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransportError, PROTOCOL_VERSION,
@@ -157,7 +157,9 @@ impl SseTransport {
             return Ok(resp);
         }
 
-        bail!("failed to parse JSON-RPC response from event stream for '{method}'",)
+        Err(Error::message(format!(
+            "failed to parse JSON-RPC response from event stream for '{method}'"
+        )))
     }
 
     /// Send a POST request and handle 401 with auth retry.
@@ -314,7 +316,9 @@ impl McpTransport for SseTransport {
         if !http_resp.status().is_success() {
             let status = http_resp.status();
             let body = http_resp.text().await.unwrap_or_default();
-            bail!("MCP SSE server returned HTTP {status} for '{method}': {body}",);
+            return Err(Error::message(format!(
+                "MCP SSE server returned HTTP {status} for '{method}': {body}"
+            )));
         }
 
         let resp: JsonRpcResponse = if Self::response_is_event_stream(&http_resp) {
@@ -331,11 +335,10 @@ impl McpTransport for SseTransport {
         };
 
         if let Some(ref err) = resp.error {
-            bail!(
+            return Err(Error::message(format!(
                 "MCP SSE error on '{method}': code={} message={}",
-                err.code,
-                err.message
-            );
+                err.code, err.message
+            )));
         }
 
         Ok(resp)
@@ -479,7 +482,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.downcast_ref::<McpTransportError>().is_some());
+        assert!(matches!(
+            err,
+            crate::Error::Transport(McpTransportError::Unauthorized { .. })
+        ));
     }
 
     #[tokio::test]

@@ -1,4 +1,6 @@
-use {anyhow::Result, async_trait::async_trait};
+use async_trait::async_trait;
+
+use crate::Result;
 
 /// A single logged inbound message.
 #[derive(Debug, Clone)]

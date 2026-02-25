@@ -4,14 +4,13 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     async_trait::async_trait,
     secrecy::ExposeSecret,
     tracing::{info, warn},
 };
 
 use moltis_channels::{
-    ChannelEvent, ChannelEventSink,
+    ChannelEvent, ChannelEventSink, Error as ChannelError, Result as ChannelResult,
     gating::{DmPolicy, GroupPolicy, MentionMode, is_allowed},
     message_log::{MessageLog, MessageLogEntry},
     plugin::{
@@ -95,14 +94,18 @@ impl MsTeamsPlugin {
             .and_then(|s| serde_json::to_value(&s.config).ok())
     }
 
-    pub fn update_account_config(&self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    pub fn update_account_config(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let parsed: MsTeamsAccountConfig = serde_json::from_value(config)?;
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get_mut(account_id) {
             state.config = parsed;
             Ok(())
         } else {
-            Err(anyhow::anyhow!("account not found: {account_id}"))
+            Err(ChannelError::unknown_account(account_id))
         }
     }
 
@@ -321,13 +324,19 @@ impl ChannelPlugin for MsTeamsPlugin {
         "Microsoft Teams"
     }
 
-    async fn start_account(&mut self, account_id: &str, config: serde_json::Value) -> Result<()> {
+    async fn start_account(
+        &mut self,
+        account_id: &str,
+        config: serde_json::Value,
+    ) -> ChannelResult<()> {
         let cfg: MsTeamsAccountConfig = serde_json::from_value(config)?;
         if cfg.app_id.is_empty() {
-            return Err(anyhow::anyhow!("Teams app_id is required"));
+            return Err(ChannelError::invalid_input("Teams app_id is required"));
         }
         if cfg.app_password.expose_secret().is_empty() {
-            return Err(anyhow::anyhow!("Teams app_password is required"));
+            return Err(ChannelError::invalid_input(
+                "Teams app_password is required",
+            ));
         }
 
         info!(account_id, "starting microsoft teams account");
@@ -344,7 +353,7 @@ impl ChannelPlugin for MsTeamsPlugin {
         Ok(())
     }
 
-    async fn stop_account(&mut self, account_id: &str) -> Result<()> {
+    async fn stop_account(&mut self, account_id: &str) -> ChannelResult<()> {
         let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
         if accounts.remove(account_id).is_none() {
             warn!(account_id, "Teams account not found");
@@ -363,7 +372,7 @@ impl ChannelPlugin for MsTeamsPlugin {
 
 #[async_trait]
 impl ChannelStatus for MsTeamsPlugin {
-    async fn probe(&self, account_id: &str) -> Result<ChannelHealthSnapshot> {
+    async fn probe(&self, account_id: &str) -> ChannelResult<ChannelHealthSnapshot> {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = accounts.get(account_id) {
             let service_url_count = {

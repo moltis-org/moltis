@@ -4,7 +4,6 @@ name              = "moltis-common"
 version.workspace = true
 
 [dependencies]
-anyhow         = { workspace = true }
 async-trait    = { workspace = true }
 futures        = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }

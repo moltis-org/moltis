@@ -1,5 +1,4 @@
 use {
-    anyhow::Result,
     async_trait::async_trait,
     base64::Engine,
     std::{future::Future, time::Duration},
@@ -13,8 +12,9 @@ use {
 };
 
 use {
-    moltis_channels::plugin::{
-        ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver,
+    moltis_channels::{
+        Error as ChannelError, Result,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent, StreamReceiver},
     },
     moltis_common::types::ReplyPayload,
 };
@@ -55,7 +55,7 @@ impl TelegramOutbound {
         accounts
             .get(account_id)
             .map(|s| s.bot.clone())
-            .ok_or_else(|| anyhow::anyhow!("unknown account: {account_id}"))
+            .ok_or_else(|| ChannelError::unknown_account(account_id))
     }
 
     /// Build reply parameters only when `reply_to_message` is enabled for this account.
@@ -125,7 +125,8 @@ impl TelegramOutbound {
                         }
                         async move { plain_req.await }
                     })
-                    .await?;
+                    .await
+                    .channel_context("send message (plain)")?;
                 Ok(message.id)
             },
         }
@@ -172,7 +173,7 @@ impl TelegramOutbound {
                         if is_message_not_modified_error(&plain_err) {
                             Ok(())
                         } else {
-                            Err(plain_err.into())
+                            Err(ChannelError::external("edit message (plain)", plain_err))
                         }
                     },
                 }
@@ -248,6 +249,16 @@ fn retry_after_duration(error: &RequestError) -> Option<Duration> {
 
 fn is_message_not_modified_error(error: &RequestError) -> bool {
     matches!(error, RequestError::Api(ApiError::MessageNotModified))
+}
+
+trait RequestResultExt<T> {
+    fn channel_context(self, context: &'static str) -> Result<T>;
+}
+
+impl<T> RequestResultExt<T> for std::result::Result<T, RequestError> {
+    fn channel_context(self, context: &'static str) -> Result<T> {
+        self.map_err(|e| ChannelError::external(context, e))
+    }
 }
 
 fn has_reached_stream_min_initial_chars(accumulated: &str, min_initial_chars: usize) -> bool {
@@ -503,12 +514,16 @@ impl ChannelOutbound for TelegramOutbound {
             if media.url.starts_with("data:") {
                 // Parse data URI: data:<mime>;base64,<data>
                 let Some(comma_pos) = media.url.find(',') else {
-                    anyhow::bail!("invalid data URI: no comma separator");
+                    return Err(ChannelError::invalid_input(
+                        "invalid data URI: no comma separator",
+                    ));
                 };
                 let base64_data = &media.url[comma_pos + 1..];
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(base64_data)
-                    .map_err(|e| anyhow::anyhow!("failed to decode base64: {e}"))?;
+                    .map_err(|e| {
+                        ChannelError::invalid_input(format!("failed to decode base64: {e}"))
+                    })?;
 
                 debug!(
                     bytes = bytes.len(),
@@ -564,7 +579,7 @@ impl ChannelOutbound for TelegramOutbound {
                                 if !payload.text.is_empty() {
                                     req = req.caption(&payload.text);
                                 }
-                                req.await?;
+                                req.await.channel_context("send document fallback")?;
                                 info!(
                                     account_id,
                                     chat_id = to,
@@ -575,7 +590,7 @@ impl ChannelOutbound for TelegramOutbound {
                                 );
                                 return Ok(());
                             }
-                            return Err(e.into());
+                            return Err(ChannelError::external("send media photo", e));
                         },
                     }
                 }
@@ -587,7 +602,7 @@ impl ChannelOutbound for TelegramOutbound {
                     if !payload.text.is_empty() {
                         req = req.caption(&payload.text);
                     }
-                    req.await?;
+                    req.await.channel_context("send voice media")?;
                     info!(
                         account_id,
                         chat_id = to,
@@ -602,7 +617,7 @@ impl ChannelOutbound for TelegramOutbound {
                     if !payload.text.is_empty() {
                         req = req.caption(&payload.text);
                     }
-                    req.await?;
+                    req.await.channel_context("send audio media")?;
                     info!(
                         account_id,
                         chat_id = to,
@@ -617,7 +632,7 @@ impl ChannelOutbound for TelegramOutbound {
                     if !payload.text.is_empty() {
                         req = req.caption(&payload.text);
                     }
-                    req.await?;
+                    req.await.channel_context("send document media")?;
                     info!(
                         account_id,
                         chat_id = to,
@@ -629,7 +644,10 @@ impl ChannelOutbound for TelegramOutbound {
                 }
             } else {
                 // URL-based media
-                let input = InputFile::url(media.url.parse()?);
+                let url = media.url.parse().map_err(|e| {
+                    ChannelError::invalid_input(format!("invalid media URL '{}': {e}", media.url))
+                })?;
+                let input = InputFile::url(url);
 
                 match media.mime_type.as_str() {
                     t if t.starts_with("image/") => {
@@ -637,7 +655,7 @@ impl ChannelOutbound for TelegramOutbound {
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }
-                        req.await?;
+                        req.await.channel_context("send URL photo media")?;
                         info!(
                             account_id,
                             chat_id = to,
@@ -652,7 +670,7 @@ impl ChannelOutbound for TelegramOutbound {
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }
-                        req.await?;
+                        req.await.channel_context("send URL voice media")?;
                         info!(
                             account_id,
                             chat_id = to,
@@ -667,7 +685,7 @@ impl ChannelOutbound for TelegramOutbound {
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }
-                        req.await?;
+                        req.await.channel_context("send URL audio media")?;
                         info!(
                             account_id,
                             chat_id = to,
@@ -682,7 +700,7 @@ impl ChannelOutbound for TelegramOutbound {
                         if !payload.text.is_empty() {
                             req = req.caption(&payload.text);
                         }
-                        req.await?;
+                        req.await.channel_context("send URL document media")?;
                         info!(
                             account_id,
                             chat_id = to,
@@ -731,13 +749,13 @@ impl ChannelOutbound for TelegramOutbound {
             if let Some(ref rp) = rp {
                 req = req.reply_parameters(rp.clone());
             }
-            req.await?;
+            req.await.channel_context("send venue")?;
         } else {
             let mut req = bot.send_location(chat_id, latitude, longitude);
             if let Some(ref rp) = rp {
                 req = req.reply_parameters(rp.clone());
             }
-            req.await?;
+            req.await.channel_context("send location")?;
         }
 
         info!(
@@ -768,14 +786,16 @@ impl TelegramOutbound {
             for chunk in chunks {
                 bot.send_message(chat_id, &chunk)
                     .parse_mode(ParseMode::Html)
-                    .await?;
+                    .await
+                    .channel_context("send reply chunk (media)")?;
             }
         } else if !payload.text.is_empty() {
             let chunks = markdown::chunk_markdown_html(&payload.text, TELEGRAM_MAX_MESSAGE_LEN);
             for chunk in chunks {
                 bot.send_message(chat_id, &chunk)
                     .parse_mode(ParseMode::Html)
-                    .await?;
+                    .await
+                    .channel_context("send reply chunk")?;
             }
         }
 
@@ -948,8 +968,11 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("unknown account"),
-            "should report unknown account"
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown channel account"),
+            "should report unknown channel account"
         );
     }
 

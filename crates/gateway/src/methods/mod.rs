@@ -53,7 +53,16 @@ const READ_METHODS: &[&str] = &[
     "stt.providers",
     "models.list",
     "models.list_all",
+    #[cfg(feature = "agent")]
     "agents.list",
+    #[cfg(feature = "agent")]
+    "agents.get",
+    #[cfg(feature = "agent")]
+    "agents.identity.get",
+    #[cfg(feature = "agent")]
+    "agents.files.list",
+    #[cfg(feature = "agent")]
+    "agents.files.get",
     "agent.identity.get",
     "skills.list",
     "skills.status",
@@ -110,6 +119,22 @@ const WRITE_METHODS: &[&str] = &[
     "agent.wait",
     "agent.identity.update",
     "agent.identity.update_soul",
+    #[cfg(feature = "agent")]
+    "agents.create",
+    #[cfg(feature = "agent")]
+    "agents.update",
+    #[cfg(feature = "agent")]
+    "agents.delete",
+    #[cfg(feature = "agent")]
+    "agents.set_default",
+    #[cfg(feature = "agent")]
+    "agents.set_session",
+    #[cfg(feature = "agent")]
+    "agents.identity.update",
+    #[cfg(feature = "agent")]
+    "agents.identity.update_soul",
+    #[cfg(feature = "agent")]
+    "agents.files.set",
     "wake",
     "talk.mode",
     "tts.enable",
