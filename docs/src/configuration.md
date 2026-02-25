@@ -37,6 +37,7 @@ offered = ["openai", "anthropic", "local-llm"]
 [providers.openai]
 enabled = true
 models = ["gpt-5.3", "gpt-5.2"]
+stream_transport = "sse"        # "sse", "websocket", or "auto"
 
 [providers.anthropic]
 enabled = true
@@ -62,6 +63,7 @@ Commands run inside isolated containers for security:
 mode = "all"                    # "off", "non-main", or "all"
 scope = "session"               # "command", "session", or "global"
 workspace_mount = "ro"          # "ro", "rw", or "none"
+home_persistence = "shared"     # "off", "session", or "shared" (default: "shared")
 backend = "auto"                # "auto", "docker", or "apple-container"
 no_network = true
 
@@ -74,6 +76,7 @@ packages = [
     "python3-pip",
     "nodejs",
     "npm",
+    "golang-go",
 ]
 ```
 
@@ -290,9 +293,10 @@ offered = ["openai", "anthropic", "local-llm"]
 mode = "all"
 scope = "session"
 workspace_mount = "ro"
+home_persistence = "session"
 backend = "auto"
 no_network = true
-packages = ["curl", "git", "jq", "python3", "nodejs"]
+packages = ["curl", "git", "jq", "python3", "nodejs", "golang-go"]
 
 [memory]
 backend = "builtin"

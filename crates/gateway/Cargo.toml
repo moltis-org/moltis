@@ -91,6 +91,7 @@ which                  = { optional = true, workspace = true }
 
 [features]
 default = [
+  "agent",
   "file-watcher",
   "graphql",
   "local-llm",
@@ -105,6 +106,7 @@ default = [
   "voice",
   "web-ui",
 ]
+agent = []
 file-watcher = ["moltis-memory/file-watcher", "moltis-openclaw-import?/file-watcher", "moltis-skills/file-watcher"]
 graphql = ["dep:async-graphql", "dep:async-graphql-axum", "dep:moltis-graphql"]
 local-embeddings = ["moltis-memory/local-embeddings"]

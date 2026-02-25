@@ -114,6 +114,7 @@ fn build_schema_map() -> KnownKeys {
             ("base_url", Leaf),
             ("models", Leaf),
             ("fetch_models", Leaf),
+            ("stream_transport", Leaf),
             ("alias", Leaf),
         ]))
     };
@@ -131,6 +132,7 @@ fn build_schema_map() -> KnownKeys {
             ("mode", Leaf),
             ("scope", Leaf),
             ("workspace_mount", Leaf),
+            ("home_persistence", Leaf),
             ("image", Leaf),
             ("container_prefix", Leaf),
             ("no_network", Leaf),
@@ -354,7 +356,8 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("name", Leaf),
                 ("emoji", Leaf),
-                ("theme", Leaf),
+                ("creature", Leaf),
+                ("vibe", Leaf),
             ])),
         ),
         (

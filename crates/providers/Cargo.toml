@@ -21,14 +21,18 @@ anyhow        = { workspace = true }
 async-stream  = { workspace = true }
 async-trait   = { workspace = true }
 futures       = { workspace = true }
+http          = { workspace = true }
 moltis-agents = { path = "../agents" }
+moltis-common = { workspace = true }
 moltis-config = { workspace = true }
 reqwest       = { workspace = true }
 secrecy       = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
+thiserror     = { workspace = true }
 tokio         = { workspace = true }
 tokio-stream  = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tracing       = { workspace = true }
 
 # Optional LLM provider crates

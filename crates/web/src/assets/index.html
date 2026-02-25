@@ -92,6 +92,7 @@
 <link rel="modulepreload" href="{{ asset_prefix }}js/page-skills.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/page-mcp.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/page-hooks.js">
+<link rel="modulepreload" href="{{ asset_prefix }}js/page-agents.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/page-settings.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/page-images.js">
 <link rel="modulepreload" href="{{ asset_prefix }}js/emoji-picker.js">
@@ -519,6 +520,7 @@ endpoint = "http://localhost:8000"</code>
     <p class="text-sm text-[var(--muted)] mb-6">
       I'm <span data-welcome-bot-name class="font-medium text-[var(--text)]"></span>. How can I help?
     </p>
+    <div data-welcome-agents class="hidden flex-wrap items-center justify-center gap-2 w-full mb-6"></div>
     <ul class="text-left text-sm text-[var(--muted)] flex flex-col gap-3 w-full">
       <li class="flex items-start gap-3">
         <span class="text-[var(--accent)] mt-0.5 flex-shrink-0">

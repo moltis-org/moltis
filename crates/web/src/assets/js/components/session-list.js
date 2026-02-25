@@ -149,6 +149,8 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 		session.parentSessionKey && keyMap[session.parentSessionKey] ? keyMap[session.parentSessionKey].preview || "" : "";
 	var preview = rawPreview && rawPreview === parentPreview ? "" : rawPreview;
 	var ts = session.updatedAt || 0;
+	var agentId = session.agent_id || "main";
+	var showAgentBadge = !!agentId && agentId !== "main";
 
 	function onClick() {
 		if (currentPrefix !== "/chats") {
@@ -164,6 +166,17 @@ function SessionItem({ session, activeKey, depth, keyMap, refreshing }) {
 				<div class="session-label">
 					<${SessionIcon} session=${session} isBranch=${isBranch} />
 					<span data-label-text>${session.label || session.key}</span>
+					${
+						showAgentBadge &&
+						html`
+						<span
+							class="text-[10px] text-[var(--muted)] border border-[var(--border)] rounded px-1 py-0 ml-1"
+							title=${`Agent: ${agentId}`}
+						>
+							@${agentId}
+						</span>
+					`
+					}
 					${
 						ts > 0 &&
 						html`

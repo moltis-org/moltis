@@ -50,6 +50,7 @@ pub async fn start_polling(
     let commands = vec![
         BotCommand::new("new", "Start a new session"),
         BotCommand::new("sessions", "List and switch sessions"),
+        BotCommand::new("agent", "Switch session agent"),
         BotCommand::new("model", "Switch provider/model"),
         BotCommand::new("sandbox", "Toggle sandbox and choose image"),
         BotCommand::new("sh", "Enable shell command mode"),

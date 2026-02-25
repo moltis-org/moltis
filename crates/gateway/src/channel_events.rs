@@ -60,7 +60,16 @@ fn slash_command_name(text: &str) -> Option<&str> {
 fn is_channel_control_command_name(cmd: &str) -> bool {
     matches!(
         cmd,
-        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "help" | "sh"
+        "new"
+            | "clear"
+            | "compact"
+            | "context"
+            | "model"
+            | "sandbox"
+            | "sessions"
+            | "agent"
+            | "help"
+            | "sh"
     )
 }
 
@@ -176,6 +185,26 @@ impl ChannelEventSink for GatewayChannelEventSink {
                 session_meta
                     .set_channel_binding(&session_key, Some(binding_json))
                     .await;
+                if let Some(entry) = session_meta.get(&session_key).await
+                    && entry
+                        .agent_id
+                        .as_deref()
+                        .map(str::trim)
+                        .is_none_or(|value| value.is_empty())
+                {
+                    let default_agent = if let Some(ref store) = state.services.agent_persona_store
+                    {
+                        store
+                            .default_id()
+                            .await
+                            .unwrap_or_else(|_| "main".to_string())
+                    } else {
+                        "main".to_string()
+                    };
+                    let _ = session_meta
+                        .set_agent_id(&session_key, Some(&default_agent))
+                        .await;
+                }
             }
 
             let chat = state.chat().await;
@@ -636,6 +665,25 @@ impl ChannelEventSink for GatewayChannelEventSink {
             session_meta
                 .set_channel_binding(&session_key, Some(binding_json))
                 .await;
+            if let Some(entry) = session_meta.get(&session_key).await
+                && entry
+                    .agent_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(|value| value.is_empty())
+            {
+                let default_agent = if let Some(ref store) = state.services.agent_persona_store {
+                    store
+                        .default_id()
+                        .await
+                        .unwrap_or_else(|_| "main".to_string())
+                } else {
+                    "main".to_string()
+                };
+                let _ = session_meta
+                    .set_agent_id(&session_key, Some(&default_agent))
+                    .await;
+            }
         }
 
         let chat = state.chat().await;
@@ -813,6 +861,26 @@ impl ChannelEventSink for GatewayChannelEventSink {
                         .set_channel_binding(&session_key, Some(binding_json))
                         .await;
                 }
+
+                let inherited_agent = old_entry
+                    .as_ref()
+                    .and_then(|entry| entry.agent_id.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                let target_agent = if let Some(agent_id) = inherited_agent {
+                    agent_id
+                } else if let Some(ref store) = state.services.agent_persona_store {
+                    store
+                        .default_id()
+                        .await
+                        .unwrap_or_else(|_| "main".to_string())
+                } else {
+                    "main".to_string()
+                };
+                let _ = session_metadata
+                    .set_agent_id(&new_key, Some(&target_agent))
+                    .await;
 
                 // Update forward mapping.
                 session_metadata
@@ -1065,6 +1133,95 @@ impl ChannelEventSink for GatewayChannelEventSink {
                     .await;
 
                     Ok(format!("Switched to: {label}"))
+                }
+            },
+            "agent" => {
+                let Some(ref store) = state.services.agent_persona_store else {
+                    return Err(ChannelError::unavailable(
+                        "agent personas are not available",
+                    ));
+                };
+                let default_id = store
+                    .default_id()
+                    .await
+                    .unwrap_or_else(|_| "main".to_string());
+                let agents = store
+                    .list()
+                    .await
+                    .map_err(|e| ChannelError::external("listing agents", e))?;
+                let current_agent = session_metadata
+                    .get(&session_key)
+                    .await
+                    .and_then(|entry| entry.agent_id)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(default_id.clone());
+
+                if args.is_empty() {
+                    let mut lines = Vec::new();
+                    for (i, agent) in agents.iter().enumerate() {
+                        let marker = if agent.id == current_agent {
+                            " *"
+                        } else {
+                            ""
+                        };
+                        let default_badge = if agent.id == default_id {
+                            " (default)"
+                        } else {
+                            ""
+                        };
+                        let emoji = agent.emoji.clone().unwrap_or_default();
+                        let label = if emoji.is_empty() {
+                            agent.name.clone()
+                        } else {
+                            format!("{emoji} {}", agent.name)
+                        };
+                        lines.push(format!(
+                            "{}. {} [{}]{}{}",
+                            i + 1,
+                            label,
+                            agent.id,
+                            default_badge,
+                            marker,
+                        ));
+                    }
+                    lines.push("\nUse /agent N to switch.".to_string());
+                    Ok(lines.join("\n"))
+                } else {
+                    let n: usize = args
+                        .parse()
+                        .map_err(|_| ChannelError::invalid_input("usage: /agent [number]"))?;
+                    if n == 0 || n > agents.len() {
+                        return Err(ChannelError::invalid_input(format!(
+                            "invalid agent number. Use 1–{}.",
+                            agents.len()
+                        )));
+                    }
+                    let chosen = &agents[n - 1];
+                    session_metadata
+                        .set_agent_id(&session_key, Some(&chosen.id))
+                        .await
+                        .map_err(|e| ChannelError::external("setting session agent", e))?;
+
+                    broadcast(
+                        state,
+                        "session",
+                        serde_json::json!({
+                            "kind": "patched",
+                            "sessionKey": &session_key,
+                        }),
+                        BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+
+                    let emoji = chosen.emoji.clone().unwrap_or_default();
+                    if emoji.is_empty() {
+                        Ok(format!("Agent switched to: {}", chosen.name))
+                    } else {
+                        Ok(format!("Agent switched to: {} {}", emoji, chosen.name))
+                    }
                 }
             },
             "model" => {
