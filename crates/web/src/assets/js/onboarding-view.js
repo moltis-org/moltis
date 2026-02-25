@@ -532,7 +532,8 @@ function IdentityStep({ onNext, onBack }) {
 	var [userName, setUserName] = useState(identity.user_name || "");
 	var [name, setName] = useState(identity.name || "Moltis");
 	var [emoji, setEmoji] = useState(identity.emoji || "\u{1f916}");
-	var [theme, setTheme] = useState(identity.theme || "");
+	var [creature, setCreature] = useState(identity.creature || "");
+	var [vibe, setVibe] = useState(identity.vibe || "");
 	var [saving, setSaving] = useState(false);
 	var [error, setError] = useState(null);
 
@@ -544,7 +545,8 @@ function IdentityStep({ onNext, onBack }) {
 			if (refreshed.user_name) setUserName((prev) => prev || refreshed.user_name);
 			if (refreshed.name) setName((prev) => (prev && prev !== "Moltis" ? prev : refreshed.name));
 			if (refreshed.emoji) setEmoji((prev) => (prev && prev !== "\u{1f916}" ? prev : refreshed.emoji));
-			if (refreshed.theme) setTheme((prev) => prev || refreshed.theme);
+			if (refreshed.creature) setCreature((prev) => prev || refreshed.creature);
+			if (refreshed.vibe) setVibe((prev) => prev || refreshed.vibe);
 		});
 		return () => {
 			cancelled = true;
@@ -564,7 +566,8 @@ function IdentityStep({ onNext, onBack }) {
 		updateIdentity({
 			name: name.trim(),
 			emoji: emoji.trim() || "",
-			theme: theme.trim() || "",
+			creature: creature.trim() || "",
+			vibe: vibe.trim() || "",
 			user_name: userName.trim(),
 			user_timezone: userTimezone || "",
 		}).then((res) => {
@@ -603,11 +606,19 @@ function IdentityStep({ onNext, onBack }) {
 						<${EmojiPicker} value=${emoji} onChange=${setEmoji} />
 					</div>
 				</div>
-				<div>
-					<div class="text-xs text-[var(--muted)] mb-1">Theme</div>
-					<input type="text" class="provider-key-input w-full"
-						value=${theme} onInput=${(e) => setTheme(e.target.value)}
-						placeholder="e.g. wise owl, chill fox" />
+				<div class="grid grid-cols-2 gap-3">
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Creature</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${creature} onInput=${(e) => setCreature(e.target.value)}
+							placeholder="owl, fox, dragon\u2026" />
+					</div>
+					<div>
+						<div class="text-xs text-[var(--muted)] mb-1">Vibe</div>
+						<input type="text" class="provider-key-input w-full"
+							value=${vibe} onInput=${(e) => setVibe(e.target.value)}
+							placeholder="wise, curious, chill\u2026" />
+					</div>
 				</div>
 			</div>
 			${error && html`<${ErrorPanel} message=${error} />`}
