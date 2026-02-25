@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use {anyhow::Result, async_trait::async_trait, tokio::sync::RwLock};
+use {async_trait::async_trait, tokio::sync::RwLock};
 
 use {
-    moltis_channels::{ChannelOutbound, ChannelStreamOutbound, StreamReceiver},
+    moltis_channels::{
+        ChannelOutbound, ChannelStreamOutbound, Error as ChannelError, Result as ChannelResult,
+        StreamReceiver,
+    },
     moltis_msteams::MsTeamsPlugin,
     moltis_telegram::TelegramPlugin,
 };
@@ -40,7 +43,7 @@ impl MultiChannelOutbound {
         }
     }
 
-    async fn resolve_outbound(&self, account_id: &str) -> Result<&dyn ChannelOutbound> {
+    async fn resolve_outbound(&self, account_id: &str) -> ChannelResult<&dyn ChannelOutbound> {
         let (tg_has, ms_has) = {
             let tg = self.telegram_plugin.read().await;
             let ms = self.msteams_plugin.read().await;
@@ -49,14 +52,14 @@ impl MultiChannelOutbound {
         match (tg_has, ms_has) {
             (true, false) => Ok(self.telegram_outbound.as_ref()),
             (false, true) => Ok(self.msteams_outbound.as_ref()),
-            (true, true) => Err(anyhow::anyhow!(
+            (true, true) => Err(ChannelError::invalid_input(format!(
                 "account_id '{account_id}' exists in multiple channels; explicit routing required"
-            )),
-            (false, false) => Err(anyhow::anyhow!("unknown channel account: {account_id}")),
+            ))),
+            (false, false) => Err(ChannelError::unknown_account(account_id)),
         }
     }
 
-    async fn resolve_stream(&self, account_id: &str) -> Result<&dyn ChannelStreamOutbound> {
+    async fn resolve_stream(&self, account_id: &str) -> ChannelResult<&dyn ChannelStreamOutbound> {
         let (tg_has, ms_has) = {
             let tg = self.telegram_plugin.read().await;
             let ms = self.msteams_plugin.read().await;
@@ -65,10 +68,10 @@ impl MultiChannelOutbound {
         match (tg_has, ms_has) {
             (true, false) => Ok(self.telegram_stream.as_ref()),
             (false, true) => Ok(self.msteams_stream.as_ref()),
-            (true, true) => Err(anyhow::anyhow!(
+            (true, true) => Err(ChannelError::invalid_input(format!(
                 "account_id '{account_id}' exists in multiple channels; explicit routing required"
-            )),
-            (false, false) => Err(anyhow::anyhow!("unknown channel account: {account_id}")),
+            ))),
+            (false, false) => Err(ChannelError::unknown_account(account_id)),
         }
     }
 }
@@ -81,7 +84,7 @@ impl ChannelOutbound for MultiChannelOutbound {
         to: &str,
         text: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_text(account_id, to, text, reply_to)
@@ -94,14 +97,14 @@ impl ChannelOutbound for MultiChannelOutbound {
         to: &str,
         payload: &moltis_common::types::ReplyPayload,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_media(account_id, to, payload, reply_to)
             .await
     }
 
-    async fn send_typing(&self, account_id: &str, to: &str) -> Result<()> {
+    async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_typing(account_id, to)
@@ -115,7 +118,7 @@ impl ChannelOutbound for MultiChannelOutbound {
         text: &str,
         suffix_html: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_text_with_suffix(account_id, to, text, suffix_html, reply_to)
@@ -128,7 +131,7 @@ impl ChannelOutbound for MultiChannelOutbound {
         to: &str,
         html: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_html(account_id, to, html, reply_to)
@@ -141,7 +144,7 @@ impl ChannelOutbound for MultiChannelOutbound {
         to: &str,
         text: &str,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_text_silent(account_id, to, text, reply_to)
@@ -156,7 +159,7 @@ impl ChannelOutbound for MultiChannelOutbound {
         longitude: f64,
         title: Option<&str>,
         reply_to: Option<&str>,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_outbound(account_id)
             .await?
             .send_location(account_id, to, latitude, longitude, title, reply_to)
@@ -172,7 +175,7 @@ impl ChannelStreamOutbound for MultiChannelOutbound {
         to: &str,
         reply_to: Option<&str>,
         stream: StreamReceiver,
-    ) -> Result<()> {
+    ) -> ChannelResult<()> {
         self.resolve_stream(account_id)
             .await?
             .send_stream(account_id, to, reply_to, stream)

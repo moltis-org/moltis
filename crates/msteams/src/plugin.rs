@@ -114,7 +114,7 @@ impl MsTeamsPlugin {
         account_id: &str,
         payload: serde_json::Value,
         webhook_secret: Option<&str>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let activity: TeamsActivity = serde_json::from_value(payload)?;
         self.handle_activity(account_id, activity, webhook_secret)
             .await
@@ -125,7 +125,7 @@ impl MsTeamsPlugin {
         account_id: &str,
         activity: TeamsActivity,
         webhook_secret: Option<&str>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let (config, event_sink, message_log, service_urls) = {
             let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
             let state = accounts

@@ -2200,7 +2200,7 @@ pub async fn start_gateway(
                             let mut ms = msteams_plugin.write().await;
                             ms.start_account(&ch.account_id, ch.config).await
                         },
-                        Err(e) => Err(anyhow::anyhow!(e)),
+                        Err(e) => Err(moltis_channels::Error::invalid_input(e)),
                     };
 
                     if let Err(e) = start_result {
