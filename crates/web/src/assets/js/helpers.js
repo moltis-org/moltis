@@ -786,6 +786,20 @@ export function renderMapPointGroups(container, points, fallbackLabel) {
 	return rendered;
 }
 
+/**
+ * Parse the payload from `agents.list` into `{ defaultId, agents }`.
+ * Handles both array (legacy) and object shapes.
+ */
+export function parseAgentsListPayload(payload) {
+	if (Array.isArray(payload)) {
+		return { defaultId: "main", agents: payload };
+	}
+	return {
+		defaultId: typeof payload?.default_id === "string" ? payload.default_id : "main",
+		agents: Array.isArray(payload?.agents) ? payload.agents : [],
+	};
+}
+
 export function createEl(tag, attrs, children) {
 	var el = document.createElement(tag);
 	if (attrs) {

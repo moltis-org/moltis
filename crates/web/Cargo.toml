@@ -32,6 +32,7 @@ which          = { workspace = true }
 
 [features]
 default            = []
+agent              = ["moltis-gateway/agent"]
 graphql            = []
 metrics            = ["moltis-gateway/metrics"]
 push-notifications = ["moltis-gateway/push-notifications"]

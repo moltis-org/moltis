@@ -356,7 +356,8 @@ fn build_schema_map() -> KnownKeys {
             Struct(HashMap::from([
                 ("name", Leaf),
                 ("emoji", Leaf),
-                ("theme", Leaf),
+                ("creature", Leaf),
+                ("vibe", Leaf),
             ])),
         ),
         (

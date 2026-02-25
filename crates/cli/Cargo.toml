@@ -70,6 +70,7 @@ tempfile = { workspace = true }
 
 [features]
 default = [
+  "agent",
   "file-watcher",
   "graphql",
   "jemalloc",
@@ -84,6 +85,7 @@ default = [
   "voice",
   "web-ui",
 ]
+agent              = ["moltis-gateway/agent", "moltis-web?/agent"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
 file-watcher = ["moltis-gateway/file-watcher"]

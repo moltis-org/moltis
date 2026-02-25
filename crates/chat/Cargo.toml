@@ -5,6 +5,7 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
+anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
 chrono                = { features = ["serde"], optional = true, workspace = true }
@@ -40,7 +41,6 @@ push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
 
 [dev-dependencies]
-anyhow          = { workspace = true }
 moltis-channels = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }

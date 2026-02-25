@@ -10,7 +10,7 @@ pub enum WizardStep {
     UserName,
     AgentName,
     AgentEmoji,
-    AgentTheme,
+    AgentVibe,
     Confirm,
     Done,
 }
@@ -47,8 +47,8 @@ impl WizardState {
             WizardStep::UserName => "What's your name?",
             WizardStep::AgentName => "Pick a name for your agent:",
             WizardStep::AgentEmoji => "Choose an emoji for your agent (e.g. \u{1f916}):",
-            WizardStep::AgentTheme => {
-                "Describe your agent's theme (e.g. wise owl, chill fox, witty robot):"
+            WizardStep::AgentVibe => {
+                "Describe your agent's vibe (e.g. wise owl, chill fox, witty robot):"
             },
             WizardStep::Confirm => "All set! Press Enter to save, or type 'back' to go back.",
             WizardStep::Done => "Onboarding complete!",
@@ -78,17 +78,17 @@ impl WizardState {
                 if !input.is_empty() {
                     self.identity.emoji = Some(input.to_string());
                 }
-                self.step = WizardStep::AgentTheme;
+                self.step = WizardStep::AgentVibe;
             },
-            WizardStep::AgentTheme => {
+            WizardStep::AgentVibe => {
                 if !input.is_empty() {
-                    self.identity.theme = Some(input.to_string());
+                    self.identity.vibe = Some(input.to_string());
                 }
                 self.step = WizardStep::Confirm;
             },
             WizardStep::Confirm => {
                 if input.eq_ignore_ascii_case("back") {
-                    self.step = WizardStep::AgentTheme;
+                    self.step = WizardStep::AgentVibe;
                 } else {
                     self.step = WizardStep::Done;
                 }
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(s.identity.emoji.as_deref(), Some("\u{1f99c}"));
 
         s.advance("cheerful parrot"); // → confirm
-        assert_eq!(s.identity.theme.as_deref(), Some("cheerful parrot"));
+        assert_eq!(s.identity.vibe.as_deref(), Some("cheerful parrot"));
         assert_eq!(s.step, WizardStep::Confirm);
 
         s.advance(""); // confirm → done
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(s.step, WizardStep::Confirm);
 
         s.advance("back");
-        assert_eq!(s.step, WizardStep::AgentTheme);
+        assert_eq!(s.step, WizardStep::AgentVibe);
     }
 
     #[test]

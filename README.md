@@ -115,7 +115,7 @@ See [Security Architecture](https://docs.moltis.org/security.html) for details.
 
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, parallel tool execution
 - **Communication** — Web UI, Telegram, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
-- **Memory & Context** — Embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, project context
+- **Memory & Context** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, project context
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection
 - **Operations** — Cron scheduling, OpenTelemetry tracing, Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration

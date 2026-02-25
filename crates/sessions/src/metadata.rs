@@ -42,6 +42,8 @@ pub struct SessionEntry {
     pub mcp_disabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(default)]
     pub version: u64,
 }
@@ -119,6 +121,7 @@ impl SessionMetadata {
                 fork_point: None,
                 mcp_disabled: None,
                 preview: None,
+                agent_id: None,
                 version: 0,
             })
     }
@@ -195,6 +198,43 @@ impl SessionMetadata {
         }
     }
 
+    /// Assign (or unassign) a session to an agent persona.
+    pub fn set_agent_id(&mut self, key: &str, agent_id: Option<String>) {
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.agent_id = agent_id;
+            entry.updated_at = now_ms();
+            entry.version += 1;
+        }
+    }
+
+    /// List all sessions belonging to a given agent.
+    pub fn list_by_agent_id(&self, agent_id: &str) -> Vec<SessionEntry> {
+        let mut entries: Vec<_> = self
+            .entries
+            .values()
+            .filter(|e| e.agent_id.as_deref() == Some(agent_id))
+            .cloned()
+            .collect();
+        entries.sort_by_key(|a| a.created_at);
+        entries
+    }
+
+    /// Delete all sessions belonging to a given agent. Returns the number of
+    /// sessions removed.
+    pub fn delete_by_agent_id(&mut self, agent_id: &str) -> u64 {
+        let keys: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.agent_id.as_deref() == Some(agent_id))
+            .map(|(k, _)| k.clone())
+            .collect();
+        let count = keys.len() as u64;
+        for key in keys {
+            self.entries.remove(&key);
+        }
+        count
+    }
+
     /// Remove an entry by key. Returns the removed entry if found.
     pub fn remove(&mut self, key: &str) -> Option<SessionEntry> {
         self.entries.remove(key)
@@ -235,6 +275,7 @@ struct SessionRow {
     fork_point: Option<i32>,
     mcp_disabled: Option<i32>,
     preview: Option<String>,
+    agent_id: Option<String>,
     version: i64,
 }
 
@@ -259,6 +300,7 @@ impl From<SessionRow> for SessionEntry {
             fork_point: r.fork_point.map(|v| v as u32),
             mcp_disabled: r.mcp_disabled.map(|v| v != 0),
             preview: r.preview,
+            agent_id: r.agent_id,
             version: r.version as u64,
         }
     }
@@ -295,6 +337,7 @@ impl SqliteSessionMetadata {
                 fork_point          INTEGER,
                 mcp_disabled        INTEGER,
                 preview             TEXT,
+                agent_id            TEXT,
                 version             INTEGER NOT NULL DEFAULT 0
             )"#,
         )
@@ -487,6 +530,40 @@ impl SqliteSessionMetadata {
             .execute(&self.pool)
             .await
             .ok();
+    }
+
+    /// Assign (or unassign) a session to an agent persona.
+    pub async fn set_agent_id(&self, key: &str, agent_id: Option<&str>) -> Result<()> {
+        let now = now_ms() as i64;
+        sqlx::query(
+            "UPDATE sessions SET agent_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(agent_id)
+        .bind(now)
+        .bind(key)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// List all sessions belonging to a given agent.
+    pub async fn list_by_agent_id(&self, agent_id: &str) -> Result<Vec<SessionEntry>> {
+        let rows = sqlx::query_as::<_, SessionRow>(
+            "SELECT * FROM sessions WHERE agent_id = ? ORDER BY created_at ASC",
+        )
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Delete all sessions belonging to a given agent (cascade).
+    pub async fn delete_by_agent_id(&self, agent_id: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// Set the parent session key and fork point for a branched session.
@@ -1158,6 +1235,9 @@ mod tests {
 
         meta.set_preview("main", Some("hello")).await;
         assert_eq!(meta.get("main").await.unwrap().version, 11);
+
+        meta.set_agent_id("main", Some("agent-1")).await.unwrap();
+        assert_eq!(meta.get("main").await.unwrap().version, 12);
     }
 
     #[tokio::test]
@@ -1217,5 +1297,175 @@ mod tests {
         meta.save().unwrap();
         let reloaded = SessionMetadata::load(path).unwrap();
         assert_eq!(reloaded.get("main").unwrap().version, 3);
+    }
+
+    #[test]
+    fn test_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path.clone()).unwrap();
+
+        meta.upsert("main", None);
+        assert!(meta.get("main").unwrap().agent_id.is_none());
+
+        meta.set_agent_id("main", Some("agent-1".to_string()));
+        assert_eq!(
+            meta.get("main").unwrap().agent_id.as_deref(),
+            Some("agent-1")
+        );
+
+        meta.set_agent_id("main", None);
+        assert!(meta.get("main").unwrap().agent_id.is_none());
+
+        // Round-trip through save/load.
+        meta.set_agent_id("main", Some("agent-2".to_string()));
+        meta.save().unwrap();
+        let reloaded = SessionMetadata::load(path).unwrap();
+        assert_eq!(
+            reloaded.get("main").unwrap().agent_id.as_deref(),
+            Some("agent-2")
+        );
+    }
+
+    #[test]
+    fn test_list_by_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("s1", Some("Session 1".to_string()));
+        meta.upsert("s2", Some("Session 2".to_string()));
+        meta.upsert("s3", Some("Session 3".to_string()));
+
+        meta.set_agent_id("s1", Some("agent-a".to_string()));
+        meta.set_agent_id("s2", Some("agent-a".to_string()));
+        meta.set_agent_id("s3", Some("agent-b".to_string()));
+
+        let agent_a = meta.list_by_agent_id("agent-a");
+        assert_eq!(agent_a.len(), 2);
+        let keys: Vec<&str> = agent_a.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"s1"));
+        assert!(keys.contains(&"s2"));
+
+        let agent_b = meta.list_by_agent_id("agent-b");
+        assert_eq!(agent_b.len(), 1);
+        assert_eq!(agent_b[0].key, "s3");
+
+        let none = meta.list_by_agent_id("agent-missing");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_delete_by_agent_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        let mut meta = SessionMetadata::load(path).unwrap();
+
+        meta.upsert("s1", None);
+        meta.upsert("s2", None);
+        meta.upsert("s3", None);
+
+        meta.set_agent_id("s1", Some("agent-a".to_string()));
+        meta.set_agent_id("s2", Some("agent-a".to_string()));
+        meta.set_agent_id("s3", Some("agent-b".to_string()));
+
+        let deleted = meta.delete_by_agent_id("agent-a");
+        assert_eq!(deleted, 2);
+        assert!(meta.get("s1").is_none());
+        assert!(meta.get("s2").is_none());
+        assert!(meta.get("s3").is_some());
+
+        // Deleting a non-existent agent returns 0.
+        let deleted = meta.delete_by_agent_id("agent-missing");
+        assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("main", None).await.unwrap();
+        assert!(meta.get("main").await.unwrap().agent_id.is_none());
+
+        meta.set_agent_id("main", Some("agent-1")).await.unwrap();
+        assert_eq!(
+            meta.get("main").await.unwrap().agent_id.as_deref(),
+            Some("agent-1")
+        );
+
+        meta.set_agent_id("main", None).await.unwrap();
+        assert!(meta.get("main").await.unwrap().agent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_list_by_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("s1", Some("Session 1".to_string()))
+            .await
+            .unwrap();
+        meta.upsert("s2", Some("Session 2".to_string()))
+            .await
+            .unwrap();
+        meta.upsert("s3", Some("Session 3".to_string()))
+            .await
+            .unwrap();
+
+        meta.set_agent_id("s1", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s2", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s3", Some("agent-b")).await.unwrap();
+
+        let agent_a = meta.list_by_agent_id("agent-a").await.unwrap();
+        assert_eq!(agent_a.len(), 2);
+        let keys: Vec<&str> = agent_a.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"s1"));
+        assert!(keys.contains(&"s2"));
+
+        let agent_b = meta.list_by_agent_id("agent-b").await.unwrap();
+        assert_eq!(agent_b.len(), 1);
+        assert_eq!(agent_b[0].key, "s3");
+
+        let none = meta.list_by_agent_id("agent-missing").await.unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_delete_by_agent_id() {
+        let pool = sqlite_pool().await;
+        let meta = SqliteSessionMetadata::new(pool);
+
+        meta.upsert("s1", None).await.unwrap();
+        meta.upsert("s2", None).await.unwrap();
+        meta.upsert("s3", None).await.unwrap();
+
+        meta.set_agent_id("s1", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s2", Some("agent-a")).await.unwrap();
+        meta.set_agent_id("s3", Some("agent-b")).await.unwrap();
+
+        let deleted = meta.delete_by_agent_id("agent-a").await.unwrap();
+        assert_eq!(deleted, 2);
+        assert!(meta.get("s1").await.is_none());
+        assert!(meta.get("s2").await.is_none());
+        assert!(meta.get("s3").await.is_some());
+
+        // Deleting a non-existent agent returns 0.
+        let deleted = meta.delete_by_agent_id("agent-missing").await.unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_agent_id_serde_compat() {
+        // Existing metadata without agent_id should deserialize fine.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        fs::write(
+            &path,
+            r#"{"main":{"id":"1","key":"main","label":null,"created_at":0,"updated_at":0,"message_count":0}}"#,
+        )
+        .unwrap();
+        let meta = SessionMetadata::load(path).unwrap();
+        assert!(meta.get("main").unwrap().agent_id.is_none());
     }
 }
