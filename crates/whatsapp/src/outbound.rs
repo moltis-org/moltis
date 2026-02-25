@@ -65,7 +65,7 @@ impl ChannelOutbound for WhatsAppOutbound {
         let msg_id = client
             .send_message(jid, msg)
             .await
-            .map_err(|e| moltis_channels::Error::external("whatsapp send_text", e))?;
+            .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp send_text: {e}")))?;
         self.record_sent_id(account_id, &msg_id);
         Ok(())
     }
@@ -93,7 +93,7 @@ impl ChannelOutbound for WhatsAppOutbound {
             .chatstate()
             .send(&jid, ChatStateType::Composing)
             .await
-            .map_err(|e| moltis_channels::Error::external("whatsapp chatstate", e))?;
+            .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp chatstate: {e}")))?;
         Ok(())
     }
 }

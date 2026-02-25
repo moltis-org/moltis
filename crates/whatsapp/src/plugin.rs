@@ -146,7 +146,7 @@ impl ChannelPlugin for WhatsAppPlugin {
             self.event_sink.clone(),
         )
         .await
-        .map_err(|e| moltis_channels::Error::external("whatsapp start", e))?;
+        .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp start: {e}")))?;
 
         Ok(())
     }
