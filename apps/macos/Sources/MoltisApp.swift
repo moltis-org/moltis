@@ -1,5 +1,18 @@
 import SwiftUI
 
+private struct SettingsMenuCommand: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings...") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+}
+
 @main
 struct MoltisApp: App {
     @StateObject private var settings: AppSettings
@@ -32,9 +45,13 @@ struct MoltisApp: App {
         }
         .windowResizability(.contentSize)
 
-        Settings {
+        WindowGroup("Moltis Settings", id: "settings") {
             SettingsView(settings: settings, providerStore: providerStore)
         }
+        .defaultSize(width: 960, height: 780)
         .windowResizability(.contentMinSize)
+        .commands {
+            SettingsMenuCommand()
+        }
     }
 }

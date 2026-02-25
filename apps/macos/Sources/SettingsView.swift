@@ -140,41 +140,51 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
+        NavigationSplitView {
             settingsSidebar
         } detail: {
             settingsDetail
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 720, idealWidth: 960, maxWidth: .infinity,
-               minHeight: 520, idealHeight: 780, maxHeight: .infinity)
-        .background(WindowResizableAccessor())
+        .frame(minWidth: 720, minHeight: 520)
     }
 
     // MARK: Sidebar
 
     private var settingsSidebar: some View {
-        List(selection: $selectedSection) {
-            ForEach(filteredGroups, id: \.group) { item in
-                Section(item.group.rawValue) {
-                    ForEach(item.sections, id: \.self) { section in
-                        Label {
-                            Text(section.title)
-                        } icon: {
-                            SettingsIconView(
-                                systemName: section.icon,
-                                color: section.iconColor
-                            )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 12))
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+            }
+            .padding(7)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+
+            List(selection: $selectedSection) {
+                ForEach(filteredGroups, id: \.group) { item in
+                    Section(item.group.rawValue) {
+                        ForEach(item.sections, id: \.self) { section in
+                            Label {
+                                Text(section.title)
+                            } icon: {
+                                SettingsIconView(
+                                    systemName: section.icon,
+                                    color: section.iconColor
+                                )
+                            }
+                            .tag(section)
                         }
-                        .tag(section)
                     }
                 }
             }
+            .listStyle(.sidebar)
         }
-        .listStyle(.sidebar)
-        .toolbar(removing: .sidebarToggle)
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
-        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
+        .padding(.top, 8)
     }
 
     // MARK: Detail
@@ -220,19 +230,4 @@ struct SettingsIconView: View {
     }
 }
 
-// MARK: - Make the Settings window resizable via AppKit
-
-private struct WindowResizableAccessor: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            view.window?.styleMask.insert(.resizable)
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        nsView.window?.styleMask.insert(.resizable)
-    }
-}
 

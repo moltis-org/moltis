@@ -11,7 +11,7 @@ struct ContentView: View {
     @ObservedObject var chatStore: ChatStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var providerStore: ProviderStore
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -22,7 +22,7 @@ struct ContentView: View {
                 settings: settings,
                 providerStore: providerStore
             ) {
-                openSettings()
+                openWindow(id: "settings")
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -334,7 +334,7 @@ private struct ChatDetailView: View {
                 text: $chatStore.draftMessage,
                 onSend: { chatStore.sendDraftMessage() }
             )
-            .frame(minHeight: 28, maxHeight: 96)
+            .frame(minHeight: 44, maxHeight: 44)
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
